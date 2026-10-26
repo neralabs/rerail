@@ -289,8 +289,8 @@ def dead_code_clause(module, graph, reference_contract):
  UNION SELECT '@module:' || n.module,d.id FROM module_names n JOIN declarations d ON d.module=n.module AND d.name=n.name
  UNION SELECT '@module:' || n.module,d.id FROM module_names n JOIN imports i ON i.module=n.module AND i.name=n.name AND i.kind='symbol' JOIN declarations d ON d.fqname=i.target
  WHERE NOT EXISTS(SELECT 1 FROM declarations local WHERE local.module=n.module AND local.name=n.name)
- UNION SELECT m.id,other.id FROM dead_traits m JOIN dead_traits c ON c.id=m.class_id AND c.structural_protocol
- JOIN dead_traits other ON other.kind='method' AND other.name=m.name AND other.class_id<>m.class_id""",('source',),('target',)))
+ UNION SELECT m.id,other.id FROM dead_traits c CROSS JOIN dead_traits m ON m.class_id=c.id
+ CROSS JOIN dead_traits other ON other.kind='method' AND other.name=m.name AND other.class_id<>m.class_id WHERE c.structural_protocol""",('source',),('target',)))
  # Dispatch states retain the original method while traversing subclasses and
  # co-bases. UNION visits each state once, including cyclic class graphs.
  stages.append(S('reachable',"""WITH RECURSIVE flow(node,dispatch) AS (

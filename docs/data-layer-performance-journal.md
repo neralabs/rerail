@@ -4603,3 +4603,44 @@ Production-SQLite replay must separate edge construction, recursive traversal, a
 The first-50 measurement has no overlap with this agent's builds or tests.
 The all-60 process continues as a diagnostic while failure investigation proceeds.
 Builds and bounded experiments can overlap that second process; its timing cannot establish acceptance.
+
+### Dead-code failure: protocol demand arrives after method fan-out
+
+The failure replay now installs the engine's actual regex functions.
+The shared implementation preserves NULL handling, capture-group errors, regex caching, and work accounting.
+Red commit `bf5f89c6` fails with `no such function: rx_replace`; both replay tests now pass.
+Red commit `853be685` requires failure snapshots to preserve both budget boundaries.
+The corrected addon passes all seven relational-storage tests and all 50 production-shape tests.
+It also passes all 1,236 batch 1–5 original and supplemental replays, without findings or execution-path differences.
+Native and replay Clippy checks pass with warnings denied. All 64 laboratory tests pass.
+
+Production SQLite 3.53.2 replays the captured `reachable` query in 51.819 CPU seconds.
+It executes 474,828,846 VM steps and returns 67,284 symbols.
+The isolated class-name producer takes only 0.293 CPU seconds, disproving the initial class-name hypothesis.
+Edge construction takes 34.738 CPU seconds and 388,693,756 VM steps.
+An external stack sample shows B-tree seeks, page reads, and cache spills in that query.
+
+The final edge arm expands matching method names across unrelated classes before checking the owner's protocol status.
+The capture's plan reads methods, then unrelated methods, then the owning class.
+The corrected SQL puts protocol classes first and uses ordered CROSS JOINs for both dependent method sets.
+It preserves all predicates, duplicate elimination, recursion, and declared allowances.
+Red commit `79debb52` exceeds two million VM steps with empty and nonempty protocol demand.
+The correction passes both cases and checks the complete expected edge sets under skewed statistics.
+
+| Captured component | Original CPU | Corrected CPU | Original VM steps | Corrected VM steps |
+| --- | ---: | ---: | ---: | ---: |
+| Edge construction | 34.738 s | 2.544 s | 388,693,756 | 68,781,444 |
+| Complete reachable query | 51.819 s | 20.196 s | 474,828,846 | 154,916,534 |
+
+Both comparisons retain identical typed-row digests and counts.
+The edge set contains 790,115 rows. These measurements include result hashing and exclude ingestion and the original allowance.
+Each replay command has a 110-second deadline. Other diagnostic work overlaps the replays.
+The [checked experiments](../fixtures/host/data-layer-port/profiling/dead-code-demand-recovery-20261025.json) retain results and limitations.
+
+A separate experiment changes the edge union to UNION ALL with one outer DISTINCT.
+It removes all sort operations, but edge CPU increases from 34.738 to 39.815 seconds.
+The complete query exceeds the 110-second deadline. The partial rewrite also exceeds that deadline for the complete query.
+Both union experiments are rejected. Production retains the original set operators.
+The protocol-demand correction changes policy revision 2 and its generator only.
+The full 9,021-file original dead-code oracle now runs separately to check all 4,931 expected findings.
+Aggregate recovery remains open. No successful full-rule-set performance result follows from this component improvement.

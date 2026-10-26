@@ -1,0 +1,153 @@
+{
+  "format": "rerail.dead-code-demand-replay/v1",
+  "sourceManifest": ".rerail/profiles/recovery-completion-20261025/full-candidate/first-50/failures/failure-61154-0.json",
+  "sqliteVersion": "3.53.2",
+  "acceptance": false,
+  "note": "Offline replay includes hashing; no original allowance. Each command has a 110-second deadline. Concurrent diagnostic work makes these component measurements, not end-to-end acceptance.",
+  "experiments": {
+    "reachable": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 118,
+      "result": {
+        "autoIndexRows": 828884,
+        "bagDigest": "696a54ebc3ed51ee",
+        "cpuNs": 51818895250,
+        "fullscanSteps": 1175633,
+        "rows": 67284,
+        "sorts": 125355,
+        "valueBytes": 5120440,
+        "vmSteps": 474828846,
+        "wallNs": 88009516375
+      },
+      "setupWallNs": 2257754417,
+      "sqliteVersion": "3.53.2"
+    },
+    "class_names": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 0,
+      "result": {
+        "autoIndexRows": 0,
+        "bagDigest": "b0c0c93d97ea737d",
+        "cpuNs": 292646375,
+        "fullscanSteps": 113348,
+        "rows": 38771,
+        "sorts": 0,
+        "valueBytes": 3110751,
+        "vmSteps": 3111410,
+        "wallNs": 362746959
+      },
+      "setupWallNs": 2511631958,
+      "sqliteVersion": "3.53.2"
+    },
+    "reach_edges": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 0,
+      "result": {
+        "autoIndexRows": 38770,
+        "bagDigest": "f3f16e91bd485e0a",
+        "cpuNs": 34737901125,
+        "fullscanSteps": 1936708,
+        "rows": 790115,
+        "sorts": 125352,
+        "valueBytes": 112045072,
+        "vmSteps": 388693756,
+        "wallNs": 47128983333
+      },
+      "setupWallNs": 2511633584,
+      "sqliteVersion": "3.53.2"
+    },
+    "reach_edges-distinct": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 0,
+      "result": {
+        "autoIndexRows": 0,
+        "bagDigest": "f3f16e91bd485e0a",
+        "cpuNs": 40150900625,
+        "fullscanSteps": 1796313,
+        "rows": 790115,
+        "sorts": 11735,
+        "valueBytes": 112045072,
+        "vmSteps": 382041911,
+        "wallNs": 66225054875
+      },
+      "setupWallNs": 3146952250,
+      "sqliteVersion": "3.53.2"
+    },
+    "reach_edges-flat": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 0,
+      "result": {
+        "autoIndexRows": 0,
+        "bagDigest": "f3f16e91bd485e0a",
+        "cpuNs": 39814925666,
+        "fullscanSteps": 1796313,
+        "rows": 790115,
+        "sorts": 0,
+        "valueBytes": 112045072,
+        "vmSteps": 359469816,
+        "wallNs": 90717935500
+      },
+      "setupWallNs": 3228282166,
+      "sqliteVersion": "3.53.2"
+    },
+    "reachable-flat": {
+      "name": "reachable-flat",
+      "timeout": 110,
+      "command": [
+        "scripts/profiling/preparation/target/release/failure_replay",
+        ".rerail/profiles/recovery-completion-20261025/full-candidate/first-50/failures/failure-61154-0.json",
+        ".rerail/profiles/recovery-completion-20261025/reachable-flat-replay.sql"
+      ]
+    },
+    "reachable-distinct": {
+      "name": "reachable-distinct",
+      "timeout": 110,
+      "command": [
+        "scripts/profiling/preparation/target/release/failure_replay",
+        ".rerail/profiles/recovery-completion-20261025/full-candidate/first-50/failures/failure-61154-0.json",
+        ".rerail/profiles/recovery-completion-20261025/reachable-distinct-replay.sql"
+      ]
+    },
+    "reach_edges-protocol": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 0,
+      "result": {
+        "autoIndexRows": 38770,
+        "bagDigest": "f3f16e91bd485e0a",
+        "cpuNs": 2544435417,
+        "fullscanSteps": 1936708,
+        "rows": 790115,
+        "sorts": 123599,
+        "valueBytes": 112045072,
+        "vmSteps": 68781444,
+        "wallNs": 4897659000
+      },
+      "setupWallNs": 2808931416,
+      "sqliteVersion": "3.53.2"
+    },
+    "reachable-protocol": {
+      "format": "rerail.sql-failure-replay/v1",
+      "note": "Includes result hashing. Uses production regex functions and SQLite. No AST ingestion or original rule allowance. Missing native producers remain errors. Compare bag digests with this same replay binary.",
+      "regexWorkUnits": 118,
+      "result": {
+        "autoIndexRows": 828884,
+        "bagDigest": "696a54ebc3ed51ee",
+        "cpuNs": 20196033625,
+        "fullscanSteps": 1175633,
+        "rows": 67284,
+        "sorts": 123602,
+        "valueBytes": 5120440,
+        "vmSteps": 154916534,
+        "wallNs": 38434300542
+      },
+      "setupWallNs": 2858384166,
+      "sqliteVersion": "3.53.2"
+    }
+  }
+}
