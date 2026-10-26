@@ -49,24 +49,22 @@ pub(crate) enum Reason {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Fact<T> {
     Known(T),
-    /// A real semantic unknown, currently an undecided reference.
+    /// A real semantic unknown or an input whose syntax is incomplete.
     Unknown(Reason),
     /// This expression has no projected resolution; other structural branches may match.
     NotApplicable(Reason),
-    /// The producer cannot safely project this input; consumers must fall back.
+    /// The producer cannot project this input; coverage is incomplete.
     Unsupported(Reason),
 }
 
 fn unavailable<T>(reason: Reason) -> Fact<T> {
     match reason {
-        Reason::UndecidedReference => Fact::Unknown(reason),
+        Reason::UndecidedReference | Reason::SyntaxError => Fact::Unknown(reason),
         Reason::MissingReference
         | Reason::UnsupportedExpression
         | Reason::MissingModule
         | Reason::UnqualifiableModule => Fact::NotApplicable(reason),
-        Reason::SyntaxError | Reason::OutOfFileTarget | Reason::LookupNotProjected => {
-            Fact::Unsupported(reason)
-        }
+        Reason::OutOfFileTarget | Reason::LookupNotProjected => Fact::Unsupported(reason),
     }
 }
 
@@ -223,7 +221,17 @@ fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Result<Node<'t, D>, Rea
             .collect();
         match parts.as_slice() {
             [inner] => node = inner.clone(),
-            _ => return Err(Reason::UnsupportedExpression),
+            _ => {
+                return Err(
+                    if node.dfs().any(|n| n.is_error() || n.is_missing())
+                        || node.ancestors().any(|n| n.is_error() || n.is_missing())
+                    {
+                        Reason::SyntaxError
+                    } else {
+                        Reason::UnsupportedExpression
+                    },
+                );
+            }
         }
     }
 }
@@ -242,6 +250,13 @@ fn chain<'t, D: Doc>(
         head = unparenthesized(head.field("object").ok_or(Reason::SyntaxError)?)?;
     }
     if head.kind() != "identifier" {
+        // Only a well-formed unsupported expression is a definite non-qualification.
+        // Inspect this requested expression, not its enclosing document.
+        if node.dfs().any(|n| n.is_error() || n.is_missing())
+            || head.ancestors().any(|n| n.is_error() || n.is_missing())
+        {
+            return Err(Reason::SyntaxError);
+        }
         return Err(Reason::UnsupportedExpression);
     }
     if head.ancestors().any(|n| n.is_error() || n.is_missing()) {
@@ -250,6 +265,36 @@ fn chain<'t, D: Doc>(
     attributes.reverse();
     Ok((expression, head, attributes))
 }
+/// Normalized, scope-free shape of an identifier/attribute qualification demand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QualificationChain {
+    pub head: String,
+    pub attributes: Vec<String>,
+}
+
+/// Parse and normalize once for callers that also need coarse import screening.
+/// This acquires no scopes and evaluates no semantic predicate.
+pub(crate) fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<QualificationChain> {
+    match chain(node) {
+        Ok((_, head, attributes)) => Fact::Known(QualificationChain {
+            head: python_identifier(&head).into_owned(),
+            attributes,
+        }),
+        Err(reason) => unavailable(reason),
+    }
+}
+
+/// Well-formed call/subscript/other non-name heads cannot satisfy explicit native
+/// import/global qualification. Incomplete syntax stays unknown.
+pub(crate) fn qualification_eligibility<D: Doc>(node: &Node<'_, D>) -> Fact<()> {
+    match qualification_chain(node) {
+        Fact::Known(_) => Fact::Known(()),
+        Fact::NotApplicable(reason) => Fact::NotApplicable(reason),
+        Fact::Unknown(reason) => Fact::Unknown(reason),
+        Fact::Unsupported(reason) => Fact::Unsupported(reason),
+    }
+}
+
 fn unknown_node<D: Doc>(node: &Node<'_, D>, reason: Reason) -> NodeFacts {
     NodeFacts {
         node_id: node.node_id(),
@@ -592,6 +637,75 @@ mod tests {
                 stop_at_global: false
             }),
             Fact::Unsupported(Reason::LookupNotProjected)
+        ));
+    }
+
+    #[test]
+    fn qualification_eligibility_rejects_non_name_heads_without_reading_scopes() {
+        let source = "factory().open()\nhandlers['open']()\nPath('f').open()\n(real.name)()\n";
+        let doc = GrammarDialect::Python.ast_grep(source);
+        for (callee, eligible) in [
+            ("factory().open", false),
+            ("handlers['open']", false),
+            ("Path('f').open", false),
+            ("(real.name)", true),
+        ] {
+            let node = doc
+                .root()
+                .dfs()
+                .filter(|n| n.kind() == "call")
+                .filter_map(|n| n.field("function"))
+                .find(|n| n.text() == callee)
+                .unwrap();
+            let result = qualification_eligibility(&node);
+            if eligible {
+                assert!(matches!(result, Fact::Known(())));
+            } else {
+                assert!(matches!(
+                    result,
+                    Fact::NotApplicable(Reason::UnsupportedExpression)
+                ));
+            }
+        }
+        let malformed = GrammarDialect::Python.ast_grep("broken = (\n");
+        assert!(
+            malformed
+                .root()
+                .dfs()
+                .any(|n| n.is_error() || n.is_missing())
+        );
+        assert!(matches!(
+            qualification_eligibility(&malformed.root()),
+            Fact::Unknown(Reason::SyntaxError)
+        ));
+    }
+
+    #[test]
+    fn valid_line_continuation_parentheses_are_not_applicable_not_unknown() {
+        let source = "import pkg\n(pkg \\\n).open()\n";
+        let doc = GrammarDialect::Python.ast_grep(source);
+        assert!(!doc.root().dfs().any(|n| n.is_error() || n.is_missing()));
+        let parens = doc
+            .root()
+            .dfs()
+            .find(|n| n.kind() == "parenthesized_expression")
+            .unwrap();
+        assert!(
+            parens
+                .children()
+                .filter(|n| n.is_named() && n.kind() != "comment")
+                .count()
+                > 1,
+            "fixture must retain the named line continuation native unparenthesizing stops at"
+        );
+        assert!(matches!(
+            qualification_eligibility(&parens),
+            Fact::NotApplicable(Reason::UnsupportedExpression)
+        ));
+        let attribute = doc.root().dfs().find(|n| n.kind() == "attribute").unwrap();
+        assert!(matches!(
+            qualification_eligibility(&attribute),
+            Fact::NotApplicable(Reason::UnsupportedExpression)
         ));
     }
 

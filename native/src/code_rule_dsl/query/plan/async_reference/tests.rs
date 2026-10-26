@@ -150,6 +150,36 @@ fn check(sources: Vec<String>) -> Run {
         .collect();
     let modules = BTreeMap::new();
     let indexed = Native::new(&tapes, &compiled, &paths, &modules);
+    let generated = generated_shape::queries();
+    let generated_roots: Vec<_> = tapes
+        .iter()
+        .enumerate()
+        .map(|(i, tape)| (i as u32, tape.root()))
+        .collect();
+    let generated_run = execute_sql(
+        &generated_roots,
+        &modules,
+        1,
+        &[&generated[0].sql, &generated[1].sql],
+    );
+    assert_eq!(
+        keys(&generated_run),
+        native,
+        "generated shape must match both oracles"
+    );
+    assert_eq!(generated_run.findings.coverage, run.findings.coverage);
+    assert_eq!(
+        generated_run.metrics.semantic_requests,
+        run.metrics.semantic_requests
+    );
+    assert!(
+        generated_run
+            .metrics
+            .filters
+            .iter()
+            .all(|(name, &count)| count <= if name == "receiver" { 2 } else { 1 }),
+        "generated shape must retain batch boundaries"
+    );
     assert_eq!(
         native,
         indexed.run().keys,
@@ -257,6 +287,30 @@ fn complete_async_family_matches_existing_path_fixtures() {
         include_str!("../../../../../../fixtures/python/value/ruff/ASYNC230.py").into(),
         include_str!("../../../../../../fixtures/python/value/ruff/ASYNC230-unpacking.py").into(),
     ]);
+}
+#[test]
+fn primary_screen_preserves_receiver_demands_and_skips_irrelevant_scopes() {
+    let irrelevant = reference_run(&["import unrelated\nasync def f():\n unrelated.run()\n factory().get()\n items[0].post()\n".into()], 1);
+    assert_eq!(irrelevant.metrics.admitted_primary_refs, 0);
+    assert_eq!(irrelevant.metrics.scope_builds, 0);
+    assert_eq!(irrelevant.metrics.semantic_requests, 0);
+    assert!(irrelevant.findings.keys.is_empty());
+    let receiver = check(vec![
+        "from pathlib import Path as P\nasync def f():\n P('x').open()\n p = P('x')\n p.open()\n"
+            .into(),
+    ]);
+    assert_eq!(receiver.metrics.admitted_primary_refs, 0);
+    assert!(receiver.metrics.semantic_requests > 0);
+    assert_eq!(receiver.findings.keys.len(), 2);
+}
+#[test]
+fn batched_positive_documents_preserve_all_four_labels() {
+    let sources = (0..24).map(|i| format!(
+        "import requests as r\nimport os as o\nfrom pathlib import Path as P\nasync def f{i}():\n r.get('url')\n o.system('cmd')\n o.spawnl(o.P_WAIT, 'x')\n o.waitpid(1, 0)\n P('x').open()\n"
+    )).collect();
+    let run = check(sources);
+    assert_eq!(run.findings.keys.len(), 120);
+    assert_eq!(run.metrics.scope_builds, 24);
 }
 #[test]
 fn duplicate_labels_do_not_repeat_producer_work() {
@@ -375,12 +429,17 @@ fn complete_async_family_corpus_profile() {
     let native = native_policy();
     let compile_cpu = cpu_ns() - compile;
     let indexed = Native::new(&parsed, &native, &paths, &modules);
+    let compile = cpu_ns();
+    let generated = generated_shape::queries();
+    let generated_compile_cpu = cpu_ns() - compile;
+    let generated_queries = [&*generated[0].sql, &*generated[1].sql];
+    let reference_queries = [SELECT_TARGETS, COMPOSE];
     let mut runs = Vec::new();
     for iteration in 0..3 {
-        let candidate = || {
+        let candidate = |queries: &[&str; 2]| {
             let cpu = cpu_ns();
             let wall = Instant::now();
-            let mut run = execute(&roots, &modules, 1);
+            let mut run = execute_sql(&roots, &modules, 1, queries);
             // Include producer/table destruction in job CPU. EXPLAIN remains
             // diagnostic work, while preparation is reported separately.
             run.metrics.execution_ns =
@@ -390,12 +449,42 @@ fn complete_async_family_corpus_profile() {
             run
         };
         let baseline = || indexed.run();
-        let (run, oracle) = if iteration % 2 == 0 {
-            (candidate(), baseline())
-        } else {
-            let b = baseline();
-            (candidate(), b)
+        let (run, oracle, generated_run) = match iteration % 3 {
+            0 => (
+                candidate(&reference_queries),
+                baseline(),
+                candidate(&generated_queries),
+            ),
+            1 => {
+                let native = baseline();
+                let generated = candidate(&generated_queries);
+                (candidate(&reference_queries), native, generated)
+            }
+            _ => {
+                let generated = candidate(&generated_queries);
+                (candidate(&reference_queries), baseline(), generated)
+            }
         };
+        assert_eq!(
+            keys(&generated_run),
+            keys(&run),
+            "generated/reference parity"
+        );
+        assert_eq!(generated_run.findings.coverage, run.findings.coverage);
+        assert_eq!(
+            generated_run.metrics.semantic_requests,
+            run.metrics.semantic_requests
+        );
+        assert_eq!(generated_run.metrics.sql_executions, 2);
+        assert!(
+            generated_run
+                .metrics
+                .filters
+                .iter()
+                .all(|(name, &count)| count <= if name == "receiver" { 2 } else { 1 }),
+            "generated per-row scan: {:?}",
+            generated_run.metrics.filters
+        );
         let mismatches = keys(&run)
             .symmetric_difference(&oracle.keys)
             .cloned()
@@ -417,6 +506,9 @@ fn complete_async_family_corpus_profile() {
             "reference_job_cpu_ns":run.metrics.execution_ns+run.metrics.preparation_ns+parse_cpu+indexed.index_ns,
             "native_job_cpu_ns":oracle.cpu_ns+oracle.compile_ns+parse_cpu+indexed.index_ns,
             "execution_cpu_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns as f64,
+            "generated_to_reference_cpu_ratio":generated_run.metrics.execution_ns as f64/run.metrics.execution_ns as f64,
+            "generated_job_cpu_ns":generated_run.metrics.execution_ns+generated_run.metrics.preparation_ns+parse_cpu+indexed.index_ns,
+            "generated":generated_run.metrics,
             "reference":run.metrics,"findings":run.findings.keys.len(),
             "native_execution_cpu_ns":oracle.cpu_ns,"native_execution_wall_ns":oracle.wall_ns,
             "native_selection_cpu_ns":oracle.prepare_ns,"native_sql_compile_ns":oracle.compile_ns,
@@ -425,10 +517,34 @@ fn complete_async_family_corpus_profile() {
             "native_match_cpu_ns":oracle.cpu_ns.saturating_sub(oracle.prepare_ns),
             "reference_to_native_match_ratio":run.metrics.execution_ns as f64/oracle.cpu_ns.saturating_sub(oracle.prepare_ns) as f64}));
     }
-    let report = json!({"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals add common parse+tape and mandatory index construction; native candidate frontier is fresh only in iteration0, cached thereafter; compare match CPU separately",
+    let mut ratios: Vec<_> = runs
+        .iter()
+        .map(|run| run["reference_to_native_match_ratio"].as_f64().unwrap())
+        .collect();
+    ratios.sort_by(f64::total_cmp);
+    let mut generated_ratios: Vec<_> = runs
+        .iter()
+        .map(|run| run["generated_to_reference_cpu_ratio"].as_f64().unwrap())
+        .collect();
+    generated_ratios.sort_by(f64::total_cmp);
+    let gates = json!({
+        "native_finding_parity": true,
+        "complete_domains": true,
+        "execution_sql_budget": 100,
+        "execution_sql_budget_pass": runs.iter().all(|run| run["reference"]["sql_executions"].as_u64().unwrap() <= 100),
+        "median_reference_to_native_match_cpu_ratio": ratios[ratios.len()/2],
+        "reference_2x_cpu_gate_pass": ratios[ratios.len()/2] <= 0.5,
+        "generated_shape_to_reference_cpu_ratio": generated_ratios[generated_ratios.len()/2],
+        "generated_shape_1_25x_cpu_gate_pass": generated_ratios[generated_ratios.len()/2] <= 1.25,
+        "generated_compiler_qualified": false,
+        "production_cutover": false
+    });
+    let report = json!({"gates":gates,"scope":"complete four-rule async family; raw finding keys, no suppressions/payloads; indexed native shares scope/memo across clauses; job totals add common parse+tape and mandatory index construction; native candidate frontier is fresh only in iteration0, cached thereafter; compare match CPU separately",
         "corpus":root,"files":sources.len(),"source_bytes":sources.iter().map(String::len).sum::<usize>(),
         "parse_tape_cpu_ns":parse_cpu,"index_construction_cpu_ns":indexed.index_ns,
-        "native_compile_cpu_ns":compile_cpu,"sql":[SELECT_TARGETS,COMPOSE],"runs":runs});
+        "native_compile_cpu_ns":compile_cpu,"generated_shape_compile_cpu_ns":generated_compile_cpu,
+        "sql":[SELECT_TARGETS,COMPOSE],"generated_sql":generated_queries,
+        "sql_bytes":[SELECT_TARGETS.len(),COMPOSE.len()],"generated_sql_bytes":generated_queries.map(str::len),"runs":runs});
     eprintln!("{}", serde_json::to_string_pretty(&report).unwrap());
     if let Ok(path) = std::env::var("RERAIL_SHARED_REPORT") {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();

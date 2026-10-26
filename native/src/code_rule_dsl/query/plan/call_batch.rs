@@ -24,12 +24,19 @@ struct Kinds {
     comment: u16,
     continuation: u16,
     function_field: u16,
+    imports: [u16; 3],
 }
 impl Kinds {
     fn new(doc: &TapeDoc) -> Self {
         let lang = doc.get_lang();
         Self {
             call: lang.kind_to_id("call"),
+            imports: [
+                "import_statement",
+                "import_from_statement",
+                "future_import_statement",
+            ]
+            .map(|k| lang.kind_to_id(k)),
             function: lang.kind_to_id("function_definition"),
             class: lang.kind_to_id("class_definition"),
             lambda: lang.kind_to_id("lambda"),
@@ -109,12 +116,14 @@ fn named(node: &Node<'_, TapeDoc>, kinds: &Kinds) -> bool {
 }
 
 /// Reads every tape row once for kind/context dispatch. Only definitions and calls
-/// in `wanted` create AST Nodes; the observer receives projected nodes, not all rows.
+/// in `wanted` create AST Nodes for the observer. Import declarations are decoded
+/// only for documents with selected calls, and sent to a separate batch observer.
 /// Each root must be a document (or subtree) of a Python TapeDoc.
 pub(crate) fn collect<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
     wanted: ContextKind,
     mut observe: impl FnMut(u32, &Node<'t, TapeDoc>),
+    mut observe_import: impl FnMut(u32, &Node<'t, TapeDoc>),
 ) -> PythonStructure {
     let mut out = PythonStructure::default();
     for (doc_id, root) in roots {
@@ -134,6 +143,8 @@ pub(crate) fn collect<'t>(
         // body. Events therefore follow body start, not definition discovery order.
         let mut starts = BinaryHeap::<Reverse<(u32, u32, u32)>>::new();
         let mut observed = FxHashSet::default();
+        let mut imports = Vec::new();
+        let first_call = out.calls.len();
         out.counters.documents += 1;
         for ordinal in first..end {
             out.counters.visited_nodes += 1;
@@ -149,6 +160,9 @@ pub(crate) fn collect<'t>(
             }
             let context = active.last().expect("root interval").1;
             let kind = doc.transducer_kind(ordinal);
+            if kinds.imports.contains(&kind) {
+                imports.push(ordinal);
+            }
             if kind == kinds.function || kind == kinds.class || kind == kinds.lambda {
                 let owner = at(root, ordinal);
                 // Preserve Node's field selection, including tape aliases/first-field rules.
@@ -307,6 +321,11 @@ pub(crate) fn collect<'t>(
                 arguments: start..out.arguments.len(),
             });
         }
+        if out.calls.len() != first_call {
+            for ordinal in imports {
+                observe_import(*doc_id, &at(root, ordinal));
+            }
+        }
     }
     out
 }
@@ -394,10 +413,15 @@ mod tests {
             ContextKind::Lambda,
         ] {
             let mut seen = FxHashSet::default();
-            let actual = collect(&roots, wanted, |doc, node| {
-                assert_eq!(doc, 9);
-                assert!(seen.insert(node.node_id()));
-            });
+            let actual = collect(
+                &roots,
+                wanted,
+                |doc, node| {
+                    assert_eq!(doc, 9);
+                    assert!(seen.insert(node.node_id()));
+                },
+                |_, _| {},
+            );
             assert_eq!(
                 call_rows(&actual, wanted),
                 call_rows(&generic, wanted),
@@ -456,6 +480,22 @@ mod tests {
         }
     }
     #[test]
+    fn imports_are_decoded_only_for_documents_with_selected_calls() {
+        let inactive = tape("import requests\ndef f():\n requests.get('x')\n");
+        let active = tape("async def f():\n requests.get('x')\nimport requests\n");
+        let mut imports = Vec::new();
+        let facts = collect(
+            &[(0, inactive.root()), (1, active.root())],
+            ContextKind::AsyncFunction,
+            |_, _| {},
+            |doc, node| {
+                imports.push((doc, node.text().into_owned()));
+            },
+        );
+        assert_eq!(facts.calls.len(), 1);
+        assert_eq!(imports, vec![(1, "import requests".into())]);
+    }
+    #[test]
     fn projected_nodes_keep_comment_adjacency_and_multiline_report_positions() {
         let source = "\nasync def f():\n    (\n       pkg.open # adjacent comment\n    )()\n    consume(x for x in source())\n";
         let root = tape(source);
@@ -466,6 +506,7 @@ mod tests {
             |doc, node| {
                 projected.insert(NodeRef::of(doc, node), node.clone());
             },
+            |_, _| {},
         );
         let call = facts
             .calls

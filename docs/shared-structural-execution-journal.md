@@ -104,3 +104,29 @@ Binding and value requests retain their exact semantic behavior.
 Artifacts: `reference-v2-500.json`, `reference-v2-full.json`, and `reference-v2-manifest.json` in `benchmark/shared-structural-execution`.
 The full benchmark process peak footprint is 1,462,961,664 bytes, including both engines and common preparation.
 These results qualify an independent reference only. Generic compilation and production cutover remain pending.
+
+### Import demand experiment: rejected first result
+
+The first import screen reduced 500-file semantic requests from 3,575 to 424.
+SQL VM instructions fell from 79,553 to 3,561.
+However, execution CPU rose from a 44 ms median to 49 ms.
+Structural collection rose from 11 ms to 23 ms, and 49 scope tables were still built.
+None of the admitted references produced a qualified symbol.
+The smaller SQL counter did not establish a CPU improvement; this result was rejected.
+
+Two causes were identified and corrected before another full run:
+
+- Import syntax was decoded in documents without selected calls. Import node IDs are now collected cheaply, then decoded only for relevant documents.
+- The coarse screen admitted call/subscript-headed attributes that cannot satisfy explicit native import/global qualification. A shared scope-free chain projection now rejects these before scope construction.
+
+The screen uses generic requested symbol sets and preserves alias, relative-import, normalization, and module semantics.
+It does not filter binding or value demands. Receiver candidates remain independent of primary callee qualification.
+Unknown syntax stays unknown. Valid non-reference expressions stay inapplicable.
+The second SQL stage receives only its own requested qualification rows.
+
+A typed relational emitter now builds both SQL stages from a hand-constructed plan.
+It validates relation schemas, column/alias scope, equijoin keys, parameter indices, row widths, and dependency cycles.
+Completed fact sources have explicit materialization owners to prevent per-row virtual-table rescans.
+Multi-branch queries use UNION without redundant branch-level DISTINCT operations.
+The independent SQL remains the qualification oracle for this emitted shape.
+This is the Phase 1 generated-shape prototype, not catalog grammar lowering.

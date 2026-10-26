@@ -4,6 +4,7 @@
 use super::{
     call_batch,
     contract::{Coverage, FindingKey, Findings},
+    import_screen::Imports,
     python_structure::{ContextKind, NodeRef},
     relation::Relation,
 };
@@ -92,6 +93,8 @@ struct Metrics {
     calls: usize,
     async_calls: usize,
     scope_builds: usize,
+    primary_refs: usize,
+    admitted_primary_refs: usize,
     semantic_requests: usize,
     qualified_lookups: usize,
     binding_lookups: usize,
@@ -248,9 +251,16 @@ impl<'a, 't> Semantics<'a, 't> {
         }
         metrics.projection_ns += cpu_ns() - started - (metrics.scope_ns - scope_before);
     }
-    fn qualified(&self, atoms: &mut Atoms) -> Relation {
+    fn qualified(
+        &self,
+        atoms: &mut Atoms,
+        demand: impl IntoIterator<Item = (u32, usize)>,
+    ) -> Relation {
         let mut relation = Relation::new(&["doc", "node", "symbol"]);
-        for (&(doc, node), fact) in &self.facts {
+        for (doc, node) in demand {
+            let Some(fact) = self.facts.get(&(doc, node)) else {
+                continue;
+            };
             let symbol = match &fact.qualification {
                 Fact::Known(Qualification::Qualified { name, .. }) => Some(name.clone()),
                 Fact::Known(Qualification::Unshadowed {
@@ -360,6 +370,14 @@ fn execute<'t>(
     modules: &BTreeMap<u32, ModulePath>,
     copies: usize,
 ) -> Run {
+    execute_sql(roots, modules, copies, &[SELECT_TARGETS, COMPOSE])
+}
+fn execute_sql<'t>(
+    roots: &[(u32, Node<'t, TapeDoc>)],
+    modules: &BTreeMap<u32, ModulePath>,
+    copies: usize,
+    queries: &[&str; 2],
+) -> Run {
     let started = cpu_ns();
     let wall = Instant::now();
     let mut metrics = Metrics {
@@ -369,7 +387,18 @@ fn execute<'t>(
     let documents: BTreeMap<_, _> = roots.iter().cloned().collect();
     assert_eq!(documents.len(), roots.len(), "document IDs must be unique");
     let node = |doc, pre| at(&documents[&doc], pre);
-    let structure = call_batch::collect(roots, ContextKind::AsyncFunction, |_, _| {});
+    let mut imports: BTreeMap<u32, Imports> = BTreeMap::new();
+    let structure = call_batch::collect(
+        roots,
+        ContextKind::AsyncFunction,
+        |_, _| {},
+        |doc, node| {
+            imports
+                .entry(doc)
+                .or_default()
+                .observe(node, modules.get(&doc));
+        },
+    );
     let parse_failed = roots
         .iter()
         .filter(|(_, root)| root.get_doc().syntax_error_nodes().next().is_some())
@@ -401,7 +430,8 @@ fn execute<'t>(
         })
         .collect();
     metrics.async_calls = active.len();
-    semantic.demand(active.iter().filter_map(|c| c.ref_node), &mut metrics);
+    let mut wanted_imports = BTreeSet::new();
+    let mut wanted_globals = BTreeSet::new();
     let mut atoms = Atoms::default();
     let mut wanted = Relation::new(&["label", "symbol", "requirement"]);
     for (label, text) in POLICIES.iter().enumerate() {
@@ -414,6 +444,7 @@ fn execute<'t>(
         };
         for copy in 0..copies {
             for name in direct["import"].as_array().into_iter().flatten() {
+                wanted_imports.insert(name.as_str().unwrap().to_owned());
                 wanted.push(&[
                     (label + 4 * copy) as i64,
                     atoms.get(name.as_str().unwrap()),
@@ -421,6 +452,7 @@ fn execute<'t>(
                 ]);
             }
             for name in direct["global"].as_array().into_iter().flatten() {
+                wanted_globals.insert(name.as_str().unwrap().to_owned());
                 wanted.push(&[
                     (label + 4 * copy) as i64,
                     atoms.get(&format!("builtin:{}", name.as_str().unwrap())),
@@ -429,6 +461,7 @@ fn execute<'t>(
             }
             if label == 1 {
                 for name in utils["spawn"]["resolves"]["import"].as_array().unwrap() {
+                    wanted_imports.insert(name.as_str().unwrap().to_owned());
                     wanted.push(&[
                         (label + 4 * copy) as i64,
                         atoms.get(name.as_str().unwrap()),
@@ -438,17 +471,22 @@ fn execute<'t>(
             }
         }
     }
-    let mut sites = Relation::new(&["doc", "report", "call", "ref"]);
-    for site in &active {
-        if let Some(reference) = site.ref_node {
-            sites.push(&[
-                site.call.doc as i64,
-                id(site.report_node),
-                id(site.call),
-                id(reference),
-            ]);
-        }
-    }
+    let no_imports = Imports::default();
+    let primary: BTreeSet<_> = active.iter().filter_map(|site| site.ref_node).collect();
+    metrics.primary_refs = primary.len();
+    let admitted: BTreeSet<_> = primary
+        .into_iter()
+        .filter(|r| {
+            imports.get(&r.doc).unwrap_or(&no_imports).may_qualify(
+                &node(r.doc, r.node_id),
+                &wanted_imports,
+                &wanted_globals,
+                modules.get(&r.doc),
+            )
+        })
+        .collect();
+    metrics.admitted_primary_refs = admitted.len();
+    semantic.demand(admitted.iter().copied(), &mut metrics);
     let mut receivers = Relation::new(&["doc", "callee", "object"]);
     let active_ids: BTreeSet<_> = active
         .iter()
@@ -463,18 +501,37 @@ fn execute<'t>(
             receiver_nodes.insert((attr.node.doc, attr.node.node_id), attr.object);
         }
     }
+    let mut sites = Relation::new(&["doc", "report", "call", "ref"]);
+    for site in &active {
+        if let Some(reference) = site.ref_node {
+            if !admitted.contains(&reference)
+                && !receiver_nodes.contains_key(&(site.call.doc, site.report_node.node_id))
+            {
+                continue;
+            }
+            sites.push(&[
+                site.call.doc as i64,
+                id(site.report_node),
+                id(site.call),
+                id(reference),
+            ]);
+        }
+    }
     let db = Connection::open_in_memory().unwrap();
     let mut relations = Vec::new();
     for (name, relation) in [
         ("call_sites", sites),
-        ("qualified", semantic.qualified(&mut atoms)),
+        (
+            "qualified",
+            semantic.qualified(&mut atoms, admitted.iter().map(|r| (r.doc, r.node_id))),
+        ),
         ("wanted_symbol", wanted),
         ("receiver", receivers),
     ] {
         relations.push((name, relation.bind(&db, name).unwrap()));
     }
     let prep = cpu_ns();
-    let mut query = db.prepare(SELECT_TARGETS).unwrap();
+    let mut query = db.prepare(queries[0]).unwrap();
     metrics.preparation_ns += cpu_ns() - prep;
     let sql_start = cpu_ns();
     let candidates: Vec<[i64; 5]> = query
@@ -529,25 +586,30 @@ fn execute<'t>(
     let mut constructed = BTreeSet::new();
     for (owner, reading) in requests {
         let value_node = unparen(node(owner.doc, owner.node_id));
-        let binding = semantic
+        let binding_fact = semantic
             .facts
             .get(&(owner.doc, value_node.node_id()))
             .filter(|f| {
                 f.binding_eligible
                     && (reading == 1 || node(owner.doc, owner.node_id).kind() == "identifier")
             })
-            .and_then(|f| {
-                let b = if reading == 1 {
+            .map(|f| {
+                if reading == 1 {
                     &f.head_bindings.stop_at_global
                 } else {
                     &f.head_bindings.default
-                };
-                if let Fact::Known(binding) = b {
-                    binding.as_ref()
-                } else {
-                    None
                 }
             });
+        let binding = match binding_fact {
+            Some(Fact::Known(binding)) => binding.as_ref(),
+            Some(Fact::Unknown(reason) | Fact::Unsupported(reason)) => {
+                semantic
+                    .failed
+                    .insert(owner.doc, format!("binding: {reason:?}"));
+                continue;
+            }
+            _ => None,
+        };
         for value in origins(value_node, binding, &documents[&owner.doc], reading == 0) {
             let v = reference(owner.doc, &value);
             origin_rows.push(&[owner.doc as i64, id(owner), reading, id(v)]);
@@ -575,7 +637,7 @@ fn execute<'t>(
         }
     }
     metrics.origin_rows = origin_rows.len();
-    semantic.demand(value_demand, &mut metrics);
+    semantic.demand(value_demand.iter().copied(), &mut metrics);
     let mut candidate_rows = Relation::new(&["label", "doc", "report", "call", "requirement"]);
     for c in candidates {
         candidate_rows.push(&c);
@@ -592,14 +654,17 @@ fn execute<'t>(
         ("call_slot", slots),
         ("value_origin", origin_rows),
         ("constructed", constructs),
-        ("qualified_values", semantic.qualified(&mut atoms)),
+        (
+            "qualified_values",
+            semantic.qualified(&mut atoms, value_demand.iter().map(|r| (r.doc, r.node_id))),
+        ),
     ] {
         relations.push((name, relation.bind(&db, name).unwrap()));
     }
     let p_wait = atoms.get("os.P_WAIT");
     let path = atoms.get("pathlib.Path");
     let prep = cpu_ns();
-    let mut query = db.prepare(COMPOSE).unwrap();
+    let mut query = db.prepare(queries[1]).unwrap();
     metrics.preparation_ns += cpu_ns() - prep;
     let sql_start = cpu_ns();
     let matches: Vec<(usize, u32, usize)> = query
@@ -672,7 +737,7 @@ fn execute<'t>(
     // Diagnostics execute after the measured job and never invoke fact producers.
     let diagnostics_started = cpu_ns();
     let diagnostics_wall = Instant::now();
-    for sql in [SELECT_TARGETS, COMPOSE] {
+    for sql in queries {
         let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let mut rows = explain.raw_query();
         while let Some(row) = rows.next().unwrap() {
@@ -684,6 +749,8 @@ fn execute<'t>(
     Run { findings, metrics }
 }
 
+#[cfg(test)]
+mod generated_shape;
 #[cfg(test)]
 mod native_oracle;
 #[cfg(test)]
