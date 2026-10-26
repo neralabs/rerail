@@ -47,3 +47,15 @@ impl Roots {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unordered_sparse_positions_are_canonical_and_duplicates_do_not_imply_all() {
+        let sparse = Roots::pack(vec![91,3,91,7], 4096);
+        assert_eq!(sparse.ordinals().as_deref(), Some([3,7,91].as_slice()));
+        let repeated = Roots::pack(vec![1;8], 8);
+        assert_eq!(repeated.ordinals().as_deref(), Some([1].as_slice()));
+    }
+}
