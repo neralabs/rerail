@@ -4411,3 +4411,11 @@ Fusion puts that stage inside a materialized CTE and discards its declared looku
 The correction retains one indexed owner when validated consumers read the producer more than once.
 Single-use and unused stages remain eligible for fusion.
 The read graph and existing conservative occurrence counter select this boundary; no runtime configuration chooses it.
+
+### CPU tracing must not request an SQL page census
+
+The public-API diagnostic spends 142.096 CPU seconds in 909 SQL working-set snapshots.
+Those snapshots scan the growing main database through dbstat.
+This is instrumentation overhead, not evidence of production fact-construction cost.
+A new production test requires no page-census spans during ordinary CPU tracing and positive coverage when explicitly requested.
+Its red run observes census spans without an explicit request.

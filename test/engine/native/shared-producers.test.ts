@@ -121,3 +121,22 @@ it.skipIf(!required)("a relational-only SQL trace does not copy candidate databa
     expect(catalogues.every(c => c.executionCoverage.fromSessionStart === false && c.executionCoverage.contextFilter === "relational")).toBe(true);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }, 35_000);
+
+it.skipIf(!required)("CPU tracing scans SQL pages only when a working-set census is requested", () => {
+  const program = `
+    import {readFileSync} from 'node:fs';import {loadNativeBinding} from ${JSON.stringify(engine)};
+    const n=loadNativeBinding(),caps=readFileSync(new URL(${JSON.stringify(capabilities)}),'utf8');
+    const r=n.CodeRuleDslRuntime.compile(JSON.stringify({format:'rerail.policy/v1',id:'trace-census',revision:1,mode:'log',clauses:[{id:'names',forbid:{ast:{language:'python',rule:{kind:'identifier'}}},violation:{code:'NAME',message:'Name',anchor:'witness.span'}}]}),'json',caps);
+    const w=new n.CodeRuleDslWorkspace();w.addCodeRule(r);
+    try {console.log(await w.applyAsync(JSON.stringify({revision:1,files:[{path:'a.py',language:'python',source:'target'}],removed:[]})));}finally{w.close();}
+  `;
+  for (const enabled of [false, true]) {
+    const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30_000,maxBuffer:8*1024*1024,
+      env:{...process.env,RERAIL_PROFILE:'1',RERAIL_PROFILE_SQL_WORKING_SET:enabled?'1':undefined}});
+    expect(child.error).toBeUndefined();expect(child.status,child.stderr).toBe(0);
+    const result=JSON.parse(child.stdout.trim()).evaluation;
+    expect(result.failures).toEqual([]);expect(result.violations).toHaveLength(1);
+    const census=child.stderr.split('\n').filter(l=>l.startsWith('RERAIL_TRACE ')).map(l=>JSON.parse(l.slice(13))).filter(r=>r.phase==='anchor-working-set');
+    if(enabled)expect(census.length).toBeGreaterThan(0);else expect(census).toEqual([]);
+  }
+},65_000);
