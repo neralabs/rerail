@@ -78,6 +78,8 @@ pub(super) struct Lease {
 }
 impl Pool {
     pub fn trim(&self, capacity: usize) {
+        #[cfg(feature = "code-rule-profile")]
+        let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-pool-trim", "admission");
         if let Some(db) = self.0.db.get() {
             if db.bindings.borrow().bytes() > 4 * 1024 * 1024 {
                 db.bindings.borrow_mut().forget();
@@ -122,6 +124,11 @@ impl Lease {
         Ok(())
     }
     pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
+        #[cfg(feature = "code-rule-profile")]
+        let _span = crate::code_rule_dsl::profile::trace::Span::start(
+            "sql-resident-accounting",
+            "admission",
+        );
         Ok(self.deref().resident_bytes()?.saturating_add(
             self.storage
                 .borrow()
@@ -138,6 +145,11 @@ impl Deref for Lease {
 }
 impl Drop for Lease {
     fn drop(&mut self) {
+        #[cfg(feature = "code-rule-profile")]
+        let mut span =
+            crate::code_rule_dsl::profile::trace::Span::start("sql-consumer-release", "lease");
+        #[cfg(feature = "code-rule-profile")]
+        span.detail(|| serde_json::json!({"lease":self.id}));
         let _ = self.progress_handler(0, None::<fn() -> bool>);
         if !self.is_autocommit() {
             let _ = self.execute_batch("ROLLBACK");

@@ -4915,3 +4915,23 @@ It must cover all ten additional rules, rather than assuming the quality/state s
 The 128-file profile has no engine failures, but its open cross-file scope prevents parity acceptance.
 Do not extrapolate its clause proportions to the 1,392-second full-repository apply.
 Candidate selection remains a separate measured frontier: 347.871 CPU seconds for first 50 and 729.928 for all 60.
+
+
+### Cold CPU architecture plan and exclusive attribution (2026-10-26)
+
+The [new workplan](cold-cpu-recovery-plan.md) replaces execution-count targets with complete cold-resource acceptance.
+It defines six bounded architectural spikes and a complete attribution pass before promotion.
+Red commit `384988cc` detects double-counted nested CPU.
+The corrected reporter subtracts immediate child CPU on the same thread and preserves unknown coverage.
+Stages now use stable logical labels in traces. Consumer, admission accounting, release, and trimming have separate spans.
+These changes add profiling only. They do not select a different production algorithm.
+All 29 Python profiler tests pass. The instrumentation addon builds successfully.
+The 128-file instrumentation check has no missing coordinates, partial overlaps, or CPU overdraw.
+It records 9.017 observed CPU seconds, including 5.318 seconds without a complete rule/clause identity.
+Its open repository scope does not establish finding parity.
+
+A frozen full 9,021-file all-60 diagnostic is running under `.rerail/profiles/cold-cpu-spikes-20261026/attribution-full/`.
+Native addon SHA-256 is `4eb3475f63a1a676d07a93e17110987fc61592d527720fdc28e10ebb8adfa518`.
+It enables CPU tracing and external samples, and disables allocator enumeration and SQL snapshots on success.
+Laboratory development can overlap it. Its time is diagnostic and cannot replace uninstrumented acceptance.
+The new replay experiments use captured tapes and generic operators. They do not add production feature flags.

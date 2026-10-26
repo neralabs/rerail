@@ -50,6 +50,9 @@ fn advance(
         &session.clause.id,
         (session.syntax_files.len() == 1).then(|| session.syntax_files[0].0.as_str()),
     );
+    #[cfg(feature = "code-rule-profile")]
+    let _execute =
+        crate::code_rule_dsl::profile::trace::Span::start("consumer-execute", &session.clause.id);
     match context.run(|| session.advance()) {
         Ok(Some(demand)) => Some(demand),
         Ok(None) => {

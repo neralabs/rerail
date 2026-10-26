@@ -1,6 +1,7 @@
 """Aggregate attributed native spans. Inclusive spans must not be added to children."""
 import collections
 import json
+from cpu_attribution import summarize as cpu_attribution
 
 LEAF_PHASES = {"syntax-prepare", "producer-stage", "producer-publish", "syntax-owners", "sql-release", "input-extract", "sql-input", "sql-validate", "sql-materialize", "sql-index", "sql-analyze", "sql-result", "sql-reach-prepare", "sql-reach-walk", "sql-reach-index", "anchor-fact-preparation", "anchor-lower", "anchor-prepare", "anchor-materialize", "anchor-index", "anchor-results", "anchor-schema", "anchor-release", "anchor-explain"}
 PLANNING_PHASES = {"anchor-fragment", "anchor-compose", "anchor-layout", "anchor-render", "anchor-ownership"}
@@ -49,7 +50,7 @@ def aggregate(log):
                         row["counters"][name] = max(row["counters"][name], value)
                     else:
                         row["counters"][name] += value
-    return {"traceEvents": len(events), "applies": applies, "parseErrors": parse_errors, "phaseMarkers": markers,
+    return {"exclusiveCpu": cpu_attribution(events), "traceEvents": len(events), "applies": applies, "parseErrors": parse_errors, "phaseMarkers": markers,
             "inputQueues": [{"runPhase": event["runPhase"], "cpuMs": (event.get("cpuNs") or 0) / 1e6,
                              "startUnixUs": event["startUnixUs"], **(event.get("detail") or {})}
                             for event in events if event["phase"] == "input-preparation"],
@@ -108,6 +109,15 @@ def summary(report):
     if "process" in report:
         process = report["process"]
         lines += [f"Sampled process tree: CPU >= {process['treeCpuSecondsLowerBound']:.3f}s; peak summed RSS {process['peakTreeRssBytes']} bytes; {process['samples']} samples.", process["note"]]
+    attribution = report['native'].get('exclusiveCpu')
+    if attribution:
+        lines += [f"Observed span CPU: {attribution['observedCpuNs']/1e6:.3f} ms; unattributed {attribution['unattributedCpuNs']/1e6:.3f} ms. Parent and child CPU are not added."]
+        lines += [f"CPU attribution coverage: missing={attribution['missingCpuEvents']}, partial overlaps={attribution['partialOverlapEvents']}, clock overdraws={attribution['cpuOverdrawEvents']}."]
+        clauses = collections.Counter()
+        for row in attribution['rows']:
+            if row['rule'] and row['clause']:
+                clauses[(row['rule'],row['clause'])] += row['selfCpuNs']
+        lines += [f"  Clause CPU {cpu/1e6:.3f} ms: {rule}/{clause}" for (rule,clause),cpu in clauses.most_common(12)]
     fields = [row["fieldLookups"] for row in report["native"].get("applies", []) if row.get("fieldLookups")]
     if fields:
         lines += [f"Field navigation: {sum(row['calls'] for row in fields)} lookups; {sum(row['childrenExamined'] for row in fields)} child examinations; {sum(row['missChildrenExamined'] for row in fields)} examinations in failed lookups; maximum scan {max(row['maxScan'] for row in fields)}."]

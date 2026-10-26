@@ -215,7 +215,7 @@ All spikes live in tools or the isolated replay host. No production algorithm fl
 
 ## Prior evidence and design constraints
 
-The [direction document](../Pulling-it-all-together/docs/rule-engine-direction/README.md) defines statistics, pushdown, and full measurement gates.
+The [direction document](../../Pulling-it-all-together/docs/rule-engine-direction/README.md) defines statistics, pushdown, and full measurement gates.
 The sibling path is workspace-local. It is not a repository dependency.
 The [previous recovery plan](sql-performance-recovery-workplan.md) and [journal](data-layer-performance-journal.md) retain branch evidence.
 

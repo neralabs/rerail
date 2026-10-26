@@ -224,13 +224,14 @@ pub(super) fn create_stage(
     stage: &Stage,
     materialize: bool,
     work: &Arc<AtomicUsize>,
+    _logical_name: &str,
 ) -> Result<()> {
     if materialize && let Some(spec) = &stage.reachability {
         return reachability::create(db, stage, spec, work);
     }
     #[cfg(feature = "code-rule-profile")]
     if materialize && std::env::var_os("RERAIL_SQL_QUERY_PLANS").is_some() {
-        let mut span = super::profile::trace::Span::start("sql-plan", &stage.name);
+        let mut span = super::profile::trace::Span::start("sql-plan", _logical_name);
         let plan = (|| -> rusqlite::Result<Vec<Value>> {
             let mut statement = db.prepare(&format!("EXPLAIN QUERY PLAN {}", stage.query))?;
             statement
@@ -248,7 +249,7 @@ pub(super) fn create_stage(
         });
     }
     #[cfg(feature = "code-rule-profile")]
-    let mut span = super::profile::trace::Span::start("sql-materialize", &stage.name);
+    let mut span = super::profile::trace::Span::start("sql-materialize", _logical_name);
     #[cfg(feature = "code-rule-profile")]
     let work_before = work.load(Ordering::Relaxed);
     let physical = if materialize {
@@ -323,7 +324,7 @@ pub(super) fn create_stage(
     if materialize && inserted != 0 {
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
-            let _span = super::profile::trace::Span::start("sql-index", &stage.name);
+            let _span = super::profile::trace::Span::start("sql-index", _logical_name);
             db.storage
                 .borrow_mut()
                 .index(
@@ -346,7 +347,7 @@ pub(super) fn create_stage(
     }
     if materialize && !stage.indexes.is_empty() {
         #[cfg(feature = "code-rule-profile")]
-        let _span = super::profile::trace::Span::start("sql-analyze", &stage.name);
+        let _span = super::profile::trace::Span::start("sql-analyze", _logical_name);
         db.storage
             .borrow_mut()
             .analyze(db, &physical, inserted)
@@ -886,7 +887,7 @@ impl<'a> Session<'a> {
             let operation = self
                 .db
                 .operation(&format!("/*RELATIONAL_STAGE*/ {}", logical.name), self.next);
-            let created = create_stage(&self.db, stage, true, &self.work);
+            let created = create_stage(&self.db, stage, true, &self.work, &logical.name);
             #[cfg(feature = "code-rule-profile")]
             if let Err(error) = &created {
                 self.db.explain_pending();

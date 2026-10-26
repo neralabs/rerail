@@ -533,7 +533,7 @@ pub(super) fn compile(
                     .map_err(|error| invalid(format!("relational query: {error}")))?;
                 (columns, false)
             } else {
-                relational::create_stage(&db, &stage, false, &work)?;
+                relational::create_stage(&db, &stage, false, &work, &stage.name)?;
                 let columns = Arc::new(
                     relational::schema::describe(&db, &stage.name)
                         .map_err(|error| invalid(format!("relational query: {error}")))?,
