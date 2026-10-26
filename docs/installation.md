@@ -534,8 +534,8 @@ It also takes the `PATH` entry set-up added out of every shell startup file
 ## Developing from a checkout
 
 A source checkout builds and tests with Node.js 24+, npm, Rust, and
-[`just`](https://github.com/casey/just); see [Develop](../README.md#develop)
-in the README.
+[`just`](https://github.com/casey/just); see
+[Development setup](../CONTRIBUTING.md#development-setup) in the contributing guide.
 
 ```sh
 just rerail-dev --install-bridge
