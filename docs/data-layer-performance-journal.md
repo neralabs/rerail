@@ -4419,3 +4419,19 @@ Those snapshots scan the growing main database through dbstat.
 This is instrumentation overhead, not evidence of production fact-construction cost.
 A new production test requires no page-census spans during ordinary CPU tracing and positive coverage when explicitly requested.
 Its red run observes census spans without an explicit request.
+
+### Shared producer identity ladder
+
+The completed 60-rule diagnostic reports 24,993 matching findings but 1,694 engine failures.
+Cold CPU is 2,701.305 seconds; cold wall time is 4,809.681 seconds.
+OS peak RSS is 14,610,890,752 bytes. These results overlap development work and are not acceptance measurements.
+Most failures report the producer stage limit. Independent capacity partitions incorrectly share this execution allowance.
+An external bottom-up sample attributes 60.35 percent of active native observations to evidence-key interning.
+Derived hashes repeatedly read complete policy bodies and repository version arrays.
+Metadata accounting also charges the same shared allocations for every input, causing premature pool eviction.
+Three new identity regressions fail: constant-cost version hashing, collision-safe cached definition hashes, and unique-owner memory accounting.
+The memory test charges 3,551,197 bytes for shared owners after starting at 54,631 bytes.
+Full definition equality must remain authoritative after cached hashes are introduced.
+
+The indexed-family diagnostic now interrupts earlier, in the surfaces stage.
+The repeated-reader boundary alone is therefore insufficient. Its live query plan will guide the next correction.

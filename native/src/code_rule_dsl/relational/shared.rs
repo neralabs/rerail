@@ -52,6 +52,7 @@ enum Key {
     },
     Evidence {
         definition: Arc<str>,
+        definition_digest: String,
         clause: String,
         name: String,
         versions: Versions,
@@ -214,6 +215,7 @@ impl Bindings {
     ) -> usize {
         self.intern(Key::Evidence {
             definition: Arc::clone(&rule.canonical),
+            definition_digest: rule.digest.clone(),
             clause: clause.into(),
             name: name.into(),
             versions: versions.clone(),
@@ -319,3 +321,7 @@ pub(super) fn stage(stage: &Stage, name: &str, aliases: &BTreeMap<String, String
     }
     out
 }
+
+#[cfg(test)]
+#[path = "shared/identity_tests.rs"]
+mod identity_tests;
