@@ -4868,3 +4868,21 @@ Across the whole job, exclusive counters record 729.928 seconds in selection, 12
 The default worker phase records another 1,398.713 seconds, dominated by that deferred apply.
 The next profiling slice must attribute this work to clauses and preparation stages before selecting another optimization.
 Recovery remains open despite complete findings parity and the substantial all-60 memory reduction.
+
+
+### Follow-up: apply import membership to both contract consumers (2026-10-26)
+
+The checked policy still retained range-based import membership in `quality-contracts-2`.
+The generator helper supports both plans, but the earlier checked-policy update covered only `quality-contracts-1`.
+The bounded-work regression now executes every applicable native contract plan and fails on the second plan before the correction.
+The checked policy now applies the same existing subtree producer to both consumers, with their independent file scopes.
+All 16 shared-SQL tests and the complete original quality fixture group pass.
+The [bounded comparison](../fixtures/host/data-layer-port/profiling/all-contract-import-recovery-20261026.json) preserves result-query CPU and external samples.
+This policy correction follows the frozen full 50/60 measurements; those reports retain their original hashes.
+
+The 128-file all-ten-rule profile completes within 14 seconds, with no engine failures.
+Its 30 diagnostic differences reflect the open cross-file subset and do not establish corpus parity.
+External bottom-up samples show allocator enumeration consuming a large part of traced execution.
+CPU tracing currently calls `malloc_zone_statistics` at every selected SQL span boundary, even without a requested memory census.
+The next instrumentation correction must make allocator enumeration explicit while retaining cheap RSS observations.
+The accepted full runs use tracing off and are unaffected by this profiling overhead.

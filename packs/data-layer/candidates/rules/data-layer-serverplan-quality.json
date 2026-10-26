@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "data-layer-serverplan-quality",
-  "revision": 6,
+  "revision": 7,
   "mode": "block",
   "description": "Candidate port of nera-data-layer serverplan_quality at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
@@ -4627,19 +4627,15 @@
             ]
           },
           {
-            "name": "import_ranges",
-            "query": "SELECT \"__path\",\"__start\",\"__end\" FROM (SELECT __path,__start,__end FROM nodes WHERE kind IN ('import_statement','import_from_statement'))",
-            "indexes": [
-              [
-                "__path",
-                "__start",
-                "__end"
-              ]
-            ]
+            "name": "import_descendants",
+            "reachability": {
+              "roots": "SELECT __path,id FROM nodes WHERE kind IN ('import_statement','import_from_statement')",
+              "syntax": "nodes"
+            }
           },
           {
             "name": "import_identifiers",
-            "query": "SELECT \"__path\",\"id\" FROM (SELECT n.__path,n.id FROM import_ranges imp JOIN nodes n ON n.__path=imp.__path AND n.__start>=imp.__start AND n.__start<=imp.__end WHERE n.kind='identifier' AND n.__end<=imp.__end)",
+            "query": "WITH imported(__path,id) AS MATERIALIZED (\n SELECT __path,node FROM import_descendants)\n SELECT n.__path,n.id FROM nodes n WHERE n.kind='identifier'\n AND n.id IN (SELECT id FROM imported)\n AND (n.__path,n.id) IN (SELECT __path,id FROM imported)",
             "indexes": [
               [
                 "__path",

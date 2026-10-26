@@ -1,0 +1,211 @@
+{
+  "format": "rerail.all-contract-import-recovery/v1",
+  "acceptance": false,
+  "files": 16,
+  "bytes": 8283678,
+  "runs": {
+    "deferred-hotspots-16": {
+      "targetExitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 28.740300792036578,
+      "contract2ResultCpuMs": 2337.9785,
+      "deferredCpuMs": 13115.923,
+      "samples": [
+        {
+          "file": "sample-1.txt",
+          "topSelf": [
+            {
+              "symbol": "pread (libsystem_kernel.dylib)",
+              "samples": 116,
+              "percent": 14.66
+            },
+            {
+              "symbol": "sqlite3VdbeRecordCompareWithSkip (engine.node)",
+              "samples": 105,
+              "percent": 13.27
+            },
+            {
+              "symbol": "sqlite3VdbeExec (engine.node)",
+              "samples": 83,
+              "percent": 10.49
+            },
+            {
+              "symbol": "pwrite (libsystem_kernel.dylib)",
+              "samples": 63,
+              "percent": 7.96
+            },
+            {
+              "symbol": "sqlite3BtreeIndexMoveto (engine.node)",
+              "samples": 62,
+              "percent": 7.84
+            },
+            {
+              "symbol": "_platform_memmove (libsystem_platform.dylib)",
+              "samples": 36,
+              "percent": 4.55
+            },
+            {
+              "symbol": "vdbeRecordCompareInt (engine.node)",
+              "samples": 27,
+              "percent": 3.41
+            },
+            {
+              "symbol": "sqlite3BtreeInsert (engine.node)",
+              "samples": 26,
+              "percent": 3.29
+            }
+          ]
+        },
+        {
+          "file": "sample-2.txt",
+          "topSelf": [
+            {
+              "symbol": "sqlite3VdbeExec (engine.node)",
+              "samples": 145,
+              "percent": 17.24
+            },
+            {
+              "symbol": "_platform_memmove (libsystem_platform.dylib)",
+              "samples": 55,
+              "percent": 6.54
+            },
+            {
+              "symbol": "pread (libsystem_kernel.dylib)",
+              "samples": 54,
+              "percent": 6.42
+            },
+            {
+              "symbol": "pwrite (libsystem_kernel.dylib)",
+              "samples": 48,
+              "percent": 5.71
+            },
+            {
+              "symbol": "sqlite3VdbeRecordCompareWithSkip (engine.node)",
+              "samples": 45,
+              "percent": 5.35
+            },
+            {
+              "symbol": "_xzm_foreach_lock (libsystem_malloc.dylib)",
+              "samples": 34,
+              "percent": 4.04
+            },
+            {
+              "symbol": "_RNvXs0_NtNtNtCs8qbUCseVjUN_13rerail_engine13code_rule_dsl10relational5tableNtB5_6CursorNtNtCsaBL9hAkOBsb_8rusqlite4vtab10VTabCursor6column (engine.node)",
+              "samples": 26,
+              "percent": 3.09
+            },
+            {
+              "symbol": "_RNvXs3_NtNtNtCs8qbUCseVjUN_13rerail_engine13code_rule_dsl10relational6syntaxNtB5_5UnionNtB5_6Source6column (engine.node)",
+              "samples": 24,
+              "percent": 2.85
+            }
+          ]
+        }
+      ]
+    },
+    "deferred-hotspots-16-fixed": {
+      "targetExitCode": 0,
+      "timedOut": false,
+      "elapsedSeconds": 26.022201084066182,
+      "contract2ResultCpuMs": 175.674251,
+      "deferredCpuMs": 10058.364,
+      "samples": [
+        {
+          "file": "sample-1.txt",
+          "topSelf": [
+            {
+              "symbol": "pread (libsystem_kernel.dylib)",
+              "samples": 111,
+              "percent": 13.49
+            },
+            {
+              "symbol": "sqlite3VdbeRecordCompareWithSkip (engine.node)",
+              "samples": 107,
+              "percent": 13.0
+            },
+            {
+              "symbol": "sqlite3VdbeExec (engine.node)",
+              "samples": 101,
+              "percent": 12.27
+            },
+            {
+              "symbol": "sqlite3BtreeIndexMoveto (engine.node)",
+              "samples": 60,
+              "percent": 7.29
+            },
+            {
+              "symbol": "pwrite (libsystem_kernel.dylib)",
+              "samples": 31,
+              "percent": 3.77
+            },
+            {
+              "symbol": "_platform_memmove (libsystem_platform.dylib)",
+              "samples": 28,
+              "percent": 3.4
+            },
+            {
+              "symbol": "vdbeRecordCompareInt (engine.node)",
+              "samples": 26,
+              "percent": 3.16
+            },
+            {
+              "symbol": "_platform_memcmp (libsystem_platform.dylib)",
+              "samples": 26,
+              "percent": 3.16
+            }
+          ]
+        },
+        {
+          "file": "sample-2.txt",
+          "topSelf": [
+            {
+              "symbol": "_RINvXs0_NtNtCs8qbUCseVjUN_13rerail_engine13code_rule_dsl7matcherNtB6_10AstMatcherNtNtCsbdXZnQXmGEk_13ast_grep_core7matcher7Matcher19match_node_with_envNtNtB8_4tape7TapeDocEBa_ (engine.node)",
+              "samples": 47,
+              "percent": 5.73
+            },
+            {
+              "symbol": "sqlite3VdbeRecordCompareWithSkip (engine.node)",
+              "samples": 39,
+              "percent": 4.76
+            },
+            {
+              "symbol": "pwrite (libsystem_kernel.dylib)",
+              "samples": 39,
+              "percent": 4.76
+            },
+            {
+              "symbol": "sqlite3VdbeExec (engine.node)",
+              "samples": 37,
+              "percent": 4.51
+            },
+            {
+              "symbol": "_RINvXs0_NtNtNtCsaTNopw4qKPP_4core4iter8adapters3mapINtB6_3MapINtNtNtBa_7sources7from_fn6FromFnNCNvXs6_NtNtCs8qbUCseVjUN_13rerail_engine13code_rule_dsl4tapeNtB1C_8TapeNodeNtNtCsbdXZnQXmGEk_13ast_grep_core6source6SgNode9ancestors0ENCNvMs2_NtB2M_4nodeINtB3N_4NodeNtB1C_7TapeDocE9ancestors0ENtNtNtBa_6traits8iterator8Iterator8try_folduNCINvNvB4B_12try_for_each4callB3Y_INtNtNtBc_3ops12control_flow11ControlFlowINtNtBc_6option6OptionB3Y_EENCINvMs4_NtNtB1E_7matcher8relationNtB77_13FieldRelation11find_insideB4a_Es0_0E0B5R_EB1G_ (engine.node)",
+              "samples": 33,
+              "percent": 4.02
+            },
+            {
+              "symbol": "pread (libsystem_kernel.dylib)",
+              "samples": 32,
+              "percent": 3.9
+            },
+            {
+              "symbol": "_tlv_get_addr (libdyld.dylib)",
+              "samples": 26,
+              "percent": 3.17
+            },
+            {
+              "symbol": "_RNvYNCNKNvNtNtCs8qbUCseVjUN_13rerail_engine13code_rule_dsl6budget16BUDGET_COUNTDOWN0s_0INtNtNtCsaTNopw4qKPP_4core3ops8function6FnOnceTINtNtB1u_6option6OptionQIB29_INtNtB1u_4cell4CellmEEEEE9call_onceBc_ (engine.node)",
+              "samples": 23,
+              "percent": 2.8
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Traced diagnostic slice, not full-repository acceptance.",
+    "Allocator-census work distorts these CPU traces; external samples expose allocator instrumentation overhead.",
+    "Both original quality fixture groups pass after applying the existing producer to both contract plans."
+  ]
+}
