@@ -286,11 +286,13 @@ fn execute(
 ) {
     let mut sessions = Vec::new();
     let mut contexts = Vec::new();
+    let mut stages = Vec::new();
     let mut identities = Vec::new();
     let mut pending = VecDeque::new();
     for (local, ready) in cohort.into_iter().enumerate() {
         identities.push((ready.index, ready.clause));
         contexts.push(ready.budget);
+        stages.push(producer::Stages::default());
         sessions.push(Some(ready.session));
         pending.push_back((local, ready.demand));
     }
@@ -303,10 +305,19 @@ fn execute(
                 if !footprint.admit(demand, input_limit) {
                     break;
                 }
-                group.push(pending.pop_front().unwrap());
+                let (local, demand) = pending.pop_front().unwrap();
+                if let Err(e) = stages[local].reserve() {
+                    let (index, clause) = identities[local];
+                    error(&mut results[index], clause, "relational-failed", &e.reason);
+                    sessions[local] = None;
+                    continue;
+                }
+                group.push((local, demand));
             }
             if group.is_empty() {
-                let (local, _) = pending.pop_front().unwrap();
+                let Some((local, _)) = pending.pop_front() else {
+                    break;
+                };
                 let (index, clause) = identities[local];
                 error(
                     &mut results[index],

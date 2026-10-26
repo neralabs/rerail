@@ -116,9 +116,56 @@ fn capacity_partitions_do_not_spend_an_independent_consumers_stage_allowance() {
     let (results, stats) = run(jobs(&rule, files(120)), producer::MAX_RESIDENT_BYTES, 1);
     assert_eq!(stats.partitions, 120);
     for (i, result) in results.iter().enumerate() {
-        assert!(result.failures.is_empty(), "independent consumer {i}: {:?}", result.failures);
+        assert!(
+            result.failures.is_empty(),
+            "independent consumer {i}: {:?}",
+            result.failures
+        );
         assert_eq!(result.violations.len(), 1);
     }
+}
+
+#[test]
+fn dependent_consumer_still_stops_at_100_passes_without_rejecting_peers() {
+    let mut document: serde_json::Value = serde_json::from_str(&rule().inner.canonical).unwrap();
+    let relational = &mut document["clauses"][0]["relational"];
+    let original = relational["stages"][0].clone();
+    let mut stages = vec![original];
+    for n in 1..34 {
+        let previous = if n == 1 {
+            "descendants".into()
+        } else {
+            format!("next_{}", n - 1)
+        };
+        stages.push(json!({"name":format!("next_{n}"),"reachability":{"syntax":"nodes","roots":format!("SELECT __path,node AS id FROM {previous} WHERE node=root")}}));
+    }
+    relational["query"] = relational["query"]
+        .as_str()
+        .unwrap()
+        .replace("descendants d", "next_33 d")
+        .into();
+    relational["stages"] = stages.into();
+    let deep = CodeRuleDslRuntime::compile(
+        document.to_string(),
+        "json".into(),
+        include_str!("../../capabilities.json").into(),
+    )
+    .unwrap();
+    let shallow = rule();
+    let mut pending = jobs(&deep, files(1));
+    pending.extend(jobs(&shallow, files(1)));
+    let (results, _) = run(pending, producer::MAX_RESIDENT_BYTES, usize::MAX);
+    assert!(results[0].violations.is_empty());
+    assert!(
+        results[0]
+            .failures
+            .iter()
+            .any(|f| f["message"] == "producer stage limit"),
+        "{:?}",
+        results[0].failures
+    );
+    assert!(results[1].failures.is_empty(), "{:?}", results[1].failures);
+    assert_eq!(results[1].violations.len(), 1);
 }
 
 #[test]

@@ -45,7 +45,19 @@ impl Allowance {
             .used
             .checked_add(n)
             .ok_or_else(|| invalid("producer stage limit"))?;
-        if self.used > MAX_STAGES {
+        Ok(())
+    }
+}
+/// Bound one logical consumer, independently of batch width or capacity partitions.
+#[derive(Default)]
+pub(super) struct Stages(usize);
+impl Stages {
+    pub(super) fn reserve(&mut self) -> Result<()> {
+        self.0 = self
+            .0
+            .checked_add(3)
+            .ok_or_else(|| invalid("producer stage limit"))?;
+        if self.0 > MAX_STAGES {
             return Err(invalid("producer stage limit"));
         }
         Ok(())
@@ -332,13 +344,22 @@ mod tests {
         assert!(allowance.reserve(3).is_ok());
     }
     #[test]
-    fn waves_share_a_non_resettable_stage_allowance() {
-        let mut a = Allowance::default();
+    fn dependent_waves_share_a_non_resettable_consumer_stage_allowance() {
+        let mut a = Stages::default();
         for _ in 0..33 {
+            a.reserve().unwrap();
+        }
+        assert!(a.reserve().is_err());
+        assert!(a.reserve().is_err());
+        assert!(Stages::default().reserve().is_ok());
+    }
+    #[test]
+    fn total_launches_are_diagnostic_not_a_shared_consumer_budget() {
+        let mut a = Allowance::default();
+        for _ in 0..120 {
             a.reserve(3).unwrap();
         }
-        assert!(a.reserve(3).is_err());
-        assert!(a.reserve(1).is_err());
+        assert_eq!(a.used, 360);
     }
     #[test]
     fn capacity_checks_precede_allocation() {
