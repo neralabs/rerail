@@ -22,11 +22,12 @@ scripts/pack-data/runtimes/*/package-lock.json
 scripts/pack-data/runtimes/*/uv.lock
 scripts/pack-data/runtimes/*/composer.lock
 
-# Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs), each tool's test cases and its recorded answers
-# on them, is never in git. Each tool-pack's data is one archive in S3, which its tracked test-data.lock names by sha256;
-# `npm run fixtures:pull` fetches and extracts it. A pull request adds new or changed files with `git add -f`, and a
-# maintainer archives them with `npm run fixtures:push` and untracks them before merge (CONTRIBUTING.md, "Pack test
-# data"). The archives are cached under .rerail/pack-data/archives/, which .rerail/ covers.
+# Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs), each tool's test cases and its expected
+# findings on them, is never in git. Each tool-pack's data is one archive in S3, which its tracked test-data.lock names
+# by sha256; `npm run fixtures:pull` fetches and extracts it. A pull request stages new or changed data under the
+# tool-pack's tracked publish/ (`npm run fixtures:stage`), and the Publish pack data workflow uploads it and commits the
+# new lock (docs/upstream.md, "Publishing pack data"). The archives are cached under .rerail/pack-data/archives/, which
+# .rerail/ covers.
 packs/*/upstream/*/fixtures/
 packs/*/upstream/*/tests/
 packs/*/upstream/*/*.expected.json

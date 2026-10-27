@@ -117,7 +117,7 @@ readings as divergences. Each concern and its oracle:
 | Concern | What it reads | Oracle |
 |---|---|---|
 | `Adapter` | A naked identifier folds to lower case and a quoted one is exact, as PostgreSQL looks names up (`value::sql::identifier`); SQLFluff's `-- noqa` (`suppress/sqlfluff.rs`) | `fixtures/sql/suppress/sqlfluff.expected.json`, SQLFluff's reports with `noqa` ignored and honoured |
-| `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), a block around a `CREATE POLICY` or `ALTER POLICY` its table (`Form::Target`, which the queries in its `USING` and `WITH CHECK` see, as SQLFluff's RF01 reads it on PostgreSQL), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's RF01 and AL05 recordings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`, pack test data: `npm run fixtures:pull`), with the declared ANSI-versus-PostgreSQL mismatches |
+| `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), a block around a `CREATE POLICY` or `ALTER POLICY` its table (`Form::Target`, which the queries in its `USING` and `WITH CHECK` see, as SQLFluff's RF01 reads it on PostgreSQL), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's expected RF01 and AL05 findings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`, pack test data: `npm run fixtures:pull`), with the declared ANSI-versus-PostgreSQL mismatches |
 | `ValueRules` | Literals and names (`value/sql.rs`) only where PostgreSQL's and SQLite's readings agree; `type`, the key, member, reference and structural compare modes are refused | `fixtures/sql/scope/postgres.expected.json` (PostgreSQL 18.6 through libpg_query) and `fixtures/sql/value/sqlite.expected.json` (SQLite 3.50.4) |
 | `ArgumentRules` | An `invocation`'s arguments as PostgreSQL 18.6's parser binds them (`matcher/arguments_sql.rs`): by position, then by name; signature markers, `syntactic` and `estree` are refused | `fixtures/sql/matcher/arguments/postgres.expected.json`, 50 calls: 49 matched by position, 1 asserted unreadable (`substring(s FOR n)`, whose start PostgreSQL supplies) |
 | `SyntaxRules` | No literal grammar (`parse`) and no `languageOptions`; `when` reads the document's options | |
@@ -406,9 +406,13 @@ A pack whose rules reproduce another tool's rules adds the validation material, 
    `upstream/<tool>/test-data.lock` ([docs/upstream.md](upstream.md#publishing-pack-data)). Get the other packs' with
    `npm run fixtures:pull`. A gated tool-pack also needs its `gates.yaml`
    ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
-3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX id>` line and a table
-   listing every copied file by its pack-relative path. Add the tool's licence to `package.json`'s `license`
-   (`Apache-2.0 AND MIT` for an MIT tool), and annotate the copied files in `REUSE.toml`.
+3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX expression>` line, a
+   `Source` table (repository, tag, 40-hex commit and licence) and a `Taken from it` table mapping each pack-relative
+   glob of copied files to its upstream path and how it was copied. The copied files are not in git; the archive's
+   `provenance.json` and `LICENSES.md` carry their licence, and `REUSE.toml` covers a pulled or staged copy with one
+   annotation for `upstream/<tool>/fixtures/**` and `upstream/<tool>/publish/fixtures/**`. Add the tool's licence to
+   `package.json`'s `license` (`Apache-2.0 AND MIT` for an MIT tool), and annotate the rule documents in `REUSE.toml`
+   with that expression.
 4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked. Start
    with `[]` and add an entry only for a disagreement you have checked.
 

@@ -18,4 +18,4 @@ The files taken from it contain material copied from vimeo/psalm and remain unde
 
 Each fixture is the `code` string of one case of a test's `providerValidCodeParse()` or `providerInvalidCodeParse()`, copied verbatim (`upstream/psalm/generate.py fixtures`).
 
-Paths are relative to the pack directory, `packs/php/`. The test files are in no package and not in git: the tool-pack's S3 archive (`upstream/psalm/test-data.lock`) holds them, with `provenance.json` (every file, its upstream path and how it was made, a snapshot of the per-file record this file kept until commit `cbf682862a47`) and `LICENSES.md` (this licence text). The expected findings recorded by running the tool are Rerail's.
+Paths are relative to the pack directory, `packs/php/`. The test files are in no package and not in git: the tool-pack's S3 archive (`upstream/psalm/test-data.lock`) holds them, with `provenance.json` (every file, its upstream path and how it was made, a snapshot of the per-file record this file kept before the archive took the files out of git) and `LICENSES.md` (this licence text). The expected findings recorded by running the tool are Rerail's.

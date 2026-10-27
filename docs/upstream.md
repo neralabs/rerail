@@ -8,7 +8,7 @@ whether upstream would still answer the same: the snapshot goes stale only when 
 | Artifact | Lock | Made by |
 | --- | --- | --- |
 | Pack test data: upstream's tests, the expected findings (`fixtures.expected.json`), Rerail's authored cases | `packs/<id>/upstream/<tool>/test-data.lock` | the generators, through `npm run fixtures:derive` (a maintainer, or the bump workflow) |
-| Real-code samples | `packs/<id>/upstream/<tool>/samples.lock` | the sample tooling (`scripts/samples/`) |
+| Real-code samples | `packs/<id>/upstream/<tool>/samples.lock` | the sample builders in `scripts/samples/`, a library API called from tests and maintainers' one-off scripts (there is no command) |
 
 Both are published the same way ([Publishing pack data](#publishing-pack-data)): the data goes into the pull request
 under the tool-pack's `publish/` directory, and a workflow on main puts it in S3 once a code owner approves.
@@ -34,8 +34,9 @@ test data (`node scripts/s3/pack-fixtures.mjs samples` alone), into `.rerail/pac
 and CI's pack-test-data action carries them in the same cache entry. Samples staged under the tool-pack's
 `publish/samples/` are laid over the locked set, so a pull request's CI judges them before they are published. To add,
 relabel or drop samples, or to rename or drop a rule key (a label naming no rule of the tool-pack fails its whole
-pack's conformance check, which catches typos), the sample tooling (`scripts/samples/pack.ts`) writes the set into
-`publish/samples/`, and the set is published like any pack data.
+pack's conformance check, which catches typos), a maintainer's one-off script calls the sample builders
+(`writeSampleSet` in `scripts/samples/pack.ts`; there is no command) to write the set into `publish/samples/`, and the
+set is published like any pack data.
 
 The conformance runner judges each rule by intent, on the samples labelled for it:
 
@@ -98,8 +99,8 @@ overfit evidence from the samples alone.
 ### Runtimes
 
 `fixtures:derive` installs the runtimes a generator needs from `scripts/pack-data/runtimes/` (`runtimes.ts`): upstream's
-own (`gates.yaml`'s `upstream.runtime`) and the adapter's (`parsers` for ESLint, `python` for Ruff and Bandit, `php` for
-PHP_CodeSniffer, PHPStan and Psalm, `blade` and `php` for tlint and stillat/blade-parser). Each runtime is pinned by its
+own (`gates.yaml`'s `upstream.runtime`) and the adapter's (`python` for Ruff and Bandit, `php` for PHP_CodeSniffer,
+PHPStan and Psalm, `blade` and `php` for tlint and stillat/blade-parser). Each runtime is pinned by its
 `package.json`, `pyproject.toml` or `composer.json` alone: every direct dependency at an exact version and in
 `overrides`, and no lockfile is committed. A Python runtime also pins its exact interpreter in `.python-version`, which
 uv installs; a PHP runtime pins its interpreter in `.php-version`, which Composer cannot install, so derive refuses any
