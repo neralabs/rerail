@@ -16,6 +16,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | open |
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
+| O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | open, **decision needed** |
+| O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
 
 ## O1. Stale-fact detection after a crash
 
@@ -196,3 +198,29 @@ A path whose blob is not stored, is not UTF-8, has no dialect, or stops the pars
 core and kinds outputs of `ABSENT`. That is consistent (an edit that makes it parse rebinds it), but
 a rule must treat `ABSENT` as unknown, not as empty. Closure: Phase 8's findings layer reports these
 files as Unknown under the loose contract.
+
+## O11. What bounds a value-creating cycle
+
+§12 rejects "cycles through value-creating builtins with no bound" but does not say what a bound is.
+T's own programs have such cycles: `qn($n, @cat($q, $a)) :- attr_of($n, $o, $a), qn($o, $q)` in
+`calls.rdl`, and likewise `qv`, `qopen`, `modn` (`calls_rust.rdl`) and `resolves` (the workloads).
+Each terminates only because it recurses along a tree edge (`attr_of`, `field`, `nearest`): finite
+and acyclic. A cycle through `@cat` over a graph with a cycle would create names forever.
+
+Options: (a) a relation declared acyclic (`.acyclic field, child`) bounds the cycle when every
+recursive step joins through one; (b) recursion through `nearest` or a tree-edge input counts as
+bounded by construction, because tree structure is not a relation (§12); (c) a depth bound,
+`widen`-style, per value-creating rule. Until this is decided, `logic::front` does not raise the
+error (`front.rs` header). Closure: the decision, then the check, with T's five programs passing.
+
+## O12. An executor for `nearest`
+
+T ran `nearest($n, $s, set)` with `tape_nearest` over a per-run copy of the tree (`tape_load`), and
+its join steps `near`/`down`. Phase 6 row 1 dropped them, because file-local work runs in the
+transducer (Phase 4 item f) and tree structure is not a relation. Every one of T's programs uses
+`nearest`, so the Phase 6 check (T's goldens reproduced) needs an executor. Options: (a) lower
+`nearest` with the other file-local rules into transducer programs (Phase 4 f), with its facts
+arriving as seed rows; (b) a CPU binding over W's tapes, read from the slab cache (Phase 9), kept as
+the reference semantics as `flat` is for lattices. (a) is the target shape; (b) would let Phase 6's
+check run before Phase 4 f and Phase 9. Closure: the decision, then the Phase 6 check.
+
