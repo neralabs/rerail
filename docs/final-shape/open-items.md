@@ -20,6 +20,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
+| O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | open, **plan gap** |
 
 ## O1. Stale-fact detection after a crash
 
@@ -260,3 +261,15 @@ trap T18). Lattice relations (`merge_lattice`) have no step form yet. Closure: t
 a `schedule::Program` (one step per rule and delta variant, its stratum from `strata`), with
 lattice merges as a fold kind, and T's programs give the same outputs through `schedule::run` as
 through `run_atoms`; the planner's counts then come from `rows.<relation>` at the boundary.
+
+## O15. S's oracle needs S's matcher deltas
+
+Phase 8 row 5 keeps S's async-call oracle as a test. Its `check()` compares every result with
+`native_oracle::Native`, which uses S's matcher API: `Corpus`, `CorpusSlot`, `anchor_plans`,
+`FileAnchorIndex::build_at`, `GrammarMatcher::admits_source` and `invalid_syntax`,
+`AnchorPlan::needs_index`, and `phase_clock`. S changed `matcher/*` relative to main (57 files,
++11.5k lines, with `phase_clock.rs`). Rule 4 says such deltas are ported onto W's version, but no
+row of the plan lists them. So the oracle stays outside the module tree (an attempt that remapped
+its other imports is in the stash `wolfeel-oracle-placement-attempt-2026-10-27`). The fixture
+paths in `tests.rs` also need one `..` fewer. Closure: add a row for S's matcher deltas that the
+oracle needs, or replace `Native` with W's matcher as the comparison.
