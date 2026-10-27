@@ -469,16 +469,20 @@ mod tests {
             "UNION supplies set semantics"
         );
         let db = rusqlite::Connection::open_in_memory().unwrap();
-        let mut sites = super::super::relation::Relation::new(&["doc", "node", "symbol"]);
+        // S's `Relation::bind` is the merged vtab's `Modules::bind`; its `filters` counter is `scans`.
+        use crate::code_rule_dsl::facts::vtab::{Modules, Relation};
+        let modules = Modules::default();
+        let mut sites = Relation::new(&["doc", "node", "symbol"]);
         for row in [[1, 10, 7], [1, 10, 7], [2, 20, 8], [3, 30, 9]] {
             sites.push(&row);
         }
-        let sites = sites.bind(&db, "sites").unwrap();
-        let mut wanted = super::super::relation::Relation::new(&["label", "symbol"]);
+        modules.bind(&db, "sites", std::sync::Arc::new(sites)).unwrap();
+        let mut wanted = Relation::new(&["label", "symbol"]);
         for row in [[1, 7], [2, 7], [2, 8]] {
             wanted.push(&row);
         }
-        let wanted = wanted.bind(&db, "wanted").unwrap();
+        modules.bind(&db, "wanted", std::sync::Arc::new(wanted)).unwrap();
+        let (sites, wanted) = (modules.get("sites").unwrap(), modules.get("wanted").unwrap());
         let mut statement = db.prepare(&emitted.sql).unwrap();
         let mut rows = statement
             .query_map([1], |row| {
@@ -489,8 +493,8 @@ mod tests {
             .unwrap();
         rows.sort_unstable();
         assert_eq!(rows, vec![(1, 10), (2, 20)]);
-        assert_eq!(sites.filters.load(std::sync::atomic::Ordering::Relaxed), 1);
-        assert_eq!(wanted.filters.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(sites.counters().scans.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(wanted.counters().scans.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
     #[test]
     fn named_derived_relations_materialize_once_and_do_not_shadow_sources() {

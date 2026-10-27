@@ -1,6 +1,6 @@
 //! Phase-one generated shape. The relational plan is constructed here by hand;
 //! lowering arbitrary catalog grammars to this plan is a separate compiler gate.
-use super::super::sql_shape::{Binding, Column, Emission, Expr, Join, Query, Select, Shape};
+use super::sql_shape::{Binding, Column, Emission, Expr, Join, Query, Select, Shape};
 
 fn column(name: &str) -> Column {
     let (alias, field) = name.split_once('.').unwrap();
