@@ -422,8 +422,10 @@ request. `publish/<path>` becomes the test data archive's file `<path>` (`publis
 
 The usual rules for third-party material apply (below), and every file going to S3 must be under a licence on
 [scripts/check/licence-allowlist.json](scripts/check/licence-allowlist.json): test data by the
-`packs/<id>/licenses/<project>/UPSTREAM.md` whose `Taken from it` pattern covers it (Rerail's own files are Apache-2.0), samples by their labels'
-`source.license`. An SPDX `A OR B` passes when either side is on the list, `A AND B` only when both are.
+`packs/<id>/licenses/<project>/UPSTREAM.md` whose `Taken from it` pattern covers it (Rerail's own files are Apache-2.0; a file under a `Not copied` glob, or one in
+a tool's subdirectory that is neither listed as Rerail's nor covered, is refused), samples by their labels'
+`source.license`. An SPDX expression passes when some way to satisfy it uses only listed licences: `A OR B` when
+either side is on the list, `A AND B` only when both are, `AND` binding tighter than `OR`; a malformed one is refused.
 
 A comment on the pull request ("Pack data waiting to publish") lists the tool-packs and how to run the publish, by hand
 and with the `gh` CLI.

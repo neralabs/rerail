@@ -65,7 +65,6 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import { licenceTerms } from "../check/check-structure/metrics/07-pack-licence-annotations.mjs";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, parseLock, readArchive, sha256, TEST_DATA_LOCK } from "./test-data-archive.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -182,8 +181,82 @@ export function listedAuthored(record, text) {
     .map((file) => `packs/${pack}/${file}`);
 }
 
-/** The licence an UPSTREAM.md records (pack check 6 reads it too). */
-const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
+/**
+ * The SPDX expression an UPSTREAM.md's `License:` line records (pack check 6 reads it too): its licence ids, `AND`,
+ * `OR` and `WITH` between them, and parentheses, up to the first thing that is none of them (the copyright note in
+ * parentheses after a space, or `;`). licenceAlternatives tells a malformed one.
+ */
+const UPSTREAM_LICENSE = /\bLicense: ((?:[()]|[A-Za-z0-9][A-Za-z0-9.+:-]*|[ \t]+(?:AND|OR|WITH)[ \t]+)+)/u;
+/** An SPDX licence or exception id, or a LicenseRef (a `+` suffix included). */
+const LICENCE_ID = /^[A-Za-z0-9][A-Za-z0-9.+:-]*$/u;
+const LICENCE_OPERATOR = /^(?:AND|OR|WITH)$/u;
+
+/**
+ * The ways an SPDX licence expression can be satisfied, or undefined when it is malformed: each a sorted list of the
+ * terms that choice takes together. `AND` binds tighter than `OR`; `X WITH Y` is one term, a licence with its exception;
+ * parentheses group. `(MIT OR Apache-2.0) AND BSD-3-Clause` is [[BSD-3-Clause, MIT], [Apache-2.0, BSD-3-Clause]].
+ */
+export function licenceAlternatives(expression) {
+  const tokens = String(expression)
+    .split(/([()])|\s+/u)
+    .filter((token) => token !== undefined && token !== "");
+  let at = 0;
+  const id = () => {
+    const token = tokens[at];
+    if (token === undefined || LICENCE_OPERATOR.test(token) || !LICENCE_ID.test(token)) return undefined;
+    at += 1;
+    return token;
+  };
+  const term = () => {
+    if (tokens[at] === "(") {
+      at += 1;
+      const inner = either();
+      if (inner === undefined || tokens[at] !== ")") return undefined;
+      at += 1;
+      return inner;
+    }
+    const licence = id();
+    if (licence === undefined) return undefined;
+    if (tokens[at] !== "WITH") return [[licence]];
+    at += 1;
+    const exception = id();
+    return exception === undefined ? undefined : [[`${licence} WITH ${exception}`]];
+  };
+  /** Operands joined by `operator`, each read by `operand`, combined by `combine`; undefined when one is malformed. */
+  const joined = (operator, operand, combine) => {
+    let result = operand();
+    while (result !== undefined && tokens[at] === operator) {
+      at += 1;
+      const next = operand();
+      result = next === undefined ? undefined : combine(result, next);
+    }
+    return result;
+  };
+  const both = () => joined("AND", term, (left, right) => left.flatMap((a) => right.map((b) => [...new Set([...a, ...b])].sort())));
+  const either = () => joined("OR", both, (left, right) => [...left, ...right]);
+  const alternatives = either();
+  if (alternatives === undefined || at !== tokens.length) return undefined;
+  return [...new Map(alternatives.map((terms) => [terms.join("\0"), terms])).values()];
+}
+
+/**
+ * Whether data under the SPDX expression `expression` may go to S3: some way to satisfy it (licenceAlternatives) takes
+ * only terms on `allowed`. A malformed expression, or a note standing in for a licence, never may.
+ */
+export function licenceAllowed(expression, allowed) {
+  return (licenceAlternatives(expression) ?? []).some((terms) => terms.every((term) => allowed.has(term)));
+}
+
+/**
+ * Whether a pack-relative path is in a subdirectory of `upstream/<tool>/` (fixtures/, tests/, authored/, …), where a
+ * file is copied from upstream unless it is authored. Files directly in `upstream/` or `upstream/<tool>/` (expected
+ * findings, cases.json, provenance.json, LICENSES.md, generators) are Rerail's. Pack check 6 and the publish licence
+ * check both classify by it.
+ */
+export function inToolSubdirectory(packPath) {
+  const segments = packPath.split("/");
+  return segments[0] === "upstream" && segments.length > 3;
+}
 /** A "Not copied" line of a licenses/<project>/UPSTREAM.md: the upstream prefix, then the pack-path glob it would land under. */
 const NOT_COPIED = /^- Not copied: `([^`]+)`(?: as `([^`]+)`)?/u;
 /** A "Taken from it" row: its first cell is a backticked pack-path glob under upstream/. */
@@ -196,21 +269,25 @@ function tableCells(line, unquote = false) {
 }
 
 /**
- * What a pack's licenses/<project>/UPSTREAM.md records (docs/pack-format.md): its `License:` SPDX id, its Source row
- * (repository, tag, commit, licence), the pack-path globs of its "Taken from it" table with each one's copy kind (the
- * first word of its How cell), and its "Not copied" lines (the upstream prefix and, when the line has one, the
- * pack-path glob). Pack check 6 and the publish licence check both read it; neither reads an archive's provenance.json.
+ * What a pack's licenses/<project>/UPSTREAM.md records (docs/pack-format.md): its `License:` SPDX expression, its Source
+ * row (repository, tag, commit, licence: the first repository-URL row of its `## Source` section), the pack-path globs
+ * of its "Taken from it" table with each one's copy kind (the first word of its How cell), and its "Not copied" lines
+ * (the upstream prefix and, when the line has one, the pack-path glob). Pack check 6 and the publish licence check both
+ * read it; neither reads an archive's provenance.json.
  */
 export function readUpstreamSources(text) {
   let source;
+  let section;
   const taken = [];
   const notCopied = [];
   for (const line of text.split("\n")) {
+    const heading = /^##\s+(.+?)\s*$/u.exec(line);
+    if (heading !== null) section = heading[1];
     const refused = NOT_COPIED.exec(line);
     if (refused !== null) notCopied.push({ prefix: refused[1], glob: refused[2] });
     if (!line.startsWith("|")) continue;
     const cells = tableCells(line, true);
-    if (source === undefined && /^https?:\/\//u.test(cells[0])) source = { repository: cells[0], tag: cells[1], commit: cells[2], licence: cells[3] };
+    if (source === undefined && section === "Source" && /^https?:\/\//u.test(cells[0])) source = { repository: cells[0], tag: cells[1], commit: cells[2], licence: cells[3] };
     const glob = TAKEN_GLOB.exec(tableCells(line)[0])?.[1];
     if (glob !== undefined) taken.push({ glob, how: /^[a-z-]+/u.exec(cells.at(-1))?.[0] ?? "" });
   }
@@ -1224,7 +1301,7 @@ function publishRequests(tree, at) {
   return new Map([...requests].sort(([a], [b]) => byBytes(a, b)));
 }
 
-/** The licence of Rerail's own files: authored pack test data, and any file no licenses/<project>/UPSTREAM.md pattern covers. */
+/** The licence of Rerail's own files: authored pack test data, and the files directly in upstream/<tool>/ no pattern covers. */
 const RERAIL_LICENCE = "Apache-2.0";
 /** A pack's licenses/<project>/UPSTREAM.md, which records an upstream repository, its licence and what was taken from it. */
 const LICENSES_RECORD = /^packs\/([^/]+)\/licenses\/[^/]+\/UPSTREAM\.md$/u;
@@ -1232,19 +1309,6 @@ const LICENSES_RECORD = /^packs\/([^/]+)\/licenses\/[^/]+\/UPSTREAM\.md$/u;
 const LICENCE_ALLOWLIST = "scripts/check/licence-allowlist.json";
 /** The one copy kind an Apache-2.0-only source's files may be under until counsel confirms otherwise: §4(b) asks a modified file to carry its change notices. */
 const APACHE_ONLY_COPY = "verbatim";
-
-/**
- * Whether data under the SPDX expression `expression` may go to S3: `A OR B` when either side may, `A AND B` (terms as
- * licenceTerms reads them) when every term is on `allowed`.
- */
-export function licenceAllowed(expression, allowed) {
-  return String(expression)
-    .split(/\s+OR\s+/u)
-    .some((alternative) => {
-      const terms = licenceTerms(alternative);
-      return terms.length > 0 && terms.every((term) => allowed.has(term));
-    });
-}
 
 /** The allowlist this checkout's code (main's, in the publish workflow) reads. */
 function licenceAllowlist() {
@@ -1254,9 +1318,11 @@ function licenceAllowlist() {
 /**
  * The upstream sources a commit's tree (`tree`, read through `blob`) records: the authored files its tools'
  * UPSTREAM.md list, and per pack, each licenses/<project>/UPSTREAM.md's licence, "Taken from it" patterns and "Not
- * copied" patterns. Returns a function from a tool directory and an archive path to that file's licence; a file under
- * a "Not copied" pattern, an Apache-2.0-only source's file that is not verbatim, or a project with no "License:" gets
- * a note in its place, which no allowlist takes.
+ * copied" patterns. Returns a function from a tool directory and an archive path to that file's licence, decided as
+ * pack check 6 decides it: a "Not copied" pattern first (refused even when authored), then authored, then the longest
+ * covering "Taken from it" pattern; a file in a subdirectory of the tool directory (inToolSubdirectory) that none of
+ * them takes is refused, and a file directly in it is Rerail's. A refused file, an Apache-2.0-only source's file that is
+ * not verbatim, or a project with no "License:" gets a note in its place, which no allowlist takes.
  */
 function sourcesAt(tree, blob) {
   const authored = new Set();
@@ -1276,20 +1342,21 @@ function sourcesAt(tree, blob) {
   }
   return (directory, path) => {
     const repositoryFile = `${directory}/${path}`;
-    if (authored.has(repositoryFile) || AUTHORED_CORPUS.test(repositoryFile)) return RERAIL_LICENCE;
     const [, pack] = directory.split("/");
     const packFile = repositoryFile.slice(`packs/${pack}/`.length);
     for (const project of projects.get(pack) ?? []) {
       const refused = project.notCopied.find(({ matcher }) => matcher.test(packFile));
       if (refused !== undefined) return `not copied (${project.record} lists ${refused.prefix} as \`${refused.glob}\` as not copied)`;
     }
+    if (authored.has(repositoryFile) || AUTHORED_CORPUS.test(repositoryFile)) return RERAIL_LICENCE;
     let covering;
     for (const project of projects.get(pack) ?? []) {
       for (const pattern of project.taken) {
         if (pattern.matcher.test(packFile) && (covering === undefined || pattern.glob.length > covering.pattern.glob.length)) covering = { project, pattern };
       }
     }
-    if (covering === undefined) return RERAIL_LICENCE;
+    if (covering === undefined)
+      return inToolSubdirectory(packFile) ? `uncovered (no licenses/*/UPSTREAM.md "Taken from it" glob covers it and its tool's UPSTREAM.md does not list it)` : RERAIL_LICENCE;
     const { project, pattern } = covering;
     if (project.licence === "Apache-2.0" && pattern.how !== APACHE_ONLY_COPY)
       return `Apache-2.0, ${pattern.how || "no copy kind"} not ${APACHE_ONLY_COPY} (${project.record}: \`${pattern.glob}\`; a modified Apache-2.0 file must carry its change notices)`;

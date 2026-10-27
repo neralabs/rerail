@@ -26,7 +26,7 @@ import {
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
-import { packFixtureAbsence, pathGlob, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
+import { inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -354,6 +354,25 @@ const spdxIds = (expression: string): string[] =>
     .map(part => part.trim())
     .filter(part => part.length > 0);
 
+/**
+ * What is wrong with a package's `license` against the licences `recorded` (per project, each licenses/<project>/UPSTREAM.md's
+ * SPDX expression), or undefined: some way to satisfy the package's licence must name exactly Apache-2.0 plus one way to
+ * satisfy each record (licenceAlternatives). A record's `OR` lets the package elect either side; its `AND` must be
+ * named whole.
+ */
+function packageLicenceFailure(license: string, recorded: ReadonlyMap<string, string>): string | undefined {
+  const named = [...new Set(spdxIds(license))].sort(compareDeterministicStrings);
+  let carried: string[][] = [[RERAIL_LICENSE]];
+  for (const [project, licence] of recorded) {
+    const alternatives = licenceAlternatives(licence);
+    if (alternatives === undefined) return `package.json: license ${JSON.stringify(license)} names ${named.join(", ")}; licenses/${project}/UPSTREAM.md records ${licence}, which is no SPDX expression`;
+    carried = carried.flatMap(terms => alternatives.map(alternative => [...new Set([...terms, ...alternative])].sort(compareDeterministicStrings)));
+  }
+  const choices = new Set(carried.map(terms => terms.join(", ")));
+  if ((licenceAlternatives(license) ?? []).some(terms => choices.has([...terms].sort(compareDeterministicStrings).join(", ")))) return undefined;
+  return `package.json: license ${JSON.stringify(license)} names ${named.join(", ")}; the pack carries ${[...choices].join(" or ")} (${RERAIL_LICENSE} and what licenses/*/UPSTREAM.md records)`;
+}
+
 /** A pack-path glob a `licenses/<project>/UPSTREAM.md` declares, with the record declaring it. */
 interface SourcePattern {
   glob: string;
@@ -391,6 +410,11 @@ function readSources(directory: string): Sources {
     if (sources.licence === undefined) failures.push(`${record}: no "License: <SPDX id>" line`);
     else recorded.set(project, sources.licence);
     if (sources.source === undefined) failures.push(`${record}: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)`);
+    else {
+      const { repository, tag, commit, licence } = sources.source;
+      const lacking = [...(tag ? [] : ["a tag"]), ...(commit !== undefined && /^[0-9a-f]{40}$/u.test(commit) ? [] : ["a 40-hex commit"]), ...(licence ? [] : ["a licence"])];
+      if (lacking.length > 0) failures.push(`${record}: Source row ${repository} lacks ${lacking.join(" and ")} (| <repository URL> | <tag> | <commit> | <licence> |)`);
+    }
     for (const { glob } of sources.taken) taken.push({ glob, record, matcher: pathGlob(glob) });
     for (const { prefix, glob } of sources.notCopied) {
       if (glob === undefined) failures.push(`${record}: "Not copied: \`${prefix}\`" names no pack-path glob (\`… as \`<glob>\`\`)`);
@@ -743,27 +767,27 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       for (const path of required) {
         if (!manifest.files.some(file => publishes(file, path))) fail("package", `package.json: files does not publish ${path}`);
       }
-      const named = [...new Set(spdxIds(manifest.license))].sort(compareDeterministicStrings);
-      const carried = [...new Set([RERAIL_LICENSE, ...sources.recorded.values()])].sort(compareDeterministicStrings);
-      if (named.join(",") !== carried.join(","))
-        fail("package", `package.json: license ${JSON.stringify(manifest.license)} names ${named.join(", ")}; the pack carries ${carried.join(", ")} (${RERAIL_LICENSE} and what licenses/*/UPSTREAM.md records)`);
+      const failure = packageLicenceFailure(manifest.license, sources.recorded);
+      if (failure !== undefined) fail("package", failure);
     }
   }
 
-  // Check 6: licences. Per upstream repository, licenses/<project>/UPSTREAM.md records its licence (on the repository
-  // allowlist), its Source row, the pack-path globs of the files taken from it and the globs nothing may be copied to
-  // (readSources). Under upstream/<tool>/, the expected findings and the generator (files directly in it) are Rerail's;
-  // every file in its subdirectories (fixtures/, tests/) is Rerail's when the tool's own upstream/<tool>/UPSTREAM.md
-  // lists it, and otherwise must match a "Taken from it" glob (sourceFailures). Per-file provenance is in each test-data
-  // archive's provenance.json, which no check reads.
+  // Check 6: licences. Per upstream repository, licenses/<project>/UPSTREAM.md records its licence (an SPDX expression
+  // some choice of whose alternatives is on the repository allowlist), its Source row, the pack-path globs of the files
+  // taken from it and the globs nothing may be copied to (readSources). Under upstream/<tool>/, the expected findings and
+  // the generator (files directly in it) are Rerail's; every file in its subdirectories (fixtures/, tests/;
+  // inToolSubdirectory, which the publish licence check shares) must match no "Not copied" glob, and is then Rerail's
+  // when the tool's own upstream/<tool>/UPSTREAM.md lists it, and otherwise must match a "Taken from it" glob
+  // (sourceFailures). Per-file provenance is in each test-data archive's provenance.json, which no check reads.
   for (const failure of sources.failures) fail("licences", failure);
   if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
   for (const [project, licence] of sources.recorded) {
-    if (!allowedLicenses().has(licence)) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is not on the repository licence allowlist`);
+    if (licenceAlternatives(licence) === undefined) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is no SPDX expression`);
+    else if (!licenceAllowed(licence, allowedLicenses())) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is not on the repository licence allowlist`);
   }
   const { authored, failures: authoredFailures } = readAuthored(directory);
   for (const failure of authoredFailures) fail("licences", failure);
-  const deeper = filesUnder(directory, join(directory, "upstream")).filter(file => file.split("/").length > 3);
+  const deeper = filesUnder(directory, join(directory, "upstream")).filter(inToolSubdirectory);
   for (const failure of sourceFailures(directory, sources, authored, deeper)) fail("licences", failure);
 
   // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.

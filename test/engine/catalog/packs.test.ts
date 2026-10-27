@@ -374,6 +374,37 @@ describe("validatePack", () => {
       { licences: ["licenses/examplelint/UPSTREAM.md: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)"] },
     ],
     [
+      "an UPSTREAM.md whose Source row is truncated",
+      directory => editUpstream(directory, text => text.replace(/^\| https:.*\n/mu, "| https://example.com/examplelint | `v1.0.0` |\n")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: Source row https://example.com/examplelint lacks a 40-hex commit and a licence (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "an UPSTREAM.md whose Source row has an empty tag and a short commit",
+      directory => editUpstream(directory, text => text.replace("| `v1.0.0` | `0000000000000000000000000000000000000000` |", "|  | `0000000` |")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: Source row https://example.com/examplelint lacks a tag and a 40-hex commit (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "an UPSTREAM.md whose only repository-URL row is outside its Source section",
+      directory => editUpstream(directory, text => text.replace("## Source", "## Elsewhere")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "a License: line that ANDs a licence off the allowlist",
+      directory => editUpstream(directory, text => text.replace("License: MIT;", "License: MIT AND GPL-3.0-only;")),
+      {
+        package: ['package.json: license "Apache-2.0 AND MIT" names Apache-2.0, MIT; the pack carries Apache-2.0, GPL-3.0-only, MIT (Apache-2.0 and what licenses/*/UPSTREAM.md records)'],
+        licences: ["licenses/examplelint/UPSTREAM.md: MIT AND GPL-3.0-only is not on the repository licence allowlist"],
+      },
+    ],
+    [
+      "a malformed License: expression",
+      directory => editUpstream(directory, text => text.replace("License: MIT;", "License: (MIT OR Apache-2.0;")),
+      {
+        package: ['package.json: license "Apache-2.0 AND MIT" names Apache-2.0, MIT; licenses/examplelint/UPSTREAM.md records (MIT OR Apache-2.0, which is no SPDX expression'],
+        licences: ["licenses/examplelint/UPSTREAM.md: (MIT OR Apache-2.0 is no SPDX expression"],
+      },
+    ],
+    [
       "an authored file the tool's UPSTREAM.md does not list, outside every glob",
       directory => {
         writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n");
@@ -402,6 +433,21 @@ describe("validatePack", () => {
     const validation = await validatePack(changed("valid", change));
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it.each([
+    ["MIT OR Apache-2.0", "Apache-2.0 AND MIT"],
+    ["GPL-3.0-only OR MIT", "Apache-2.0 AND MIT"],
+    ["(MIT OR GPL-3.0-only) AND Apache-2.0", "Apache-2.0 AND MIT"],
+  ])("passes License: %s with the package's %s: it elects an alternative of the OR", async (licence, packageLicence) => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        editUpstream(directory, text => text.replace("License: MIT;", `License: ${licence};`));
+        editJson(join(directory, "package.json"), manifest => ({ ...manifest, license: packageLicence }));
+      }),
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
   });
 
   it("passes a rule whatever its message says: messages are left to review", async () => {

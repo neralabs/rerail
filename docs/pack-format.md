@@ -314,24 +314,28 @@ Precisely:
 5. The npm name is `@neralabs/rerail-pack-<id>`, `repository` is `{ "type": "git", "url": <the root package.json's
    repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,
-   `divergences.json`, `upstream` or `candidates`. The SPDX ids `license` names must be exactly Apache-2.0 plus the
-   licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line.
+   `divergences.json`, `upstream` or `candidates`. Some way to satisfy `license` must name exactly Apache-2.0 plus,
+   for each `licenses/<project>/UPSTREAM.md`, one way to satisfy the SPDX expression its `License:` line records: an
+   `OR` there lets the package elect either side (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`), and an `AND` must
+   be named whole.
 6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` per upstream repository: its
-   `License:` line, a `Source` table (repository, tag, commit, licence; required), a `Taken from it` table whose first column
+   `License:` line (an SPDX expression: ids, `AND`, `OR`, `WITH` and parentheses, up to the note after it; a
+   malformed one fails), a `Source` section whose table row gives the repository, a tag, the 40-hex commit and the
+   licence (required; a truncated row fails), a `Taken from it` table whose first column
    holds backticked pack-path globs starting with `upstream/` (with the upstream paths and how each kind of file was
    made), and its `Not copied` lines. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
-   `fixtures/`, `tests/`) must be authored or match some project's glob, and each declared glob must match at least
+   `fixtures/`, `tests/`) must match no `Not copied` glob, and then be authored or match some project's glob, and each declared glob must match at least
    one pulled file (a checkout without the pack's test data fails once per tool, saying to run
    `npm run fixtures:pull`); files directly in `upstream/` or `upstream/<tool>/` (expected findings, generators) are
    Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
    corpus) is listed instead, per file, in the tool's own `upstream/<tool>/UPSTREAM.md`: it is Rerail's, so it adds no
    licence to `licenses/` or to the package's `license`. That record may list only files under its own
-   `upstream/<tool>/`, and every file it lists must exist. Every recorded licence must be on the repository allowlist
-   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
+   `upstream/<tool>/`, and every file it lists must exist. Some way to satisfy every recorded licence must use only licences on the repository
+   allowlist (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
    paths nothing is copied from, one per line as
    ``- Not copied: `<upstream path prefix>` as `<pack path glob>` — <project>, <SPDX id>``
    (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); the pack-path
-   glob is required, and a pulled file under it fails. The per-file record (each file, its upstream path and how it was made) is not
+   glob is required, and a pulled file under it fails, authored or not. The per-file record (each file, its upstream path and how it was made) is not
    in git: it is `upstream/<tool>/provenance.json` in the tool-pack's test-data archive, beside `LICENSES.md` with the
    licence texts, for audit, and no check reads it. `reuse lint` and `node scripts/check/check-licenses.mjs` stay
    repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts a
@@ -440,9 +444,13 @@ that same expression, `Apache-2.0 AND <upstream>`, so what `reuse lint` reports 
 publishes; whether adapted rule documents need the upstream licence is an open legal question. Only licences on the
 repository allowlist are accepted.
 
-When test data is published, a file the tool's own `UPSTREAM.md` lists (or one under `authored/`) is Rerail's
-Apache-2.0; any other file takes the licence of the longest `Taken from it` glob that covers it. A file from an
-Apache-2.0-only source is refused unless that glob's kind is `verbatim`, and a file under a `Not copied` glob is refused.
+When test data is published, each file's licence is decided as check 6 decides it. A file under a `Not copied` glob is
+refused, even one the tool's `UPSTREAM.md` lists or one under `authored/`. Otherwise a listed file (or one under
+`authored/`) is Rerail's Apache-2.0, and any other file takes the licence of the longest `Taken from it` glob that
+covers it. A file in a subdirectory of `upstream/<tool>/` that none of these takes is refused; one directly in
+`upstream/<tool>/` (expected findings, `cases.json`, `provenance.json`) is Rerail's. A file from an Apache-2.0-only
+source is refused unless that glob's kind is `verbatim`. A licence passes when some way to satisfy its SPDX
+expression uses only allowlisted licences (`AND` binds tighter than `OR`); a malformed expression is refused.
 
 ## Moving to this layout
 

@@ -18,6 +18,7 @@ import {
   BUCKET,
   check,
   confirm,
+  inToolSubdirectory,
   isPackFixture,
   licenceAllowed,
   objectTagging,
@@ -31,6 +32,7 @@ import {
   push,
   readLock,
   readSamplesLock,
+  readUpstreamSources,
   requireAws,
   SAMPLES_LOCK,
   samples,
@@ -137,6 +139,13 @@ function setUp() {
 /** Every upload's tags, as a maintainer's push gives them. */
 const TAGS = { commit: "0".repeat(40), pr: "none", runId: "local", uploader: "maintainer" };
 
+/**
+ * A pack's licenses/<project>/UPSTREAM.md recording `licence` (its `License:` line, then a copyright note), a Source row,
+ * one "Taken from it" glob `taken` copied `how`, and `extra` (Not copied lines) after it.
+ */
+const licensesRecord = ({ licence, taken = "upstream/t/fixtures/upstream/**", how = "verbatim", extra = "" }) =>
+  `# Tool\n\nLicense: ${licence} (Copyright (c) Upstream); [\`LICENSE\`](LICENSE) is the upstream licence file.\n\n## Source\n\n| Repository | Tag | Commit | Licence |\n|---|---|---|---|\n| https://example.com/tool | \`v1\` | \`${"1".repeat(40)}\` | ${licence} |\n\n## Taken from it\n\n| Pack paths | Upstream paths | How |\n|---|---|---|\n| \`${taken}\` | \`tests/\` | ${how}: as taken |\n${extra}`;
+
 /** setUp with three tool-packs' test data on disk, untracked, and everything else committed. */
 function withData() {
   const context = setUp();
@@ -145,6 +154,8 @@ function withData() {
   write("packs/p/upstream/t/UPSTREAM.md", record(["upstream/t/fixtures/rerail/a.py"]));
   write("packs/p/upstream/t/fixtures/rerail/a.py", "authored\n");
   write("packs/p/upstream/t/fixtures/upstream/b.py", "derived\n");
+  // The copied file's source: a file in a tool's subdirectory that no record covers is refused at publish.
+  write("packs/p/licenses/tool/UPSTREAM.md", licensesRecord({ licence: "Apache-2.0" }));
   write("packs/p/upstream/t/x y.expected.json", "{}\n");
   write("packs/p/upstream/w/gates.yaml", "gates\n");
   write("packs/p/upstream/w/cases.json", "[]\n");
@@ -1030,6 +1041,8 @@ function pullRequest() {
   const publishRequest = Object.fromEntries(Object.entries(changes).map(([path, text]) => [path.replace(/^(packs\/[^/]+\/upstream\/[^/]+)\//u, "$1/publish/"), text]));
   const pr = branch(root, "feature", {
     ...publishRequest,
+    // The new file is Rerail's: a file in a tool's subdirectory that neither its UPSTREAM.md lists nor a glob covers is refused.
+    "packs/p/upstream/t/UPSTREAM.md": record(["upstream/t/fixtures/rerail/a.py", "upstream/t/fixtures/rerail/new.py"]),
     "package.json": `${JSON.stringify({ scripts: { preinstall: `touch ${marker}`, "fixtures:stage": `touch ${marker}` } }, null, 2)}\n`,
     "packs/p/upstream/t/generate.py": `open(${JSON.stringify(marker)}, "w").write("ran")\n`,
     "scripts/s3/pack-fixtures.mjs": `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "ran\\n");\n`,
@@ -1193,6 +1206,49 @@ describe("pack --from (the publish workflow's prep)", () => {
     const { manifest } = await packed(context, "verbatim");
     expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 4 });
   });
+
+  it("refuses an authored file under a Not copied glob, whether its tool's UPSTREAM.md lists it or it is under authored/", async () => {
+    const context = published();
+    const notCopied = (glob) => `\n## Not copied\n\n- Not copied: \`tests/gpl/\` as \`${glob}\` — other, GPL-3.0-only\n`;
+    branch(context.root, "overlap", {
+      "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "Apache-2.0", extra: notCopied("upstream/t/fixtures/rerail/**") }),
+      "packs/q/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT", taken: "upstream/u/fixtures/**", extra: notCopied("upstream/u/authored/**") }),
+      "packs/p/upstream/t/publish/cases.json": "[]\n",
+      "packs/q/upstream/u/publish/cases.json": "[]\n",
+    });
+    const message = await packFailure(context, "overlap");
+    expect(message).toContain("2 file(s) going to S3");
+    expect(message).toContain("  packs/p/upstream/t/fixtures/rerail/a.py: not copied (packs/p/licenses/tool/UPSTREAM.md lists tests/gpl/ as `upstream/t/fixtures/rerail/**` as not copied)");
+    expect(message).toContain("  packs/q/upstream/u/authored/corpus/c.py: not copied (packs/q/licenses/tool/UPSTREAM.md lists tests/gpl/ as `upstream/u/authored/**` as not copied)");
+  });
+
+  it("refuses a file in a tool's subdirectory that no Taken from it glob covers, and keeps the tool directory's own files Rerail's", async () => {
+    const context = published();
+    branch(context.root, "uncovered", {
+      "packs/p/upstream/t/publish/fixtures/other/c.py": "copied?\n",
+      "packs/p/upstream/t/publish/tests/d.py": "copied?\n",
+      "packs/p/upstream/t/publish/cases.json": "[]\n",
+    });
+    const message = await packFailure(context, "uncovered");
+    expect(message).toContain("2 file(s) going to S3");
+    expect(message).toContain("  packs/p/upstream/t/fixtures/other/c.py: uncovered (no licenses/*/UPSTREAM.md \"Taken from it\" glob covers it and its tool's UPSTREAM.md does not list it)");
+    expect(message).toContain("  packs/p/upstream/t/tests/d.py: uncovered");
+    expect(message).not.toContain("cases.json");
+
+    branch(context.root, "rerails", { "packs/p/upstream/t/publish/cases.json": "[]\n", "packs/p/upstream/t/publish/provenance.json": "{}\n" });
+    const { manifest } = await packed(context, "rerails");
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 5 });
+  });
+
+  it("reads a License: line's whole SPDX expression: an AND of a refused licence is refused, an OR with an allowed one is taken", async () => {
+    const context = published();
+    branch(context.root, "and", { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT AND GPL-3.0-only" }), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    expect(await packFailure(context, "and")).toContain("  packs/p/upstream/t/fixtures/upstream/b.py: MIT AND GPL-3.0-only");
+
+    branch(context.root, "or", { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT OR GPL-3.0-only" }), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    const { manifest } = await packed(context, "or");
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 3, "MIT OR GPL-3.0-only": 1 });
+  });
 });
 
 describe("licenceAllowed", () => {
@@ -1203,6 +1259,46 @@ describe("licenceAllowed", () => {
     expect(licenceAllowed("GPL-3.0-only", allowed)).toBe(false);
     expect(licenceAllowed("MIT AND GPL-3.0-only", allowed)).toBe(false);
     expect(licenceAllowed("(MIT AND Apache-2.0) OR GPL-3.0-only", allowed)).toBe(true);
+  });
+
+  it("parses precedence and parentheses: some choice of alternatives must use allowed terms alone", () => {
+    const allowed = new Set(["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception"]);
+    expect(licenceAllowed("(MIT OR Apache-2.0) AND GPL-3.0-only", allowed)).toBe(false);
+    expect(licenceAllowed("MIT OR GPL-3.0-only", allowed)).toBe(true);
+    expect(licenceAllowed("GPL-3.0-only OR MIT AND Apache-2.0", allowed)).toBe(true);
+    expect(licenceAllowed("GPL-3.0-only OR MIT AND GPL-2.0-only", allowed)).toBe(false);
+    expect(licenceAllowed("MIT AND (GPL-3.0-only OR Apache-2.0)", allowed)).toBe(true);
+    expect(licenceAllowed("(MIT OR GPL-3.0-only) AND (GPL-2.0-only OR Apache-2.0)", allowed)).toBe(true);
+    expect(licenceAllowed("((MIT)) AND ((GPL-2.0-only))", allowed)).toBe(false);
+    // WITH attaches an exception to its licence: the pair is one term.
+    expect(licenceAllowed("Apache-2.0 WITH LLVM-exception", allowed)).toBe(true);
+    expect(licenceAllowed("MIT WITH LLVM-exception", allowed)).toBe(false);
+    expect(licenceAllowed("GPL-2.0-only WITH Classpath-exception-2.0 OR MIT", allowed)).toBe(true);
+  });
+
+  it("refuses a malformed expression", () => {
+    const allowed = new Set(["MIT", "Apache-2.0"]);
+    for (const malformed of ["", "(MIT", "MIT)", "MIT AND", "OR MIT", "MIT OR OR Apache-2.0", "MIT Apache-2.0", "()", "MIT WITH", "MIT and Apache-2.0", "MIT, Apache-2.0", "not copied (a note)"])
+      expect(licenceAllowed(malformed, allowed), malformed).toBe(false);
+  });
+});
+
+describe("inToolSubdirectory (pack check 6 and the publish licence check classify by it)", () => {
+  it("takes a file in a tool's subdirectory as copied unless authored, and the tool directory's own files as Rerail's", () => {
+    for (const copied of ["upstream/t/fixtures/a.py", "upstream/t/tests/x/b.py", "upstream/t/authored/c.py", "upstream/t/other/d.json"]) expect(inToolSubdirectory(copied), copied).toBe(true);
+    for (const own of ["upstream/t/cases.json", "upstream/t/provenance.json", "upstream/t/LICENSES.md", "upstream/t/x.expected.json", "upstream/t/generate.py", "upstream/README.md", "rules/a/b/c.json"])
+      expect(inToolSubdirectory(own), own).toBe(false);
+  });
+});
+
+describe("readUpstreamSources", () => {
+  it("reads the License: line's whole SPDX expression, up to the note after it", () => {
+    const licence = (line) => readUpstreamSources(`# Tool\n\nLicense: ${line}\n`).licence;
+    expect(licence("MIT (Copyright (c) Someone); [`LICENSE`](LICENSE) is the upstream licence file.")).toBe("MIT");
+    expect(licence("MIT; [`LICENSE`](LICENSE) is the upstream licence file.")).toBe("MIT");
+    expect(licence("MIT AND GPL-3.0-only (Copyright (c) Someone)")).toBe("MIT AND GPL-3.0-only");
+    expect(licence("MIT OR Apache-2.0 (Copyright (c) The Rust Project Contributors); [`LICENSE-MIT`](LICENSE-MIT)")).toBe("MIT OR Apache-2.0");
+    expect(licence("(MIT OR Apache-2.0) AND GPL-3.0-only")).toBe("(MIT OR Apache-2.0) AND GPL-3.0-only");
   });
 });
 

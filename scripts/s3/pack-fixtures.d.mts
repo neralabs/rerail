@@ -103,7 +103,9 @@ export function selectToolPacks(root?: string, pack?: string, tool?: string): To
 export function toolPackFiles(root: string, directory: string): string[];
 export function publishFiles(root: string, directory: string): string[];
 export function objectTagging(tags?: Partial<UploadTags>): string;
+export function licenceAlternatives(expression: string): string[][] | undefined;
 export function licenceAllowed(expression: string, allowed: ReadonlySet<string>): boolean;
+export function inToolSubdirectory(packPath: string): boolean;
 export function archiveKey(toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
 export function archiveCachePath(root: string, toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
 export function readLock(root: string, toolPack: ToolPack): Lock;
