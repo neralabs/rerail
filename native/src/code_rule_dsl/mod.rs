@@ -41,6 +41,9 @@ mod tape;
 #[cfg(test)]
 mod test_support;
 mod transducer;
+// Typing's rounds run over T's facts in tests only until Phase 10 wires them.
+#[allow(dead_code)]
+mod typing;
 mod value;
 mod violations;
 mod vue;

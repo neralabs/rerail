@@ -8,6 +8,9 @@
 //! Every result is checked against the goldens.
 //!
 //! usage: dl-lattice <facts dir> <golden dir>
+//!
+//! In Rerail (05 Phase 10 row 2), `main` is a function over the two directories; under test, every
+//! golden check must find no difference.
 use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -1108,6 +1111,8 @@ fn diff(a: &[String], b: &[String]) -> usize {
 }
 
 fn line(name: &str, st: &St, check: &str) {
+    #[cfg(test)]
+    assert!(check.split("diff ").skip(1).all(|n| n.starts_with("0")), "{name}: {check}");
     println!(
         "| {name} | {:.1} | {} | {} | {} | {} | {check} |",
         st.ms, st.iters, st.visits, st.max_changes, st.max_frontier
@@ -1123,9 +1128,7 @@ struct DocG {
     cross_in: Vec<(u32, u32)>,
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let (dir, gold) = (args[1].as_str(), args[2].as_str());
+pub(crate) fn main(dir: &str, gold: &str) {
     let t0 = Instant::now();
     let mut f = Facts::load(dir);
     let load_ms = t0.elapsed().as_secs_f64() * 1e3;
@@ -1537,3 +1540,6 @@ fn main() {
 fn gold_rows(dir: &str, name: &str) -> Vec<String> {
     golden(dir, name)
 }
+
+#[cfg(test)]
+mod tests;
