@@ -5430,3 +5430,40 @@ A new complete 50/60-rule measurement starts sequentially on the frozen artifact
 The native close stays in its original position; only its additional CPU/RSS sidecar and the controller's primary RSS source change.
 Comparison uses the previously recorded authoritative OS resources, not the old driver's earlier RSS sample.
 The 125.804-second first-50 recovery target and source ownership frontier remain outside this schema-lifecycle delivery.
+
+
+### Final frame-retirement measurements: semantic pass, memory gate still failed (2026-10-26)
+
+The [final machine-readable receipt](performance-decisions/schema-lifecycle-final-20261026.json) records complete artifact, driver, workload, compile, cold, close, and OS resource observations.
+Both complete runs use all 9,021 files and matching unchanged policies.
+The 50-rule run matches all 24,820 findings; the 60-rule run matches all 24,993 findings.
+Both have zero false positives, false negatives, and engine failures.
+
+| Workload | Artifact | Cold CPU, seconds | Cold wall, seconds | OS peak RSS, bytes |
+| --- | --- | ---: | ---: | ---: |
+| 50 rules | Original control | 743.541 | 890.458 | 4,738,318,336 |
+| 50 rules | Unchanged control repeat | 814.560 | 1,013.311 | 4,863,492,096 |
+| 50 rules | Final frame-retirement candidate | 794.814 | 935.626 | 4,673,306,624 |
+| 60 rules | Matching control | 3,899.342 | 5,557.645 | 6,520,143,872 |
+| 60 rules | Final frame-retirement candidate | 1948.767 | 2235.125 | 7,579,385,856 |
+
+Policy compile CPU is 1.089 seconds for 50 rules and 1.902 seconds for 60 rules, separate from cold execution.
+The final 60-rule CPU reduction is 50.0 percent.
+Its OS peak RSS increases 16.2 percent against the matching control.
+The strict complete resource gate therefore remains failed. This branch is not an accepted memory baseline.
+The first-50 CPU result remains within the observed control variation; no robust gain is established.
+
+The native payload lifetime defect is fixed and its regression test passes.
+Its bounded diagnostic improvement does not establish a complete repository memory improvement.
+The new close receipt records 7,350,648,832 peak bytes before close and 7,579,336,704 after close on the 60-rule run.
+The complete OS peak is 7,579,385,856 bytes.
+The pre-close computation itself also reaches a high peak; the remaining memory problem cannot be attributed only to final close.
+An attempted external memory-map capture found that Node had already exited and collected no live profile.
+The remaining full-repository memory cause has not been established by this experiment.
+
+Input processing consumes 1420.769 CPU seconds and global results consume 527.666 seconds.
+Input preparation, matching, and fact construction therefore form the main remaining CPU frontier.
+Parser/source-graph ownership and additional memory attribution require their own evidence before changes.
+The 125.804-second first-50 target remains unmet.
+SC1–SC4 implementation and semantic checks are complete; resource acceptance stays explicitly open on RSS.
+No new Linear issues or production optimization flags were added.

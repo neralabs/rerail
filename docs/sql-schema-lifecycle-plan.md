@@ -1,8 +1,9 @@
 # SQL schema lifecycle: implementation plan
 
 Date: 2026-10-26.
-Status: SC1–SC4 executor changes are implemented. Broad validation and corrected full resource acceptance are in progress.
-The first full candidate failed acceptance; see the performance journal and rejected measurement receipt.
+Status: SC1–SC4 implementation and full semantic validation are complete. Strict resource acceptance remains failed on 60-rule OS peak RSS.
+The final 60-rule cold CPU decreases about 50 percent, but OS peak RSS increases about 16 percent.
+Both full rule sets have exact parity and zero engine failures. The performance journal retains all rejected measurements and both 50-rule controls.
 
 This plan expands Delivery 2 of the [cold CPU recovery plan](cold-cpu-recovery-plan.md).
 The [spike results](cold-cpu-spike-results.md) and their receipts supply the evidence.
@@ -440,5 +441,5 @@ Final readers release exact binding pins, and cleanup groups ready-row deletions
 
 The first full candidate matched findings but failed resource and error acceptance.
 The journal records that rejected result and the subsequent input-planning correction.
-Full corrected 50- and 60-rule runs must pass before this plan is accepted.
+Final corrected 50- and 60-rule runs pass full semantic parity. The complete OS RSS gate remains failed, so this plan is not resource-accepted.
 The broader cold CPU recovery target includes candidate selection and source ownership, which this delivery does not claim to solve.
