@@ -1,17 +1,20 @@
-//! Native pieces for rdl's SQL backend, as a SQLite loadable extension:
+//! The logic's native fixpoints (05 Phase 6 row 1), registered on the store's connection.
 //!
-//! - `tape_load(schema)` reads `<schema>.tape` and `<schema>.node` once; `tape_nearest(n, 'k1,k2,..')` is `n`'s
-//!   nearest strict ancestor whose kind is in the set (NULL if none). It replaces the recursive-CTE climb.
+//! From Typing-support's `rdl/sqlite-ext` (T), where they were a loadable extension that rdl's SQL
+//! backend called:
 //! - `flat_join(v)` is the flat lattice's join as an aggregate; `flat_bin(op, a, b)` its arithmetic transfer.
 //! - `lattice_fixpoint(p)` evaluates one flat-lattice component natively. SQL supplies its non-recursive parts as
 //!   tables: `<p>_seed(c0 n, c1 v)`, `<p>_copy(c0 n, c1 src)` (n gets src's value) and `<p>_bin(c0 n, c1 op, c2 l,
-//!   c3 r)` (n gets flat_bin(op, l, r)). Optionally `<p>_kseed(c0 kind, c1 v)`: every node of that kind (from the
-//!   loaded tape) is seeded with v, so per-kind defaults need no row per node. With a second argument it writes the
-//!   result straight into that table, or with `@name` keeps it in memory for the `lattice_result` virtual table
-//!   (`CREATE VIRTUAL TABLE temp.cv USING lattice_result(name)`: rows (c0, c1), O(1) lookup on `c0 = ?`), otherwise
-//!   writes `<p>_out(c0, c1)`. Returns "rows waves visits solve_ms total_ms".
+//!   c3 r)` (n gets flat_bin(op, l, r)). With a second argument it writes the result straight into that table, or
+//!   with `@name` keeps it in memory for the `lattice_result` virtual table (`CREATE VIRTUAL TABLE temp.cv USING
+//!   lattice_result(name)`: rows (c0, c1), O(1) lookup on `c0 = ?`), otherwise writes `<p>_out(c0, c1)`. Returns
+//!   "rows waves visits solve_ms total_ms".
 //! - `set_fixpoint_open/run/close` and the `set_rel` vtab evaluate one component of set-valued relations natively
 //!   (see `setfix.rs`).
+//!
+//! Not kept: T's `tape_load`/`tape_nearest` and per-kind seeds (`<p>_kseed`), which read a per-run copy of one
+//! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
+//! as seed rows.
 mod setfix;
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -20,46 +23,15 @@ use rusqlite::{Connection, Error, Result};
 use std::borrow::Cow;
 use std::ffi::CStr;
 use std::sync::Mutex;
-use std::collections::HashMap;
-use std::os::raw::{c_char, c_int};
-use std::sync::{Arc, RwLock};
+use std::os::raw::c_int;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub const TOP: i64 = 4611686018427387904;
 const BOT: i64 = i64::MIN;
 const BIG: i64 = 1 << 40;
 
-/// The tree in preorder: each node's parent, kind and descendant count (its subtree is `n+1..=n+size`).
-struct Tape { par: Vec<i32>, kind: Vec<u16>, size: Vec<u32>, kinds: HashMap<String, u16> }
-static TAPE: RwLock<Option<Arc<Tape>>> = RwLock::new(None);
-
 fn user_err(m: String) -> Error { Error::UserFunctionError(m.into()) }
-
-fn tape_load(conn: &Connection, schema: &str) -> Result<usize> {
-    let mut kinds: HashMap<String, u16> = HashMap::new();
-    let (mut par, mut kind) = (Vec::new(), Vec::new());
-    let mut st = conn.prepare(&format!("SELECT n, kind FROM {schema}.node"))?;
-    let mut rows = st.query([])?;
-    while let Some(r) = rows.next()? {
-        let n: i64 = r.get(0)?;
-        let k: String = r.get(1)?;
-        let next = kinds.len() as u16;
-        let id = *kinds.entry(k).or_insert(next);
-        if kind.len() <= n as usize { kind.resize(n as usize + 1, u16::MAX); par.resize(n as usize + 1, -1); }
-        kind[n as usize] = id;
-    }
-    let mut size = vec![0u32; par.len()];
-    let mut st = conn.prepare(&format!("SELECT n, par, size FROM {schema}.tape"))?;
-    let mut rows = st.query([])?;
-    while let Some(r) = rows.next()? {
-        let (n, p, z): (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
-        par[n as usize] = p as i32;
-        size[n as usize] = z as u32;
-    }
-    let n = par.len();
-    *TAPE.write().unwrap() = Some(Arc::new(Tape { par, kind, size, kinds }));
-    Ok(n)
-}
 
 fn flat_bin(op: &str, a: i64, b: i64) -> i64 {
     if a == TOP || b == TOP { return TOP; }
@@ -100,20 +72,9 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
             bins.push((r.get(0)?, op, r.get(2)?, r.get(3)?));
         }
     }
-    let kseed: Vec<(String, i64)> = if conn.prepare(&format!("SELECT 1 FROM {p}_kseed LIMIT 0")).is_ok() {
-        let mut st = conn.prepare(&format!("SELECT c0, c1 FROM {p}_kseed"))?;
-        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_>>()?
-    } else { Vec::new() };
-    let tape = if kseed.is_empty() { None } else { Some(TAPE.read().unwrap().clone().ok_or_else(|| user_err("tape_load first".into()))?) };
-    let mut n = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
+    let n = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
         .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).max().map_or(0, |m| m as usize + 1);
-    if let Some(t) = &tape { n = n.max(t.kind.len()); }
     let mut seed = vec![BOT; n];
-    if let Some(t) = &tape {
-        let mut by_kind = vec![BOT; t.kinds.len()];
-        for (k, v) in &kseed { if let Some(&id) = t.kinds.get(k) { by_kind[id as usize] = join(by_kind[id as usize], *v); } }
-        for (v, &k) in t.kind.iter().enumerate() { if k != u16::MAX { seed[v] = by_kind[k as usize]; } }
-    }
     for &(k, v) in &seeds { seed[k as usize] = join(seed[k as usize], v); }
     // In-edges per node (to evaluate it) and out-edges (to find dependents), as CSR.
     let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
@@ -251,36 +212,9 @@ unsafe impl VTabCursor for ResultCursor {
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// # Safety
-/// Called by SQLite's extension loader.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn sqlite3_extension_init(db: *mut ffi::sqlite3, err: *mut *mut c_char, api: *mut ffi::sqlite3_api_routines) -> c_int {
-    unsafe { Connection::extension_init2(db, err, api, init) }
-}
-
-fn init(db: Connection) -> Result<bool> {
+/// Registers the functions and virtual tables on `db`.
+pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
-    db.create_scalar_function(c"tape_load", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
-        let schema: String = ctx.get(0)?;
-        let conn = unsafe { ctx.get_connection()? };
-        tape_load(&conn, &schema).map(|n| n as i64)
-    })?;
-    db.create_scalar_function(c"tape_nearest", 2, det, |ctx| {
-        let tape = TAPE.read().unwrap().clone().ok_or_else(|| user_err("tape_load first".into()))?;
-        let t2 = tape.clone();
-        let set = ctx.get_or_create_aux(1, move |v| -> Result<Vec<bool>, Error> {
-            let mut m = vec![false; t2.kinds.len()];
-            for k in v.as_str()?.split(',') { if let Some(&id) = t2.kinds.get(k) { m[id as usize] = true; } }
-            Ok(m)
-        })?;
-        let n: i64 = ctx.get(0)?;
-        let mut cur = tape.par[n as usize];
-        while cur >= 0 {
-            if set[tape.kind[cur as usize] as usize] { return Ok(Some(cur as i64)); }
-            cur = tape.par[cur as usize];
-        }
-        Ok(None)
-    })?;
     db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
         let o: String = ctx.get(0)?;
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
@@ -334,5 +268,8 @@ fn init(db: Connection) -> Result<bool> {
     db.create_module(c"set_rel", &SETREL, None)?;
     const RESULT: Module<ResultTab> = Module::read_only_module();
     db.create_module(c"lattice_result", &RESULT, None)?;
-    Ok(false)
+    Ok(())
 }
+
+#[cfg(test)]
+mod tests;

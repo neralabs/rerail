@@ -2,6 +2,8 @@
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
 //! `sql` is the typed SQL its plans emit.
 
-// Nothing emits SQL through it until the planner (Phase 6) does.
+// Nothing emits SQL through them until the planner (Phase 6) does.
+#[allow(dead_code)]
+pub(in crate::code_rule_dsl) mod native;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod sql;

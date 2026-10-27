@@ -654,8 +654,6 @@ unsafe impl VTabCursor for RelCursor {
 //   neg <src> <tok..>      a negated atom (every variable bound)
 //   cat <tok> <tok> <tok>  first = second "." third, binding the first or testing it; with the first bound and a part
 //                          unbound, splitting the first at each "." (binding the unbound parts, testing a bound one)
-//   near <tok> <tok> <hex kinds>   the second is the first's nearest strict ancestor of a kind in the comma list
-//   down <tok> <tok> <hex kinds>   the same, enumerating the first (unbound) from the second (bound)
 //   eq <tok> <tok>, ne <tok> <tok> equal (binding the first if unbound) or not
 //   lt <tok> <tok>, le <tok> <tok> integer order, both bound
 //   count <src> <tok..> <tok>      the atom's matching tuples (its variables bound), binding or testing the last
@@ -663,6 +661,7 @@ unsafe impl VTabCursor for RelCursor {
 // Tokens are `_`, `v<slot>`, `i:<int>`, `x:<hex symbol>`. Which columns of an atom are keys (bound) or bind is fixed
 // here, in literal order, so each step looks up one index and never re-derives the binding pattern.
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
+// T's `near`/`down` steps (ancestor climbs over a loaded tape) are not kept: tree axes run in the transducer.
 
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     let mut s = std::mem::take(&mut syms.buf);
@@ -805,10 +804,6 @@ enum Step {
     Cat { out: usize, a: Key, b: Key, bind: bool },
     /// `whole` split at each "." into `a` and `b`; `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
     Split { whole: Key, a: Option<usize>, b: Option<usize>, ka: Key, kb: Key },
-    Near { n: Key, a: usize, kinds: Vec<bool>, bind: bool },
-    /// Every node `n` whose nearest strict ancestor of a kind in `kinds` is `a`: `a`'s subtree in preorder,
-    /// skipping the inside of each such node (the node itself is one of them).
-    Down { a: Key, n: usize, kinds: Vec<bool> },
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     Count { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, out: usize, bind: bool },
@@ -825,7 +820,6 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
     let mut steps = Vec::new();
     let mut out = Vec::new();
     let mut multi = Vec::new();
-    let tape = crate::TAPE.read().unwrap().clone();
     fn tok(t: &str, syms: &mut Interner) -> Result<Option<Key>> {
         Ok(if t == "_" { None } else if let Some(i) = t.strip_prefix("i:") { Some(Key::Const(num(i)?)) }
            else if let Some(x) = t.strip_prefix("x:") { Some(Key::Const(syms.id(&unhex(x)?))) } else { Some(Key::Slot(slot(t)?)) })
@@ -900,25 +894,6 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 grow(&mut bound, o); bound[o] = true;
                 steps.push(Step::Cat { out: o, a, b, bind });
             }
-            "near" => {
-                let tape = tape.as_ref().ok_or_else(|| err("near needs tape_load"))?;
-                let (Some(n), Some(Key::Slot(a))) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad near")) };
-                if !is_bound(&bound, n) { return Err(err("near from an unbound slot")); }
-                let mut kinds = vec![false; tape.kinds.len()];
-                for k in unhex(toks[3])?.split(',') { if let Some(&id) = tape.kinds.get(k) { kinds[id as usize] = true; } }
-                let bind = !is_bound(&bound, Key::Slot(a));
-                grow(&mut bound, a); bound[a] = true;
-                steps.push(Step::Near { n, a, kinds, bind });
-            }
-            "down" => {
-                let tape = tape.as_ref().ok_or_else(|| err("down needs tape_load"))?;
-                let (Some(Key::Slot(n)), Some(a)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad down")) };
-                if !is_bound(&bound, a) || is_bound(&bound, Key::Slot(n)) { return Err(err("down binds its first slot from its bound second")); }
-                let mut kinds = vec![false; tape.kinds.len()];
-                for k in unhex(toks[3])?.split(',') { if let Some(&id) = tape.kinds.get(k) { kinds[id as usize] = true; } }
-                grow(&mut bound, n); bound[n] = true;
-                steps.push(Step::Down { a, n, kinds });
-            }
             "lt" | "le" => {
                 let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("order of an unbound slot")); }
@@ -954,7 +929,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
 fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
     struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     tape: Option<&'a crate::Tape>, key: Vec<i64>, row: Vec<i64> }
+                     key: Vec<i64>, row: Vec<i64> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -1048,31 +1023,12 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                     go(cx, i + 1, slots);
                 }
             }
-            Step::Near { n, a, kinds, bind } => {
-                let tape = cx.tape.expect("tape");
-                let mut cur = tape.par[val(slots, *n) as usize];
-                while cur >= 0 && !kinds[tape.kind[cur as usize] as usize] { cur = tape.par[cur as usize]; }
-                if cur < 0 { return }
-                if *bind { slots[*a] = cur as i64 } else if slots[*a] != cur as i64 { return }
-                go(cx, i + 1, slots);
-            }
-            Step::Down { a, n, kinds } => {
-                let tape = cx.tape.expect("tape");
-                let a = val(slots, *a) as usize;
-                let (mut cur, stop) = (a + 1, a + tape.size[a] as usize);
-                while cur <= stop {
-                    slots[*n] = cur as i64;
-                    go(cx, i + 1, slots);
-                    cur += if kinds[tape.kind[cur] as usize] { tape.size[cur] as usize + 1 } else { 1 };
-                }
-            }
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
     }
-    let tape = crate::TAPE.read().unwrap().clone();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, tape: tape.as_deref(), key: Vec::new(), row: Vec::new() };
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new() };
     let mut slots = vec![0i64; j.nslots];
     go(&mut cx, 0, &mut slots);
     cx.n
