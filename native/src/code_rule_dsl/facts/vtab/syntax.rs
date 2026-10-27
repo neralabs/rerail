@@ -22,7 +22,7 @@
 
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE};
+use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom};
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
@@ -93,18 +93,32 @@ impl Class {
     }
 }
 
-/// A dialect's kinds as T's exporter reads them.
+/// A dialect's kinds as T's exporter reads them. T's kinds were names, and a grammar gives some names several codes
+/// (aliases): the `kind` column holds each name's canonical code (`KindCatalog::kind_id`, what a program's constant
+/// lowers to), and a lookup reads the postings of every code of that name.
 struct Dialect {
     tag: u8,
     catalog: KindCatalog,
     classes: Vec<Class>,
     operator: Option<u16>,
+    canonical: Vec<u16>,
+    codes: HashMap<u16, Vec<u16>>,
 }
 impl Dialect {
     fn new(tag: u8) -> StoreResult<Self> {
         let catalog = from_tape_tag(tag).ok_or_else(|| StoreError::Invalid(format!("no dialect has tape tag {tag}")))?.kinds();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
-        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator") })
+        let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
+            .map(|k| match catalog.kind_name(k) {
+                Some(name) if catalog.kind_is_named(k) => Some(catalog.kind_id(name)).filter(|&c| c != 0).unwrap_or(k),
+                _ => k,
+            })
+            .collect();
+        let mut codes: HashMap<u16, Vec<u16>> = HashMap::new();
+        for (k, &c) in canonical.iter().enumerate() {
+            codes.entry(c).or_default().push(k as u16);
+        }
+        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), canonical, codes })
     }
     fn code(f: &Facts, id: u32) -> u16 {
         (f.kind[id as usize] % KIND_STRIDE) as u16
@@ -201,6 +215,7 @@ impl Projected {
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub(crate) struct Batch {
     docs: Vec<Projected>,
+    dialects: HashMap<u8, Dialect>,
     nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
@@ -305,7 +320,7 @@ impl Batch {
         let nodes = offsets(&|p| p.core.len());
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| p.fielded.len());
-        Ok((Arc::new(Batch { docs, nodes, children, fields }), relations))
+        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields }), relations))
     }
 
     fn offsets(&self, view: View) -> &[usize] {
@@ -375,8 +390,8 @@ impl Viewed {
     /// The column holding the row's own node, which ranges and direct lookups address.
     fn own(&self) -> usize {
         match self.view {
-            View::Node => 1,
-            View::Child | View::Field => 2,
+            View::Node | View::Child => 1,
+            View::Field => 2,
             View::Tape => 0,
         }
     }
@@ -443,9 +458,15 @@ impl Source for Viewed {
             } else if matches!(self.view, View::Node) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(kind), tag) = (u32::try_from(v), v / i64::from(KIND_STRIDE)) else { continue };
-                for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| i64::from(p.tag) == tag) {
-                    rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
+                    continue;
+                };
+                let Some(dialect) = b.dialects.get(&tag).filter(|_| v >= 0) else { continue };
+                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
+                for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| p.tag == tag) {
+                    for &kind in &atoms {
+                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                    }
                 }
             } else {
                 return None;
@@ -465,7 +486,10 @@ impl Source for Viewed {
         let parent = || if p.parent[l] == NONE { -1 } else { p.global(p.parent[l]) };
         match (self.view, column) {
             (View::Node, 0) => i64::from(p.key),
-            (View::Node, 2) => i64::from(p.facts.kind[id]),
+            (View::Node, 2) => {
+                let code = (p.facts.kind[id] % KIND_STRIDE) as usize;
+                i64::from(kind_atom(p.tag, self.batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
+            }
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
@@ -509,4 +533,4 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::code_rule_dsl) mod tests;

@@ -26,7 +26,8 @@ fn facts(path: &str, source: &str) -> Arc<Facts> {
         Built::Unparsed => panic!("{path} did not parse"),
     }
 }
-fn documents() -> Vec<Document> {
+/// The corpus as a batch, document `d` keyed `d`.
+pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
     corpus()
         .into_iter()
         .enumerate()
@@ -159,6 +160,8 @@ fn lookups_agree_with_scans() {
         ("node", format!("n > {} AND n < {}", (1i64 << 32) - 5, (1i64 << 32) + 3)),
         ("child", format!("p = {n}")),
         ("child", format!("c IN ({n}, {}, 0, 7)", n + 1)),
+        ("child", format!("p = {n} AND idx = 1")),
+        ("child", "idx = 0".to_owned()),
         ("field", format!("p = {n}")),
         ("field", format!("c = {}", n + 1)),
         ("tape", "par = -1".to_owned()),
@@ -178,11 +181,27 @@ fn lookups_agree_with_scans() {
         };
         let indexed = key(&format!("SELECT * FROM {rel} WHERE {filter}"));
         // `+` on every column reference hides the constraint from xBestIndex: SQLite scans and filters.
-        let hidden = regex::Regex::new(r"\b(n|p|c|d|kind|par) ").unwrap().replace_all(&filter, "+$1 ");
+        let hidden = regex::Regex::new(r"\b(n|p|c|d|kind|par|idx) ").unwrap().replace_all(&filter, "+$1 ");
         let scanned = key(&format!("SELECT * FROM {rel} WHERE {hidden}"));
         assert!(!indexed.is_empty() || filter.contains("0, 7"), "{rel} {filter}: no rows");
         assert_eq!(indexed, scanned, "{rel} {filter}");
     }
+}
+
+/// Two cursors on one table, joined on a column the inner one does not index, pair children by position.
+#[test]
+fn self_joins_pair_children_by_position() {
+    let store = ContentStore::open(&temp("self-join")).unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
+    for (name, source) in sources(&store, documents().into_iter().take(1).collect()).unwrap() {
+        modules.bind(&db, name, source).unwrap();
+    }
+    let count = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    let pairs = "FROM child a CROSS JOIN child b WHERE a.p < b.p AND b.p < a.p + 40 AND a.idx = b.idx";
+    let joined = count(&format!("SELECT count(*) {pairs}"));
+    assert!(joined > 0);
+    assert_eq!(joined, count(&format!("SELECT count(*) {}", pairs.replace("a.idx = b.idx", "+a.idx = +b.idx"))));
 }
 
 /// A document whose `#core:` name now binds other facts is refused when the batch is bound.

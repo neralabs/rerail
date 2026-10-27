@@ -39,7 +39,8 @@ cost on every document, the warm run on a few, and an outer SQL query sees the s
   preorder. T's programs and goldens then run unchanged on the product's facts.
 - **Every column is an integer.** A node is `d << 32 | named preorder id`, so a document is an id
   interval. `d` is the document's key from the caller (its path atom in the push path). Kinds are
-  kind atoms (`facts::core::kind_atom`), fields field atoms (`tag << 16 | field code`), and text,
+  kind atoms (`facts::core::kind_atom`) of each name's canonical code (`KindCatalog::kind_id`; a grammar's
+  aliases give one name several codes, and T's kinds were names), fields field atoms (`tag << 16 | field code`), and text,
   paths, modules and operators name atoms (C12), interned when the batch is bound.
 - **A binding is checked against current versions when it is bound**: each document carries the
   core digest it was built from, and binding refuses a document whose `#core:` name now binds
