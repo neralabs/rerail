@@ -8,6 +8,8 @@ use super::{
     },
 };
 
+use super::packed_batch::PackedBatch;
+
 fn checked_u32(value: usize) -> Result<u32, Error> {
     u32::try_from(value).map_err(|_| Error::BackendFailure)
 }
@@ -40,27 +42,26 @@ impl PackedValueTables {
             ValueMatcher::Class { class, negated } => {
                 (2, u32::from(*class), u32::from(*negated), 0, 0)
             }
-            ValueMatcher::Set { members, negated } => {
+            ValueMatcher::Set { negated, .. } => {
                 let start = checked_u32(self.lua_members.len())?;
-                for member in members {
-                    self.lua_members.push(match member {
-                        ValueSetMember::Byte(byte) => LuaSetMemberRecord {
-                            kind: 0,
-                            first: u32::from(*byte),
-                            ..LuaSetMemberRecord::default()
-                        },
-                        ValueSetMember::Range(first, second) => LuaSetMemberRecord {
-                            kind: 1,
-                            first: u32::from(*first),
-                            second: u32::from(*second),
-                            ..LuaSetMemberRecord::default()
-                        },
-                        ValueSetMember::Class { class, negated } => LuaSetMemberRecord {
-                            kind: 2,
-                            first: u32::from(*class),
-                            negated: u32::from(*negated),
-                            ..LuaSetMemberRecord::default()
-                        },
+                // Normalize over the byte alphabet once. Even a set with many
+                // duplicate members needs at most 128 disjoint ranges on GPU.
+                let mut byte = 0u16;
+                while byte < 256 {
+                    if matcher.matches(byte as u8) == *negated {
+                        byte += 1;
+                        continue;
+                    }
+                    let first = byte;
+                    byte += 1;
+                    while byte < 256 && matcher.matches(byte as u8) != *negated {
+                        byte += 1;
+                    }
+                    self.lua_members.push(LuaSetMemberRecord {
+                        kind: 1,
+                        first: u32::from(first),
+                        second: u32::from(byte - 1),
+                        ..LuaSetMemberRecord::default()
                     });
                 }
                 (
@@ -68,7 +69,7 @@ impl PackedValueTables {
                     u32::from(*negated),
                     0,
                     start,
-                    checked_u32(members.len())?,
+                    checked_u32(self.lua_members.len())? - start,
                 )
             }
         })
@@ -109,8 +110,9 @@ impl PackedValueTables {
                         next: 0,
                     }
                 }
-                NfaState::Capture { next, .. } => NfaStateRecord {
+                NfaState::Capture { slot, next } => NfaStateRecord {
                     kind: 3,
+                    data_start: *slot,
                     next: *next,
                     ..NfaStateRecord::default()
                 },
@@ -236,4 +238,119 @@ pub(super) fn unicode_word_data() -> Vec<u32> {
         data.extend([range.start() as u32, range.end() as u32]);
     }
     data
+}
+
+pub(super) fn lua_matcher(
+    batch: &PackedBatch,
+    instruction: LuaInstructionRecord,
+) -> Result<ValueMatcher, Error> {
+    let i = instruction;
+    Ok(match i.matcher_kind {
+        0 if [
+            i.matcher_first,
+            i.matcher_second,
+            i.data_start,
+            i.data_count,
+        ] == [0; 4] =>
+        {
+            ValueMatcher::Any
+        }
+        1 if i.matcher_first <= 255 && [i.matcher_second, i.data_start, i.data_count] == [0; 3] => {
+            ValueMatcher::Byte(i.matcher_first as u8)
+        }
+        2 if i.matcher_first <= 255
+            && i.matcher_second <= 1
+            && [i.data_start, i.data_count] == [0; 2] =>
+        {
+            let class = i.matcher_first as u8;
+            if !b"acdglpsuwxz".contains(&class.to_ascii_lowercase())
+                || class.is_ascii_uppercase() != (i.matcher_second != 0)
+            {
+                return Err(Error::InvalidAnchor);
+            }
+            ValueMatcher::Class {
+                class,
+                negated: i.matcher_second != 0,
+            }
+        }
+        3 if i.matcher_first <= 1 && i.matcher_second == 0 => {
+            let end = i
+                .data_start
+                .checked_add(i.data_count)
+                .ok_or(Error::InvalidAnchor)?;
+            let ranges = batch
+                .lua_members
+                .get(i.data_start as usize..end as usize)
+                .ok_or(Error::InvalidAnchor)?;
+            let mut members = Vec::new();
+            let mut previous = None;
+            for member in ranges {
+                if member.kind != 1
+                    || member.negated != 0
+                    || member.second > 255
+                    || member.first > member.second
+                    || previous.is_some_and(|end| member.first <= end + 1)
+                {
+                    return Err(Error::InvalidAnchor);
+                }
+                members.push(ValueSetMember::Range(
+                    member.first as u8,
+                    member.second as u8,
+                ));
+                previous = Some(member.second);
+            }
+            ValueMatcher::Set {
+                members,
+                negated: i.matcher_first != 0,
+            }
+        }
+        _ => return Err(Error::InvalidAnchor),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::value::ValueSetMember;
+    use super::*;
+
+    #[test]
+    fn lua_sets_pack_into_at_most_128_exact_byte_ranges() {
+        let alternating = (0..100)
+            .flat_map(|_| (0u8..=254).step_by(2).map(ValueSetMember::Byte))
+            .collect::<Vec<_>>();
+        let mixed = vec![
+            ValueSetMember::Range(b'a', b'f'),
+            ValueSetMember::Class {
+                class: b's',
+                negated: false,
+            },
+            ValueSetMember::Class {
+                class: b'd',
+                negated: true,
+            },
+            ValueSetMember::Byte(0),
+        ];
+        for members in [alternating, mixed] {
+            for negated in [false, true] {
+                let matcher = ValueMatcher::Set {
+                    members: members.clone(),
+                    negated,
+                };
+                let mut tables = PackedValueTables::default();
+                let (kind, first, _, start, count) = tables.push_lua_matcher(&matcher).unwrap();
+                assert_eq!((kind, first, start), (3, u32::from(negated), 0));
+                assert!(count <= 128);
+                for byte in 0u8..=255 {
+                    let found = tables.lua_members.iter().any(|range| {
+                        u32::from(byte) >= range.first && u32::from(byte) <= range.second
+                    });
+                    assert_eq!(
+                        found != negated,
+                        matcher.matches(byte),
+                        "byte={byte} negated={negated}"
+                    );
+                }
+            }
+        }
+    }
 }

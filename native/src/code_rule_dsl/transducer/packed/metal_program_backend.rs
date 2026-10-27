@@ -1,5 +1,5 @@
 use super::metal_backend::launch::{
-    CheckedComputeEncoder, LaunchScope, commit_checked, wait_checked,
+    CheckedComputeEncoder, commit_checked, wait_checked,
 };
 use super::metal_backend::{MappedBuffer, pipeline_named};
 use super::metal_batch_abi::{
@@ -607,7 +607,7 @@ pub(super) fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    let _evaluation = LaunchScope::enter();
+    let _evaluation = super::metal_backend::metal_execution_guard()?;
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }

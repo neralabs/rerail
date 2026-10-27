@@ -451,7 +451,7 @@ pub(super) fn define(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }

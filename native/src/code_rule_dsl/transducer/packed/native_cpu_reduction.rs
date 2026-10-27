@@ -358,12 +358,15 @@ pub(super) fn define(
                 task,
                 mem::offset_of!(NativeTaskContext, current_captures) as i32,
             );
-            function.ins().store(
-                MemFlags::trusted(),
-                zero,
-                task,
-                mem::offset_of!(NativeTaskContext, current_steps) as i32,
-            );
+            if predicate_index == 0 {
+                // Query predicates share one fresh budget for this candidate.
+                function.ins().store(
+                    MemFlags::trusted(),
+                    zero,
+                    task,
+                    mem::offset_of!(NativeTaskContext, current_steps) as i32,
+                );
+            }
             let call = function.ins().call(predicate_function, &[task]);
             let outcome = function.inst_results(call)[0];
             let rejected = function.ins().icmp_imm(IntCC::Equal, outcome, 0);
@@ -427,7 +430,7 @@ pub(super) fn define(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }

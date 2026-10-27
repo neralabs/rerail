@@ -106,7 +106,7 @@ pub(super) fn plan_shared(
         let evaluation_index =
             u32::try_from(plan.evaluations.len()).map_err(|_| Error::BackendCapacity)?;
         let mut limits = [0_u32; ARENA_KIND_COUNT];
-        let mut work_limit = 0_u32;
+        let mut workspace_work_estimate = 0_u32;
         let mut end = task_index;
         while end < tasks.len()
             && tasks[end].file == first.file
@@ -136,20 +136,21 @@ pub(super) fn plan_shared(
                     total.checked_add(value).ok_or(Error::BackendCapacity)?
                 };
             }
-            work_limit = work_limit.saturating_add(tasks[end].work_limit);
+            workspace_work_estimate =
+                workspace_work_estimate.saturating_add(tasks[end].workspace_work_estimate);
             plan.tasks.push(MetalTask {
                 evaluation: evaluation_index,
                 batch_ordinal: tasks[end].batch_ordinal,
                 file: tasks[end].file,
                 program: tasks[end].program,
                 root: tasks[end].root,
-                work_limit: tasks[end].work_limit,
+                workspace_work_estimate: tasks[end].workspace_work_estimate,
             });
             end += 1;
         }
         let mut evaluation = MetalEvaluation {
             generation: 1,
-            work_limit,
+            workspace_work_estimate,
             task_start: u32::try_from(task_index).map_err(|_| Error::BackendCapacity)?,
             task_count: u32::try_from(end - task_index).map_err(|_| Error::BackendCapacity)?,
             pending: LazyArenaBlockRecord {
@@ -226,4 +227,138 @@ pub(super) fn plan_shared(
         };
     }
     Ok(plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn evaluation_workspace_work_estimate_saturates_at_abi_maximum() {
+        let tasks = [
+            MetalTask {
+                file: 0,
+                program: 0,
+                workspace_work_estimate: u32::MAX,
+                ..MetalTask::default()
+            },
+            MetalTask {
+                file: 0,
+                program: 0,
+                workspace_work_estimate: 1,
+                ..MetalTask::default()
+            },
+        ];
+        let plan = plan_shared(&tasks, &[TaskCapacities::default(); 2], None).unwrap();
+        assert_eq!(plan.evaluations[0].workspace_work_estimate, u32::MAX);
+    }
+
+    #[test]
+    fn shared_page_caps_bound_evaluation_and_global_durable_totals() {
+        let tasks = [
+            MetalTask {
+                file: 0,
+                program: 0,
+                ..MetalTask::default()
+            },
+            MetalTask {
+                file: 1,
+                program: 0,
+                ..MetalTask::default()
+            },
+        ];
+        let capacities = [TaskCapacities {
+            results: u32::MAX,
+            output_captures: u32::MAX,
+            ..TaskCapacities::default()
+        }; 2];
+        let mut caps = [u32::MAX; ARENA_KIND_COUNT];
+        caps[ArenaKind::Result as usize] = 64;
+        caps[ArenaKind::FinalCapture as usize] = 128;
+
+        let plan = plan_shared(&tasks, &capacities, Some(caps)).unwrap();
+
+        assert!(
+            plan.evaluations
+                .iter()
+                .all(|evaluation| evaluation.quotas[ArenaKind::Result as usize].limit == 64)
+        );
+        assert_eq!(plan.global.arenas[ArenaKind::Result as usize].capacity, 64);
+        assert_eq!(
+            plan.global.arenas[ArenaKind::FinalCapture as usize].capacity,
+            128
+        );
+    }
+
+    #[test]
+    fn shared_plan_assigns_contiguous_tasks_and_reuses_lazy_blocks_across_roots() {
+        let tasks = [
+            MetalTask {
+                file: 0,
+                program: 0,
+                batch_ordinal: 0,
+                workspace_work_estimate: 7,
+                ..MetalTask::default()
+            },
+            MetalTask {
+                file: 0,
+                program: 0,
+                batch_ordinal: 1,
+                workspace_work_estimate: 11,
+                ..MetalTask::default()
+            },
+            MetalTask {
+                file: 0,
+                program: 1,
+                batch_ordinal: 2,
+                workspace_work_estimate: 13,
+                ..MetalTask::default()
+            },
+        ];
+        let capacities = [
+            TaskCapacities {
+                pending: 2,
+                query_states: 3,
+                query_members: 5,
+                queued_states: 7,
+                greedy_entries: 11,
+                ..TaskCapacities::default()
+            },
+            TaskCapacities {
+                pending: 13,
+                query_states: 17,
+                query_members: 19,
+                queued_states: 23,
+                greedy_entries: 29,
+                ..TaskCapacities::default()
+            },
+            TaskCapacities {
+                pending: 31,
+                query_states: 37,
+                query_members: 41,
+                queued_states: 43,
+                greedy_entries: 47,
+                ..TaskCapacities::default()
+            },
+        ];
+
+        let plan = plan_shared(&tasks, &capacities, None).unwrap();
+
+        assert_eq!(plan.evaluations.len(), 2);
+        let first = plan.evaluations[0];
+        assert_eq!((first.task_start, first.task_count), (0, 2));
+        assert_eq!(first.workspace_work_estimate, 18);
+        assert_eq!(first.pending.limit, 13);
+        assert_eq!(first.query_bucket.limit, 17);
+        assert_eq!(first.query_member.limit, 19);
+        assert_eq!(first.queued_state.limit, 23);
+        assert_eq!(first.greedy_entry.limit, 29);
+        let second = plan.evaluations[1];
+        assert_eq!((second.task_start, second.task_count), (2, 1));
+        assert_eq!(second.pending.limit, 31);
+        assert_eq!(second.query_bucket.limit, 37);
+        assert_eq!(second.query_member.limit, 41);
+        assert_eq!(second.queued_state.limit, 43);
+        assert_eq!(second.greedy_entry.limit, 47);
+    }
 }

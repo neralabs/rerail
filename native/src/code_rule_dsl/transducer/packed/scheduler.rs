@@ -464,3 +464,233 @@ impl AdmissionTable<'_> {
         Admission::Accepted
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(start: u32, end: u32) -> MetalNode {
+        MetalNode {
+            source_start: start,
+            source_end: end,
+            ..MetalNode::default()
+        }
+    }
+
+    #[test]
+    fn capture_containment_preserves_multiplicity_and_zero_width_identity() {
+        let nodes = [node(0, 1), node(2, 2), node(2, 2)];
+        let links = [
+            LinkRecord {
+                previous: 0,
+                first: 7,
+                second: 0,
+            },
+            LinkRecord {
+                previous: 1,
+                first: 7,
+                second: 1,
+            },
+            LinkRecord {
+                previous: 2,
+                first: 7,
+                second: 1,
+            },
+            LinkRecord {
+                previous: 1,
+                first: 7,
+                second: 2,
+            },
+        ];
+        assert_eq!(
+            capture_containment(&links, &nodes, 3, 2),
+            Some((true, false))
+        );
+        assert_eq!(
+            capture_containment(&links, &nodes, 2, 3),
+            Some((false, true))
+        );
+        assert_eq!(
+            capture_containment(&links, &nodes, 2, 4),
+            Some((false, false))
+        );
+    }
+
+    #[test]
+    fn query_antichain_accepts_supersets_and_rejects_subsets_in_both_orders() {
+        let nodes = [node(0, 1), node(2, 3)];
+        let captures = [
+            LinkRecord {
+                previous: 0,
+                first: 1,
+                second: 0,
+            },
+            LinkRecord {
+                previous: 1,
+                first: 1,
+                second: 1,
+            },
+        ];
+        let subset = PathRecord {
+            pc: 1,
+            captures: 1,
+            ..PathRecord::default()
+        };
+        let superset = PathRecord {
+            captures: 2,
+            ..subset
+        };
+        for (first, second, expected) in [
+            (subset, superset, Admission::Accepted),
+            (superset, subset, Admission::Rejected),
+        ] {
+            let mut buckets = [QueryBucketRecord::default(); 1];
+            let mut members = [QueryMemberRecord::default(); 2];
+            let mut member_count = 0;
+            let mut table = AdmissionTable {
+                buckets: &mut buckets,
+                members: &mut members,
+                member_count: &mut member_count,
+                captures: &captures,
+                cursors: &[],
+                repeats: &[],
+                nodes: &nodes,
+                maximum_cursor_slot: 0,
+            };
+            assert_eq!(table.admit(first, 0), Admission::Accepted);
+            assert_eq!(table.admit(second, 0), expected);
+        }
+    }
+
+    #[test]
+    fn queued_states_suppress_only_complete_equal_identities() {
+        let nodes = [node(0, 1), node(2, 3)];
+        let captures = [
+            LinkRecord {
+                previous: 0,
+                first: 1,
+                second: 0,
+            },
+            LinkRecord {
+                previous: 0,
+                first: 1,
+                second: 1,
+            },
+        ];
+        let mut records = [QueuedStateRecord::default(); 2];
+        let first = PathRecord {
+            pc: 4,
+            node: 1,
+            captures: 1,
+            ..PathRecord::default()
+        };
+        assert_eq!(
+            queue_insert(&mut records, first, 2, &captures, &[], &[], &nodes, 0),
+            QueueInsert::Inserted
+        );
+        assert_eq!(
+            queue_insert(&mut records, first, 2, &captures, &[], &[], &nodes, 0),
+            QueueInsert::Duplicate
+        );
+        let unequal = PathRecord {
+            captures: 2,
+            ..first
+        };
+        assert_eq!(
+            queue_insert(&mut records, unequal, 2, &captures, &[], &[], &nodes, 0),
+            QueueInsert::Inserted
+        );
+        assert!(queue_remove(
+            &mut records,
+            first,
+            2,
+            &captures,
+            &[],
+            &[],
+            &nodes,
+            0
+        ));
+        assert!(!queue_remove(
+            &mut records,
+            first,
+            2,
+            &captures,
+            &[],
+            &[],
+            &nodes,
+            0
+        ));
+    }
+
+    #[test]
+    fn greedy_replacement_keeps_one_slot_and_returns_the_newest_path() {
+        let nodes = [node(0, 1)];
+        let mut records = [GreedyEntryRecord::default(); 1];
+        let first = PathRecord {
+            pc: 9,
+            start: 3,
+            node: 4,
+            ..PathRecord::default()
+        };
+        assert_eq!(
+            schedule_greedy(&mut records, first, &[], &[], &[], &nodes, 0),
+            GreedySchedule::Inserted(0)
+        );
+        let newest = PathRecord { node: 8, ..first };
+        assert_eq!(
+            schedule_greedy(&mut records, newest, &[], &[], &[], &nodes, 0),
+            GreedySchedule::Replaced(0)
+        );
+        assert_eq!(take_greedy(&mut records, 0), Some(newest));
+        assert_eq!(take_greedy(&mut records, 0), None);
+    }
+
+    #[test]
+    fn query_admission_uses_complete_keys_after_hash_collisions() {
+        let nodes = [node(0, 1)];
+        let mut buckets = [QueryBucketRecord::default(); 2];
+        let mut members = [QueryMemberRecord::default(); 2];
+        let mut member_count = 0;
+        let captures = [LinkRecord {
+            previous: 0,
+            first: 1,
+            second: 0,
+        }];
+        let cursors = [
+            LinkRecord {
+                previous: 0,
+                first: 0,
+                second: 10,
+            },
+            LinkRecord {
+                previous: 0,
+                first: 0,
+                second: 11,
+            },
+        ];
+        let mut table = AdmissionTable {
+            buckets: &mut buckets,
+            members: &mut members,
+            member_count: &mut member_count,
+            captures: &captures,
+            cursors: &cursors,
+            repeats: &[],
+            nodes: &nodes,
+            maximum_cursor_slot: 1,
+        };
+        let first = PathRecord {
+            pc: 3,
+            node: 0,
+            captures: 1,
+            cursors: 1,
+            ..PathRecord::default()
+        };
+        assert_eq!(table.admit(first, 0), Admission::Accepted);
+        assert_eq!(table.admit(first, 0), Admission::Rejected);
+        let unequal = PathRecord {
+            cursors: 2,
+            ..first
+        };
+        assert_eq!(table.admit(unequal, 0), Admission::Accepted);
+    }
+}

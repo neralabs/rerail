@@ -1,12 +1,11 @@
 use super::{
     metal_batch_abi::{
-        ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord,
-        LuaInstructionRecord, LuaSetMemberRecord, MetalBatchHeader, MetalEvaluation,
-        MetalFile as BatchFile, MetalGlobalArenas, MetalNode as BatchNode,
-        MetalProgram as BatchProgram, MetalString as BatchString, MetalSupertype as BatchSupertype,
-        MetalTask as BatchTask, NONE, NfaRangeRecord, NfaStateRecord, PendingRecord,
-        PropertyRecord, QueryBucketRecord, QueryMemberRecord, QueuedStateRecord, RepeatRecord,
-        ResultRecord, TaskStatus, ValueRecord,
+        ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord, LuaInstructionRecord,
+        LuaSetMemberRecord, MetalBatchHeader, MetalEvaluation, MetalFile as BatchFile,
+        MetalGlobalArenas, MetalNode as BatchNode, MetalProgram as BatchProgram,
+        MetalString as BatchString, MetalSupertype as BatchSupertype, MetalTask as BatchTask, NONE,
+        NfaRangeRecord, NfaStateRecord, PendingRecord, PropertyRecord, QueryBucketRecord,
+        QueryMemberRecord, QueuedStateRecord, RepeatRecord, ResultRecord, TaskStatus, ValueRecord,
     },
     native_ir::ArenaKind,
     packed_workspace::{TaskCapacities, WorkspaceTotals, plan_shared},
@@ -18,6 +17,18 @@ use crate::code_rule_dsl::tape::TapeDoc;
 const MAX_OUTPUT_CAPTURES_PER_TASK: u32 = 4_096;
 const MAX_PROPERTIES_PER_TASK: u32 = 4_096;
 
+/// Packed query ordering and exact-admission metadata, derived from the Program.
+pub(super) fn program_flags(program: &Program) -> u32 {
+    u32::from(program.tree_sitter_query)
+        | (u32::from(
+            program.tree_sitter_query
+                && program
+                    .words
+                    .iter()
+                    .any(|word| split(*word).0 == REPEAT_BEGIN),
+        ) << 1)
+}
+
 fn bounded_capacity(needed: u32, maximum: u32) -> u32 {
     needed.min(maximum)
 }
@@ -25,12 +36,12 @@ fn bounded_capacity(needed: u32, maximum: u32) -> u32 {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct AssertionRecord {
-    kind: u32,
-    first: u32,
-    second: u32,
-    data_start: u32,
-    data_count: u32,
-    flags: u32,
+    pub(super) kind: u32,
+    pub(super) first: u32,
+    pub(super) second: u32,
+    pub(super) data_start: u32,
+    pub(super) data_count: u32,
+    pub(super) flags: u32,
 }
 
 #[repr(C)]
@@ -44,7 +55,7 @@ struct OutputInstructionRecord {
     fifth: u32,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct PackedBatch {
     pub(super) header: MetalBatchHeader,
     pub(super) nodes: Vec<BatchNode>,
@@ -82,6 +93,11 @@ fn global_node(base: u32, node: Option<u32>) -> Result<u32, Error> {
         base.checked_add(node).ok_or(Error::BackendFailure)
     })
 }
+
+const DURABLE_RESULT_PAGE_CAPACITY: u32 = 4_194_304;
+const DURABLE_CAPTURE_PAGE_CAPACITY: u32 = 8_388_608;
+const DURABLE_PROPERTY_PAGE_CAPACITY: u32 = 2_097_152;
+const DURABLE_OUTPUT_BYTE_PAGE_CAPACITY: u32 = 64 * 1024 * 1024;
 
 impl PackedBatch {
     pub(super) fn arena_start(&self, kind: ArenaKind) -> u32 {
@@ -121,19 +137,95 @@ impl PackedBatch {
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
+        Self::build(programs, files, anchors, true)
+    }
+
+    pub(super) fn new_grid_inputs(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Vec<u32>>],
+    ) -> Result<Self, Error> {
+        Self::build(programs, files, anchors, false)
+    }
+
+    pub(super) fn new_shared_grid_inputs(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Arc<[u32]>>],
+    ) -> Result<Self, Error> {
+        Self::build(programs, files, anchors, false)
+    }
+
+    fn build<R: AsRef<[u32]>>(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<R>],
+        materialize_tasks: bool,
+    ) -> Result<Self, Error> {
+        Self::build_from_tapes(
+            programs,
+            files.len(),
+            anchors,
+            materialize_tasks,
+            |file| Ok(std::borrow::Cow::Borrowed(&files[file])),
+            |_| Ok(()),
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_streamed_grid_inputs(
+        programs: &[Program],
+        files: &[crate::code_rule_dsl::tape::TapeSource],
+        anchors: &[Vec<Arc<[u32]>>],
+    ) -> Result<Self, Error> {
+        Self::new_streamed_grid_inputs_with_upload(programs, files, anchors, |_| Ok(()))
+    }
+
+    pub(super) fn new_streamed_grid_inputs_with_upload(
+        programs: &[Program],
+        files: &[crate::code_rule_dsl::tape::TapeSource],
+        anchors: &[Vec<Arc<[u32]>>],
+        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
+    ) -> Result<Self, Error> {
+        Self::build_from_tapes(
+            programs,
+            files.len(),
+            anchors,
+            false,
+            |file| {
+                files[file]
+                    .restore(&|| false)
+                    .map(std::borrow::Cow::Owned)
+                    .map_err(|_| Error::BackendFailure)
+            },
+            after_file,
+        )
+    }
+
+    fn build_from_tapes<'a, R: AsRef<[u32]>>(
+        programs: &[Program],
+        file_count: usize,
+        anchors: &[Vec<R>],
+        materialize_tasks: bool,
+        mut load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
+        mut after_file: impl FnMut(&mut Self) -> Result<(), Error>,
+    ) -> Result<Self, Error> {
+        if anchors.len() != file_count || anchors.iter().any(|file| file.len() != programs.len()) {
             return Err(Error::InvalidAnchor);
         }
         let mut batch = Self {
             nfa_data: super::value_packing::unicode_word_data(),
             ..Self::default()
         };
-        for tape in files {
-            let node_start = checked_u32(batch.nodes.len())?;
+        let mut navigation = [0usize; 4];
+        for file in 0..file_count {
+            let tape = load(file)?;
+            let node_start = checked_u32(navigation[0])?;
             let source_start = checked_u32(batch.source.len())?;
             let source = tape.transducer_source();
             batch.source.extend_from_slice(source);
-            let line_start = checked_u32(batch.line_starts.len())?;
+            let line_start = checked_u32(navigation[3])?;
+            let first_line = batch.line_starts.len();
             batch.line_starts.push(source_start);
             batch.line_starts.extend(
                 source
@@ -142,7 +234,8 @@ impl PackedBatch {
                     .filter(|(_, byte)| **byte == b'\n')
                     .map(|(index, _)| source_start + index as u32 + 1),
             );
-            let supertype_start = checked_u32(batch.supertypes.len())?;
+            let supertype_start = checked_u32(navigation[2])?;
+            let first_supertype = batch.supertypes.len();
             batch
                 .supertypes
                 .extend(
@@ -154,21 +247,19 @@ impl PackedBatch {
                 );
             let mut local_children = Vec::new();
             for node in 0..tape.transducer_len() as u32 {
-                let direct = tape.transducer_children(node).collect::<Vec<_>>();
-                let child_start = checked_u32(batch.children.len() + local_children.len())?;
-                local_children.extend(
-                    direct
-                        .iter()
-                        .map(|child| node_start.checked_add(*child).ok_or(Error::BackendFailure))
-                        .collect::<Result<Vec<_>, _>>()?,
-                );
+                let child_start = checked_u32(navigation[1] + local_children.len())?;
+                let first_child = local_children.len();
+                for child in tape.transducer_children(node) {
+                    local_children
+                        .push(node_start.checked_add(child).ok_or(Error::BackendFailure)?);
+                }
                 let span = tape.transducer_span(node);
                 batch.nodes.push(BatchNode {
                     parent: global_node(node_start, tape.transducer_parent(node))?,
                     next_any: global_node(node_start, tape.transducer_next_sibling(node, false))?,
                     next_named: global_node(node_start, tape.transducer_next_sibling(node, true))?,
                     child_start,
-                    child_count: checked_u32(direct.len())?,
+                    child_count: checked_u32(local_children.len() - first_child)?,
                     descendant_end: node_start
                         .checked_add(tape.transducer_descendants(node).end)
                         .ok_or(Error::BackendFailure)?,
@@ -183,6 +274,10 @@ impl PackedBatch {
                     flags: u32::from(tape.transducer_flags(node)),
                 });
             }
+            navigation[0] += tape.transducer_len();
+            navigation[1] += local_children.len();
+            navigation[2] += batch.supertypes.len() - first_supertype;
+            navigation[3] += batch.line_starts.len() - first_line;
             batch.children.extend(local_children);
             batch.files.push(BatchFile {
                 node_start,
@@ -190,10 +285,11 @@ impl PackedBatch {
                 source_start,
                 source_length: checked_u32(source.len())?,
                 line_start,
-                line_count: checked_u32(batch.line_starts.len())? - line_start,
+                line_count: checked_u32(batch.line_starts.len() - first_line)?,
                 supertype_start,
-                supertype_count: checked_u32(batch.supertypes.len())? - supertype_start,
+                supertype_count: checked_u32(batch.supertypes.len() - first_supertype)?,
             });
+            after_file(&mut batch)?;
         }
         for program in programs {
             let word_start = checked_u32(batch.words.len())?;
@@ -417,17 +513,21 @@ impl PackedBatch {
                 label_count: checked_u32(program.labels.len())?,
                 maximum_cursor_slot,
                 maximum_lua_capture_slot,
-                flags: u32::from(program.tree_sitter_query),
+                flags: program_flags(program),
             });
         }
         for (file, file_anchors) in anchors.iter().enumerate() {
             for (program, roots) in file_anchors.iter().enumerate() {
+                let roots = roots.as_ref();
                 if roots.windows(2).any(|pair| pair[0] >= pair[1]) {
                     return Err(Error::InvalidAnchor);
                 }
                 for &root in roots {
-                    if root as usize >= files[file].transducer_len() {
+                    if root >= batch.files[file].node_count {
                         return Err(Error::InvalidAnchor);
+                    }
+                    if !materialize_tasks {
+                        continue;
                     }
                     let ordinal = checked_u32(batch.tasks.len())?;
                     let root = batch.files[file]
@@ -447,7 +547,7 @@ impl PackedBatch {
                     } else {
                         task_nodes
                     };
-                    let work_limit = u64::from(scoped_nodes)
+                    let workspace_work_estimate = u64::from(scoped_nodes)
                         .saturating_mul(programs[program].words.len() as u64)
                         .saturating_mul(4_096)
                         .clamp(4_096, MAX_WORK_PER_TASK as u64)
@@ -457,7 +557,7 @@ impl PackedBatch {
                         file: checked_u32(file)?,
                         program: checked_u32(program)?,
                         root,
-                        work_limit,
+                        workspace_work_estimate,
                         ..BatchTask::default()
                     });
                 }
@@ -468,10 +568,10 @@ impl PackedBatch {
             task_count: checked_u32(batch.tasks.len())?,
             file_count: checked_u32(batch.files.len())?,
             program_count: checked_u32(batch.programs.len())?,
-            node_count: checked_u32(batch.nodes.len())?,
-            child_count: checked_u32(batch.children.len())?,
-            supertype_count: checked_u32(batch.supertypes.len())?,
-            line_start_count: checked_u32(batch.line_starts.len())?,
+            node_count: checked_u32(navigation[0])?,
+            child_count: checked_u32(navigation[1])?,
+            supertype_count: checked_u32(navigation[2])?,
+            line_start_count: checked_u32(navigation[3])?,
             string_count: checked_u32(batch.strings.len())?,
             structural_word_count: checked_u32(batch.words.len())?,
             value_instruction_count: programs.iter().try_fold(0_u32, |count, program| {
@@ -535,11 +635,6 @@ impl ProgramCapacityFacts {
         })
     }
 }
-
-const DURABLE_RESULT_PAGE_CAPACITY: u32 = 4_194_304;
-const DURABLE_CAPTURE_PAGE_CAPACITY: u32 = 8_388_608;
-const DURABLE_PROPERTY_PAGE_CAPACITY: u32 = 2_097_152;
-const DURABLE_OUTPUT_BYTE_PAGE_CAPACITY: u32 = 64 * 1024 * 1024;
 
 impl PackedBatch {
     pub(super) fn workspace_allocation_bytes(
@@ -632,7 +727,7 @@ impl PackedBatch {
                     if operations == 0 {
                         0
                     } else {
-                        task.work_limit.min(65_536)
+                        task.workspace_work_estimate.min(65_536)
                     }
                 };
                 let pending_states = work_capacity(facts.pending_operations);
@@ -674,6 +769,22 @@ impl PackedBatch {
                     };
                     Ok::<u32, Error>(maximum.max(needed))
                 })?;
+                let strip_states = program.output_program.instructions.iter().try_fold(
+                    0u32,
+                    |maximum, instruction| {
+                        let needed =
+                            if let output::OutputInstruction::Strip { regex, .. } = instruction {
+                                checked_u32(regex.states.len())?
+                                    .checked_mul(7)
+                                    .and_then(|n| n.checked_add(1))
+                                    .ok_or(Error::BackendCapacity)?
+                            } else {
+                                0
+                            };
+                        Ok::<_, Error>(maximum.max(needed))
+                    },
+                )?;
+                let value_states = value_states.max(strip_states);
                 let source_transform =
                     program
                         .output_program
@@ -904,10 +1015,6 @@ fn status_error(status: &TaskStatus) -> Option<Error> {
         7 => Error::InvalidOperand(status.program_counter as usize),
         _ => Error::BackendFailure,
     })
-}
-
-pub(super) fn stable_status_error(statuses: &[TaskStatus]) -> Option<Error> {
-    statuses.iter().find_map(status_error)
 }
 
 struct PackedResults<'a> {
@@ -1167,16 +1274,171 @@ impl<'a> PackedResults<'a> {
 #[derive(Clone)]
 pub(crate) struct PackedExecution {
     pub(super) batch: Arc<PackedBatch>,
-    pub(super) page: Arc<PackedResultPage>,
+    pages: Arc<Vec<PackedResultPage>>,
     evaluation_indexes: Arc<Vec<Option<usize>>>,
     file_task_ordinal_bases: Arc<Vec<u32>>,
+    grid_errors: Option<Arc<Vec<Option<Error>>>>,
     file_start: usize,
     file_count: usize,
     program_start: usize,
     program_count: usize,
+    publication_files: Range<usize>,
+}
+
+#[track_caller]
+fn grid_result_failure() -> Error {
+    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!(
+            "TEMPO_GRID_RESULT_INVARIANT {}",
+            std::panic::Location::caller()
+        );
+    }
+    Error::BackendFailure
 }
 
 impl PackedExecution {
+    fn single_page(&self) -> Result<&PackedResultPage, Error> {
+        match self.pages.as_slice() {
+            [page] => Ok(page),
+            _ => Err(grid_result_failure()),
+        }
+    }
+
+    // Test oracle only: preserve all interpreter values through the production
+    // publication adapter without planning a JIT execution workspace.
+    #[cfg(test)]
+    pub(super) fn interpret_reference(
+        programs: &[Program],
+        file: &TapeDoc,
+        roots: &[Vec<u32>],
+        limits: &[u32],
+    ) -> Result<Self, Error> {
+        fn append_bytes(arena: &mut Vec<u8>, bytes: &[u8]) -> Result<(u32, u32), Error> {
+            let start = checked_u32(arena.len())?;
+            let count = checked_u32(bytes.len())?;
+            if start == NONE || start.checked_add(count).is_none() {
+                return Err(Error::BackendCapacity);
+            }
+            arena.extend_from_slice(bytes);
+            Ok((start, count))
+        }
+        if programs.len() != roots.len() || programs.len() != limits.len() {
+            return Err(Error::InvalidAnchor);
+        }
+        let files = std::slice::from_ref(file);
+        let anchors = vec![roots.to_vec()];
+        let input = super::metal_grid::MetalGridInput::build(programs, files, &anchors)?;
+        let BatchOutcome { outputs, errors } =
+            super::execute_batch_outcomes(programs, files, &anchors)?;
+        let [outputs]: [Vec<Vec<Output>>; 1] =
+            outputs.try_into().map_err(|_| Error::BackendFailure)?;
+        let [errors]: [Vec<Option<Error>>; 1] =
+            errors.try_into().map_err(|_| Error::BackendFailure)?;
+        if outputs.len() != programs.len() || errors.len() != programs.len() {
+            return Err(Error::BackendFailure);
+        }
+        let mut results = Vec::new();
+        let mut captures = Vec::new();
+        let mut properties = Vec::new();
+        let mut bytes = Vec::new();
+        for (program, mut outputs) in outputs.into_iter().enumerate() {
+            if errors[program].is_some() && !outputs.is_empty() {
+                return Err(Error::BackendFailure);
+            }
+            // Limits select complete interpreter results. They cannot hide a
+            // later operand or work failure in the original evaluation.
+            outputs.truncate(usize::try_from(limits[program]).map_err(|_| Error::BackendCapacity)?);
+            for output in outputs {
+                let row = checked_u32(results.len())?;
+                let capture_start = checked_u32(captures.len())?;
+                let property_start = checked_u32(properties.len())?;
+                let property_count = checked_u32(output.properties.len())?;
+                for (key, value) in output.properties {
+                    properties.push(PropertyRecord {
+                        kind: 0,
+                        owner: row,
+                        key: u32::from(key),
+                        value: value.map_or(NONE, u32::from),
+                        ..PropertyRecord::default()
+                    });
+                }
+                for capture in output.captures {
+                    let owner = checked_u32(captures.len())?;
+                    let property_start = checked_u32(properties.len())?;
+                    let property_count = checked_u32(capture.properties.len())?;
+                    for (key, value) in capture.properties {
+                        properties.push(PropertyRecord {
+                            kind: 1,
+                            owner,
+                            key: u32::from(key),
+                            value: value.map_or(NONE, u32::from),
+                            ..PropertyRecord::default()
+                        });
+                    }
+                    let (text_start, text_length) = match capture.text {
+                        Some(text) => append_bytes(&mut bytes, &text)?,
+                        None => (NONE, 0),
+                    };
+                    captures.push(FinalCaptureRecord {
+                        label: u32::from(capture.label),
+                        node: capture.node,
+                        start: checked_u32(capture.span.start)?,
+                        end: checked_u32(capture.span.end)?,
+                        text_start,
+                        text_length,
+                        property_start,
+                        property_count,
+                        retained: 1,
+                    });
+                }
+                let dynamic_start = checked_u32(properties.len())?;
+                let dynamic_count = checked_u32(output.dynamic_properties.len())?;
+                for (key, value) in output.dynamic_properties {
+                    let value = value.ok_or(Error::BackendFailure)?;
+                    let (key_start, key_length) = append_bytes(&mut bytes, &key)?;
+                    let (value_start, value_length) = append_bytes(&mut bytes, &value)?;
+                    properties.push(PropertyRecord {
+                        kind: 2,
+                        owner: row,
+                        value: 1,
+                        key_start,
+                        key_length,
+                        value_start,
+                        value_length,
+                        ..PropertyRecord::default()
+                    });
+                }
+                results.push(ResultRecord {
+                    task_ordinal: output.task_ordinal,
+                    local_ordinal: output.local_ordinal,
+                    start: output.start,
+                    label: u32::from(output.label),
+                    capture_start,
+                    capture_count: checked_u32(captures.len())? - capture_start,
+                    property_start,
+                    property_count,
+                    dynamic_start,
+                    dynamic_count,
+                });
+            }
+        }
+        let errors = input
+            .grid
+            .evaluation_spans
+            .iter()
+            .map(|span| errors[span.program as usize].clone())
+            .collect();
+        Self::from_grid_arenas(
+            input.packed,
+            &input.grid.evaluation_spans,
+            results,
+            captures,
+            properties,
+            bytes,
+            errors,
+        )
+    }
+
     pub(super) fn new(batch: PackedBatch, page: PackedResultPage) -> Self {
         let file_count = batch.files.len();
         let program_count = batch.programs.len();
@@ -1195,13 +1457,93 @@ impl PackedExecution {
             .for_each(|base| *base = 0);
         Self {
             batch: Arc::new(batch),
-            page: Arc::new(page),
+            pages: Arc::new(vec![page]),
             evaluation_indexes: Arc::new(evaluation_indexes),
             file_task_ordinal_bases: Arc::new(file_task_ordinal_bases),
+            grid_errors: None,
             file_start: 0,
             file_count,
             program_start: 0,
             program_count,
+            publication_files: 0..file_count,
+        }
+    }
+
+    pub(super) fn from_grid_records(
+        batch: impl Into<Arc<PackedBatch>>,
+        evaluations: &[super::metal_grid::EvaluationSpan],
+        results: Vec<ResultRecord>,
+        captures: Vec<FinalCaptureRecord>,
+        errors: Vec<Option<Error>>,
+    ) -> Result<Self, Error> {
+        Self::from_grid_arenas(
+            batch,
+            evaluations,
+            results,
+            captures,
+            Vec::new(),
+            Vec::new(),
+            errors,
+        )
+    }
+
+    pub(super) fn from_grid_arenas(
+        batch: impl Into<Arc<PackedBatch>>,
+        evaluations: &[super::metal_grid::EvaluationSpan],
+        results: Vec<ResultRecord>,
+        captures: Vec<FinalCaptureRecord>,
+        properties: Vec<PropertyRecord>,
+        output_storage: Vec<u8>,
+        errors: Vec<Option<Error>>,
+    ) -> Result<Self, Error> {
+        let publication = GridPublication::new(batch.into(), evaluations, errors)?;
+        let fragment = publication.validate_page(results, captures, properties, output_storage)?;
+        publication.execution(vec![fragment], 0..publication.template.file_count)
+    }
+
+    pub(super) fn into_outcome(self) -> Result<BatchOutcome, Error> {
+        if self.file_start != 0
+            || self.file_count != self.batch.files.len()
+            || self.program_start != 0
+            || self.program_count != self.batch.programs.len()
+        {
+            return Err(Error::InvalidAnchor);
+        }
+        if self.grid_errors.is_some() {
+            let mut outputs = vec![vec![Vec::new(); self.program_count]; self.file_count];
+            let mut errors = vec![vec![None; self.program_count]; self.file_count];
+            for file in 0..self.file_count {
+                for program in 0..self.program_count {
+                    let (results, error) = self.program_results(file, program)?;
+                    errors[file][program] = error;
+                    for result in results {
+                        outputs[file][program].push(Output {
+                            task_ordinal: result.record.task_ordinal,
+                            local_ordinal: result.local_ordinal(),
+                            start: result.start_node(),
+                            label: result.label(),
+                            captures: result
+                                .captures()
+                                .map(|capture| Capture {
+                                    label: capture.label(),
+                                    node: capture.node(),
+                                    span: capture.span(),
+                                    text: capture.transformed_text().map(<[u8]>::to_vec),
+                                    properties: capture.properties().collect(),
+                                })
+                                .collect(),
+                            properties: result.properties().collect(),
+                            dynamic_properties: result
+                                .dynamic_properties()
+                                .map(|(key, value)| (key.to_vec(), value.map(<[u8]>::to_vec)))
+                                .collect(),
+                        });
+                    }
+                }
+            }
+            Ok(BatchOutcome { outputs, errors })
+        } else {
+            self.single_page()?.decode_outcomes(&self.batch)
         }
     }
 
@@ -1222,26 +1564,12 @@ impl PackedExecution {
             return Err(Error::InvalidAnchor);
         }
         Ok(Self {
-            batch: Arc::clone(&self.batch),
-            page: Arc::clone(&self.page),
-            evaluation_indexes: Arc::clone(&self.evaluation_indexes),
-            file_task_ordinal_bases: Arc::clone(&self.file_task_ordinal_bases),
             file_start,
             file_count,
             program_start,
             program_count,
+            ..self.clone()
         })
-    }
-
-    pub(super) fn into_outcome(self) -> Result<BatchOutcome, Error> {
-        if self.file_start != 0
-            || self.file_count != self.batch.files.len()
-            || self.program_start != 0
-            || self.program_count != self.batch.programs.len()
-        {
-            return Err(Error::InvalidAnchor);
-        }
-        self.page.decode_outcomes(&self.batch)
     }
 
     pub(crate) fn file_count(&self) -> usize {
@@ -1252,7 +1580,22 @@ impl PackedExecution {
         self.program_count
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) fn host_arena_counts(&self) -> [usize; 4] {
+        self.pages.iter().fold([0; 4], |mut counts, page| {
+            for (count, length) in counts.iter_mut().zip([
+                page.results.len(),
+                page.final_captures.len(),
+                page.properties.len(),
+                page.output_storage.len(),
+            ]) {
+                *count += length;
+            }
+            counts
+        })
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
     pub(super) fn physical_file_count(&self) -> usize {
         self.batch.files.len()
     }
@@ -1265,31 +1608,41 @@ impl PackedExecution {
         if file >= self.file_count || program >= self.program_count {
             return Err(Error::InvalidAnchor);
         }
+        if !self.publication_files.contains(&file) {
+            return Ok((Vec::new(), None));
+        }
         let file = self.file_start + file;
         let program = self.program_start + program;
         let evaluation = self.evaluation_indexes[file * self.batch.programs.len() + program];
         let Some(evaluation) = evaluation else {
             return Ok((Vec::new(), None));
         };
-        let record = &self.batch.evaluations[evaluation];
-        let statuses = &self.page.statuses
-            [record.task_start as usize..(record.task_start + record.task_count) as usize];
-        if let Some(error) = statuses.iter().find_map(status_error) {
-            return Ok((Vec::new(), Some(error)));
+        if let Some(errors) = &self.grid_errors {
+            if let Some(error) = &errors[evaluation] {
+                return Ok((Vec::new(), Some(error.clone())));
+            }
+        } else {
+            let record = &self.batch.evaluations[evaluation];
+            let statuses = &self.single_page()?.statuses
+                [record.task_start as usize..(record.task_start + record.task_count) as usize];
+            if let Some(error) = statuses.iter().find_map(status_error) {
+                return Ok((Vec::new(), Some(error)));
+            }
         }
         let file_record = &self.batch.files[file];
         let task_ordinal_base = self.file_task_ordinal_bases[file];
-        let results = self.page.evaluation_results[evaluation]
-            .iter()
-            .copied()
-            .map(|index| PackedResultView {
-                page: &self.page,
-                record: &self.page.results[index as usize],
-                file: file_record,
-                source: &self.batch.source,
-                task_ordinal_base,
-            })
-            .collect();
+        let mut results = Vec::new();
+        for page in self.pages.iter() {
+            for &index in page.evaluation_results.get(evaluation)? {
+                results.push(PackedResultView {
+                    page,
+                    record: &page.results[index as usize],
+                    file: file_record,
+                    source: &self.batch.source,
+                    task_ordinal_base,
+                });
+            }
+        }
         Ok((results, None))
     }
 }
@@ -1406,6 +1759,324 @@ impl<'a> PackedResultView<'a> {
     }
 }
 
+// Sparse indexes retain the complete evaluation domain without allocating one
+// empty vector per evaluation for every bounded output fragment.
+#[derive(Debug)]
+struct EvaluationRows {
+    count: usize,
+    rows: BTreeMap<usize, Vec<u32>>,
+}
+impl EvaluationRows {
+    fn new(count: usize) -> Self {
+        Self {
+            count,
+            rows: BTreeMap::new(),
+        }
+    }
+    fn push(&mut self, evaluation: usize, row: u32) -> Result<(), Error> {
+        if evaluation >= self.count {
+            return Err(grid_result_failure());
+        }
+        self.rows.entry(evaluation).or_default().push(row);
+        Ok(())
+    }
+    fn get(&self, evaluation: usize) -> Result<&[u32], Error> {
+        if evaluation >= self.count {
+            return Err(grid_result_failure());
+        }
+        Ok(self.rows.get(&evaluation).map_or(&[], Vec::as_slice))
+    }
+}
+type GridOrder = (u32, u32, Option<u32>, u32);
+pub(super) struct GridFragment {
+    page: PackedResultPage,
+    first: Option<GridOrder>,
+    last: Option<GridOrder>,
+}
+pub(super) struct GridPublication {
+    template: PackedExecution,
+    evaluations: Vec<super::metal_grid::EvaluationSpan>,
+}
+impl GridPublication {
+    pub(super) fn new(
+        batch: Arc<PackedBatch>,
+        evaluations: &[super::metal_grid::EvaluationSpan],
+        errors: Vec<Option<Error>>,
+    ) -> Result<Self, Error> {
+        if !batch.tasks.is_empty() || errors.len() != evaluations.len() {
+            return Err(grid_result_failure());
+        }
+        let file_count = batch.files.len();
+        let program_count = batch.programs.len();
+        let mut evaluation_indexes = vec![
+            None;
+            file_count
+                .checked_mul(program_count)
+                .ok_or(Error::BackendCapacity)?
+        ];
+        let mut file_bases = vec![u32::MAX; file_count];
+        for (index, evaluation) in evaluations.iter().enumerate() {
+            let slot = evaluation_indexes
+                .get_mut(evaluation.file as usize * program_count + evaluation.program as usize)
+                .ok_or(Error::BackendFailure)?;
+            if slot.replace(index).is_some() {
+                return Err(grid_result_failure());
+            }
+            file_bases[evaluation.file as usize] =
+                file_bases[evaluation.file as usize].min(evaluation.semantic_start);
+        }
+        file_bases
+            .iter_mut()
+            .filter(|base| **base == u32::MAX)
+            .for_each(|base| *base = 0);
+        Ok(Self {
+            evaluations: evaluations.to_vec(),
+            template: PackedExecution {
+                batch,
+                pages: Arc::new(Vec::new()),
+                evaluation_indexes: Arc::new(evaluation_indexes),
+                file_task_ordinal_bases: Arc::new(file_bases),
+                grid_errors: Some(Arc::new(errors)),
+                file_start: 0,
+                file_count,
+                program_start: 0,
+                program_count,
+                publication_files: 0..file_count,
+            },
+        })
+    }
+    pub(super) fn validate_page(
+        &self,
+        results: Vec<ResultRecord>,
+        captures: Vec<FinalCaptureRecord>,
+        properties: Vec<PropertyRecord>,
+        output_storage: Vec<u8>,
+    ) -> Result<GridFragment, Error> {
+        let batch = &self.template.batch;
+        let evaluations = &self.evaluations;
+        let errors = self
+            .template
+            .grid_errors
+            .as_ref()
+            .ok_or(Error::BackendFailure)?;
+        let mut expected_capture_start = 0_usize;
+        let mut expected_property_start = 0_usize;
+        let mut expected_byte_start = 0_usize;
+        let mut previous_order = None;
+        let mut first_order = None;
+        let mut evaluation_results = EvaluationRows::new(evaluations.len());
+        for (index, result) in results.iter().enumerate() {
+            let evaluation_index = evaluations
+                .partition_point(|span| span.semantic_start <= result.task_ordinal)
+                .checked_sub(1)
+                .ok_or(Error::BackendFailure)?;
+            let evaluation = evaluations[evaluation_index];
+            if result.task_ordinal - evaluation.semantic_start >= evaluation.root_count
+                || errors[evaluation_index].is_some()
+            {
+                return Err(grid_result_failure());
+            }
+            let program = batch.programs[evaluation.program as usize];
+            if result.label >= program.label_count
+                || result.capture_start as usize != expected_capture_start
+            {
+                return Err(grid_result_failure());
+            }
+            let file = batch.files[evaluation.file as usize];
+            if result.start < file.node_start || result.start - file.node_start >= file.node_count {
+                return Err(grid_result_failure());
+            }
+            let range = checked_range(result.capture_start, result.capture_count, captures.len())?;
+            expected_capture_start = range.end;
+            let first_capture = if program.flags & 1 != 0 {
+                captures[range.clone()]
+                    .iter()
+                    .find(|capture| capture.retained != 0)
+                    .map(|capture| capture.node)
+            } else {
+                None
+            };
+            let order = (
+                result.task_ordinal,
+                result.start,
+                first_capture,
+                result.local_ordinal,
+            );
+            if previous_order.is_some_and(|previous| previous >= order) {
+                return Err(grid_result_failure());
+            }
+            first_order.get_or_insert(order);
+            previous_order = Some(order);
+            if captures[range].iter().any(|capture| {
+                capture.label >= program.label_count
+                    || capture.retained > 1
+                    || (program.output_count == 0
+                        && (capture.retained != 1
+                            || capture.text_start != NONE
+                            || capture.property_count != 0))
+                    || capture.node < file.node_start
+                    || capture.node - file.node_start >= file.node_count
+                    || capture.start < file.source_start
+                    || capture.end < capture.start
+                    || capture.end - file.source_start > file.source_length
+            }) {
+                return Err(grid_result_failure());
+            }
+            let match_properties = checked_range(
+                result.property_start,
+                result.property_count,
+                properties.len(),
+            )?;
+            if result.property_count != 0 && match_properties.start != expected_property_start {
+                return Err(grid_result_failure());
+            }
+            if properties[match_properties.clone()].iter().any(|property| {
+                property.kind != 0
+                    || property.owner as usize != index
+                    || property.key >= program.string_count
+                    || (property.value != NONE && property.value >= program.string_count)
+            }) {
+                return Err(grid_result_failure());
+            }
+            expected_property_start += result.property_count as usize;
+            for (capture_index, capture) in captures
+                [checked_range(result.capture_start, result.capture_count, captures.len())?]
+            .iter()
+            .enumerate()
+            {
+                let range = checked_range(
+                    capture.property_start,
+                    capture.property_count,
+                    properties.len(),
+                )?;
+                if capture.property_count != 0 && range.start != expected_property_start {
+                    return Err(grid_result_failure());
+                }
+                if properties[range].iter().any(|property| {
+                    property.kind != 1
+                        || property.owner != result.capture_start + capture_index as u32
+                        || property.key >= program.string_count
+                        || (property.value != NONE && property.value >= program.string_count)
+                }) {
+                    return Err(grid_result_failure());
+                }
+                expected_property_start += capture.property_count as usize;
+                if capture.text_start != NONE {
+                    if capture.text_start as usize != expected_byte_start {
+                        return Err(grid_result_failure());
+                    }
+                    expected_byte_start = expected_byte_start
+                        .checked_add(capture.text_length as usize)
+                        .ok_or(Error::BackendCapacity)?;
+                    let text = checked_range(
+                        capture.text_start,
+                        capture.text_length,
+                        output_storage.len(),
+                    )?;
+                    if std::str::from_utf8(&output_storage[text]).is_err() {
+                        return Err(grid_result_failure());
+                    }
+                } else if capture.text_length != 0 {
+                    return Err(grid_result_failure());
+                }
+            }
+            let dynamic =
+                checked_range(result.dynamic_start, result.dynamic_count, properties.len())?;
+            if result.dynamic_count != 0 && dynamic.start != expected_property_start {
+                return Err(grid_result_failure());
+            }
+            for property in &properties[dynamic] {
+                if property.kind != 2 || property.owner as usize != index || property.value > 1 {
+                    return Err(grid_result_failure());
+                }
+                if property.key_start as usize != expected_byte_start {
+                    return Err(grid_result_failure());
+                }
+                expected_byte_start = expected_byte_start
+                    .checked_add(property.key_length as usize)
+                    .ok_or(Error::BackendCapacity)?;
+                if property.value == 1 {
+                    if property.value_start as usize != expected_byte_start {
+                        return Err(grid_result_failure());
+                    }
+                    expected_byte_start = expected_byte_start
+                        .checked_add(property.value_length as usize)
+                        .ok_or(Error::BackendCapacity)?;
+                }
+                let key = checked_range(
+                    property.key_start,
+                    property.key_length,
+                    output_storage.len(),
+                )?;
+                if std::str::from_utf8(&output_storage[key]).is_err() {
+                    return Err(grid_result_failure());
+                }
+                let source = if property.value == 1 {
+                    output_storage.as_slice()
+                } else {
+                    batch.source.as_slice()
+                };
+                let value =
+                    checked_range(property.value_start, property.value_length, source.len())?;
+                if property.value == 0
+                    && (value.start < file.source_start as usize
+                        || value.end > (file.source_start + file.source_length) as usize)
+                {
+                    return Err(grid_result_failure());
+                }
+                if std::str::from_utf8(&source[value]).is_err() {
+                    return Err(grid_result_failure());
+                }
+            }
+            expected_property_start += result.dynamic_count as usize;
+            evaluation_results.push(evaluation_index, checked_u32(index)?)?;
+        }
+        if expected_capture_start != captures.len()
+            || expected_property_start != properties.len()
+            || expected_byte_start != output_storage.len()
+        {
+            return Err(grid_result_failure());
+        }
+        let page = PackedResultPage {
+            statuses: Vec::new(),
+            result_order: (0..checked_u32(results.len())?).collect(),
+            results,
+            final_captures: captures,
+            properties,
+            output_storage,
+            evaluation_results,
+        };
+        Ok(GridFragment {
+            page,
+            first: first_order,
+            last: previous_order,
+        })
+    }
+    pub(super) fn execution(
+        &self,
+        fragments: Vec<GridFragment>,
+        files: Range<usize>,
+    ) -> Result<PackedExecution, Error> {
+        if files.start > files.end || files.end > self.template.file_count {
+            return Err(Error::InvalidAnchor);
+        }
+        let mut previous = None;
+        let mut pages = Vec::with_capacity(fragments.len());
+        for fragment in fragments {
+            if let Some(first) = fragment.first {
+                if previous.is_some_and(|last| last >= first) {
+                    return Err(grid_result_failure());
+                }
+                previous = fragment.last;
+            }
+            pages.push(fragment.page);
+        }
+        let mut execution = self.template.clone();
+        execution.pages = Arc::new(pages);
+        execution.publication_files = files;
+        Ok(execution)
+    }
+}
 #[derive(Debug)]
 pub(super) struct PackedResultPage {
     statuses: Vec<TaskStatus>,
@@ -1414,7 +2085,7 @@ pub(super) struct PackedResultPage {
     properties: Vec<PropertyRecord>,
     output_storage: Vec<u8>,
     result_order: Vec<u32>,
-    evaluation_results: Vec<Vec<u32>>,
+    evaluation_results: EvaluationRows,
 }
 
 fn copy_output_bytes(
@@ -1438,7 +2109,7 @@ impl PackedResultPage {
             properties: Vec::new(),
             output_storage: Vec::new(),
             result_order: Vec::new(),
-            evaluation_results: Vec::new(),
+            evaluation_results: EvaluationRows::new(0),
         }
     }
 
@@ -1504,7 +2175,7 @@ impl PackedResultPage {
             properties: Vec::new(),
             output_storage: Vec::new(),
             result_order: Vec::new(),
-            evaluation_results: vec![Vec::new(); batch.evaluations.len()],
+            evaluation_results: EvaluationRows::new(batch.evaluations.len()),
         };
         let mut result_evaluations = Vec::new();
         for (result_offset, source_result) in results[result_range.clone()].iter().enumerate() {
@@ -1599,11 +2270,17 @@ impl PackedResultPage {
         }
         page.result_order.sort_by_key(|index| {
             let result = &page.results[*index as usize];
-            let first_capture = page.final_captures[result.capture_start as usize
-                ..(result.capture_start + result.capture_count) as usize]
-                .iter()
-                .find(|capture| capture.retained != 0)
-                .map(|capture| capture.node);
+            let task = batch.tasks[task_by_ordinal[result.task_ordinal as usize].unwrap()];
+            let query = batch.programs[task.program as usize].flags & 1 != 0;
+            let first_capture = if query {
+                page.final_captures[result.capture_start as usize
+                    ..(result.capture_start + result.capture_count) as usize]
+                    .iter()
+                    .find(|capture| capture.retained != 0)
+                    .map(|capture| capture.node)
+            } else {
+                None
+            };
             (
                 result.task_ordinal,
                 result.start,
@@ -1612,7 +2289,8 @@ impl PackedResultPage {
             )
         });
         for &result in &page.result_order {
-            page.evaluation_results[result_evaluations[result as usize] as usize].push(result);
+            page.evaluation_results
+                .push(result_evaluations[result as usize] as usize, result)?;
         }
         Ok(page)
     }
@@ -1843,12 +2521,17 @@ impl PackedBatch {
             }
         }
         for file_outputs in &mut outputs {
-            for program_outputs in file_outputs {
+            for (program_index, program_outputs) in file_outputs.iter_mut().enumerate() {
+                let query = self.programs[program_index].flags & 1 != 0;
                 program_outputs.sort_by_key(|output| {
                     (
                         output.task_ordinal,
                         output.start,
-                        output.captures.first().map(|capture| capture.node),
+                        if query {
+                            output.captures.first().map(|capture| capture.node)
+                        } else {
+                            None
+                        },
                         output.local_ordinal,
                     )
                 });
@@ -1873,5 +2556,451 @@ impl PackedBatch {
             output_storage,
         )?
         .into_result()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
+    use ast_grep_core::tree_sitter::LanguageExt;
+
+    #[test]
+    fn streamed_tapes_preserve_all_immutable_grid_input_bytes() {
+        use crate::code_rule_dsl::tape::{Grammar, TapeImage, TapeSource};
+        use ast_grep_core::tree_sitter::StrDoc;
+        let grammar = Grammar::new(SupportLang::Python).unwrap();
+        let inputs = ["# comment\nvalue = f'{item}'\n", "def broken(\n  pass\n"].map(|text| {
+            let source = Arc::new(text.to_owned());
+            let native = StrDoc::new(text, SupportLang::Python);
+            TapeSource {
+                source: Arc::clone(&source),
+                grammar: Arc::clone(&grammar),
+                image: Arc::new(
+                    TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false)
+                        .unwrap(),
+                ),
+                lines: Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines)),
+            }
+        });
+        let docs = inputs
+            .iter()
+            .map(|input| input.restore(&|| false).unwrap())
+            .collect::<Vec<_>>();
+        let programs = [Program::compile_tree_sitter_query_pattern(
+            "(_) @node",
+            &SupportLang::Python.get_ts_language(),
+        )
+        .unwrap()];
+        let anchors = docs
+            .iter()
+            .map(|doc| {
+                vec![Arc::<[u32]>::from(
+                    (0..doc.transducer_len() as u32).collect::<Vec<_>>(),
+                )]
+            })
+            .collect::<Vec<_>>();
+        let expected = PackedBatch::new_shared_grid_inputs(&programs, &docs, &anchors).unwrap();
+        let actual = PackedBatch::new_streamed_grid_inputs(&programs, &inputs, &anchors).unwrap();
+        assert_eq!(actual.header, expected.header);
+        assert_eq!(actual.nodes, expected.nodes);
+        assert_eq!(actual.children, expected.children);
+        assert_eq!(actual.supertypes, expected.supertypes);
+        assert_eq!(actual.line_starts, expected.line_starts);
+        assert_eq!(actual.files, expected.files);
+        assert_eq!(actual.source, expected.source);
+        assert_eq!(actual.words, expected.words);
+        assert!(actual.tasks.is_empty());
+        let (mut nodes, mut children, mut supertypes, mut lines) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let streamed = PackedBatch::new_streamed_grid_inputs_with_upload(
+            &programs,
+            &inputs,
+            &anchors,
+            |batch| {
+                nodes.append(&mut batch.nodes);
+                children.append(&mut batch.children);
+                supertypes.append(&mut batch.supertypes);
+                lines.append(&mut batch.line_starts);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(streamed.header, expected.header);
+        assert_eq!(streamed.files, expected.files);
+        assert_eq!(nodes, expected.nodes);
+        assert_eq!(children, expected.children);
+        assert_eq!(supertypes, expected.supertypes);
+        assert_eq!(lines, expected.line_starts);
+        assert!(streamed.nodes.is_empty() && streamed.children.is_empty());
+    }
+
+    fn batch() -> PackedBatch {
+        let mut batch = PackedBatch::default();
+        batch.files.push(BatchFile {
+            node_count: 1,
+            source_length: 1,
+            line_count: 1,
+            ..BatchFile::default()
+        });
+        batch.programs.push(BatchProgram::default());
+        batch.tasks.push(BatchTask::default());
+        let mut evaluation = MetalEvaluation::default();
+        for kind in [
+            ArenaKind::Result,
+            ArenaKind::FinalCapture,
+            ArenaKind::Property,
+            ArenaKind::OutputByte,
+        ] {
+            evaluation.quotas[kind as usize].limit = 1;
+            batch.global_arenas.arenas[kind as usize].capacity = 1;
+        }
+        batch.evaluations.push(evaluation);
+        batch.source.push(b'x');
+        batch.nodes.push(BatchNode::default());
+        batch
+    }
+
+    #[test]
+    fn direct_grid_result_validation_rejects_malformed_typed_records() {
+        let evaluation = super::super::metal_grid::EvaluationSpan {
+            root_count: 1,
+            ..Default::default()
+        };
+        let result = ResultRecord {
+            capture_count: 1,
+            ..Default::default()
+        };
+        let capture = FinalCaptureRecord {
+            end: 1,
+            text_start: NONE,
+            retained: 1,
+            ..Default::default()
+        };
+        let check = |results: Vec<ResultRecord>,
+                     captures: Vec<FinalCaptureRecord>,
+                     error: Option<Error>| {
+            let mut batch = batch();
+            batch.tasks.clear();
+            batch.evaluations.clear();
+            batch.programs[0].label_count = 1;
+            PackedExecution::from_grid_records(batch, &[evaluation], results, captures, vec![error])
+        };
+        assert!(check(vec![result], vec![capture], None).is_ok());
+        for malformed in [
+            ResultRecord {
+                task_ordinal: 1,
+                ..result
+            },
+            ResultRecord {
+                capture_count: 2,
+                ..result
+            },
+            ResultRecord {
+                property_count: 1,
+                ..result
+            },
+            ResultRecord { label: 1, ..result },
+        ] {
+            assert!(matches!(
+                check(vec![malformed], vec![capture], None),
+                Err(Error::BackendFailure)
+            ));
+        }
+        for malformed in [
+            FinalCaptureRecord {
+                label: 1,
+                ..capture
+            },
+            FinalCaptureRecord {
+                text_start: 0,
+                ..capture
+            },
+            FinalCaptureRecord {
+                retained: 2,
+                ..capture
+            },
+            FinalCaptureRecord { end: 2, ..capture },
+        ] {
+            assert!(matches!(
+                check(vec![result], vec![malformed], None),
+                Err(Error::BackendFailure)
+            ));
+        }
+        assert!(matches!(
+            check(vec![result], vec![capture], Some(Error::WorkLimit)),
+            Err(Error::BackendFailure)
+        ));
+        assert!(matches!(
+            check(vec![result, result], vec![capture, capture], None),
+            Err(Error::BackendFailure)
+        ));
+    }
+
+    #[test]
+    fn bounded_task_capacity_keeps_zero_and_stops_at_the_limit() {
+        assert_eq!(bounded_capacity(0, 256), 0);
+        assert_eq!(bounded_capacity(17, 256), 17);
+        assert_eq!(bounded_capacity(257, 256), 256);
+    }
+
+    #[test]
+    fn production_result_limit_caps_evaluation_and_global_result_capacity() {
+        let program = Program::new(
+            vec![word(STOP, 0, 0), word(EMIT, 0, 0)],
+            vec![b"match".to_vec()],
+            vec![],
+            vec![0],
+            vec![],
+        )
+        .unwrap();
+        let programs = [program];
+        let mut batch = batch();
+        let totals = batch
+            .assign_workspace_with_result_limits(&programs, Some(&[0]))
+            .unwrap();
+        assert_eq!(totals.results, 0);
+        assert_eq!(
+            batch.evaluations[0].quotas[ArenaKind::Result as usize].limit,
+            0
+        );
+    }
+
+    #[test]
+    fn capacity_facts_do_not_reserve_unused_mutable_arenas() {
+        let linear = Program::new(
+            vec![word(STOP, 0, 0), word(EMIT, 0, 0)],
+            vec![b"match".to_vec()],
+            vec![],
+            vec![0],
+            vec![],
+        )
+        .unwrap();
+        let facts = ProgramCapacityFacts::new(&linear).unwrap();
+        assert_eq!(facts.pending_operations, 0);
+        assert_eq!(facts.capture_operations, 0);
+        assert_eq!(facts.cursor_operations, 0);
+        assert_eq!(facts.repeat_operations, 0);
+        assert_eq!(facts.greedy_operations, 0);
+        assert_eq!(facts.emit_operations, 1);
+        assert_eq!(facts.directive_count, 0);
+    }
+
+    #[test]
+    fn capacity_facts_include_each_structural_scratch_arena() {
+        let structural = Program::compile_tree_sitter_query_pattern(
+            "(module (comment)+ @item)",
+            &SupportLang::Python.get_ts_language(),
+        )
+        .unwrap();
+        let facts = ProgramCapacityFacts::new(&structural).unwrap();
+        assert_ne!(facts.pending_operations, 0);
+        assert_ne!(facts.capture_operations, 0);
+        assert_ne!(facts.cursor_operations, 0);
+        assert_ne!(facts.repeat_operations, 0);
+        assert_ne!(facts.emit_operations, 0);
+
+        let greedy = Program::new(
+            vec![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
+            vec![b"match".to_vec()],
+            vec![],
+            vec![0],
+            vec![],
+        )
+        .unwrap();
+        assert_ne!(
+            ProgramCapacityFacts::new(&greedy)
+                .unwrap()
+                .greedy_operations,
+            0
+        );
+    }
+
+    #[test]
+    fn packed_results_reject_every_out_of_range_task_count() {
+        for status in [
+            TaskStatus {
+                result_count: 2,
+                ..TaskStatus::default()
+            },
+            TaskStatus {
+                final_capture_count: 2,
+                ..TaskStatus::default()
+            },
+            TaskStatus {
+                property_count: 2,
+                ..TaskStatus::default()
+            },
+            TaskStatus {
+                output_byte_count: 2,
+                ..TaskStatus::default()
+            },
+        ] {
+            assert_eq!(
+                batch().decode_outputs(
+                    &[status],
+                    &[ResultRecord::default()],
+                    &[FinalCaptureRecord::default()],
+                    &[PropertyRecord::default()],
+                    &[0],
+                ),
+                Err(Error::BackendFailure),
+            );
+        }
+    }
+
+    #[test]
+    fn packed_results_keep_task_errors_scoped_to_their_program() {
+        let mut batch = batch();
+        batch.programs.push(BatchProgram::default());
+        batch.evaluations[0].task_count = 1;
+        batch.tasks.push(BatchTask {
+            evaluation: 1,
+            batch_ordinal: 1,
+            program: 1,
+            ..BatchTask::default()
+        });
+        batch.evaluations.push(MetalEvaluation {
+            task_start: 1,
+            task_count: 1,
+            ..batch.evaluations[0]
+        });
+        let outcome = batch
+            .decode_outcomes(
+                &[
+                    TaskStatus {
+                        error: 2,
+                        ..TaskStatus::default()
+                    },
+                    TaskStatus::default(),
+                ],
+                &[ResultRecord::default(); 2],
+                &[FinalCaptureRecord::default(); 2],
+                &[PropertyRecord::default(); 2],
+                &[0; 2],
+            )
+            .unwrap();
+        assert_eq!(
+            outcome.errors,
+            vec![vec![Some(Error::BackendCapacity), None]]
+        );
+        assert_eq!(outcome.outputs, vec![vec![Vec::new(), Vec::new()]]);
+    }
+
+    #[test]
+    fn compact_result_page_preserves_nested_oracle_output() {
+        let mut batch = batch();
+        batch.global_arenas.arenas[ArenaKind::Result as usize].cursor = 1;
+        let statuses = [TaskStatus {
+            result_count: 1,
+            ..TaskStatus::default()
+        }];
+        let results = [ResultRecord {
+            task_ordinal: 0,
+            local_ordinal: 3,
+            start: 0,
+            label: 7,
+            ..ResultRecord::default()
+        }];
+        let captures = [FinalCaptureRecord::default()];
+        let properties = [PropertyRecord::default()];
+        let bytes = [0];
+        let expected = batch
+            .decode_outcomes(&statuses, &results, &captures, &properties, &bytes)
+            .unwrap();
+
+        let page =
+            PackedResultPage::compact(&batch, &statuses, &results, &captures, &properties, &bytes)
+                .unwrap();
+
+        assert_eq!(page.decode_outcomes(&batch).unwrap(), expected);
+        assert_eq!(page.results.len(), 1);
+        assert_eq!(page.results[0].local_ordinal, 3);
+    }
+
+    #[test]
+    fn compact_result_page_drops_every_child_of_a_failed_evaluation() {
+        let mut batch = batch();
+        batch.tasks.push(BatchTask {
+            batch_ordinal: 1,
+            ..BatchTask::default()
+        });
+        batch.global_arenas.arenas[ArenaKind::Result as usize].cursor = 1;
+        let statuses = [
+            TaskStatus {
+                result_count: 1,
+                ..TaskStatus::default()
+            },
+            TaskStatus {
+                error: 2,
+                ..TaskStatus::default()
+            },
+        ];
+        let results = [ResultRecord {
+            task_ordinal: 0,
+            ..ResultRecord::default()
+        }];
+
+        let page = PackedResultPage::compact(
+            &batch,
+            &statuses,
+            &results,
+            &[FinalCaptureRecord::default()],
+            &[PropertyRecord::default()],
+            &[0],
+        )
+        .unwrap();
+        let outcome = page.decode_outcomes(&batch).unwrap();
+
+        assert!(page.results.is_empty());
+        assert!(outcome.outputs[0][0].is_empty());
+        assert_eq!(outcome.errors[0][0], Some(Error::BackendCapacity));
+    }
+
+    #[test]
+    fn packed_results_reject_partial_output_from_failed_tasks() {
+        assert_eq!(
+            batch().decode_outcomes(
+                &[TaskStatus {
+                    error: 2,
+                    result_count: 1,
+                    ..TaskStatus::default()
+                }],
+                &[ResultRecord::default()],
+                &[FinalCaptureRecord::default()],
+                &[PropertyRecord::default()],
+                &[0],
+            ),
+            Err(Error::BackendFailure),
+        );
+    }
+
+    #[test]
+    fn packed_results_reject_invalid_utf8_transformed_capture_text() {
+        let status = TaskStatus {
+            result_count: 1,
+            final_capture_count: 1,
+            output_byte_count: 1,
+            ..TaskStatus::default()
+        };
+        let result = ResultRecord {
+            capture_count: 1,
+            ..ResultRecord::default()
+        };
+        let capture = FinalCaptureRecord {
+            text_start: 0,
+            text_length: 1,
+            ..FinalCaptureRecord::default()
+        };
+        assert_eq!(
+            batch().decode_outputs(
+                &[status],
+                &[result],
+                &[capture],
+                &[PropertyRecord::default()],
+                &[0xff],
+            ),
+            Err(Error::BackendFailure),
+        );
     }
 }

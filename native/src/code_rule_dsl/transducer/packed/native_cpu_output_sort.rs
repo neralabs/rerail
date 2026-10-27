@@ -41,7 +41,10 @@ const FIELDS: [usize; 9] = [
     mem::offset_of!(FinalCaptureRecord, retained),
 ];
 
-pub(super) fn define(module: &mut JITModule) -> Result<FuncId, Box<cranelift_module::ModuleError>> {
+pub(super) fn define(
+    module: &mut JITModule,
+    query: bool,
+) -> Result<FuncId, Box<cranelift_module::ModuleError>> {
     let pointer_type = module.target_config().pointer_type();
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
@@ -138,12 +141,6 @@ pub(super) fn define(module: &mut JITModule) -> Result<FuncId, Box<cranelift_mod
             previous,
             mem::offset_of!(FinalCaptureRecord, end) as i32,
         );
-        let previous_label = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            previous,
-            mem::offset_of!(FinalCaptureRecord, label) as i32,
-        );
         let start_after =
             function
                 .ins()
@@ -152,13 +149,23 @@ pub(super) fn define(module: &mut JITModule) -> Result<FuncId, Box<cranelift_mod
         let end_before = function
             .ins()
             .icmp(IntCC::UnsignedLessThan, previous_end, values[4]);
-        let end_equal = function.ins().icmp(IntCC::Equal, previous_end, values[4]);
-        let label_after =
-            function
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThan, previous_label, values[1]);
-        let equal_and_label = function.ins().band(end_equal, label_after);
-        let end_after = function.ins().bor(end_before, equal_and_label);
+        let end_after = if query {
+            end_before
+        } else {
+            let previous_label = function.ins().load(
+                types::I32,
+                MemFlags::trusted(),
+                previous,
+                mem::offset_of!(FinalCaptureRecord, label) as i32,
+            );
+            let end_equal = function.ins().icmp(IntCC::Equal, previous_end, values[4]);
+            let label_after =
+                function
+                    .ins()
+                    .icmp(IntCC::UnsignedGreaterThan, previous_label, values[1]);
+            let equal_and_label = function.ins().band(end_equal, label_after);
+            function.ins().bor(end_before, equal_and_label)
+        };
         let tie_after = function.ins().band(start_equal, end_after);
         let after = function.ins().bor(start_after, tie_after);
         let args = values.iter().copied().map(Into::into).collect::<Vec<_>>();
@@ -209,7 +216,7 @@ pub(super) fn define(module: &mut JITModule) -> Result<FuncId, Box<cranelift_mod
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -289,7 +296,7 @@ fn define_first_capture_node(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -450,7 +457,7 @@ pub(super) fn define_results(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }

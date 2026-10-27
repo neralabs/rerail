@@ -1,7 +1,7 @@
 //! Ordered capture containment for the independent CPU JIT.
 //! Capture links are immutable insertion histories. Geometry ties retain insertion order.
 use super::{context_pointer, declare, pointer_at};
-use crate::policy_dsl::transducer::{
+use crate::code_rule_dsl::transducer::packed::{
     metal_batch_abi::{LinkRecord, MetalNode},
     native_cpu::NativeTaskContext,
 };
@@ -112,7 +112,7 @@ fn define_geometry_walk(
         f.seal_all_blocks();
         f.finalize();
     }
-    crate::policy_dsl::transducer::native_cpu_codegen::define_function(module, id, &mut context)?;
+    crate::code_rule_dsl::transducer::packed::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -182,7 +182,7 @@ pub(super) fn define(
         f.seal_all_blocks();
         f.finalize();
     }
-    crate::policy_dsl::transducer::native_cpu_codegen::define_function(module, id, &mut context)?;
+    crate::code_rule_dsl::transducer::packed::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }

@@ -181,7 +181,7 @@ fn define_unicode_word(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -319,11 +319,10 @@ fn define_utf8_scalar(
         function.seal_all_blocks();
         function.finalize();
     }
-    if let Err(error) = module.define_function(id, &mut context) {
+    super::native_cpu_codegen::define_function(module, id, &mut context).inspect_err(|_| {
         #[cfg(test)]
         eprintln!("utf8 scalar:\n{}", context.func.display());
-        return Err(Box::new(error));
-    }
+    })?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -429,7 +428,7 @@ fn define_unicode_word_side(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -448,8 +447,8 @@ pub(super) fn define_helpers(
     Ok(RegexHelpers { closure, find })
 }
 
-// The functions below are direct block-for-block translations of look_matches,
-// nfa_closure, and evaluate_nfa in metal_batch_runtime.metal.
+// These helpers implement look assertions and ordered NFA closures for the
+// native CPU backend. The Metal backend uses its separate shared frontier.
 fn define_look_matches(
     module: &mut JITModule,
     unicode_word_left: FuncId,
@@ -700,7 +699,7 @@ fn define_look_matches(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -715,6 +714,10 @@ fn define_closure(
     signature.params.push(AbiParam::new(pointer_type));
     signature.params.push(AbiParam::new(pointer_type));
     for _ in 0..7 {
+        signature.params.push(AbiParam::new(types::I32));
+    }
+    if ordered {
+        signature.params.push(AbiParam::new(types::I32));
         signature.params.push(AbiParam::new(types::I32));
     }
     signature.returns.push(AbiParam::new(types::I64));
@@ -855,6 +858,15 @@ fn define_closure(
             mem::offset_of!(NativeTaskContext, value_start) as i32,
         );
         let stack_start = function.ins().iadd(base, n);
+        let stack_tag_start = if ordered {
+            let offset = function.ins().imul_imm(n, 4);
+            let tags = function.ins().iadd(base, offset);
+            let initial_tag = function.block_params(entry)[9];
+            store_u32(&mut function, work, tags, initial_tag);
+            Some(tags)
+        } else {
+            None
+        };
         store_u32(&mut function, work, stack_start, state);
         let one = function.ins().iconst(types::I32, 1);
         function
@@ -897,7 +909,7 @@ fn define_closure(
             types::I32,
             MemFlags::trusted(),
             task,
-            mem::offset_of!(NativeTaskContext, work_limit) as i32,
+            mem::offset_of!(NativeTaskContext, path_work_limit) as i32,
         );
         let over = function
             .ins()
@@ -908,6 +920,10 @@ fn define_closure(
         let next_stack_count = function.ins().iadd_imm(stack_count, -1);
         let stack_index = function.ins().iadd(stack_start, next_stack_count);
         let current = load_u32(&mut function, work, stack_index);
+        let current_tag = stack_tag_start.map(|tags| {
+            let index = function.ins().iadd(tags, next_stack_count);
+            load_u32(&mut function, work, index)
+        });
         let valid_current = function.ins().icmp(IntCC::UnsignedLessThan, current, n);
         let current_ok = function.create_block();
         function
@@ -1014,6 +1030,11 @@ fn define_closure(
         function.switch_to_block(append);
         let output_index = function.ins().iadd(output_start, output_count);
         store_u32(&mut function, work, output_index, current);
+        if let Some(tag) = current_tag {
+            let tags = function.block_params(entry)[10];
+            let index = function.ins().iadd(tags, output_count);
+            store_u32(&mut function, work, index, tag);
+        }
         let output_count = function.ins().iadd_imm(output_count, 1);
         function
             .ins()
@@ -1069,6 +1090,10 @@ fn define_closure(
         function.switch_to_block(push_write);
         let index = function.ins().iadd(stack_start, stack_count);
         store_u32(&mut function, work, index, next);
+        if let (Some(tags), Some(tag)) = (stack_tag_start, current_tag) {
+            let index = function.ins().iadd(tags, stack_count);
+            store_u32(&mut function, work, index, tag);
+        }
         let stack_count = function.ins().iadd_imm(stack_count, 1);
         function
             .ins()
@@ -1156,6 +1181,10 @@ fn define_closure(
         let target = load_u32(&mut function, data, data_index);
         let stack_index = function.ins().iadd(stack_start, stack_count);
         store_u32(&mut function, work, stack_index, target);
+        if let (Some(tags), Some(tag)) = (stack_tag_start, current_tag) {
+            let index = function.ins().iadd(tags, stack_count);
+            store_u32(&mut function, work, index, tag);
+        }
         let stack_count = function.ins().iadd_imm(stack_count, 1);
         function.ins().jump(
             split_loop,
@@ -1193,6 +1222,18 @@ fn define_closure(
         function.switch_to_block(capture_write);
         let stack_index = function.ins().iadd(stack_start, stack_count);
         store_u32(&mut function, work, stack_index, next);
+        if let (Some(tags), Some(tag)) = (stack_tag_start, current_tag) {
+            let slot = function.ins().load(
+                types::I32,
+                MemFlags::trusted(),
+                state_address,
+                mem::offset_of!(NfaStateRecord, data_start) as i32,
+            );
+            let start_capture = function.ins().icmp_imm(IntCC::Equal, slot, 0);
+            let tag = function.ins().select(start_capture, at, tag);
+            let index = function.ins().iadd(tags, stack_count);
+            store_u32(&mut function, work, index, tag);
+        }
         let stack_count = function.ins().iadd_imm(stack_count, 1);
         function
             .ins()
@@ -1217,6 +1258,11 @@ fn define_closure(
             function.switch_to_block(append);
             let output_index = function.ins().iadd(output_start, match_values[2]);
             store_u32(&mut function, work, output_index, match_values[0]);
+            if let Some(tag) = current_tag {
+                let tags = function.block_params(entry)[10];
+                let index = function.ins().iadd(tags, match_values[2]);
+                store_u32(&mut function, work, index, tag);
+            }
             let output_count = function.ins().iadd_imm(match_values[2], 1);
             function
                 .ins()
@@ -1245,7 +1291,7 @@ fn define_closure(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -1258,7 +1304,7 @@ fn define_find(
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer_type));
     signature.params.push(AbiParam::new(pointer_type));
-    for _ in 0..4 {
+    for _ in 0..5 {
         signature.params.push(AbiParam::new(types::I32));
     }
     signature.returns.push(AbiParam::new(types::I64));
@@ -1358,12 +1404,7 @@ fn define_find(
             function
                 .ins()
                 .icmp(IntCC::UnsignedLessThanOrEqual, candidate, input_end);
-        let source_length = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            task,
-            mem::offset_of!(NativeTaskContext, source_length) as i32,
-        );
+        let source_length = params[6];
         let input_bounded =
             function
                 .ins()
@@ -1391,26 +1432,30 @@ fn define_find(
             value,
             mem::offset_of!(ValueRecord, state_count) as i32,
         );
-        let anchored = function.ins().load(
+        let unanchored = function.ins().load(
             types::I32,
             MemFlags::trusted(),
             value,
-            mem::offset_of!(ValueRecord, auxiliary) as i32,
+            mem::offset_of!(ValueRecord, operand) as i32,
         );
         let nonempty = function.ins().icmp_imm(IntCC::NotEqual, n, 0);
-        let four_n = function.ins().imul_imm(n, 4);
-        let no_overflow = function
-            .ins()
-            .icmp(IntCC::UnsignedGreaterThanOrEqual, four_n, n);
+        let seven_n = function.ins().imul_imm(n, 7);
+        let required = function.ins().iadd_imm(seven_n, 1);
+        let no_overflow = function.ins().icmp_imm(
+            IntCC::UnsignedLessThanOrEqual,
+            n,
+            ((u32::MAX - 1) / 7) as i64,
+        );
         let value_capacity = function.ins().load(
             types::I32,
             MemFlags::trusted(),
             task,
             mem::offset_of!(NativeTaskContext, value_capacity) as i32,
         );
-        let enough = function
-            .ins()
-            .icmp(IntCC::UnsignedGreaterThanOrEqual, value_capacity, four_n);
+        let enough =
+            function
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, value_capacity, required);
         let valid_n = function.ins().band(nonempty, no_overflow);
         let workspace_ready = function.create_block();
         let classify_capacity = function.create_block();
@@ -1448,6 +1493,11 @@ fn define_find(
         let current = function.ins().iadd(base, current_offset);
         let next_offset = function.ins().imul_imm(n, 3);
         let next = function.ins().iadd(base, next_offset);
+        let tag_stride = function.ins().imul_imm(n, 3);
+        let current_tags = function.ins().iadd(current, tag_stride);
+        let match_tag = function.ins().iadd(base, seven_n);
+        let no_tag = function.ins().iconst(types::I32, NONE as i64);
+        store_u32(&mut function, work, match_tag, no_tag);
         let zero = function.ins().iconst(types::I32, 0);
         function.ins().jump(clear_initial, &[zero.into()]);
         function.switch_to_block(clear_initial);
@@ -1471,12 +1521,14 @@ fn define_find(
                 task,
                 input,
                 value_index,
-                anchored,
+                unanchored,
                 candidate,
                 input_start,
                 input_end,
                 current,
                 zero,
+                no_tag,
+                current_tags,
             ],
         );
         let packed = function.inst_results(call)[0];
@@ -1556,8 +1608,15 @@ fn define_find(
         );
         let matched = function.ins().icmp_imm(IntCC::Equal, kind, 5);
         let next_scan = function.create_block();
-        function.ins().brif(
-            matched,
+        let save_match = function.create_block();
+        function
+            .ins()
+            .brif(matched, save_match, &[], next_scan, &[]);
+        function.switch_to_block(save_match);
+        let tag_index = function.ins().iadd(current_index, tag_stride);
+        let tag = load_u32(&mut function, work, tag_index);
+        store_u32(&mut function, work, match_tag, tag);
+        function.ins().jump(
             transition,
             &[
                 values[0].into(),
@@ -1567,8 +1626,6 @@ fn define_find(
                 values[0].into(),
                 values[5].into(),
             ],
-            next_scan,
-            &[],
         );
         function.switch_to_block(next_scan);
         let index = function.ins().iadd_imm(values[5], 1);
@@ -1758,7 +1815,7 @@ fn define_find(
             types::I32,
             MemFlags::trusted(),
             task,
-            mem::offset_of!(NativeTaskContext, work_limit) as i32,
+            mem::offset_of!(NativeTaskContext, path_work_limit) as i32,
         );
         let over = function
             .ins()
@@ -1832,6 +1889,10 @@ fn define_find(
             mem::offset_of!(NfaRangeRecord, target) as i32,
         );
         let next_at = function.ins().iadd_imm(values[0], 1);
+        let current_index = function.ins().iadd(values[1], values[5]);
+        let tag_index = function.ins().iadd(current_index, tag_stride);
+        let tag = load_u32(&mut function, work, tag_index);
+        let next_tags = function.ins().iadd(values[2], tag_stride);
         let call = function.ins().call(
             closure,
             &[
@@ -1844,6 +1905,8 @@ fn define_find(
                 input_end,
                 values[2],
                 values[6],
+                tag,
+                next_tags,
             ],
         );
         let packed = function.inst_results(call)[0];
@@ -1934,7 +1997,18 @@ fn define_find(
 
         function.switch_to_block(return_match);
         let end = function.block_params(return_match)[0];
-        let start = function.ins().uextend(types::I64, candidate);
+        let start = load_u32(&mut function, work, match_tag);
+        let valid_start = function
+            .ins()
+            .icmp(IntCC::UnsignedGreaterThanOrEqual, start, candidate);
+        let ordered = function
+            .ins()
+            .icmp(IntCC::UnsignedLessThanOrEqual, start, end);
+        let valid = function.ins().band(valid_start, ordered);
+        let encode_match = function.create_block();
+        function.ins().brif(valid, encode_match, &[], invalid, &[]);
+        function.switch_to_block(encode_match);
+        let start = function.ins().uextend(types::I64, start);
         let start = function.ins().ishl_imm(start, 32);
         let end = function.ins().uextend(types::I64, end);
         let span = function.ins().bor(start, end);
@@ -1959,7 +2033,7 @@ fn define_find(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -2456,7 +2530,7 @@ pub(super) fn define(
             types::I32,
             MemFlags::trusted(),
             task,
-            mem::offset_of!(NativeTaskContext, work_limit) as i32,
+            mem::offset_of!(NativeTaskContext, path_work_limit) as i32,
         );
         let over = function
             .ins()
@@ -2580,7 +2654,7 @@ pub(super) fn define(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }

@@ -333,7 +333,7 @@ pub(super) fn define_downcase(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -567,6 +567,22 @@ pub(super) fn define_strip(
             task,
             mem::offset_of!(NativeTaskContext, status),
         );
+        // Find reads one immutable snapshot, which can reside in either arena.
+        let source_length = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            task,
+            mem::offset_of!(NativeTaskContext, source_length) as i32,
+        );
+        let published_length = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            status,
+            mem::offset_of!(TaskStatus, output_byte_count) as i32,
+        );
+        let input_length = function
+            .ins()
+            .select(transformed, published_length, source_length);
         let output_start = function.ins().load(
             types::I32,
             MemFlags::trusted(),
@@ -651,7 +667,15 @@ pub(super) fn define_strip(
         function.switch_to_block(try_match);
         let call = function.ins().call(
             find,
-            &[task, values[5], value, values[1], values[2], values[7]],
+            &[
+                task,
+                values[5],
+                value,
+                input_start,
+                values[2],
+                values[7],
+                input_length,
+            ],
         );
         let span = function.inst_results(call)[0];
         let error = function.inst_results(call)[1];
@@ -680,20 +704,7 @@ pub(super) fn define_strip(
             ],
         );
         function.switch_to_block(next_candidate);
-        let next = function.ins().iadd_imm(values[7], 1);
-        function.ins().jump(
-            candidate,
-            &[
-                values[0].into(),
-                values[1].into(),
-                values[2].into(),
-                values[3].into(),
-                values[4].into(),
-                values[5].into(),
-                values[6].into(),
-                next.into(),
-            ],
-        );
+        function.ins().jump(no_match, &[]);
 
         function.switch_to_block(found);
         let values = function.block_params(found).to_vec();
@@ -729,14 +740,21 @@ pub(super) fn define_strip(
             .ins()
             .icmp(IntCC::UnsignedGreaterThanOrEqual, match_end, values[2]);
         let preserve = function.create_block();
+        let finish_mode = function.ins().iconst(types::I32, 1);
         function.ins().brif(
             terminal,
-            finish_capture,
+            copy,
             &[
                 values[0].into(),
+                values[2].into(),
                 values[3].into(),
                 values[4].into(),
+                values[5].into(),
                 values[6].into(),
+                values[1].into(),
+                values[2].into(),
+                values[2].into(),
+                finish_mode.into(),
             ],
             preserve,
             &[],
@@ -770,7 +788,7 @@ pub(super) fn define_strip(
                 values[4].into(),
                 values[5].into(),
                 values[6].into(),
-                match_end.into(),
+                values[1].into(),
                 copy_end.into(),
                 scalar_end.into(),
                 zero.into(),
@@ -890,7 +908,7 @@ pub(super) fn define_strip(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }
@@ -1328,7 +1346,7 @@ pub(super) fn define_language_from_mime(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }

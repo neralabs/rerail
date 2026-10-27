@@ -328,7 +328,7 @@ pub(super) fn define(
             "output instruction is not lowered".into(),
         )));
     }
-    let sort_captures = native_cpu_output_sort::define(module)?;
+    let sort_captures = native_cpu_output_sort::define(module, native.tree_sitter_query)?;
     let sort_results = native_cpu_output_sort::define_results(module)?;
     let downcase = native_cpu_output_transform::define_downcase(module)?;
     let strip = if native
@@ -668,6 +668,14 @@ pub(super) fn define(
 
         function.switch_to_block(properties);
         let values = function.block_params(properties).to_vec();
+        // Output operators share one budget for this complete candidate.
+        // Neither a previous candidate nor its structural execution owns it.
+        function.ins().store(
+            MemFlags::trusted(),
+            zero,
+            task,
+            mem::offset_of!(NativeTaskContext, current_steps) as i32,
+        );
         let results = pointer(
             &mut function,
             task,
@@ -1469,7 +1477,7 @@ pub(super) fn define(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(id)
 }

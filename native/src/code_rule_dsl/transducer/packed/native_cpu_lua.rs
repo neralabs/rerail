@@ -449,7 +449,7 @@ pub(super) fn define(
             types::I32,
             MemFlags::trusted(),
             task,
-            mem::offset_of!(NativeTaskContext, work_limit) as i32,
+            mem::offset_of!(NativeTaskContext, path_work_limit) as i32,
         );
         let over_limit = function
             .ins()
@@ -738,7 +738,7 @@ pub(super) fn define(
                         types::I32,
                         MemFlags::trusted(),
                         task,
-                        mem::offset_of!(NativeTaskContext, work_limit) as i32,
+                        mem::offset_of!(NativeTaskContext, path_work_limit) as i32,
                     );
                     let over = function
                         .ins()
@@ -937,11 +937,10 @@ pub(super) fn define(
         function.seal_all_blocks();
         function.finalize();
     }
-    if let Err(error) = module.define_function(id, &mut context) {
+    super::native_cpu_codegen::define_function(module, id, &mut context).inspect_err(|_| {
         #[cfg(test)]
         eprintln!("{}", context.func.display());
-        return Err(Box::new(error));
-    }
+    })?;
     module.clear_context(&mut context);
     Ok(())
 }

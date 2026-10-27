@@ -1,8 +1,9 @@
 use super::capture_run::Limits;
 use super::*;
-use crate::policy_dsl::tape::{Grammar, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_language::{LanguageExt, SupportLang};
+use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
+use ast_grep_core::tree_sitter::LanguageExt;
 
 fn tape(source: &str) -> TapeDoc {
     let grammar = Grammar::new(SupportLang::Python).unwrap();

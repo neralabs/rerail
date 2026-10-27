@@ -77,6 +77,7 @@ pub(super) struct MetalProgram {
     pub label_count: u32,
     pub maximum_cursor_slot: u32,
     pub maximum_lua_capture_slot: u32,
+    /// Bit 0: query capture ordering. Bit 1: exact admission for a query with repeats.
     pub flags: u32,
 }
 
@@ -338,7 +339,7 @@ pub(super) struct MetalEvaluation {
     pub failure_task: u32,
     pub failure_pc: u32,
     pub work_used: u32,
-    pub work_limit: u32,
+    pub workspace_work_estimate: u32,
     pub task_start: u32,
     pub task_count: u32,
     pub quotas: [EvaluationQuotaRecord; ARENA_KIND_COUNT],
@@ -370,7 +371,8 @@ pub(super) struct MetalTask {
     pub file: u32,
     pub program: u32,
     pub root: u32,
-    pub work_limit: u32,
+    /// Workspace estimate only. Runtime task and path budgets are independent.
+    pub workspace_work_estimate: u32,
 }
 
 const _: [(); 80] = [(); size_of::<MetalBatchHeader>()];
@@ -405,3 +407,72 @@ const _: [(); 4] = [(); align_of::<MetalFile>()];
 const _: [(); 4] = [(); align_of::<MetalProgram>()];
 const _: [(); 4] = [(); align_of::<MetalTask>()];
 const _: [(); 4] = [(); align_of::<MetalEvaluation>()];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metal_batch_abi_has_stable_sizes_and_alignment() {
+        assert_eq!(size_of::<MetalBatchHeader>(), 80);
+        assert_eq!(size_of::<MetalNode>(), 44);
+        assert_eq!(size_of::<MetalFile>(), 32);
+        assert_eq!(size_of::<MetalProgram>(), 68);
+        assert_eq!(size_of::<MetalString>(), 8);
+        assert_eq!(size_of::<MetalSupertype>(), 8);
+        assert_eq!(size_of::<PathRecord>(), 44);
+        assert_eq!(size_of::<LinkRecord>(), 12);
+        assert_eq!(size_of::<RepeatRecord>(), 12);
+        assert_eq!(size_of::<QueryStateRecord>(), 40);
+        assert_eq!([PENDING_PATH, PENDING_GREEDY, PENDING_FOLLOWING], [0, 1, 2]);
+        assert_eq!(size_of::<PendingRecord>(), 52);
+        assert_eq!(size_of::<QueryBucketRecord>(), 32);
+        assert_eq!(size_of::<QueryMemberRecord>(), 16);
+        assert_eq!(size_of::<QueuedStateRecord>(), 32);
+        assert_eq!(size_of::<GreedyEntryRecord>(), 72);
+        assert_eq!(size_of::<ResultRecord>(), 40);
+        assert_eq!(size_of::<FinalCaptureRecord>(), 36);
+        assert_eq!(size_of::<PropertyRecord>(), 32);
+        assert_eq!(size_of::<TaskStatus>(), 32);
+        assert_eq!(size_of::<SharedArenaRecord>(), 12);
+        assert_eq!(size_of::<EvaluationQuotaRecord>(), 8);
+        assert_eq!(size_of::<LazyArenaBlockRecord>(), 16);
+        assert_eq!(size_of::<MetalEvaluation>(), 308);
+        assert_eq!(size_of::<MetalGlobalArenas>(), 184);
+        assert_eq!(size_of::<MetalTask>(), 24);
+        assert_eq!(align_of::<MetalBatchHeader>(), 4);
+        assert_eq!(align_of::<MetalTask>(), 4);
+    }
+
+    #[test]
+    fn metal_batch_abi_uses_an_explicit_version() {
+        assert_ne!(FORMAT_VERSION, 0);
+        let header = MetalBatchHeader {
+            format_version: FORMAT_VERSION,
+            ..MetalBatchHeader::default()
+        };
+        assert_eq!(header.format_version, 4);
+        assert_eq!(FORMAT_VERSION, 4);
+    }
+
+    #[test]
+    fn shared_arena_kind_order_is_stable_in_version_four() {
+        use super::super::native_ir::ArenaKind;
+
+        assert_eq!(ArenaKind::Pending as u32, 0);
+        assert_eq!(ArenaKind::Capture as u32, 1);
+        assert_eq!(ArenaKind::Cursor as u32, 2);
+        assert_eq!(ArenaKind::Repeat as u32, 3);
+        assert_eq!(ArenaKind::QueryBucket as u32, 4);
+        assert_eq!(ArenaKind::QueryMember as u32, 5);
+        assert_eq!(ArenaKind::QueuedState as u32, 6);
+        assert_eq!(ArenaKind::GreedyEntry as u32, 7);
+        assert_eq!(ArenaKind::ValueState as u32, 8);
+        assert_eq!(ArenaKind::Candidate as u32, 9);
+        assert_eq!(ArenaKind::Result as u32, 10);
+        assert_eq!(ArenaKind::FinalCapture as u32, 11);
+        assert_eq!(ArenaKind::Property as u32, 12);
+        assert_eq!(ArenaKind::OutputByte as u32, 13);
+        assert_eq!(ARENA_KIND_COUNT, 14);
+    }
+}

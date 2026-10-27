@@ -82,13 +82,6 @@ pub(super) enum StructuralOperation {
     Emit { label: u16, output: FunctionRef },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct StructuralBlock {
-    pub position: u16,
-    pub operation: StructuralOperation,
-    pub next: Option<u16>,
-}
-
 impl StructuralOperation {
     pub(super) fn encoded(self) -> (u8, u8, u16) {
         match self {
@@ -129,6 +122,13 @@ impl StructuralOperation {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct StructuralBlock {
+    pub position: u16,
+    pub operation: StructuralOperation,
+    pub next: Option<u16>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

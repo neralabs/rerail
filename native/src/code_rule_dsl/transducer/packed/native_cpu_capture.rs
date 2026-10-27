@@ -306,6 +306,8 @@ fn define_one(
         } => (*capture, *negated, false),
         _ => unreachable!("unsupported capture program rejected before lowering"),
     };
+    // Relations quantify positive membership existentially and negative membership universally.
+    let positive_any = any || matches!(program, CaptureProgram::Relation { .. });
     let mut builder_context = FunctionBuilderContext::new();
     {
         let mut function = FunctionBuilder::new(&mut context.func, &mut builder_context);
@@ -340,11 +342,17 @@ fn define_one(
             task,
             mem::offset_of!(NativeTaskContext, current_captures) as i32,
         );
-        let initial = function.ins().iconst(types::I8, i64::from(!any));
+        let positive_initial = function.ins().iconst(types::I8, i64::from(!positive_any));
+        let negative_initial = function.ins().iconst(types::I8, i64::from(!any));
         let zero = function.ins().iconst(types::I32, 0);
         function.ins().jump(
             loop_block,
-            &[head.into(), initial.into(), initial.into(), zero.into()],
+            &[
+                head.into(),
+                positive_initial.into(),
+                negative_initial.into(),
+                zero.into(),
+            ],
         );
 
         function.switch_to_block(loop_block);
@@ -456,7 +464,9 @@ fn define_one(
                 (result, negative)
             }
             CaptureProgram::Contains { strings, .. } => {
-                let mut positive = function.ins().iconst(types::I8, i64::from(!any));
+                let mut positive = function
+                    .ins()
+                    .iconst(types::I8, i64::from(!any && !strings.is_empty()));
                 let mut negative = positive;
                 for string in strings {
                     let found = string_contains(
@@ -502,7 +512,7 @@ fn define_one(
 
         function.switch_to_block(aggregate);
         let values = function.block_params(aggregate).to_vec();
-        let positive = if any {
+        let positive = if positive_any {
             function.ins().bor(values[1], values[4])
         } else {
             function.ins().band(values[1], values[4])
@@ -547,7 +557,7 @@ fn define_one(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }

@@ -63,7 +63,7 @@ fn charge_task_work(function: &mut FunctionBuilder<'_>, task: Value) -> Value {
         types::I32,
         MemFlags::trusted(),
         task,
-        mem::offset_of!(NativeTaskContext, work_limit) as i32,
+        mem::offset_of!(NativeTaskContext, task_work_limit) as i32,
     );
     let within = function
         .ins()
@@ -190,7 +190,7 @@ fn define_cursor_value(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -268,7 +268,7 @@ fn define_cursor_equal(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -391,208 +391,13 @@ fn define_repeat_equal(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
 
-fn define_capture_occurrences(
-    module: &mut JITModule,
-    id: FuncId,
-) -> Result<(), Box<cranelift_module::ModuleError>> {
-    let mut context = module.make_context();
-    context.func.signature = module.make_signature();
-    context
-        .func
-        .signature
-        .params
-        .push(AbiParam::new(module.target_config().pointer_type()));
-    for _ in 0..3 {
-        context
-            .func
-            .signature
-            .params
-            .push(AbiParam::new(types::I32));
-    }
-    context
-        .func
-        .signature
-        .returns
-        .push(AbiParam::new(types::I32));
-    let mut builder_context = FunctionBuilderContext::new();
-    {
-        let mut function = FunctionBuilder::new(&mut context.func, &mut builder_context);
-        let entry = function.create_block();
-        function.append_block_params_for_function_params(entry);
-        let walk = function.create_block();
-        function.append_block_param(walk, types::I32);
-        function.append_block_param(walk, types::I32);
-        let inspect = function.create_block();
-        let done = function.create_block();
-        function.append_block_param(done, types::I32);
-        function.switch_to_block(entry);
-        let zero = function.ins().iconst(types::I32, 0);
-        let initial_head = function.block_params(entry)[1];
-        function
-            .ins()
-            .jump(walk, &[initial_head.into(), zero.into()]);
-        function.switch_to_block(walk);
-        let head = function.block_params(walk)[0];
-        let count = function.block_params(walk)[1];
-        let present = function.ins().icmp_imm(IntCC::NotEqual, head, 0);
-        function
-            .ins()
-            .brif(present, inspect, &[], done, &[count.into()]);
-        function.switch_to_block(inspect);
-        let task = function.block_params(entry)[0];
-        let links = context_pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, captures),
-        );
-        let one = function.ins().iconst(types::I32, 1);
-        let index = function.ins().isub(head, one);
-        let link = pointer_at(&mut function, links, index, mem::size_of::<LinkRecord>());
-        let label = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            link,
-            mem::offset_of!(LinkRecord, first) as i32,
-        );
-        let node = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            link,
-            mem::offset_of!(LinkRecord, second) as i32,
-        );
-        let expected_label = function.block_params(entry)[2];
-        let expected_node = function.block_params(entry)[3];
-        let label_same = function.ins().icmp(IntCC::Equal, label, expected_label);
-        let node_same = function.ins().icmp(IntCC::Equal, node, expected_node);
-        let matches = function.ins().band(label_same, node_same);
-        let incremented = function.ins().iadd_imm(count, 1);
-        let next_count = function.ins().select(matches, incremented, count);
-        let previous = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            link,
-            mem::offset_of!(LinkRecord, previous) as i32,
-        );
-        function
-            .ins()
-            .jump(walk, &[previous.into(), next_count.into()]);
-        function.switch_to_block(done);
-        let result = function.block_params(done)[0];
-        function.ins().return_(&[result]);
-        function.seal_all_blocks();
-        function.finalize();
-    }
-    module.define_function(id, &mut context)?;
-    module.clear_context(&mut context);
-    Ok(())
-}
-
-fn define_capture_contains(
-    module: &mut JITModule,
-    id: FuncId,
-    occurrences: FuncId,
-) -> Result<(), Box<cranelift_module::ModuleError>> {
-    let mut context = module.make_context();
-    context.func.signature = module.make_signature();
-    context
-        .func
-        .signature
-        .params
-        .push(AbiParam::new(module.target_config().pointer_type()));
-    context
-        .func
-        .signature
-        .params
-        .push(AbiParam::new(types::I32));
-    context
-        .func
-        .signature
-        .params
-        .push(AbiParam::new(types::I32));
-    context
-        .func
-        .signature
-        .returns
-        .push(AbiParam::new(types::I32));
-    let occurrences = module.declare_func_in_func(occurrences, &mut context.func);
-    let mut builder_context = FunctionBuilderContext::new();
-    {
-        let mut function = FunctionBuilder::new(&mut context.func, &mut builder_context);
-        let entry = function.create_block();
-        function.append_block_params_for_function_params(entry);
-        let walk = function.create_block();
-        function.append_block_param(walk, types::I32);
-        let inspect = function.create_block();
-        let reject = function.create_block();
-        let accept = function.create_block();
-        function.switch_to_block(entry);
-        let initial_right = function.block_params(entry)[2];
-        function.ins().jump(walk, &[initial_right.into()]);
-        function.switch_to_block(walk);
-        let head = function.block_params(walk)[0];
-        let present = function.ins().icmp_imm(IntCC::NotEqual, head, 0);
-        function.ins().brif(present, inspect, &[], accept, &[]);
-        function.switch_to_block(inspect);
-        let task = function.block_params(entry)[0];
-        let links = context_pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, captures),
-        );
-        let one = function.ins().iconst(types::I32, 1);
-        let index = function.ins().isub(head, one);
-        let link = pointer_at(&mut function, links, index, mem::size_of::<LinkRecord>());
-        let label = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            link,
-            mem::offset_of!(LinkRecord, first) as i32,
-        );
-        let node = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            link,
-            mem::offset_of!(LinkRecord, second) as i32,
-        );
-        let left = function.block_params(entry)[1];
-        let right = function.block_params(entry)[2];
-        let left_call = function.ins().call(occurrences, &[task, left, label, node]);
-        let left_count = function.inst_results(left_call)[0];
-        let right_call = function
-            .ins()
-            .call(occurrences, &[task, right, label, node]);
-        let right_count = function.inst_results(right_call)[0];
-        let enough =
-            function
-                .ins()
-                .icmp(IntCC::UnsignedGreaterThanOrEqual, left_count, right_count);
-        let previous = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            link,
-            mem::offset_of!(LinkRecord, previous) as i32,
-        );
-        function
-            .ins()
-            .brif(enough, walk, &[previous.into()], reject, &[]);
-        function.switch_to_block(reject);
-        let zero = function.ins().iconst(types::I32, 0);
-        function.ins().return_(&[zero]);
-        function.switch_to_block(accept);
-        let one = function.ins().iconst(types::I32, 1);
-        function.ins().return_(&[one]);
-        function.seal_all_blocks();
-        function.finalize();
-    }
-    module.define_function(id, &mut context)?;
-    module.clear_context(&mut context);
-    Ok(())
-}
+#[path = "native_cpu_capture_relation.rs"]
+mod capture_relation;
 
 fn define_exact_state_equal(
     module: &mut JITModule,
@@ -660,7 +465,7 @@ fn define_exact_state_equal(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -1176,7 +981,7 @@ fn define_queue_insert(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -1468,7 +1273,7 @@ fn define_queue_remove(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -1863,7 +1668,7 @@ fn define_greedy_schedule(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -1959,7 +1764,7 @@ fn define_greedy_take(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -2125,7 +1930,7 @@ fn define_path_enqueue(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -2212,7 +2017,6 @@ fn define_query_admit(
                 .value_type(function.block_params(entry)[0]),
         );
         function.append_block_param(members, types::I32);
-        function.append_block_param(members, types::I32);
         let inspect_member = function.create_block();
         function.append_block_param(
             inspect_member,
@@ -2222,28 +2026,9 @@ fn define_query_admit(
                 .value_type(function.block_params(entry)[0]),
         );
         function.append_block_param(inspect_member, types::I32);
-        function.append_block_param(inspect_member, types::I32);
         let append = function.create_block();
         function.append_block_param(
             append,
-            function
-                .func
-                .dfg
-                .value_type(function.block_params(entry)[0]),
-        );
-        function.append_block_param(append, types::I32);
-        let replace = function.create_block();
-        function.append_block_param(
-            replace,
-            function
-                .func
-                .dfg
-                .value_type(function.block_params(entry)[0]),
-        );
-        function.append_block_param(replace, types::I32);
-        let append_new = function.create_block();
-        function.append_block_param(
-            append_new,
             function
                 .func
                 .dfg
@@ -2257,7 +2042,6 @@ fn define_query_admit(
                 .dfg
                 .value_type(function.block_params(entry)[0]),
         );
-        function.append_block_param(check_member, types::I32);
         function.append_block_param(check_member, types::I32);
         let accepted = function.create_block();
         let rejected = function.create_block();
@@ -2376,7 +2160,16 @@ fn define_query_admit(
             bucket,
             mem::offset_of!(QueryBucketRecord, occupied) as i32,
         );
-        let empty = function.ins().icmp_imm(IntCC::Equal, occupied, 0);
+        // Evaluations reuse these arenas for every root. The bucket's links
+        // point into task-local histories, so a previous task is never a hit.
+        let task_ordinal = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            task,
+            mem::offset_of!(NativeTaskContext, task_ordinal) as i32,
+        );
+        let epoch = function.ins().iadd_imm(task_ordinal, 1);
+        let empty = function.ins().icmp(IntCC::NotEqual, occupied, epoch);
         function.ins().brif(
             empty,
             initialize,
@@ -2398,10 +2191,9 @@ fn define_query_admit(
             slot,
             mem::size_of::<QueryBucketRecord>(),
         );
-        let one = function.ins().iconst(types::I32, 1);
         let zero = function.ins().iconst(types::I32, 0);
         for (offset, value) in [
-            (mem::offset_of!(QueryBucketRecord, occupied), one),
+            (mem::offset_of!(QueryBucketRecord, occupied), epoch),
             (mem::offset_of!(QueryBucketRecord, hash), hash),
             (mem::offset_of!(QueryBucketRecord, pc), pc),
             (mem::offset_of!(QueryBucketRecord, node), node),
@@ -2539,34 +2331,30 @@ fn define_query_admit(
             bucket,
             mem::offset_of!(QueryBucketRecord, first_member) as i32,
         );
-        let no_replacement = function.ins().iconst(types::I32, 0);
-        function.ins().jump(
-            members,
-            &[bucket.into(), first_member.into(), no_replacement.into()],
-        );
+        function
+            .ins()
+            .jump(members, &[bucket.into(), first_member.into()]);
 
         function.switch_to_block(members);
         let bucket = function.block_params(members)[0];
         let member = function.block_params(members)[1];
-        let replacement = function.block_params(members)[2];
         let has_member = function.ins().icmp_imm(IntCC::NotEqual, member, 0);
         function.ins().brif(
             has_member,
             inspect_member,
-            &[bucket.into(), member.into(), replacement.into()],
+            &[bucket.into(), member.into()],
             append,
-            &[bucket.into(), replacement.into()],
+            &[bucket.into()],
         );
 
         function.switch_to_block(inspect_member);
         let bucket = function.block_params(inspect_member)[0];
         let member = function.block_params(inspect_member)[1];
-        let replacement = function.block_params(inspect_member)[2];
         let within_work = charge_task_work(&mut function, task);
         function.ins().brif(
             within_work,
             check_member,
-            &[bucket.into(), member.into(), replacement.into()],
+            &[bucket.into(), member.into()],
             work_limit,
             &[],
         );
@@ -2574,7 +2362,6 @@ fn define_query_admit(
         function.switch_to_block(check_member);
         let bucket = function.block_params(check_member)[0];
         let member = function.block_params(check_member)[1];
-        let replacement = function.block_params(check_member)[2];
         let member_index = function.ins().iadd_imm(member, -1);
         let member_records = context_pointer(
             &mut function,
@@ -2611,57 +2398,17 @@ fn define_query_admit(
         let reverse_contains = function
             .ins()
             .icmp_imm(IntCC::NotEqual, reverse_contains, 0);
-        let replacement = function.ins().select(reverse_contains, member, replacement);
+        let equal = function.ins().band(does_contain, reverse_contains);
         function.ins().brif(
-            does_contain,
+            equal,
             rejected,
             &[],
             members,
-            &[bucket.into(), next_member.into(), replacement.into()],
+            &[bucket.into(), next_member.into()],
         );
 
         function.switch_to_block(append);
         let bucket = function.block_params(append)[0];
-        let replacement = function.block_params(append)[1];
-        let has_replacement = function.ins().icmp_imm(IntCC::NotEqual, replacement, 0);
-        function.ins().brif(
-            has_replacement,
-            replace,
-            &[bucket.into(), replacement.into()],
-            append_new,
-            &[bucket.into()],
-        );
-
-        function.switch_to_block(replace);
-        let replacement = function.block_params(replace)[1];
-        let member_records = context_pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, query_members),
-        );
-        let replacement_index = function.ins().iadd_imm(replacement, -1);
-        let member_record = pointer_at(
-            &mut function,
-            member_records,
-            replacement_index,
-            mem::size_of::<QueryMemberRecord>(),
-        );
-        function.ins().store(
-            MemFlags::trusted(),
-            captures,
-            member_record,
-            mem::offset_of!(QueryMemberRecord, captures) as i32,
-        );
-        function.ins().store(
-            MemFlags::trusted(),
-            capture_hash,
-            member_record,
-            mem::offset_of!(QueryMemberRecord, capture_hash) as i32,
-        );
-        function.ins().jump(accepted, &[]);
-
-        function.switch_to_block(append_new);
-        let bucket = function.block_params(append_new)[0];
         let member_count = function.ins().load(
             types::I32,
             MemFlags::trusted(),
@@ -2804,7 +2551,7 @@ fn define_query_admit(
         function.seal_all_blocks();
         function.finalize();
     }
-    module.define_function(id, &mut context)?;
+    super::native_cpu_codegen::define_function(module, id, &mut context)?;
     module.clear_context(&mut context);
     Ok(())
 }
@@ -2815,7 +2562,6 @@ pub(super) fn define(
     let cursor_value = declare(module, "tempo_cursor_value", 3)?;
     let cursor_equal = declare(module, "tempo_cursor_equal", 3)?;
     let repeat_equal = declare(module, "tempo_repeat_equal", 3)?;
-    let capture_occurrences = declare(module, "tempo_capture_occurrences", 4)?;
     let capture_contains = declare(module, "tempo_capture_contains", 3)?;
     let query_admit = declare(module, "tempo_query_admit", 3)?;
     let exact_state_equal = declare(module, "tempo_exact_state_equal", 7)?;
@@ -2827,8 +2573,7 @@ pub(super) fn define(
     define_cursor_value(module, cursor_value)?;
     define_cursor_equal(module, cursor_equal, cursor_value)?;
     define_repeat_equal(module, repeat_equal)?;
-    define_capture_occurrences(module, capture_occurrences)?;
-    define_capture_contains(module, capture_contains, capture_occurrences)?;
+    capture_relation::define(module, capture_contains)?;
     define_exact_state_equal(
         module,
         exact_state_equal,

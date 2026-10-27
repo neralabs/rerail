@@ -212,3 +212,111 @@ fn reserve_atomic(cursor: &AtomicU32, capacity: u32, count: u32) -> Result<u32, 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_reservation_enforces_evaluation_quota_before_global_capacity() {
+        let global = GlobalArenaCursor::new(ArenaRange::<ResultTag> {
+            start: ArenaOffset::new(10),
+            capacity: 8,
+        });
+        let first = EvaluationQuota::new(2);
+        let second = EvaluationQuota::new(3);
+        assert_eq!(global.reserve(&first, 2).unwrap().get(), 10);
+        assert!(matches!(
+            global.reserve(&first, 1),
+            Err(SharedReservationError::EvaluationCapacity)
+        ));
+        assert_eq!(global.reserve(&second, 3).unwrap().get(), 12);
+        assert_eq!(first.used(), 2);
+        assert_eq!(second.used(), 3);
+        assert_eq!(global.used(), 5);
+    }
+
+    #[test]
+    fn shared_reservation_reports_impossible_global_plan() {
+        let global = GlobalArenaCursor::new(ArenaRange::<CaptureTag> {
+            start: ArenaOffset::new(0),
+            capacity: 1,
+        });
+        let quota = EvaluationQuota::new(2);
+        assert_eq!(global.reserve(&quota, 1).unwrap().get(), 0);
+        assert!(matches!(
+            global.reserve(&quota, 1),
+            Err(SharedReservationError::GlobalPlan)
+        ));
+        assert_eq!(quota.used(), 2);
+    }
+
+    #[test]
+    fn task_chunks_keep_physical_records_compact_and_quota_exact() {
+        let global = GlobalArenaCursor::new(ArenaRange::<PendingTag> {
+            start: ArenaOffset::new(100),
+            capacity: 8,
+        });
+        let quota = EvaluationQuota::new(5);
+        let mut task = TaskArenaChunk::default();
+        let offsets = (0..5)
+            .map(|_| task.reserve_one(&quota, &global, 4).unwrap().get())
+            .collect::<Vec<_>>();
+        assert_eq!(offsets, [100, 101, 102, 103, 104]);
+        assert_eq!(quota.used(), 5);
+        assert_eq!(global.used(), 8);
+    }
+
+    #[test]
+    fn lazy_block_is_allocated_once_for_concurrent_evaluation_tasks() {
+        use std::sync::Arc;
+
+        let global = Arc::new(GlobalArenaCursor::new(ArenaRange::<QueryStateTag> {
+            start: ArenaOffset::new(20),
+            capacity: 64,
+        }));
+        let block = Arc::new(LazyArenaBlock::new(32));
+        let threads = (0..8)
+            .map(|_| {
+                let global = Arc::clone(&global);
+                let block = Arc::clone(&block);
+                std::thread::spawn(move || block.ensure(&global).unwrap())
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            let range = thread.join().unwrap();
+            assert_eq!(range.start.get(), 20);
+            assert_eq!(range.capacity, 32);
+        }
+        assert_eq!(global.used(), 32);
+    }
+
+    #[test]
+    fn concurrent_tasks_share_one_global_typed_arena_without_overlap() {
+        use std::sync::Arc;
+
+        let global = Arc::new(GlobalArenaCursor::new(ArenaRange::<ResultTag> {
+            start: ArenaOffset::new(0),
+            capacity: 4_000,
+        }));
+        let quotas = (0..4)
+            .map(|_| Arc::new(EvaluationQuota::new(1_000)))
+            .collect::<Vec<_>>();
+        let mut threads = Vec::new();
+        for quota in quotas {
+            let global = Arc::clone(&global);
+            threads.push(std::thread::spawn(move || {
+                (0..1_000)
+                    .map(|_| global.reserve(&quota, 1).unwrap().get())
+                    .collect::<Vec<_>>()
+            }));
+        }
+        let mut offsets = threads
+            .into_iter()
+            .flat_map(|thread| thread.join().unwrap())
+            .collect::<Vec<_>>();
+        offsets.sort_unstable();
+        assert_eq!(offsets, (0..4_000).collect::<Vec<_>>());
+        assert_eq!(global.used(), 4_000);
+    }
+}

@@ -119,6 +119,13 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
+    /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
+    /// tests compile queries against it).
+    #[cfg(test)]
+    pub(super) fn language(&self) -> Language {
+        self.lang.get_ts_language()
+    }
+
     pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
@@ -1634,6 +1641,28 @@ impl Points {
             .get_or_init(|| LineTable::tree_sitter(&self.source))
             .point(byte);
         Position::new(row, column, byte)
+    }
+}
+
+/// Immutable source-bound tape input. Expanded navigation exists only while
+/// this file is packed or its result page is normalized.
+#[derive(Clone)]
+pub(super) struct TapeSource {
+    pub source: Arc<String>,
+    pub grammar: Arc<Grammar>,
+    pub image: Arc<FileImage>,
+    pub lines: Arc<LineTable>,
+}
+
+impl TapeSource {
+    pub(super) fn restore(&self, budget: &impl Fn() -> bool) -> Result<TapeDoc, String> {
+        TapeDoc::restore_with_lines(
+            Arc::clone(&self.source),
+            Arc::clone(&self.grammar),
+            &self.image,
+            Arc::clone(&self.lines),
+            budget,
+        )
     }
 }
 
