@@ -714,7 +714,7 @@ describe("Rerail session restore", () => {
         content: [
           "Rerail has guidance for this Bash call:",
           "- Ask before force-pushing. [acme:no-force-push]",
-          "Follow it, or tell the user in one line why you won't.",
+          "Follow it, or tell the user in one line why you won't and run `rerail feedback acme:no-force-push \"<that line>\"`.",
         ].join("\n"),
         ruleIds: ["acme:no-force-push"],
         rules: [{ id: "acme:no-force-push", state: "steered" }],

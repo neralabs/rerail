@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -31,6 +31,7 @@ import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, t
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import type { ManagedUpdater } from "../setup/updater.js";
+import { readConsent, updateConsent } from "./consent.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */
@@ -328,9 +329,6 @@ function pageUrl(origin: string, scope: RulesDashboardScope, page: DashboardPage
   return url.href;
 }
 
-/** In the Rerail home: the person's one approval that Rerail may read their coding agent sessions (T2b). */
-const CONSENT_FILE = "consent.json";
-
 /** What set-up needs from this machine: the coding agents, their registration, the dashboard, and npm for rule packs. */
 export function setupEnvironment(context: SetupContext, port?: number): SetupEnvironment {
   return {
@@ -346,22 +344,11 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       });
     },
     sessionsApproved() {
-      try {
-        const consent = JSON.parse(readFileSync(join(context.home, CONSENT_FILE), "utf8")) as { sessions?: { approvedAt?: unknown } };
-        return typeof consent.sessions?.approvedAt === "string";
-      } catch {
-        return false;
-      }
+      return readConsent(context.home).sessions !== undefined;
     },
     async setSessionsApproved(approved) {
-      const path = join(context.home, CONSENT_FILE);
-      if (!approved) {
-        await rm(path, { force: true });
-        return;
-      }
-      await mkdir(context.home, { recursive: true, mode: 0o700 });
-      const consent = { sessions: { approvedAt: new Date().toISOString() } };
-      await writeFile(path, `${JSON.stringify(consent, null, 2)}\n`, { mode: 0o600 });
+      updateConsent(context.home, ({ sessions: _sessions, ...others }) =>
+        approved ? { ...others, sessions: { approvedAt: new Date().toISOString() } } : others);
     },
     async dashboard(scope, page, open): Promise<DashboardLink> {
       let origin: string;

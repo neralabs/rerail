@@ -91,7 +91,7 @@ describe("OMP steer renderer", () => {
       "<dim>Rerail found 1 problem in your last edit:</dim>",
       "<dim>- Check checkout requirements. [checkout]</dim>",
       "<dim>  ◆ Rerail · fake  steered</dim>",
-      "<dim>Fix it, or tell the user in one line why you won't.</dim>",
+      "<dim>Fix it, or tell the user in one line why you won't and run `rerail feedback checkout \"<that line>\"`.</dim>",
     ]);
   });
 
