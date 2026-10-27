@@ -224,3 +224,21 @@ arriving as seed rows; (b) a CPU binding over W's tapes, read from the slab cach
 the reference semantics as `flat` is for lattices. (a) is the target shape; (b) would let Phase 6's
 check run before Phase 4 f and Phase 9. Closure: the decision, then the Phase 6 check.
 
+
+Note (2026-10-27): `logic::plan` ports T's SQL lowering of `nearest` too, a recursive CTE over a
+`tape(n, par, size)` input relation, so T's programs run end to end over T's facts (row 5 step 1's
+goldens). That is (b) in SQL, over a per-run copy of the tree, and not the target shape.
+
+## O13. Symbols as atoms in the planner's SQL
+
+`logic::native` reads and writes symbol columns as store atoms (C12; row 1 step 3), while
+`logic::plan` (row 5 step 1) runs T's SQL over text symbols, as T's facts have them. A run that mixes
+native strata with SQL strata would join atom ids against text, so the native strata
+(`native_stratum`, `native_set_fixpoint`, `native_fixpoint`, `join_spec`, `observe`, `live_stats`)
+are not ported yet. Design for the next step: inputs are fact families whose symbol columns hold
+atoms (§10.6), as the product stores them; the run's connection is the content store (its `atoms`
+table, with derived relations in `temp`); string constants are interned at lowering, so the
+planner, `stat_val` and `stat_kind` all key on atom ids; `@cat` and the `rdl_int` split become
+functions over the same interner (`setfix::Interner`), flushed after each statement; outputs are
+decoded through `atoms`. The test fixture is T's, atomized at load. Closure: that step, with the
+native modes' outputs equal to the SQL goldens.
