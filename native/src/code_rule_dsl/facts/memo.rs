@@ -4,9 +4,10 @@
 //! run digest, so an edit whose facts are unchanged rebinds nothing and its readers never run.
 //! The memo stays keyed by content: a content seen before (any path, any scope) is a lookup.
 
+use super::Graph;
 use super::observe::path_name;
 use crate::content_store::{
-    ABSENT, ContentStore, DerivationInput, DerivationRecord, FactsCompletion, FactsMemoKey, FactsPlanSet,
+    ABSENT, DerivationInput, DerivationRecord, FactsCompletion, FactsMemoKey, FactsPlanSet,
     FactsResult, SourceId, StoreError, StoreResult,
 };
 
@@ -37,11 +38,12 @@ pub(crate) struct Evaluated {
 /// The facts of `file`, whose content is `source`: from the memo when it knows every clause of the
 /// set, otherwise from `run` (the clauses' results and empty completions), which is memoised.
 pub(crate) fn evaluate(
-    store: &ContentStore,
+    graph: &(impl Graph + ?Sized),
     file: FileFacts<'_>,
     source: SourceId,
     run: impl FnOnce() -> StoreResult<(Vec<FactsResult>, Vec<FactsCompletion>)>,
 ) -> StoreResult<Evaluated> {
+    let store = graph.store();
     let key = FactsMemoKey { source, fact_schema: file.fact_schema, path: file.path };
     let (hit, digest) = match store.facts_memo(key)?.run_digest(file.set) {
         Some(digest) => (true, digest),
@@ -54,7 +56,7 @@ pub(crate) fn evaluate(
         }
     };
     let name = path_name(file.scope, file.path);
-    let read = store.binding(&name)?.unwrap_or(ABSENT);
+    let read = graph.binding(&name)?.unwrap_or(ABSENT);
     let record = DerivationRecord {
         output: file.output(),
         producer: file.set.digest,

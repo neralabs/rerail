@@ -9,7 +9,8 @@
 //! cutoff, Y1's rule). There is no level order: a derivation reached again by a later wave runs
 //! again, which `Work` counts.
 
-use crate::content_store::{ContentStore, Derivation, DerivationRecord, StoreError, StoreResult};
+use super::Graph;
+use crate::content_store::{Derivation, DerivationRecord, StoreError, StoreResult};
 
 /// Counts of one propagation. `rerun - changed` re-runs produced what they produced before: the
 /// work spurious invalidation costs (C19).
@@ -25,7 +26,7 @@ pub(crate) struct Work {
 /// frontier and returns its derivations as re-run; a frontier is never empty. More than
 /// `max_waves` waves is an error: a cycle whose digests do not settle.
 pub(crate) fn propagate(
-    store: &ContentStore,
+    store: &(impl Graph + ?Sized),
     mut changed: Vec<String>,
     max_waves: u32,
     mut recompute: impl FnMut(&[Derivation]) -> StoreResult<Vec<DerivationRecord>>,

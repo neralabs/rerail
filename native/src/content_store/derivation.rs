@@ -85,24 +85,14 @@ impl ContentStore {
             let mut atoms = atoms.iter().copied();
             for record in records {
                 let output = atoms.next().expect("one atom per output");
-                transaction
-                    .prepare_cached(
-                        "INSERT INTO derivations(output_atom,producer,status,cost) VALUES (?1,?2,?3,?4) \
-                         ON CONFLICT(output_atom) DO UPDATE \
-                         SET producer=excluded.producer,status=excluded.status,cost=excluded.cost",
-                    )?
-                    .execute(params![output, &record.producer[..], record.status, record.cost])?;
-                transaction
-                    .prepare_cached("DELETE FROM derivation_inputs WHERE output_atom=?1")?
-                    .execute([output])?;
-                let mut insert = transaction.prepare_cached(
-                    "INSERT INTO derivation_inputs(output_atom,ordinal,name_atom,digest) \
-                     VALUES (?1,?2,?3,?4)",
-                )?;
-                for (ordinal, input) in record.inputs.iter().enumerate() {
-                    let name = input.name.as_ref().map(|_| atoms.next().expect("one atom per named input"));
-                    insert.execute(params![output, ordinal as i64, name, &input.digest[..]])?;
-                }
+                let inputs = record
+                    .inputs
+                    .iter()
+                    .map(|input| (input.name.as_ref().map(|_| atoms.next().expect("one atom per named input")), input.digest))
+                    .collect();
+                let derivation =
+                    StoredDerivation { producer: record.producer, status: record.status, cost: record.cost, inputs };
+                write_derivation(transaction, output, &derivation)?;
                 if bind(transaction, output, &record.digest)? {
                     changed.push(record.output.clone());
                 }
@@ -174,6 +164,100 @@ impl ContentStore {
             .query_row(params![id, &ABSENT[..]], |row| row.get(0))
             .map_err(StoreError::from)
     }
+
+    /// The digest the atom `name` is bound to, if any.
+    pub fn binding_of(&self, name: Sym) -> StoreResult<Option<[u8; 32]>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        connection
+            .prepare_cached("SELECT digest FROM name_bindings WHERE name_atom=?1")?
+            .query_row([name], |row| row.get::<_, Vec<u8>>(0))
+            .optional()?
+            .map(|bytes| digest(&bytes))
+            .transpose()
+    }
+
+    /// The stored derivation whose output is the atom `output`, with its inputs in order.
+    pub fn derivation_of(&self, output: Sym) -> StoreResult<Option<StoredDerivation>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let Some((producer, status, cost)) = connection
+            .prepare_cached("SELECT producer,status,cost FROM derivations WHERE output_atom=?1")?
+            .query_row([output], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get(1)?, row.get(2)?)))
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let inputs = connection
+            .prepare_cached("SELECT name_atom,digest FROM derivation_inputs WHERE output_atom=?1 ORDER BY ordinal")?
+            .query_map([output], |row| Ok((row.get::<_, Option<Sym>>(0)?, row.get::<_, Vec<u8>>(1)?)))?
+            .map(|row| {
+                let (name, bytes) = row?;
+                Ok((name, digest(&bytes)?))
+            })
+            .collect::<StoreResult<_>>()?;
+        Ok(Some(StoredDerivation { producer: digest(&producer)?, status, cost, inputs }))
+    }
+
+    /// The outputs of the stored derivations that read the atom `name`, ascending.
+    pub fn readers_of(&self, name: Sym) -> StoreResult<Vec<Sym>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut readers = connection
+            .prepare_cached(
+                "SELECT DISTINCT output_atom FROM derivation_inputs INDEXED BY derivation_inputs_by_name \
+                 WHERE name_atom=?1 ORDER BY output_atom",
+            )?
+            .query_map([name], |row| row.get(0))?
+            .collect::<Result<Vec<Sym>, _>>()?;
+        readers.dedup();
+        Ok(readers)
+    }
+
+    /// Writes one overlay layer in one transaction: each binding (a rebinding bumps its revision)
+    /// and each derivation with its inputs replaced. The layer's own rows are already final, so
+    /// nothing here compares or reports changes.
+    pub fn write_derivation_layer(
+        &self,
+        bindings: &[(Sym, [u8; 32])],
+        derivations: &[(Sym, StoredDerivation)],
+    ) -> StoreResult<()> {
+        self.immediate_transaction(|transaction| {
+            for (name, digest) in bindings {
+                bind(transaction, *name, digest)?;
+            }
+            for (output, derivation) in derivations {
+                write_derivation(transaction, *output, derivation)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// A derivation by atoms, as the overlay and the writer hold it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredDerivation {
+    pub producer: [u8; 32],
+    pub status: i64,
+    pub cost: i64,
+    pub inputs: Vec<(Option<Sym>, [u8; 32])>,
+}
+
+fn write_derivation(transaction: &Transaction<'_>, output: Sym, derivation: &StoredDerivation) -> StoreResult<()> {
+    transaction
+        .prepare_cached(
+            "INSERT INTO derivations(output_atom,producer,status,cost) VALUES (?1,?2,?3,?4) \
+             ON CONFLICT(output_atom) DO UPDATE \
+             SET producer=excluded.producer,status=excluded.status,cost=excluded.cost",
+        )?
+        .execute(params![output, &derivation.producer[..], derivation.status, derivation.cost])?;
+    transaction
+        .prepare_cached("DELETE FROM derivation_inputs WHERE output_atom=?1")?
+        .execute([output])?;
+    let mut insert = transaction.prepare_cached(
+        "INSERT INTO derivation_inputs(output_atom,ordinal,name_atom,digest) VALUES (?1,?2,?3,?4)",
+    )?;
+    for (ordinal, (name, digest)) in derivation.inputs.iter().enumerate() {
+        insert.execute(params![output, ordinal as i64, name, &digest[..]])?;
+    }
+    Ok(())
 }
 
 /// Binds the atom `name` to `digest`; whether its digest changed.

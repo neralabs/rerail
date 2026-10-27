@@ -1,4 +1,5 @@
 use super::*;
+use crate::content_store::ContentStore;
 use crate::code_rule_dsl::facts::observe::push_root;
 use crate::content_store::{Derivation, GitTree, GitTreeEntry, HashKey};
 use std::cell::RefCell;
