@@ -9,8 +9,8 @@ Test support that scores rule packs against the tools they port. It is never pub
   against the pack's upstream recording (`packs/<id>/upstream/<tool>/`, pack test data that `npm run fixtures:pull`
   fetches from the archive the tool-pack's `test-data.lock` names) and its declared divergences. The CLI
   is `npm run conformance:languages`, with `-- --check` as CI's gate (`npm run test:conformance`).
-  `identifier-rename.ts` is the overfitting guard: a port must score the same when the tests' own identifiers are
-  renamed.
+  The overfitting guard is data: each ECMA tool-pack's test data holds upstream-labelled rename variants of its
+  upstream units (`source.units[path].renamedFrom`, written by the generators through `scripts/pack-data/rename/`).
   It also scores each rule on the pack's real-code samples (`--samples`; `--check` scores the fixtures and the
   samples): real files from open-source repositories, each labelled, per pack rule, with the lines the rule should
   report or as clean for it (`scripts/samples/format.ts`). A tool-pack's samples are one archive in S3 that its tracked

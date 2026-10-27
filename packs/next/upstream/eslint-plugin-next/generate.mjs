@@ -234,24 +234,36 @@ ${rows.join("\n")}
 
 async function recordFixtures() {
   const written = writeFixtures(await captureCases());
-  const { findings, skipped } = await lint(ESLint, fixturesDirectory, packConfig(), written.map(entry => entry.path), RULE_IDS);
-  const dropped = new Set(skipped.map(entry => entry.path));
-  for (const entry of skipped) {
+  // Each upstream case is a case of the rule whose test file it came from; Rerail's own cases have no upstream origin.
+  const origins = new Map(written.filter(entry => entry.kind !== "authored").map(entry => [entry.path, [`@next/next/${entry.rule}`]]));
+  const { variants, skipped: unrenamed } = writeRenameVariants(fixturesDirectory, [...origins.keys()], origins);
+  const linted = await lint(ESLint, fixturesDirectory, packConfig(), [...written.map(entry => entry.path), ...variants.map(variant => variant.unit)], RULE_IDS);
+  const dropped = new Set(linted.skipped.map(entry => entry.path));
+  for (const entry of linted.skipped.filter(({ path }) => !isVariantPath(path))) {
     console.warn(`dropped (ESLint cannot parse under the pack config): ${entry.path}: ${entry.reason}`);
     rmSync(join(fixturesDirectory, entry.path));
   }
   const kept = written.filter(entry => !dropped.has(entry.path));
+  const recorded = withOrigins(fixturesDirectory, kept.map(entry => entry.path).sort(), origins, variants, dropped, linted.findings);
+  const findings = recorded.findings;
   writeAuthoredRecord(kept);
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort() }, findings);
+  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, findings);
   // Sanity check: the case's own rule under the pack config vs the test's expected error count.
   const mismatches = [];
   for (const entry of kept) {
     const own = findings.filter(finding => finding.path === entry.path && finding.rule === `@next/next/${entry.rule}`).length;
     if (own !== entry.errors) mismatches.push({ path: entry.path, expected: entry.errors, recorded: own });
   }
-  writeFileSync(join(HERE, "fixtures.cases.json"), `${JSON.stringify({ cases: written.map(({ rule, kind, index, path, errors }) => ({ rule, kind, index, path, errors, dropped: dropped.has(path) })), mismatches }, null, 1)}\n`);
+  const byPath = new Map(written.map(entry => [entry.path, entry]));
+  const renamed = Object.entries(recorded.units).flatMap(([path, { renamedFrom }]) => {
+    if (renamedFrom === undefined) return [];
+    const { rule, kind, index } = byPath.get(renamedFrom);
+    return [{ rule, kind: "renamed", index, path, of: renamedFrom, renamedKind: kind }];
+  });
+  const cases = [...written.map(({ rule, kind, index, path, errors }) => ({ rule, kind, index, path, errors, dropped: dropped.has(path) })), ...renamed];
+  writeFileSync(join(HERE, "fixtures.cases.json"), `${JSON.stringify({ cases, unrenamed, mismatches }, null, 1)}\n`);
   console.log(packFixturesWritten([join(HERE, "fixtures.cases.json")]));
-  console.log(`fixtures: ${written.length} cases extracted, ${dropped.size} dropped, ${findings.length} findings, ${mismatches.length} mismatches vs the tests`);
+  console.log(`fixtures: ${written.length} cases extracted, ${dropped.size} dropped, ${renamed.length} rename variants, ${findings.length} findings, ${mismatches.length} mismatches vs the tests`);
   for (const mismatch of mismatches) console.log(`  mismatch ${mismatch.path}: test expects ${mismatch.expected}, plugin reports ${mismatch.recorded}`);
 }
 
@@ -264,8 +276,11 @@ function writeLicenses() {
   const rows = [
     ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
     ...cases
-      .filter(entry => !entry.dropped && entry.kind !== "authored")
+      .filter(entry => !entry.dropped && entry.kind !== "authored" && entry.kind !== "renamed")
       .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim) |`),
+    ...cases
+      .filter(entry => entry.kind === "renamed")
+      .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | derived from ${entry.renamedKind}[${entry.index}] (\`fixtures/${entry.of}\` with its names and literals renamed) |`),
   ];
   const text = `# Next.js ${PLUGIN_VERSION} (@next/eslint-plugin-next)
 

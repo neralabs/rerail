@@ -19,11 +19,16 @@
 // espree, or the TypeScript-family extension of its filename. Code that does not parse is left out, and so is code
 // over MAX_CASE_BYTES: ESLint's performance stress cases (prefer-template's 1 MB string literal), which exhaust the
 // engine's per-file AST work budget once every pack rule runs on the file. Each kept file is one analysis unit. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
+// `source.units` names each file's origin, the rule whose test file it came from. Each such file also gets a rename
+// variant, renamed/<rule>/<n>.<ext> (conformance/recorders/eslint-record.mjs `writeRenameVariants`): its identifiers
+// and string and number literal contents renamed, in the original's language, linted like any file, and marked
+// `renamedFrom` the original.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isVariantPath, withOrigins, writeRenameVariants } from "../../../conformance/recorders/eslint-record.mjs";
 import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -285,19 +290,26 @@ function extractFixtures() {
 }
 
 const { fixtures, files, languages, counts } = (installHooks(), extractFixtures());
-const { findings, unparsed } = await lint(fixtures, files, RULES, languages);
-for (const path of unparsed) {
+// Each file is a case of the rule whose test file it came from (`<rule>/<n>.<ext>`); its rename variant joins its
+// language group.
+const origins = new Map(files.map(file => [file, [file.split("/")[0]]]));
+const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, files, origins);
+const variantOf = new Map(variants.map(variant => [variant.of, variant.unit]));
+const variantLanguages = languages.map(({ files: members, languageOptions }) => ({ files: [...members, ...members.flatMap(member => variantOf.get(member) ?? [])], languageOptions }));
+const linted = await lint(fixtures, [...files, ...variants.map(variant => variant.unit)], RULES, variantLanguages);
+const unparsedSet = new Set(linted.unparsed);
+for (const path of linted.unparsed.filter(path => !isVariantPath(path))) {
   rmSync(join(fixtures, path));
   const count = counts[path.split("/")[0]];
   count.unparsed = (count.unparsed ?? 0) + 1;
 }
-const unparsedSet = new Set(unparsed);
 const kept = files.filter(file => !unparsedSet.has(file));
+const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
 writeJson(join(HERE, TOOL, "fixtures.expected.json"), {
   tool: TOOL,
   version: VERSION,
-  source: { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: kept },
+  source: { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin },
   findings,
 });
-console.log(`${TOOL} fixtures: ${kept.length} files, ${findings.length} findings`);
+console.log(`${TOOL} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
 for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);

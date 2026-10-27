@@ -141,7 +141,7 @@ npm run build:native      # compile the native kernel into native/
 npm run build             # clean build: native kernel, runtime, host bundles, UI
 npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
 npm run test:all          # build, unit, conformance, reference, native, and integration suites
-npm run test:conformance  # the language conformance gate, offline (the identifier-rename gate, test/conformance/, runs in npm test)
+npm run test:conformance  # the language conformance gate, offline
 npm run package:check     # build and dry-run the npm pack
 ```
 
@@ -189,8 +189,7 @@ in `model/manifest.json`.
 the production workspace against the tool's recordings in the pack's `upstream/` and, with `--samples`, on the
 tool-packs' labelled real-code samples (`samples.lock`, [docs/port-readiness.md](docs/port-readiness.md#samples));
 `--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the gate over the fixtures
-and the samples. Both it and the conformance tests (`test/conformance/`: the identifier-rename gate) run offline in
-`npm run test:conformance`, part of `test:all` in CI.
+and the samples; it runs offline in `npm run test:conformance`, part of `test:all` in CI.
 
 ### Operational commands (`just`)
 

@@ -6,7 +6,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertPortableCase, lint, pinnedRequire, REPOSITORY, writeRecording } from "../../../conformance/recorders/eslint-record.mjs";
+import { assertPortableCase, isVariantPath, lint, pinnedRequire, REPOSITORY, withOrigins, writeRecording, writeRenameVariants } from "../../../conformance/recorders/eslint-record.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
@@ -217,10 +217,12 @@ export function resetDirectory(path) {
 
 /**
  * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, filename?, extension?, drop? }`)
- * and `tool`'s AUTHORED cases under `<directory>/fixtures/`, records the pack configuration over them (every chosen
- * rule on every source; the recording holds `tool`'s rules, over the files ESLint parses), lists the authored files in
- * `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count under the pack configuration against
- * the test's `errors`. The check's report goes to `<tools>/scratch/`.
+ * and `tool`'s AUTHORED cases under `<directory>/fixtures/`, a rename variant of each extracted case under
+ * `fixtures/renamed/` (`writeRenameVariants`), records the pack configuration over them (every chosen rule on every
+ * source; the recording holds `tool`'s rules, over the files ESLint parses, and each extracted case's origin, its
+ * rule), lists the authored files in `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count
+ * under the pack configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`. The kept
+ * entries it returns hold the kept variants too (kind `renamed`, `of` the original's path).
  */
 export async function finishFixtures(require, tool, directory, cases, tools) {
   const { ESLint } = require("eslint");
@@ -237,22 +239,26 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
     const filename = entry.filename === undefined ? undefined : entry.filename.replace(/^\/+/u, "");
     written.push({ ...entry, path: writeCase(fixtures, entry.directory, name, entry.extension, entry.code, filename) });
   }
+  const origins = new Map(written.map(entry => [entry.path, [entry.rule]]));
   for (const entry of AUTHORED[tool]) {
     const name = `rerail-${entry.name}`;
     const path = writeCase(fixtures, entry.directory, name, entry.extension, entry.code, entry.filename);
     const unit = entry.manifest === undefined ? path : [writeCase(fixtures, entry.directory, name, undefined, `${JSON.stringify(entry.manifest, null, 2)}\n`, "package.json"), path];
     written.push({ ...entry, kind: "authored", origin: "written by Rerail", path, unit });
   }
-  const { findings, skipped } = await lint(ESLint, fixtures, config(require), written.map(entry => entry.path), ALL_RULES);
-  const unparsable = new Map(skipped.map(entry => [entry.path, entry.reason]));
-  for (const path of unparsable.keys()) rmSync(join(fixtures, path));
+  const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, [...origins.keys()], origins);
+  const linted = await lint(ESLint, fixtures, config(require), [...written.map(entry => entry.path), ...variants.map(variant => variant.unit)], ALL_RULES);
+  const unparsable = new Map(linted.skipped.map(entry => [entry.path, entry.reason]));
+  for (const path of [...unparsable.keys()].filter(path => !isVariantPath(path))) rmSync(join(fixtures, path));
   const kept = written.filter(entry => !unparsable.has(entry.path));
+  const recorded = withOrigins(fixtures, kept.map(entry => entry.unit ?? entry.path), origins, variants, new Set(unparsable.keys()), linted.findings);
+  const findings = recorded.findings;
   const upstream = UPSTREAM[tool];
   writeRecording(
     join(directory, "fixtures.expected.json"),
     tool,
     PINS[tool],
-    { kind: "fixtures", origin: `${upstream.repository}@${upstream.commit}`, rules: RULES[tool], files: kept.map(entry => entry.unit ?? entry.path) },
+    { kind: "fixtures", origin: `${upstream.repository}@${upstream.commit}`, rules: RULES[tool], files: recorded.files, units: recorded.units },
     findings.filter(finding => RULES[tool].includes(finding.rule)),
   );
   writeAuthoredRecord(tool, directory, kept);
@@ -261,19 +267,22 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
     const own = findings.filter(finding => finding.path === entry.path && finding.rule === entry.rule).length;
     if (own !== entry.errors) mismatches.push({ origin: entry.origin, path: entry.path, expected: entry.errors, recorded: own, options: entry.test?.options, settings: entry.test?.settings });
   }
+  const renamed = Object.entries(recorded.units).flatMap(([path, { renamedFrom }]) => (renamedFrom === undefined ? [] : [{ kind: "renamed", path, of: renamedFrom }]));
   const report = {
     tool,
     extracted: cases.length,
     written: written.length,
     kept: kept.length,
+    renamed: renamed.length,
+    unrenamed,
     dropped,
     unparsable: written.filter(entry => unparsable.has(entry.path)).map(entry => ({ origin: entry.origin, path: entry.path, reason: unparsable.get(entry.path) })),
     mismatches,
   };
   mkdirSync(join(tools, "scratch"), { recursive: true });
   writeFileSync(join(tools, "scratch", `${tool}-fixtures-report.json`), `${JSON.stringify(report, null, 1)}\n`);
-  console.log(`${tool}: ${cases.length} cases, ${dropped.length} dropped (syntax), ${report.unparsable.length} unparsable, ${kept.length} kept, ${mismatches.length} count mismatches`);
-  return { kept, report };
+  console.log(`${tool}: ${cases.length} cases, ${dropped.length} dropped (syntax), ${report.unparsable.length} unparsable, ${kept.length} kept, ${renamed.length} rename variants, ${mismatches.length} count mismatches`);
+  return { kept: [...kept, ...renamed], report };
 }
 
 /** UPSTREAM.md beside the recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
@@ -296,9 +305,13 @@ export function writeLicense(tool, upstream, copied, kept) {
   const directory = join(UPSTREAM_DIRECTORY, "..", "licenses", meta.project);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
+  const originOf = new Map(kept.map(entry => [entry.path, entry.origin]));
   const rows = [
     ...copied.map(entry => `| \`upstream/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
-    ...kept.filter(entry => entry.kind !== "authored").map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
+    ...kept.filter(entry => entry.kind !== "authored" && entry.kind !== "renamed").map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
+    ...kept
+      .filter(entry => entry.kind === "renamed")
+      .map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${originOf.get(entry.of)}\` | derived (\`fixtures/${entry.of}\` with its names and literals renamed) |`),
   ];
   const text = `# ${meta.title}
 

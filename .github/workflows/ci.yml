@@ -827,8 +827,7 @@ jobs:
           npm run test:scripts
           npm run test:reference
 
-      # Offline: conformance:languages:check scores every pack's ported rules against its recordings. The
-      # identifier-rename gate (test/conformance/) runs with the unit tests.
+      # Offline: conformance:languages:check scores every pack's ported rules against its recordings.
       - name: Conformance harnesses
         run: npm run test:conformance
 

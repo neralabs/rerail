@@ -125,14 +125,45 @@ export type UpstreamFinding = z.infer<typeof findingSchema>;
  */
 const unitSchema = z.union([nonEmpty, z.array(nonEmpty).min(1)]);
 
-const fixtureSourceSchema = z.strictObject({
-  kind: z.literal("fixtures"),
-  /** Upstream repository URL `@` commit the fixture files were copied from. */
-  origin: nonEmpty,
-  /** Every upstream rule the run reported; each is scored over every unit. */
+/** A unit's key in `source.units`: its path, or the first path of a multi-file unit. */
+export function unitKey(unit: z.infer<typeof unitSchema>): string {
+  return typeof unit === "string" ? unit : unit[0]!;
+}
+
+/** Where a unit came from upstream. */
+const unitOriginSchema = z.strictObject({
+  /** The upstream rules (names as in `rules`) whose tests the unit was written from. */
   rules: z.array(nonEmpty).min(1),
-  files: z.array(unitSchema).min(1),
+  /**
+   * A rename variant: the key of the unit it is a renamed copy of (identifiers and string and number literal
+   * contents changed, `scripts/pack-data/rename/`), labelled by upstream like any unit.
+   */
+  renamedFrom: nonEmpty.optional(),
 });
+export type UnitOrigin = z.infer<typeof unitOriginSchema>;
+
+const fixtureSourceSchema = z
+  .strictObject({
+    kind: z.literal("fixtures"),
+    /** Upstream repository URL `@` commit the fixture files were copied from. */
+    origin: nonEmpty,
+    /** Every upstream rule the run reported; each is scored over every unit. */
+    rules: z.array(nonEmpty).min(1),
+    files: z.array(unitSchema).min(1),
+    /** Each unit's upstream origin, by `unitKey`; a unit without an entry (Rerail's own probes) has no known origin. */
+    units: z.record(nonEmpty, unitOriginSchema).optional(),
+  })
+  .superRefine((source, context) => {
+    const units = source.units ?? {};
+    const keys = new Set(source.files.map(unitKey));
+    const issue = (message: string): void => context.addIssue({ code: "custom", path: ["units"], message });
+    for (const [key, origin] of Object.entries(units)) {
+      if (!keys.has(key)) issue(`${key}: not a listed unit`);
+      if (origin.renamedFrom === undefined) continue;
+      const original = units[origin.renamedFrom];
+      if (original === undefined || original.renamedFrom !== undefined) issue(`${key}: renamedFrom ${origin.renamedFrom} is not an original unit with an origin`);
+    }
+  });
 
 export const recordingSchema = z.strictObject({
   tool: nonEmpty,

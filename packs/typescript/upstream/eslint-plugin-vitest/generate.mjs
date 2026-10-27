@@ -17,12 +17,24 @@
 // left out. A case with another parser is left out. A case's code is written to a test file, fixtures/<rule>/<n>.test.ts
 // (.test.tsx with JSX, or the TypeScript-family extension of its filename after `.test`). Code that does not parse is left out. Each kept file is
 // one analysis unit. Rerail's own cases (AUTHORED, below) are written beside them as fixtures/<rule>/rerail-<name>.test.ts,
-// linted the same way, and listed as Rerail's in UPSTREAM.md beside this recorder.
+// linted the same way, and listed as Rerail's in UPSTREAM.md beside this recorder. `source.units` names each upstream
+// case's origin, the rule whose test file it came from (Rerail's cases have none); each such case also gets a rename
+// variant under fixtures/renamed/ (conformance/recorders/eslint-record.mjs `writeRenameVariants`), linted in the
+// original's language and marked `renamedFrom` it.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, assertKnownReportRules, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import {
+  assertCommit,
+  assertKnownReportRules,
+  isVariantPath,
+  lint,
+  pinnedRequire,
+  withOrigins,
+  writeRecording,
+  writeRenameVariants,
+} from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -771,20 +783,28 @@ function authoredMismatches(authored, findings) {
 
 async function recordFixtures() {
   const { fixtures, files, authored, languages, counts } = extractFixtures();
-  const { findings, skipped } = await lint(ESLint, fixtures, config(languages), files, RULES);
-  for (const { path, reason } of skipped) {
-    if (authored.some(({ file }) => file === path)) throw new Error(`AUTHORED ${path} does not parse: ${reason}`);
+  // Each upstream case is a case of the rule whose test file it came from (`<rule>/<n>.test.<ext>`); Rerail's own
+  // cases have no upstream origin. A rename variant joins its original's language group.
+  const authoredFiles = new Set(authored.map(({ file }) => file));
+  const origins = new Map(files.filter(file => !authoredFiles.has(file)).map(file => [file, [`${PREFIX}${file.split("/")[0]}`]]));
+  const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, files, origins);
+  const variantOf = new Map(variants.map(variant => [variant.of, variant.unit]));
+  const variantLanguages = languages.map(({ files: members, languageOptions }) => ({ files: [...members, ...members.flatMap(member => variantOf.get(member) ?? [])], languageOptions }));
+  const linted = await lint(ESLint, fixtures, config(variantLanguages), [...files, ...variants.map(variant => variant.unit)], RULES);
+  for (const { path, reason } of linted.skipped.filter(({ path }) => !isVariantPath(path))) {
+    if (authoredFiles.has(path)) throw new Error(`AUTHORED ${path} does not parse: ${reason}`);
     rmSync(join(fixtures, path));
     const count = counts[`${PREFIX}${path.split("/")[0]}`];
     count.unparsed = (count.unparsed ?? 0) + 1;
   }
-  const mismatches = authoredMismatches(authored, findings);
+  const mismatches = authoredMismatches(authored, linted.findings);
   if (mismatches.length > 0) throw new Error(`AUTHORED cases the plugin reports otherwise:\n  ${mismatches.join("\n  ")}`);
-  const unparsed = new Set(skipped.map(({ path }) => path));
+  const unparsed = new Set(linted.skipped.map(({ path }) => path));
   const kept = files.filter(file => !unparsed.has(file)).sort();
+  const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
   writeAuthoredRecord([...authored].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)));
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: kept }, findings);
-  console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${findings.length} findings`);
+  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
+  console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }
 

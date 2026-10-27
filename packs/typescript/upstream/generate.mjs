@@ -18,7 +18,9 @@
 // rules' whole test files with types on, as no-dynamic-delete's).
 // A case's extension is its parser's: .ts (.tsx with JSX) for typescript-eslint's parser, .js (.jsx) for espree,
 // or the TypeScript-family extension of its filename (.d.ts, .tsx, .mts, .cts). Code the configuration cannot
-// parse is left out. Each kept file is one analysis unit.
+// parse is left out. Each kept file is one analysis unit. `source.units` names each file's origin, the rule whose test
+// file it came from; each such file also gets a rename variant under <tool>/fixtures/renamed/
+// (conformance/recorders/eslint-record.mjs `writeRenameVariants`), linted like any file and marked `renamedFrom` it.
 //
 // Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
@@ -26,6 +28,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isVariantPath, withOrigins, writeRenameVariants } from "../../../conformance/recorders/eslint-record.mjs";
 import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -307,22 +310,26 @@ function extractFixtures(tool) {
 
 async function recordFixtures(tool) {
   const { fixtures, files, counts } = extractFixtures(tool);
-  const { findings, unparsed } = await lint(fixtures, files, RULES.get(tool));
-  for (const path of unparsed) rmSync(join(fixtures, path));
-  const unparsedSet = new Set(unparsed);
-  const kept = files.filter(file => !unparsedSet.has(file));
-  for (const path of unparsed) {
+  // Each file is a case of the rule whose test file it came from (`<rule>/<n>.<ext>`).
+  const origins = new Map(files.map(file => [file, [`${PLUGIN_PREFIX}${file.split("/")[0]}`]]));
+  const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, files, origins);
+  const linted = await lint(fixtures, [...files, ...variants.map(variant => variant.unit)], RULES.get(tool));
+  const unparsedSet = new Set(linted.unparsed);
+  for (const path of linted.unparsed.filter(path => !isVariantPath(path))) {
+    rmSync(join(fixtures, path));
     const count = counts[`${PLUGIN_PREFIX}${path.split("/")[0]}`];
     count.unparsed = (count.unparsed ?? 0) + 1;
   }
+  const kept = files.filter(file => !unparsedSet.has(file));
+  const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
   const source = CHECKOUTS[tool];
   writeJson(join(HERE, tool, "fixtures.expected.json"), {
     tool,
     version: versionOf(tool),
-    source: { kind: "fixtures", origin: `${source.repository}@${source.commit}`, rules: RULES.get(tool), files: kept },
+    source: { kind: "fixtures", origin: `${source.repository}@${source.commit}`, rules: RULES.get(tool), files: units, units: origin },
     findings,
   });
-  console.log(`${tool} fixtures: ${kept.length} files, ${findings.length} findings`);
+  console.log(`${tool} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }
 

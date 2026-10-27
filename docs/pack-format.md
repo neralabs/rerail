@@ -141,10 +141,6 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   `npm run fixtures:pull` fetches and the conformance runner scores (`--samples`, and in `--check`); `SAMPLES.md` lists
   the sources and their licences. They are never published, and checks 1 to 8 do not read them
   ([port readiness, "Samples"](port-readiness.md#samples)).
-- `upstream/<tool>/protected-identifiers.json` (optional, ECMA family): opts the pack into the identifier-rename gate,
-  `test/conformance/identifier-rename.test.ts`, which scores every shipped port again on the fixtures with each
-  user-chosen identifier renamed and fails when a score moves. It maps fixture paths or directories to the names and
-  patterns the rename must keep (names the rule's implementation or the test's options mention).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
   `rerail-unknown`) and the evidence checked.
 

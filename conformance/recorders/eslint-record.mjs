@@ -1,15 +1,16 @@
 // Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the guard that keeps
-// the recording machine out of fixtures, and
+// the recording machine out of fixtures, each unit's upstream origin and the ECMA rename variants, and
 // ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
 // pull request CI).
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordingWritten } from "../../scripts/s3/pack-fixtures.mjs";
+import { renameVariant } from "../../scripts/pack-data/rename/ecmascript.ts";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -154,4 +155,81 @@ export async function lint(ESLint, cwd, config, files, rules) {
     }
   }
   return { findings, skipped };
+}
+
+/** Where a tool's rename variants sit under its fixtures directory: `renamed/<the original's path>`. */
+export const RENAMED_DIRECTORY = "renamed";
+
+/** The files the rename rewrites: the ECMA sources. A unit's other files (`package.json`) are copied as they are. */
+const ECMA_SOURCE = /\.[cm]?[jt]sx?$/u;
+
+const unitPaths = unit => (typeof unit === "string" ? [unit] : unit);
+
+/** A unit's key in `source.units` (pack.ts `unitKey`): its path, or the first path of a multi-file unit. */
+export const unitKey = unit => unitPaths(unit)[0];
+
+/** Whether `path` (relative to the fixtures directory) is a rename variant's file. */
+export const isVariantPath = path => path.startsWith(`${RENAMED_DIRECTORY}/`);
+
+/**
+ * Writes, under `fixtures/renamed/`, a renamed copy of every unit `origins` names: its ECMA sources through
+ * scripts/pack-data/rename/ecmascript.ts (identifiers and string and number literal contents), its other files
+ * copied. Upstream then lints the copy like any unit, and its findings label it. A unit whose rename would change no
+ * source, or change one's length or parse, gets no variant. Returns each variant (`of`, the original's key; `unit`,
+ * shaped like the original; `paths`, original path to variant path) and the units skipped, with why.
+ */
+export function writeRenameVariants(fixtures, units, origins) {
+  const variants = [];
+  const skipped = [];
+  for (const unit of units) {
+    const of = unitKey(unit);
+    if (!origins.has(of)) continue;
+    const outputs = [];
+    let problem;
+    for (const path of unitPaths(unit)) {
+      const text = readFileSync(join(fixtures, path), "utf8");
+      const renamed = ECMA_SOURCE.test(path) ? renameVariant(text, path) : { source: undefined };
+      if (renamed.problem !== undefined && renamed.problem !== "nothing to rename") problem = `${path}: ${renamed.problem}`;
+      outputs.push({ path, variant: `${RENAMED_DIRECTORY}/${path}`, source: renamed.source });
+    }
+    if (problem === undefined && outputs.every(output => output.source === undefined)) problem = "nothing to rename";
+    if (problem !== undefined) {
+      skipped.push({ of, problem });
+      continue;
+    }
+    for (const { path, variant, source } of outputs) {
+      mkdirSync(dirname(join(fixtures, variant)), { recursive: true });
+      if (source === undefined) copyFileSync(join(fixtures, path), join(fixtures, variant));
+      else writeFileSync(join(fixtures, variant), source);
+    }
+    const paths = new Map(outputs.map(({ path, variant }) => [path, variant]));
+    variants.push({ of, unit: typeof unit === "string" ? paths.get(unit) : unit.map(path => paths.get(path)), paths });
+  }
+  return { variants, skipped };
+}
+
+/**
+ * The recording's `files` and `units` once ESLint has run, and its findings. `kept` are the original units that
+ * parsed; a variant is kept when its original is and none of its files is in `unparsed`. A dropped variant's files
+ * are deleted and its findings dropped.
+ */
+export function withOrigins(fixtures, kept, origins, variants, unparsed, findings) {
+  const keptKeys = new Set(kept.map(unitKey));
+  const keptVariants = [];
+  const dropped = new Set();
+  for (const variant of variants) {
+    const paths = unitPaths(variant.unit);
+    if (keptKeys.has(variant.of) && !paths.some(path => unparsed.has(path))) keptVariants.push(variant);
+    else for (const path of paths) dropped.add(path);
+  }
+  for (const path of dropped) rmSync(join(fixtures, path), { force: true });
+  const entries = [];
+  for (const key of keptKeys) if (origins.has(key)) entries.push([key, { rules: [...new Set(origins.get(key))].sort() }]);
+  for (const variant of keptVariants) entries.push([unitKey(variant.unit), { rules: [...new Set(origins.get(variant.of))].sort(), renamedFrom: variant.of }]);
+  entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return {
+    files: [...kept, ...keptVariants.map(variant => variant.unit)],
+    units: Object.fromEntries(entries),
+    findings: findings.filter(finding => !dropped.has(finding.path)),
+  };
 }

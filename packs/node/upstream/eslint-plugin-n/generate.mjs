@@ -26,13 +26,16 @@
 // syntax and reads a CommonJS wrapper name: upstream's RuleTester declares `globals.node`, those names included, in
 // every case, so such a case is written as CommonJS (`.js`/`.ts`), the only module system where Node defines them.
 // Each fixture's recording unit is the fixture and its nearest package.json (the one the plugin and Node read for
-// it), so Rerail reads the same manifest: its `type`, `bin` and `engines`.
+// it), so Rerail reads the same manifest: its `type`, `bin` and `engines`. `source.units` names each case's origin,
+// the rule whose test file it came from; each case also gets a rename variant under fixtures/renamed/
+// (conformance/recorders/eslint-record.mjs `writeRenameVariants`) with a copy of its manifest, linted like any case
+// and marked `renamedFrom` it.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, lint, pinnedRequire, REPOSITORY, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, isVariantPath, lint, pinnedRequire, RENAMED_DIRECTORY, REPOSITORY, withOrigins, writeRecording, writeRenameVariants } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = "eslint-plugin-n";
@@ -99,10 +102,13 @@ export function nodeSourceType(file) {
   return JSON.parse(readFileSync(manifest, "utf8")).type === "module" ? "module" : "commonjs";
 }
 
-/** A fixture's recording unit: the fixture (relative to `fixtures`) and its nearest package.json, sorted. */
+/**
+ * A fixture's recording unit: the fixture (relative to `fixtures`), then its nearest package.json. The fixture comes
+ * first, as a unit's first path is its key in `source.units`.
+ */
 function fixtureUnit(fixtures, path) {
   const manifest = relative(fixtures, nearest(dirname(join(fixtures, path)), "package.json")).split(sep).join("/");
-  return [path, manifest].sort();
+  return [path, manifest];
 }
 
 const TYPESCRIPT = [".ts", ".mts", ".cts", ".tsx"];
@@ -299,7 +305,8 @@ function writeFixtures(upstream, cases) {
 
 // ---- 3. licenses --------------------------------------------------------------------------------------------------
 
-function writeLicenses(upstream, cases, manifests) {
+/** `variants`: the kept rename variants, `{ unit, of }` (the variant's files, its original's key). */
+function writeLicenses(upstream, cases, manifests, variants) {
   const directory = join(HERE, "..", "..", "licenses", TOOL);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
@@ -308,6 +315,17 @@ function writeLicenses(upstream, cases, manifests) {
   rows.push(`|\`upstream/${TOOL}/fixtures/package.json\`|none|Rerail's own, not copied: the fixtures' source type and engines (\`fixturePackageJson\`), under the pack's \`LICENSE\`|`);
   for (const [copy, original] of [...manifests].sort()) rows.push(`|\`upstream/${TOOL}/fixtures/${copy}\`|\`${original}\`|verbatim (test data a case's \`filename\` reads)|`);
   for (const entry of cases) rows.push(`|\`upstream/${TOOL}/fixtures/${entry.path}\`|\`${entry.testFile}\`|extracted from ${entry.testFile} ${entry.origin}|`);
+  const byPath = new Map(cases.map(entry => [entry.path, entry]));
+  const copiedManifests = new Map();
+  for (const { unit, of } of variants) {
+    const original = byPath.get(of);
+    rows.push(`|\`upstream/${TOOL}/fixtures/${unit[0]}\`|\`${original.testFile}\`|derived from ${original.testFile} ${original.origin} (\`fixtures/${of}\` with its names and literals renamed)|`);
+    for (const copy of unit.slice(1)) copiedManifests.set(copy, copy.slice(RENAMED_DIRECTORY.length + 1));
+  }
+  for (const [copy, original] of [...copiedManifests].sort()) {
+    const source = original === "package.json" ? "none" : `\`${manifests.get(original)}\``;
+    rows.push(`|\`upstream/${TOOL}/fixtures/${copy}\`|${source}|a copy of \`fixtures/${original}\`, beside the rename variants it gives a manifest|`);
+  }
   const text = `# eslint-plugin-n ${VERSION}
 
 Upstream: [eslint-community/eslint-plugin-n](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${VERSION}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
@@ -347,12 +365,19 @@ async function main() {
   const { cases, skippedUpstream } = await extract(upstream, tools);
   const manifests = writeFixtures(upstream, cases);
   const fixtures = join(HERE, "fixtures");
-  const fixtureRun = await record(tools, fixtures, cases.map(entry => entry.path));
+  // Each case is a case of the rule whose test file it came from. Its rename variant, under renamed/, renames the
+  // case's code and copies its manifest.
+  const units = new Map(cases.map(entry => [entry.path, fixtureUnit(fixtures, entry.path)]));
+  const origins = new Map(cases.map(entry => [entry.path, [`n/${entry.rule}`]]));
+  const { variants } = writeRenameVariants(fixtures, [...units.values()], origins);
+  const fixtureRun = await record(tools, fixtures, [...cases.map(entry => entry.path), ...variants.map(variant => variant.paths.get(variant.of))]);
   const dropped = new Map(fixtureRun.skipped.map(entry => [entry.path, entry.reason]));
   const kept = cases.filter(entry => !dropped.has(entry.path));
-  for (const path of dropped.keys()) rmSync(join(fixtures, path));
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort().map(path => fixtureUnit(fixtures, path)) }, fixtureRun.findings);
-  writeLicenses(upstream, kept, manifests);
+  for (const path of [...dropped.keys()].filter(path => !isVariantPath(path))) rmSync(join(fixtures, path));
+  const recorded = withOrigins(fixtures, kept.map(entry => entry.path).sort().map(path => units.get(path)), origins, variants, new Set(dropped.keys()), fixtureRun.findings);
+  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, recorded.findings);
+  const keptVariants = recorded.files.filter(unit => isVariantPath(unit[0])).map(unit => ({ unit, of: recorded.units[unit[0]].renamedFrom }));
+  writeLicenses(upstream, kept, manifests, keptVariants);
 
   const mismatches = [];
   for (const entry of kept) {
