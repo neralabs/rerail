@@ -165,6 +165,10 @@ jobs:
       confirmed: ${{ steps.result.outputs.confirmed }}
       # [{ key, reason }] for each object not put or confirmed.
       failed: ${{ steps.result.outputs.failed }}
+      # The credentials and upload steps' outcomes, which the failed job's comment reports; empty when the job never
+      # ran (approval rejected, or cancelled while waiting).
+      credentials: ${{ steps.credentials.outcome }}
+      upload: ${{ steps.upload.outcome }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v7
@@ -302,14 +306,34 @@ jobs:
             echo "made=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Each list goes through a file, so a failing command fails this step (a process substitution's would not),
+          # and must hold one entry per object (per tool-pack) before the index is touched.
+          objects="$(jq length <<< "$OBJECTS")"
+          if ! node scripts/s3/pack-data-publish.mjs locks "$RUNNER_TEMP/locks" > "$RUNNER_TEMP/locks.txt"; then
+            echo "::error::writing the locks failed; nothing was committed"
+            exit 1
+          fi
+          mapfile -t locks < "$RUNNER_TEMP/locks.txt"
+          if [ "$objects" -eq 0 ] || [ "${#locks[@]}" -ne "$objects" ]; then
+            echo "::error::${#locks[@]} lock(s) written for $objects object(s); nothing was committed"
+            exit 1
+          fi
+          if ! jq -r '[.[] | "\(.pack)/\(.tool)"] | unique[]' <<< "$OBJECTS" > "$RUNNER_TEMP/tool-packs.txt"; then
+            echo "::error::listing the objects' tool-packs failed; nothing was committed"
+            exit 1
+          fi
+          mapfile -t tool_packs < "$RUNNER_TEMP/tool-packs.txt"
+          expected="$(jq '[.[] | "\(.pack)/\(.tool)"] | unique | length' <<< "$OBJECTS")"
+          if [ "${#tool_packs[@]}" -eq 0 ] || [ "${#tool_packs[@]}" -ne "$expected" ]; then
+            echo "::error::${#tool_packs[@]} tool-pack(s) listed for $expected in the objects; nothing was committed"
+            exit 1
+          fi
           export GIT_INDEX_FILE="$RUNNER_TEMP/publish.index"
           git read-tree "$HEAD_SHA"
-          mapfile -t locks < <(node scripts/s3/pack-data-publish.mjs locks "$RUNNER_TEMP/locks")
           for lock in "${locks[@]}"; do
             oid="$(git hash-object -w -- "$RUNNER_TEMP/locks/$lock")"
             git update-index --add --cacheinfo "100644,$oid,$lock"
           done
-          mapfile -t tool_packs < <(jq -r '[.[] | "\(.pack)/\(.tool)"] | unique[]' <<< "$OBJECTS")
           for entry in "${tool_packs[@]}"; do
             [[ "$entry" =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$ ]] || { echo "::error::$entry is not a tool-pack"; exit 1; }
             git ls-files -z -- "packs/${entry%%/*}/upstream/${entry#*/}/publish" | git update-index -z --force-remove --stdin
@@ -425,6 +449,8 @@ jobs:
           PR: ${{ inputs.pr }}
           OBJECTS: ${{ needs.prep.outputs.objects }}
           FAILED: ${{ needs.upload.outputs.failed }}
+          CREDENTIALS_OUTCOME: ${{ needs.upload.outputs.credentials }}
+          UPLOAD_OUTCOME: ${{ needs.upload.outputs.upload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail

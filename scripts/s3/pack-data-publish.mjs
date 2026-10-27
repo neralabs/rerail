@@ -10,8 +10,9 @@
 //                                                         failed
 //
 // Inputs come from the environment: OBJECTS (prep's objects, JSON), and for `comment` RUN_URL, plus COMMIT (published),
-// REASON (action-needed) or FAILED (failed: upload's `failed` output, JSON `[{ key, reason }]`, empty when upload did
-// not run).
+// REASON (action-needed) or FAILED (failed: upload's `failed` output, JSON `[{ key, reason }]`, empty when confirm wrote
+// no report) with CREDENTIALS_OUTCOME and UPLOAD_OUTCOME (failed: those upload steps' outcomes, empty when the upload job
+// never ran).
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -39,8 +40,15 @@ const objectTable = (objects) => [
 /** The publish/ directories the objects come from, as repository paths. */
 const publishDirectories = (objects) => [...new Set(publishedObjects(objects).map(({ toolPack }) => `${toolPack.directory}/${PUBLISH_DIRECTORY}/`))].sort();
 
+/** Why upload put nothing it could name, from its credentials and upload steps' outcomes (empty: the job never ran). */
+function uploadFailure({ credentials = "", upload = "" }) {
+  if (credentials === "failure" || (upload !== "" && upload !== "skipped")) return "upload step failed: see the run";
+  if (credentials === "" && upload === "") return "upload did not run: approval rejected or job cancelled";
+  return "upload job failed before its upload step: see the run";
+}
+
 /** The sticky comment for `state` ("published", "action-needed" or "failed"). */
-export function publishComment(state, { runUrl, objects, commit, reason, failed = [] }) {
+export function publishComment(state, { runUrl, objects, commit, reason, failed = [], outcomes = {} }) {
   const run = `[publish run](${runUrl})`;
   if (state === "published") {
     return [
@@ -70,7 +78,7 @@ export function publishComment(state, { runUrl, objects, commit, reason, failed 
   }
   if (state === "failed") {
     const lines = failed.length === 0
-      ? ["- upload did not run: approval rejected or job cancelled"]
+      ? [`- ${uploadFailure(outcomes)}`]
       : failed.map(({ key, reason: why }) => `- \`s3://${BUCKET}/${key}\`: ${String(why).replace(/\s+/gu, " ")}`);
     return [
       `${COMMENT_MARKER} state=failed -->`,
@@ -99,7 +107,8 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
       }
     } else if (command === "comment" && argument !== undefined) {
       const failed = process.env.FAILED ? JSON.parse(process.env.FAILED) : [];
-      process.stdout.write(publishComment(argument, { runUrl: process.env.RUN_URL, objects, commit: process.env.COMMIT, reason: process.env.REASON, failed }));
+      const outcomes = { credentials: process.env.CREDENTIALS_OUTCOME, upload: process.env.UPLOAD_OUTCOME };
+      process.stdout.write(publishComment(argument, { runUrl: process.env.RUN_URL, objects, commit: process.env.COMMIT, reason: process.env.REASON, failed, outcomes }));
     } else {
       throw new Error("usage: node scripts/s3/pack-data-publish.mjs locks <dir> | comment <published|action-needed|failed>");
     }
