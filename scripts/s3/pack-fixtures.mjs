@@ -1413,8 +1413,12 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
   return result;
 }
 
-/** How many paths of each change list the summary shows. */
-const SUMMARY_PATHS = 10;
+/**
+ * How many paths of each change list the summary shows. The approver reads it in place of CI deriving the data again,
+ * and a replace publish's dropped files appear nowhere else; 50 per list keeps a bump's summary well under the step
+ * summary's 1 MiB.
+ */
+const SUMMARY_PATHS = 50;
 
 /** The approver's view of a manifest (packFrom's), as markdown: one row per archive, then what each changes. */
 export function publishSummary(manifest) {

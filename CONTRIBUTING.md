@@ -389,9 +389,12 @@ token.
 **Pack test data is in S3** runs `node scripts/s3/pack-fixtures.mjs check` under the read role: a `head-object` for
 every archive a `test-data.lock` or `samples.lock` names, downloading nothing, failing with each missing key, its lock
 and its remedy. Main's runs read only S3, so a pull request cannot merge until S3 holds what its locks name. CI
-verifies the data by sha256 only: it never derives it again or asks upstream. The required check is **CI result**,
-which fails when any CI job failed or was cancelled, since GitHub counts a job skipped after a failed dependency as
-passing ([docs/upstream.md](docs/upstream.md#ci)).
+verifies the data by sha256 only: it never derives it again or asks upstream. That is deliberate: pack test data is a
+point-in-time artifact, and no CI job checks that it reproduces from the pins. What a pull request publishes is
+checked by the code owner who approves its upload, reading prep's summary against the pull request's pin, generator
+and recipe changes, and by the conformance check on the new data ([Merging](#merging-maintainers)). The required check
+is **CI result**, which fails when any CI job failed or was cancelled, since GitHub counts a job skipped after a failed
+dependency as passing ([docs/upstream.md](docs/upstream.md#ci)).
 
 Structure metric #3 (`npm run check`) fails while any pack test data is tracked in the pulled layout, a tool directory
 lacks a `test-data.lock`, a lock is malformed, or a `publish/` is tracked ("Pack data waiting to publish"), so a pull
@@ -467,6 +470,16 @@ the publish workflow is the routine path.
 The pull request is then checked by **Pack test data is in S3**, which stays red until S3 holds every archive its
 locks name, and by the conformance check on the published data.
 
+No CI job derives the data again: the approving code owner is the check that it is what the pull request's pins,
+generators and recipes make. prep's summary lists what each archive adds, changes and drops (up to 50 paths per list;
+the dropped ones, which a replace publish removes, appear nowhere else) and its licences. Approve only when every change
+follows from the pull request: data that changes with no pin, generator or recipe change to explain it is a reason to
+reject the upload. To check a bump's data yourself, derive it again in the sandbox described below, at the pull
+request's head with its `publish/`: `npm run fixtures:pull` (which lays `publish/` over the locked archive), then
+`npm run fixtures:derive -- --pack <id> --tool <tool> --update` and
+`npm run fixtures:stage -- --pack <id> --tool <tool> --all`; `git status -- packs/<id>/upstream/<tool>/publish` then
+shows every file where the derivation differs from what the pull request publishes, and is clean when they agree.
+
 When a pull request changes a pin, a generator or a recipe, the derived data must be made again. `fixtures:derive`
 runs the pull request's own generators and recipes, and the upstream code they fetch, so a maintainer reviews that
 code first and then runs it in a sandbox: a clone of its own, in a container or VM that can reach no AWS or GitHub
@@ -538,7 +551,7 @@ Do not paste code, data or rules from another project without recording it:
 
 `reuse lint` must pass. Only permissively licensed material is accepted, anywhere in the repository: the licence
 texts in `LICENSES/` must be on the allowlist in `scripts/check/licence-allowlist.json` (Apache-2.0, MIT, BSD-2-Clause,
-BSD-3-Clause, CC0-1.0, ISC, Zlib, 0BSD, Unicode-3.0), so no copyleft file can be committed.
+BSD-3-Clause, CC0-1.0, ISC, Zlib, 0BSD, Unicode-3.0, PostgreSQL), so no copyleft file can be committed.
 
 Fixtures (`fixtures/`) and rule packs (`packs/`) follow the same rules; see their READMEs.
 
