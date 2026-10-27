@@ -1,4 +1,10 @@
-use regex_syntax::hir::{Hir, Look, literal::Extractor};
+//! Necessary conditions a regex places on the whole text it matches (a leaf's text or a term),
+//! derived from its HIR. Moved from `matcher/anchors/text.rs`: the in-memory anchor index and the
+//! store's vocabulary (`content_store::vocabulary`) both use them.
+use regex_syntax::hir::{
+    Hir, Look,
+    literal::{ExtractKind, Extractor},
+};
 
 const MAX_PATTERN_BYTES: usize = 16 * 1024;
 const MAX_PREFIXES: usize = 64;
@@ -7,14 +13,19 @@ const MAX_PREFIX_CHARS: usize = 8;
 /// Necessary conditions only: passing this probe never replaces regex matching.
 /// All lengths are UTF-8 byte lengths, as in the regex engine's HIR properties.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct TextProbe {
+pub(crate) struct TextProbe {
     min_len: usize,
     max_len: Option<usize>,
     prefixes: Option<Vec<String>>,
+    /// A complete union of nonempty suffixes at the end of the text, when the end is anchored.
+    suffixes: Option<Vec<String>>,
+    /// Groups of literals the text contains at least one of: every match starts with one of a
+    /// prefix group and ends with one of a suffix group, wherever it lies in the text.
+    required: Vec<Vec<String>>,
 }
 
 impl TextProbe {
-    pub(super) fn compile(pattern: &str) -> Self {
+    pub(crate) fn compile(pattern: &str) -> Self {
         // Parsing and extraction are optional optimizations. Bound their work,
         // and leave authoritative syntax/size validation to the actual matcher.
         if pattern.len() > MAX_PATTERN_BYTES {
@@ -40,36 +51,82 @@ impl TextProbe {
                 None
             },
             prefixes: if anchored_start {
-                literal_prefixes(&hir)
+                affixes(&hir, ExtractKind::Prefix)
             } else {
                 None
             },
+            suffixes: if anchored_end {
+                affixes(&hir, ExtractKind::Suffix)
+            } else {
+                None
+            },
+            // An anchored side is already the stronger condition.
+            required: [
+                (!anchored_start).then_some(ExtractKind::Prefix),
+                (!anchored_end).then_some(ExtractKind::Suffix),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|kind| affixes(&hir, kind))
+            .collect(),
         }
     }
 
     /// A complete union of nonempty prefixes at the start of the node text.
     /// None is unconstrained, including unanchored and multiline-only starts.
-    pub(super) fn prefixes(&self) -> Option<&[String]> {
+    pub(crate) fn prefixes(&self) -> Option<&[String]> {
         self.prefixes.as_deref()
     }
 
-    pub(super) fn allows(&self, text: &str) -> bool {
+    pub(crate) fn allows(&self, text: &str) -> bool {
         text.len() >= self.min_len
             && self.max_len.is_none_or(|max| text.len() <= max)
             && self
                 .prefixes
                 .as_ref()
                 .is_none_or(|prefixes| prefixes.iter().any(|prefix| text.starts_with(prefix)))
+            && self
+                .suffixes
+                .as_ref()
+                .is_none_or(|suffixes| suffixes.iter().any(|suffix| text.ends_with(suffix)))
+            && self
+                .required
+                .iter()
+                .all(|group| group.iter().any(|literal| text.contains(literal.as_str())))
+    }
+
+    /// The prefixes as half-open ranges of UTF-8 (memcmp) order: every allowed text lies in one.
+    /// The upper bound is the prefix with its last character advanced; None is unbounded.
+    pub(crate) fn prefix_ranges(&self) -> Option<Vec<(String, Option<String>)>> {
+        let prefixes = self.prefixes.as_ref()?;
+        Some(prefixes.iter().map(|prefix| (prefix.clone(), successor(prefix))).collect())
     }
 }
 
-fn literal_prefixes(hir: &Hir) -> Option<Vec<String>> {
+/// The least string greater than every string that starts with `prefix`, in code point order
+/// (UTF-8 byte order is code point order).
+fn successor(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let next = (u32::from(last) + 1..=u32::from(char::MAX)).find_map(char::from_u32);
+        if let Some(next) = next {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
+fn affixes(hir: &Hir, kind: ExtractKind) -> Option<Vec<String>> {
     // The HIR extractor composes unions, concatenations and repetitions. Its
     // limits shorten literals or broaden to an infinite sequence, never drop
     // alternatives. Flags have already been resolved into HIR classes/looks.
     // Look assertions are relaxed to empty matches; only the separately proven
-    // absolute-start property permits using these literals as node prefixes.
+    // absolute-start (or -end) property permits using these literals as node
+    // prefixes (suffixes). Unanchored, they bound where a match starts (ends).
+    let suffix = matches!(kind, ExtractKind::Suffix);
     let sequence = Extractor::new()
+        .kind(kind)
         .limit_class(MAX_PREFIXES)
         .limit_total(MAX_PREFIXES)
         .limit_repeat(MAX_PREFIX_CHARS)
@@ -82,21 +139,36 @@ fn literal_prefixes(hir: &Hir) -> Option<Vec<String>> {
     let mut prefixes = Vec::with_capacity(literals.len());
     for literal in literals {
         let bytes = literal.as_bytes();
-        // The extractor truncates bytes, which can split a Unicode character.
-        // Keeping only complete initial characters weakens the constraint.
-        let text = match std::str::from_utf8(bytes) {
-            Ok(text) => text,
-            Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()]).ok()?,
+        // The extractor truncates bytes, which can split a Unicode character: a prefix loses
+        // its tail, a suffix its head. Keeping only complete characters weakens the constraint.
+        let text = if suffix {
+            let start = bytes.iter().position(|&byte| byte & 0xC0 != 0x80).unwrap_or(bytes.len());
+            std::str::from_utf8(&bytes[start..]).ok()?
+        } else {
+            match std::str::from_utf8(bytes) {
+                Ok(text) => text,
+                Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()]).ok()?,
+            }
         };
-        let end = text
-            .char_indices()
-            .nth(MAX_PREFIX_CHARS)
-            .map_or(text.len(), |(offset, _)| offset);
-        if end == 0 {
+        let kept = if suffix {
+            let skip = text.chars().count().saturating_sub(MAX_PREFIX_CHARS);
+            &text[text.char_indices().nth(skip).map_or(text.len(), |(offset, _)| offset)..]
+        } else {
+            &text[..text
+                .char_indices()
+                .nth(MAX_PREFIX_CHARS)
+                .map_or(text.len(), |(offset, _)| offset)]
+        };
+        if kept.is_empty() {
             // Even one empty alternative makes the entire union unconstrained.
             return None;
         }
-        prefixes.push(text[..end].to_owned());
+        prefixes.push(kept.to_owned());
+    }
+    if suffix {
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        return Some(prefixes);
     }
     prefixes.sort_unstable();
     // Lexicographic ordering makes a prefix precede all of its extensions.
@@ -121,6 +193,13 @@ mod tests {
                     assert!(
                         prefixes.iter().any(|prefix| text.starts_with(prefix)),
                         "{pattern:?} excluded {text:?} from the prefix index"
+                    );
+                }
+                if let Some(ranges) = probe.prefix_ranges() {
+                    assert!(
+                        ranges.iter().any(|(lo, hi)| text.as_str() >= lo.as_str()
+                            && hi.as_ref().is_none_or(|hi| text.as_str() < hi.as_str())),
+                        "{pattern:?} excluded {text:?} from the prefix ranges"
                     );
                 }
             }
@@ -224,6 +303,37 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn suffixes_and_required_literals_reject_without_losing_matches() {
+        let probe = TextProbe::compile(r"(?:Error|Exception)\z");
+        assert!(probe.allows("ValueError"));
+        assert!(!probe.allows("ValueErrors"));
+        let probe = TextProbe::compile(r"foo.*bar");
+        assert!(probe.allows("xfooybarz"));
+        assert!(!probe.allows("xbar"), "a match starts with foo");
+        assert!(!probe.allows("nothing here"));
+        let texts = ["Error", "xError", "Errorx", "éError", "foo", "afoob", "bar", "é", "ab"].map(str::to_owned);
+        for pattern in [r"(?:Error|é)\z", r"(?i)error\z", r"foo|bar", r"(?m)foo$", r"\bfoo", r"[a-c]+é", r"(?:a|)b"] {
+            assert_sound(pattern, &texts);
+        }
+    }
+
+    #[test]
+    fn prefix_ranges_hold_every_extension_and_nothing_below() {
+        assert_eq!(super::successor("ab"), Some("ac".to_owned()));
+        assert_eq!(super::successor("a\u{D7FF}"), Some("a\u{E000}".to_owned()));
+        assert_eq!(super::successor("a\u{10FFFF}"), Some("b".to_owned()));
+        assert_eq!(super::successor("\u{10FFFF}"), None);
+        let probe = TextProbe::compile(r"\A(?:tar|é)");
+        let ranges = probe.prefix_ranges().unwrap();
+        for text in ["tar", "target", "tar\u{10FFFF}x", "é", "éclair"] {
+            assert!(ranges.iter().any(|(lo, hi)| text >= lo.as_str() && hi.as_ref().is_none_or(|hi| text < hi.as_str())), "{text}");
+        }
+        for text in ["ta", "tas", "e", "f"] {
+            assert!(!ranges.iter().any(|(lo, hi)| text >= lo.as_str() && hi.as_ref().is_none_or(|hi| text < hi.as_str())), "{text}");
         }
     }
 }

@@ -104,8 +104,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
     }
 }
 
-mod text;
-use text::TextProbe;
+use crate::code_rule_dsl::prefilter::probes::TextProbe;
 
 #[cfg(test)]
 mod tests;

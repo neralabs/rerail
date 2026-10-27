@@ -21,7 +21,7 @@ mod php_view;
 mod placement;
 // Published from the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
-mod prefilter;
+pub(crate) mod prefilter;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;

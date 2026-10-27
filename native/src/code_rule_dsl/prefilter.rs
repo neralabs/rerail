@@ -19,6 +19,7 @@ mod graph;
 mod kinds;
 mod lower;
 pub(crate) mod plans;
+pub(crate) mod probes;
 mod values;
 
 pub(crate) use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
@@ -41,12 +42,12 @@ pub(crate) fn kind_token(code: u32) -> String {
 
 /// The kind code of node `pre` in the prefilter's atoms. A restored tape reports ERROR as
 /// tree-sitter's symbol (u16::MAX); the atoms use its tape code, 0, which no other node has.
-pub(crate) fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
+pub(in crate::code_rule_dsl) fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
     if doc.transducer_flags(pre) & 8 != 0 { 0 } else { doc.transducer_kind(pre) }
 }
 
 /// A tape's prefilter rows, from the tape alone.
-pub(crate) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> StoreResult<TapePrefilter> {
+pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> StoreResult<TapePrefilter> {
     let lang = u32::from(language::tape_tag(*doc.get_lang()).ok_or_else(|| StoreError::Invalid("unregistered tape language".to_owned()))?);
     let mut positions = kinds::Builder::default();
     let mut counts = [0_u32; LANG_STRIDE as usize];
@@ -79,7 +80,7 @@ pub(crate) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> b
 }
 
 /// Builds and publishes the prefilter rows of `docs`, the tapes `tapes` name, 64 at a time.
-pub(crate) fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> StoreResult<()> {
+pub(in crate::code_rule_dsl) fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> StoreResult<()> {
     if tapes.len() != docs.len() {
         return Err(StoreError::Invalid("tape identity count does not match prefilter documents".to_owned()));
     }
@@ -97,7 +98,7 @@ pub(crate) fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) 
 /// The candidates of `plans`, all of language `lang` (a tape tag), over `tapes`: per plan, its
 /// (tape, preorder) rows in order. Tapes of another language or without prefilter rows have none.
 /// A superset of each plan's roots (`lower.rs`); the matcher confirms them.
-pub(crate) fn select(
+pub(in crate::code_rule_dsl) fn select(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],

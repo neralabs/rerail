@@ -3,6 +3,7 @@
 //! vocabulary tables (schema: `vocabulary_*`) fill in SQL. Adapted from Pulling-it-all-together's
 //! `matcher/anchors/sql/functions.rs`; its node decoders (`nera_decode`, `nera_span`, `nera_slice`,
 //! `nera_parent`, ...) read P's private tape copies and went with them (03 §7).
+use crate::code_rule_dsl::prefilter::probes::TextProbe;
 use rusqlite::{
     Connection, Result,
     functions::FunctionFlags,
@@ -59,7 +60,8 @@ pub(super) fn install(db: &Connection) -> Result<()> {
     )?;
     // One row per term instead of one per pattern and term: the patterns of a set are compiled
     // once and tried in turn (a combined RegexSet was slower, regex.md §2.2).
-    let sets = parking_lot::Mutex::new(Vec::<(String, Vec<(String, regex::Regex)>)>::new());
+    type Compiled = Vec<(String, TextProbe, regex::Regex)>;
+    let sets = parking_lot::Mutex::new(Vec::<(String, Compiled)>::new());
     db.create_scalar_function(
         c"nera_terms_matching",
         2,
@@ -78,7 +80,8 @@ pub(super) fn install(db: &Connection) -> Result<()> {
                         .map(|expression| {
                             let regex = regex::Regex::new(&expression)
                                 .map_err(|e| invalid(e.to_string()))?;
-                            Ok((expression, regex))
+                            let probe = TextProbe::compile(&expression);
+                            Ok((expression, probe, regex))
                         })
                         .collect::<Result<Vec<_>>>()?;
                     if sets.len() == 4 {
@@ -91,11 +94,25 @@ pub(super) fn install(db: &Connection) -> Result<()> {
             let matched: Vec<&str> = sets[at]
                 .1
                 .iter()
-                .filter(|(_, regex)| regex.is_match(term))
-                .map(|(expression, _)| expression.as_str())
+                // The probe's byte tests reject most terms before the regex runs (ast-index-spike
+                // S163/S169: derived probes as top-level conjuncts).
+                .filter(|(_, probe, regex)| probe.allows(term) && regex.is_match(term))
+                .map(|(expression, _, _)| expression.as_str())
                 .collect();
             Ok((!matched.is_empty())
                 .then(|| serde_json::to_string(&matched).expect("expression JSON")))
+        },
+    )?;
+    // An anchored predicate's terms lie in its prefix ranges: the fill seeks them in `term_freq`
+    // instead of scanning every term (`vocabulary-fill.sql`).
+    db.create_scalar_function(
+        c"nera_prefix_ranges",
+        1,
+        flags | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            Ok(TextProbe::compile(ctx.get_raw(0).as_str()?)
+                .prefix_ranges()
+                .map(|ranges| serde_json::to_string(&ranges).expect("range JSON")))
         },
     )?;
     db.create_scalar_function(

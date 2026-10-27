@@ -337,13 +337,15 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     let lang = GrammarDialect::TypeScript;
     let rules = [json!({"kind": "identifier", "regex": "^tar"}), json!({"kind": "identifier", "regex": "^(?:alpha|beta)$"})];
     let count = |sql: &str| -> i64 { store.query_rows(sql, [], |r| r.get(0)).unwrap()[0] };
-    let first = put(&store, "const target = alpha(beta);", lang);
+    // `^tar` is anchored: its terms are sought by prefix range, so the range edges must hold.
+    let first = put(&store, "const target = alpha(beta); ta; tar; tarz; tas; taré; sz;", lang);
     let selected = select_each(&store, lang, std::slice::from_ref(&first), &rules);
     assert_eq!(selected[0][0].0, selected[0][0].1);
     assert_eq!(selected[1][0].0, selected[1][0].1);
     assert_eq!(count("SELECT count(*) FROM vocabulary_predicate WHERE ready=1"), 2);
     assert_eq!(count("SELECT count(*) FROM vocabulary_literal"), 2, "an exact literal set joins its literals");
-    assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 3);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE expression='^tar'"), 4, "target, tar, tarz, taré");
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 6);
     assert_eq!(count("SELECT count(*) FROM vocabulary_pending"), 0);
     // A new tape's new terms are pending until the next statement matches them.
     let second = put(&store, "let tarp = gamma;", lang);
@@ -359,5 +361,5 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     // A term that leaves the store leaves every predicate's set.
     store.remove_prefilter(tapes[1].0).unwrap();
     assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term='tarp'"), 0);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 3);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 6);
 }
