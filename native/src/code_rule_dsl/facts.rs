@@ -19,6 +19,8 @@ pub(crate) mod pages;
 pub(crate) mod propagate;
 #[allow(dead_code)]
 pub(crate) mod runs;
+#[allow(dead_code)]
+pub(crate) mod vtab;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).
