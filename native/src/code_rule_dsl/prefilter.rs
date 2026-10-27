@@ -105,11 +105,15 @@ pub(in crate::code_rule_dsl) fn select(
     tapes: &[TapeId],
 ) -> StoreResult<Vec<Vec<(i64, u32)>>> {
     let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
-    let statement = lower::batch(plans, lang, &files);
+    // Statistics only order the lowering, so reading them in their own snapshot is safe.
+    let statistics = store.candidate_transaction(false, |db| {
+        crate::code_rule_dsl::stats::inputs::Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))
+    })?;
+    let statement = lower::batch(plans, lang, &files, &statistics);
     let mut rows = vec![Vec::new(); plans.len()];
     execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32)))?;
     Ok(rows)
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::code_rule_dsl) mod tests;

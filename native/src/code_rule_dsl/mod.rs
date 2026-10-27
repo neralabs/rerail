@@ -22,6 +22,9 @@ mod placement;
 // Published from the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 pub(crate) mod prefilter;
+// Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
+#[allow(dead_code)]
+mod stats;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;

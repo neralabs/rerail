@@ -366,6 +366,7 @@ CREATE TABLE IF NOT EXISTS term_postings (
     term TEXT NOT NULL,
     tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
     kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n > 0),
     postings BLOB NOT NULL,
     PRIMARY KEY (lang, term, tape_id, kind)
 ) STRICT, WITHOUT ROWID;
@@ -376,6 +377,20 @@ CREATE TABLE IF NOT EXISTS term_freq (
     n INTEGER NOT NULL,
     PRIMARY KEY (lang, term)
 ) STRICT, WITHOUT ROWID;
+-- Planner statistics (stats/inputs.rs, from Data-layer-rule-expressivity's `value_frequency`
+-- and `value_kind_frequency`): nodes per (term, kind) and covered nodes per kind, over every
+-- tape with a set. A kind's uncovered nodes are `kind_freq.n - term_kind_freq.n`.
+CREATE TABLE IF NOT EXISTS term_node_freq (
+    lang INTEGER NOT NULL,
+    term TEXT NOT NULL,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (lang, term, kind)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS term_kind_freq (
+    kind INTEGER PRIMARY KEY,
+    n INTEGER NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS term_coverage (
     tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
     kind INTEGER NOT NULL,
@@ -394,6 +409,10 @@ END;
 CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
     UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
     DELETE FROM term_freq WHERE lang=OLD.lang AND term=OLD.term AND n<=0;
+    UPDATE term_node_freq SET n=n-OLD.n WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind;
+    DELETE FROM term_node_freq WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind AND n<=0;
+    UPDATE term_kind_freq SET n=n-OLD.n WHERE kind=OLD.kind;
+    DELETE FROM term_kind_freq WHERE kind=OLD.kind AND n<=0;
 END;
 
 -- The prefilter's regex vocabulary (vocabulary.rs, from Pulling-it-all-together's

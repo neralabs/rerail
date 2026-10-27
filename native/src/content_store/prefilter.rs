@@ -24,7 +24,8 @@ use rusqlite::{Transaction, params, types::Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
-pub(crate) const PREFILTER_VERSION: i64 = 2;
+/// 3: term postings carry their node count, which the planner statistics sum.
+pub(crate) const PREFILTER_VERSION: i64 = 3;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -197,12 +198,30 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter) -> StoreResult<()> {
     rows.sort_unstable_by_key(|((kind, term), _)| (*term, *kind));
     insert(
         transaction,
-        "INSERT INTO term_postings(lang,term,tape_id,kind,postings)",
+        "INSERT INTO term_postings(lang,term,tape_id,kind,n,postings)",
         "",
         rows.into_iter().map(|((kind, term), pres)| {
             pres.sort_unstable();
-            [lang.into(), (*term).to_owned().into(), tape.into(), i64::from(*kind).into(), Value::Blob(pack(pres))]
+            [lang.into(), (*term).to_owned().into(), tape.into(), i64::from(*kind).into(), (pres.len() as i64).into(), Value::Blob(pack(pres))]
         }),
+    )?;
+    insert(
+        transaction,
+        "INSERT INTO term_node_freq(lang,term,kind,n)",
+        "ON CONFLICT(lang,term,kind) DO UPDATE SET n=n+excluded.n",
+        postings.iter().map(|((kind, term), pres)| {
+            [lang.into(), (*term).to_owned().into(), i64::from(*kind).into(), (pres.len() as i64).into()]
+        }),
+    )?;
+    let mut covered = BTreeMap::<u32, i64>::new();
+    for ((kind, _), pres) in &postings {
+        *covered.entry(*kind).or_default() += pres.len() as i64;
+    }
+    insert(
+        transaction,
+        "INSERT INTO term_kind_freq(kind,n)",
+        "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n",
+        covered.into_iter().map(|(kind, n)| [i64::from(kind).into(), n.into()]),
     )?;
     // One row per term, counting the tape's kinds that carry it, in place of a per-row trigger.
     let mut terms = BTreeMap::<&str, i64>::new();

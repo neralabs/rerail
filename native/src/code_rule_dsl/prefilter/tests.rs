@@ -8,7 +8,7 @@ use ast_grep_core::tree_sitter::StrDoc;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
+pub(in crate::code_rule_dsl) fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
     let native = StrDoc::new(source, lang);
     let grammar = Grammar::new(lang).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
@@ -18,7 +18,7 @@ fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
 
 /// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in
 /// microseconds), so a counter disambiguates.
-pub(super) fn temp() -> PathBuf {
+pub(in crate::code_rule_dsl) fn temp() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -26,7 +26,7 @@ pub(super) fn temp() -> PathBuf {
 }
 
 /// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
-pub(super) fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
+pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
     let (doc, bytes) = document(source, lang);
     let grammar = i64::from(language::tape_tag(lang).unwrap());
     let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
@@ -39,8 +39,26 @@ fn count(store: &ContentStore, sql: &str) -> i64 {
     store.query_rows(sql, [], |r| r.get(0)).unwrap()[0]
 }
 
-pub(super) fn open(path: &Path) -> ContentStore {
+pub(in crate::code_rule_dsl) fn open(path: &Path) -> ContentStore {
     ContentStore::open(path).unwrap()
+}
+
+/// A rule's compiled matcher, outside any rule document.
+pub(in crate::code_rule_dsl) fn matcher(rule: &serde_json::Value, lang: GrammarDialect) -> crate::code_rule_dsl::matcher::AstMatcher {
+    let ids = std::collections::BTreeMap::new();
+    let utils = crate::code_rule_dsl::compile::UtilScope {
+        table: std::sync::Weak::new(),
+        ids: &ids,
+        options: None,
+        python: None,
+        transform: None,
+        conflicts: None,
+        captures: Default::default(),
+        calls: None,
+        documents: None,
+        side: crate::code_rule_dsl::compile::documents::Side::Host,
+    };
+    crate::code_rule_dsl::compile::compile_ast_rule(rule, lang, "test/rule", &mut Vec::new(), &utils).unwrap()
 }
 
 #[test]

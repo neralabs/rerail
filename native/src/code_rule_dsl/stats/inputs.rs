@@ -1,6 +1,9 @@
 //! Plan inputs read in one batch from SQL-owned summaries (ast-index-spike S241).
 //! These immutable values describe a decision; they are not a second frequency owner.
-use super::super::{AnchorPlan, Condition, Required, Requirement};
+//! From Data-layer-rule-expressivity's `matcher/anchors/sql/statistics/mod.rs`: the summaries are
+//! the content store's (`kind_freq`, `term_node_freq`, `term_kind_freq`), keyed by kind atom.
+use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
+use crate::code_rule_dsl::prefilter::LANG_STRIDE;
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
@@ -9,13 +12,13 @@ use std::sync::Arc;
 struct Key(u32, Required);
 
 #[derive(Clone, Copy)]
-pub(super) struct Estimate {
+pub(in crate::code_rule_dsl) struct Estimate {
     pub rows: u64,
     pub uncovered: u64,
 }
 
 #[derive(Clone, Default)]
-pub(super) struct Statistics(Arc<BTreeMap<Key, Estimate>>);
+pub(in crate::code_rule_dsl) struct Statistics(Arc<BTreeMap<Key, Estimate>>);
 
 fn patterns(plan: &AnchorPlan, seen: &mut HashSet<usize>, visit: &mut impl FnMut(&[Requirement])) {
     match &plan.condition {
@@ -40,10 +43,6 @@ impl Statistics {
         db: &Connection,
         plans: impl IntoIterator<Item = (u32, &'a AnchorPlan)>,
     ) -> Result<Self> {
-        #[cfg(feature = "code-rule-profile")]
-        let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
-            crate::code_rule_dsl::profile::Phase::Planning,
-        );
         let mut requests = BTreeSet::new();
         let mut seen = BTreeMap::<u32, HashSet<usize>>::new();
         for (language, plan) in plans {
@@ -58,12 +57,13 @@ impl Statistics {
             let rows = std::iter::repeat_n("(?,?,?)", requests.len())
                 .collect::<Vec<_>>()
                 .join(",");
+            // ERROR (65535) is the tape's code 0 (`prefilter::kind_code`).
             let sql = format!("WITH wanted(lang,code,term) AS (VALUES {rows})
                 SELECT w.lang,w.code,w.term,coalesce(k.n,0),coalesce(v.n,0),
                        max(0,coalesce(k.n,0)-coalesce(c.n,0))
-                FROM wanted w LEFT JOIN kfreq k ON k.lang=w.lang AND k.code=CASE WHEN w.code=65535 THEN 0 ELSE w.code END
-                LEFT JOIN value_frequency v ON v.lang=w.lang AND v.kind=k.code AND v.term=w.term
-                LEFT JOIN value_kind_frequency c ON c.lang=w.lang AND c.kind=k.code");
+                FROM wanted w LEFT JOIN kind_freq k ON k.kind=w.lang*{LANG_STRIDE}+CASE WHEN w.code=65535 THEN 0 ELSE w.code END
+                LEFT JOIN term_node_freq v ON v.lang=w.lang AND v.kind=k.kind AND v.term=w.term
+                LEFT JOIN term_kind_freq c ON c.kind=k.kind");
             let parameters = requests.iter().flat_map(|Key(lang, required)| {
                 let (kind, term) = match required {
                     Required::Kind(kind) => (*kind, Value::Null),
@@ -128,7 +128,7 @@ impl Statistics {
 }
 
 #[derive(Clone, serde::Serialize)]
-pub(super) struct Decision {
+pub(in crate::code_rule_dsl) struct Decision {
     pub consumer: usize,
     pub pattern: usize,
     pub requirement: usize,
@@ -136,64 +136,6 @@ pub(super) struct Decision {
     pub literal: Option<String>,
     pub estimated_rows: Option<u64>,
     pub uncovered_rows: Option<u64>,
-}
-
-/// Legacy stores backfill counts once. The execution path never recounts postings.
-pub(super) fn upgrade(db: &Connection) -> Result<()> {
-    use rusqlite::functions::FunctionFlags;
-    db.create_scalar_function(
-        c"__rerail_posting_count",
-        1,
-        FunctionFlags::SQLITE_UTF8
-            | FunctionFlags::SQLITE_DETERMINISTIC
-            | FunctionFlags::SQLITE_INNOCUOUS,
-        |ctx| {
-            let bytes = ctx.get_raw(0).as_blob()?;
-            let mut count = 0_i64;
-            let (mut value, mut shift, mut position) = (0_u32, 0_u32, 0_u32);
-            for &byte in bytes {
-                if shift > 28 || (shift == 28 && byte > 15) {
-                    return Err(rusqlite::Error::UserFunctionError(
-                        "invalid legacy posting".into(),
-                    ));
-                }
-                value |= u32::from(byte & 127) << shift;
-                if byte & 128 == 0 {
-                    position = position.checked_add(value).ok_or_else(|| {
-                        rusqlite::Error::UserFunctionError("legacy posting overflow".into())
-                    })?;
-                    count += 1;
-                    value = 0;
-                    shift = 0;
-                } else {
-                    shift += 7;
-                }
-            }
-            if shift != 0 {
-                return Err(rusqlite::Error::UserFunctionError(
-                    "truncated legacy posting".into(),
-                ));
-            }
-            Ok(count)
-        },
-    )?;
-    let result = (|| {
-        let tx = db.unchecked_transaction()?;
-        tx.execute_batch(
-            "ALTER TABLE vidx ADD COLUMN n INTEGER NOT NULL DEFAULT 0;
-            UPDATE vidx SET n=__rerail_posting_count(postings)",
-        )?;
-        let (_, schema) = include_str!("../schema.sql")
-            .split_once("-- SQL-owned planner statistics.")
-            .expect("statistics schema boundary");
-        tx.execute_batch(schema)?;
-        tx.execute_batch("INSERT INTO value_frequency SELECT lang,term,kind,sum(n) FROM vidx GROUP BY lang,term,kind;
-            INSERT INTO value_kind_frequency SELECT lang,kind,sum(n) FROM vidx GROUP BY lang,kind")?;
-        tx.pragma_update(None, "user_version", 3_i64)?;
-        tx.commit()
-    })();
-    let removed = db.remove_function(c"__rerail_posting_count", 1);
-    result.and(removed)
 }
 
 #[cfg(test)]

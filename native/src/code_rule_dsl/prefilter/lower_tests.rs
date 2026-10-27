@@ -2,7 +2,7 @@ use super::*;
 use crate::code_rule_dsl::{
     language::{self, GrammarDialect},
     matcher::AstMatcher,
-    prefilter::tests::{open, put, temp},
+    prefilter::tests::{matcher, open, put, temp},
     tape::TapeDoc,
 };
 use crate::content_store::{ContentStore, StoreResult};
@@ -219,23 +219,6 @@ fn a_union_with_a_superset_of_every_branch_is_that_superset() {
     let unrelated = lower.relation("SELECT 2,2".into(), true).unwrap();
     let union = lower.union(vec![filtered, unrelated]).unwrap();
     assert_ne!(union.name, scope.name);
-}
-
-fn matcher(rule: &Json, lang: GrammarDialect) -> AstMatcher {
-    let ids = std::collections::BTreeMap::new();
-    let utils = crate::code_rule_dsl::compile::UtilScope {
-        table: std::sync::Weak::new(),
-        ids: &ids,
-        options: None,
-        python: None,
-        transform: None,
-        conflicts: None,
-        captures: Default::default(),
-        calls: None,
-        documents: None,
-        side: crate::code_rule_dsl::compile::documents::Side::Host,
-    };
-    crate::code_rule_dsl::compile::compile_ast_rule(rule, lang, "test/rule", &mut Vec::new(), &utils).unwrap()
 }
 
 /// The preorders the matcher accepts on `doc`, by a full walk.

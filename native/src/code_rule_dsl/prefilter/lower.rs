@@ -10,6 +10,7 @@
 //! into the candidate set were good enough for word containment in ast-index-spike (history index
 //! l.404, S192–S193), and each rule's sets stay scoped to its own candidate tapes (T2, S149).
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
+use crate::code_rule_dsl::stats::inputs::Statistics;
 use rusqlite::types::Value;
 use std::collections::{BTreeSet, HashMap};
 #[path = "access.rs"]
@@ -105,6 +106,8 @@ struct Lower {
     indexed: BTreeSet<String>,
     reuse: Reuse,
     predicates: HashMap<String, (String, String)>,
+    /// Plan inputs read before lowering (`stats::inputs`); empty statistics keep pattern order.
+    statistics: Statistics,
 }
 
 /// SQL set identities, independent of the matcher's conservative exactness metadata.
@@ -134,6 +137,7 @@ impl Lower {
             indexed: BTreeSet::new(),
             reuse: Reuse::default(),
             predicates: HashMap::new(),
+            statistics: Statistics::default(),
         }
     }
     fn parameter(&mut self, value: impl Into<Value>) -> String {
@@ -618,15 +622,20 @@ impl Lower {
     /// A pattern root holds every requirement in its subtree. P reached roots by decoded parent
     /// hops from the requirement with the fewest postings (counted per request) and confirmed
     /// subtree spans. Here a requirement without parents is the root itself, so its postings bound
-    /// the roots, and the others narrow them to the tapes that hold every requirement. Choosing
-    /// the rarest posting is the statistics' job (D10: `kind_freq`, `term_freq`), not a count.
+    /// the roots, and the others narrow them to the tapes that hold every requirement, rarest
+    /// first by the statistics read before lowering (D10), not by a count per request.
     fn pattern(&mut self, required: &[Requirement], scope: Set) -> Result<Set, ()> {
         if required.is_empty() {
             return Ok(scope);
         }
         let mut roots = scope.clone();
         let mut inside = Vec::new();
-        for requirement in required {
+        let mut order: Vec<_> = required.iter().enumerate().collect();
+        order.sort_by_key(|(ordinal, requirement)| {
+            let estimate = self.statistics.choose(self.lang, std::slice::from_ref(*requirement)).1;
+            (estimate.map_or(u64::MAX, |estimate| estimate.rows), *ordinal)
+        });
+        for (_, requirement) in order {
             let (kind, literal) = match &requirement.value {
                 Required::Kind(kind) => (*kind, None),
                 Required::Terminal(kind, text) => (*kind, Some(text)),
@@ -647,12 +656,13 @@ impl Lower {
 
 /// The candidate sets of `plans`, over the requested tapes of language `lang` (a tape tag) that
 /// have prefilter rows: `execute::request` fills `request_file`.
-pub(super) fn batch(plans: &[&AnchorPlan], lang: u32, files: &[i64]) -> Statement {
-    batch_scope(plans, lang, files)
+pub(super) fn batch(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &Statistics) -> Statement {
+    batch_scope(plans, lang, files, statistics)
 }
 
-fn scope(lang: u32) -> Lower {
+fn scope(lang: u32, statistics: &Statistics) -> Lower {
     let mut lower = Lower::new(lang);
+    lower.statistics = statistics.clone();
     let lang_parameter = lower.parameter(i64::from(lang));
     lower.ctes.push(format!(
         "cf(fid) AS MATERIALIZED (SELECT r.fid FROM request_file r JOIN tape_objects t ON t.tape_id=r.fid JOIN prefilter_sets s ON s.tape_id=r.fid WHERE t.grammar_id={lang_parameter})"
@@ -677,7 +687,7 @@ fn anchored(plan: &AnchorPlan) -> bool {
             | Condition::Relation { .. } => false,
         }
 }
-fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64]) -> Statement {
+fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Statistics) -> Statement {
     use super::graph::program::Program;
     let mut program = Program::default();
     let mut roots = Vec::new();
@@ -687,7 +697,7 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64]) -> Statement {
     for (qid, plan) in plans.iter().enumerate() {
         // Admission belongs to the individual plan. Another consumer's cached
         // producers cannot expand or shrink this plan's existing 256-node allowance.
-        let mut lower = scope(lang);
+        let mut lower = scope(lang, statistics);
         let checkpoint = lower.ctes.len();
         lower.limit = checkpoint + 256;
         let attempted = lower.plan(plan, lower.all());
@@ -701,7 +711,7 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64]) -> Statement {
             Err(()) => {
                 // Discard the entire failed fragment, including predicates, parameters
                 // and reuse state. Earlier fragments already belong to the shared program.
-                lower = scope(lang);
+                lower = scope(lang, statistics);
                 lower.limit = lower.ctes.len() + 256;
                 match &plan.root_kinds {
                     Some(kinds) => lower.kinds(kinds).unwrap_or_else(|_| lower.all()),
