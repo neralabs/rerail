@@ -70,7 +70,7 @@ The agent drafts the rule from your description, tests it against the repository
 ## How it works
 
 <p align="center">
-  <img src="docs/how-it-works.svg" width="880" alt="The coding agent's edits go to the Rerail engine, which checks the changed lines against your rules, steers the agent back when one is broken, and records the session for the dashboard.">
+  <img src="docs/images/how-it-works.svg" width="880" alt="The coding agent's edits go to the Rerail engine, which checks the changed lines against your rules, steers the agent back when one is broken, and records the session for the dashboard.">
 </p>
 
 1. **Capture.** Hooks (Claude Code, Codex, Cursor) or native extensions (OMP, Pi) observe the session automatically, so the agent never has to remember to call Rerail. Before an edit, Rerail records the file as it was, so it can tell which lines the agent changed.
