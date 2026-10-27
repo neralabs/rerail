@@ -1,69 +1,14 @@
 // Shared by the core release scripts in this directory (docs/distribution-model.md, "Release channels"). The core
 // package @neralabs/rerail is versioned by the Release pull request, not by changesets: when anything core ships has
-// changed since its last release, the pull request bumps its patch version and dates the root CHANGELOG.md's
-// unreleased section. Each released core version is marked by the git tag `v<version>`, which release.yml publishes.
+// changed since its last release (core-paths.mjs), the pull request bumps its patch version and dates the root
+// CHANGELOG.md's unreleased section. Each released core version is marked by the git tag `v<version>`, which
+// release.yml publishes.
 import semver from "semver";
 
 export const CORE_NAME = "@neralabs/rerail";
 
 /** The git tag that releases core's `version`: release.yml publishes on it. */
 export const coreTag = (version) => `v${version}`;
-
-/**
- * Paths whose change never changes what core ships, so they alone never release it: the packs (released on their
- * own), documentation, CI, changesets, tests, fixtures, corpora and benchmarks, development and release scripts, and
- * repository files npm does not pack (a generator's output is committed where it ships, so it counts there). Everything else is a core change, `package-lock.json` included unless only its
- * pack workspace entries moved (`lockChangesCore`). A directory ends in `/`.
- */
-export const NOT_SHIPPED = [
-  ".changeset/",
-  ".github/",
-  ".rerail/",
-  "benchmark/",
-  "conformance/",
-  "docs/",
-  "fixtures/",
-  "integration/",
-  "LICENSES/",
-  "packs/",
-  "playground/",
-  "scripts/check/",
-  "scripts/dev/",
-  "scripts/dsl/",
-  "scripts/generate/",
-  "scripts/host/",
-  "scripts/release/",
-  "scripts/review/",
-  "scripts/README.md",
-  "test/",
-  ".gitattributes",
-  ".gitignore",
-  "CHANGELOG.md",
-  "CONTEXT.md",
-  "CONTRIBUTING.md",
-  "Justfile",
-  "REUSE.toml",
-  "REVIEW.md",
-  "SECURITY.md",
-  "vitest.config.ts",
-];
-
-/** Whether a change to repository path `path` can change what core ships. */
-export const shipsWithCore = (path) => !NOT_SHIPPED.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
-
-/** `package-lock.json` without its pack workspace entries, which the pack release moves. */
-const withoutPacks = (lock) => ({ ...lock, packages: Object.fromEntries(Object.entries(lock.packages ?? {}).filter(([key]) => !key.startsWith("packs/"))) });
-
-/** Whether two `package-lock.json` texts differ anywhere but their pack workspace entries. */
-export const lockChangesCore = (before, after) => JSON.stringify(withoutPacks(JSON.parse(before))) !== JSON.stringify(withoutPacks(JSON.parse(after)));
-
-/**
- * The paths among `changed` (repository paths changed since core's last release) that change what core ships.
- * `readLock(ref)` reads `package-lock.json` at the release (`"release"`) or now (`"head"`), called only when it changed.
- */
-export function coreChanges(changed, readLock) {
-  return changed.filter((path) => shipsWithCore(path) && (path !== "package-lock.json" || lockChangesCore(readLock("release"), readLock("head"))));
-}
 
 /** The first `## ` heading of a changelog and where it is, or null. */
 function firstSection(text) {

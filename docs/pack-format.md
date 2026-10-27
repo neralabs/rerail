@@ -358,7 +358,7 @@ of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`)
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
 bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the packs: the core
 package at the repository root is bumped by the same Release pull request when what it ships changes, with its notes
-in the root `CHANGELOG.md` ([README](../README.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
+in the root `CHANGELOG.md` ([release](release.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
 rules, so its first release is `0.1.1`.
 
 ### Release

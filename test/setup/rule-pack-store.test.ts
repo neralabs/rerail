@@ -103,7 +103,7 @@ describe("npmPackStore", () => {
 
     const { problems } = await npmPackStore(temporaryHome(), npm).fetch(["typescript"], "latest");
 
-    expect(problems).toEqual([{ packageName: "@neralabs/rerail-pack-typescript", reason: "npm could not reach the registry (ECONNREFUSED)" }]);
+    expect(problems).toEqual([{ packageName: "@neralabs/rerail-pack-typescript", reason: "could not reach the npm registry (https://registry.npmjs.org, ECONNREFUSED): check your network, proxy, or registry in ~/.npmrc" }]);
   });
 
   it("removes a staging folder a run left long ago, and keeps one another run may be using", async () => {
@@ -262,7 +262,7 @@ describe("installPackVersions", () => {
     await installPackVersions([{ id: "typescript", version: "0.1.1" }], copies);
     const store: PackStore = { ...copies, install: async () => { throw new Error("npm error code ENOTFOUND\nnpm error network request failed"); } };
 
-    expect(await installPackVersions([{ id: "typescript", version: "0.1.2" }], store)).toBe("npm could not reach the registry (ENOTFOUND). Nothing was changed.");
+    expect(await installPackVersions([{ id: "typescript", version: "0.1.2" }], store)).toBe("could not reach the npm registry (ENOTFOUND): check your network, proxy, or registry in ~/.npmrc. Nothing was changed.");
     expect(copies.installs).toHaveLength(1);
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
   });
