@@ -1,8 +1,8 @@
 //! Behavioral validation of structural progress, independent of execution backend.
 use super::*;
-use crate::policy_dsl::tape::{Grammar, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_language::SupportLang;
+use crate::code_rule_dsl::language::GrammarDialect;
 
 fn program(words: Vec<u32>) -> Result<Program, Error> {
     Program::new(words, vec![b"value".to_vec()], vec![], vec![0], vec![])
@@ -76,9 +76,9 @@ fn cycle_progress_rejects_restored_and_bypassed_navigation() {
 #[test]
 fn cycle_progress_preserves_advancing_cursor_and_navigation_loops() {
     let source = Arc::new("f()\ng()\n".to_owned());
-    let grammar = Grammar::new(SupportLang::Python).unwrap();
-    let native = StrDoc::new(source.as_str(), SupportLang::Python);
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let native = StrDoc::new(source.as_str(), GrammarDialect::Python);
+    let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
     let tape = TapeDoc::restore(source, grammar, &image, &|| false).unwrap();
     let roots = tape.transducer_children(0).collect::<Vec<_>>();
     assert_eq!(roots.len(), 2);
@@ -159,8 +159,8 @@ fn cycle_progress_preserves_nested_query_loops_with_separate_entries() {
     let source = Arc::new("f(a)\ng(b)\n".to_owned());
     let query =
         "(module (expression_statement (call arguments: (argument_list (identifier)+)))+ @stmt)";
-    let language = SupportLang::Python.get_ts_language();
-    let native = StrDoc::new(source.as_str(), SupportLang::Python);
+    let language = GrammarDialect::Python.get_ts_language();
+    let native = StrDoc::new(source.as_str(), GrammarDialect::Python);
     let native_query = tree_sitter::Query::new(&language, query).unwrap();
     let mut cursor = tree_sitter::QueryCursor::new();
     let mut matches = cursor.matches(&native_query, native.tree.root_node(), source.as_bytes());
@@ -175,8 +175,8 @@ fn cycle_progress_preserves_nested_query_loops_with_separate_entries() {
         );
     }
     assert_eq!(native_spans, vec![vec![0..4, 5..9]]);
-    let grammar = Grammar::new(SupportLang::Python).unwrap();
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
     let tape = TapeDoc::restore(source, grammar, &image, &|| false).unwrap();
     let program = Program::compile_tree_sitter_query_pattern(query, &language).unwrap();
     let output = program.execute_roots(&tape, [0]).unwrap();
@@ -208,7 +208,7 @@ fn cycle_progress_compiles_every_pinned_query() {
         .collect::<Vec<_>>();
     paths.sort();
     assert_eq!(paths.len(), 15);
-    let language = SupportLang::Python.get_ts_language();
+    let language = GrammarDialect::Python.get_ts_language();
     let mut count = 0;
     for path in paths {
         let source = std::fs::read_to_string(&path).unwrap();
@@ -229,9 +229,9 @@ fn cycle_progress_compiles_every_pinned_query() {
 #[test]
 fn cycle_progress_acceptance_implies_actual_progress_for_short_sequences() {
     let source = Arc::new("f(a, b)\ng(c)\n".to_owned());
-    let grammar = Grammar::new(SupportLang::Python).unwrap();
-    let native = StrDoc::new(source.as_str(), SupportLang::Python);
-    let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let native = StrDoc::new(source.as_str(), GrammarDialect::Python);
+    let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
     let tape = TapeDoc::restore(source, grammar, &image, &|| false).unwrap();
     let nodes = tape.transducer_len() as u32;
     let operations = [

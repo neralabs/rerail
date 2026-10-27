@@ -1,8 +1,9 @@
 //! The query compiler's supported greedy repetition boundary, checked at construction.
 use super::*;
-use crate::policy_dsl::tape::{Grammar, TapeImage};
+use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
-use ast_grep_language::{LanguageExt, SupportLang};
+use crate::code_rule_dsl::language::GrammarDialect;
+use ast_grep_language::LanguageExt;
 use tree_sitter::StreamingIterator;
 
 fn program(words: Vec<u32>) -> Program {
@@ -57,19 +58,34 @@ fn greedy_contract_rejects_observable_and_reentered_query_continuations() {
             "query construction must reject unsupported greedy behavior at {pc}: {words:?}"
         );
     }
-    let (counterexample, _, _) = super::admission_spike::advancing_greedy_reconvergence();
-    assert_eq!(
-        counterexample.validate(),
+    // Tempo's `admission_spike::advancing_greedy_reconvergence` program (the spike is not copied).
+    let counterexample = program(vec![
+        word(REPEAT_BEGIN, 0, 0),
+        word(SAVE_CURSOR, 0, 0),
+        word(FORK, 0, 8),
+        word(GOTO, 0, 4),
+        word(FORK, GREEDY, 11),
+        word(KIND, 0, 1),
+        word(DESCEND, NAMED, 0),
+        word(GOTO, 0, 4),
+        word(DESCEND, NAMED, 0),
+        word(FIRST, NAMED, 0),
+        word(GOTO, 0, 4),
+        word(CAPTURE, 0, 0),
+        word(EMIT, 0, 0),
+    ]);
+    assert!(matches!(
+        counterexample.with_tree_sitter_query_semantics(),
         Err(Error::InvalidGreedyRegion(4))
-    );
+    ));
 }
 
 #[test]
 fn greedy_contract_keeps_nonquery_branch_multiplicity() {
     let source = "# a\n";
-    let grammar = Grammar::new(SupportLang::Python).unwrap();
-    let tree = StrDoc::new(source, SupportLang::Python);
-    let image = TapeImage::encode(tree.tree.root_node(), &grammar, source, &|| false).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let tree = StrDoc::new(source, GrammarDialect::Python);
+    let image = TapeImage::encode(tree.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
     let program = program(vec![
         word(FORK, GREEDY, 2),
@@ -92,7 +108,7 @@ fn greedy_contract_keeps_nonquery_branch_multiplicity() {
 
 #[test]
 fn greedy_contract_preserves_compiled_query_captures_against_native() {
-    let language = SupportLang::Python.get_ts_language();
+    let language = GrammarDialect::Python.get_ts_language();
     let queries = [
         "(module (expression_statement) @prefix (comment)+)",
         "(module (expression_statement)? @prefix (comment)*)",
@@ -127,8 +143,8 @@ fn greedy_contract_preserves_compiled_query_captures_against_native() {
             let mut parser = tree_sitter::Parser::new();
             parser.set_language(&language).unwrap();
             let tree = parser.parse(&source, None).unwrap();
-            let grammar = Grammar::new(SupportLang::Python).unwrap();
-            let image = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap();
+            let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+            let image = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
             let tape =
                 TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap();
             let query = tree_sitter::Query::new(&language, query_source).unwrap();

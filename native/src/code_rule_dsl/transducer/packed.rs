@@ -33,6 +33,33 @@ pub(super) fn reset_metal_execution_metrics() {
 pub(super) fn metal_execution_metrics() -> (usize, usize) {
     metal_program_backend::metrics()
 }
+// The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
+// and declared here so their `super::` is the program and its opcodes, as in Tempo).
+#[cfg(target_os = "macos")]
+#[path = "packed/verify/bounded_repeat_proof.rs"]
+mod bounded_repeat_proof;
+#[path = "packed/verify/closure_proof.rs"]
+mod closure_proof;
+#[path = "packed/verify/cycle_progress.rs"]
+mod cycle_progress;
+#[cfg(test)]
+#[path = "packed/verify/cycle_progress_tests.rs"]
+mod cycle_progress_tests;
+#[path = "packed/verify/execution_shape.rs"]
+mod execution_shape;
+#[path = "packed/verify/greedy_contract.rs"]
+mod greedy_contract;
+#[cfg(test)]
+#[path = "packed/verify/greedy_contract_tests.rs"]
+mod greedy_contract_tests;
+#[path = "packed/verify/terminal_repeat_proof.rs"]
+mod terminal_repeat_proof;
+#[cfg(test)]
+#[path = "packed/verify/backend_parity_tests.rs"]
+mod backend_parity_tests;
+// The tree-sitter query front end (05 Phase 4 row 4, from Tempo's `scm.rs`).
+#[path = "packed/compile/scm.rs"]
+mod scm;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
@@ -83,8 +110,10 @@ const EMIT: u8 = 0x40;
 pub(super) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
 const EXTRA: u8 = 2;
-const MISSING: u8 = 8;
+const MISSING: u8 = 4;
+const ERROR: u8 = 8;
 const SIZE_LONG: u8 = 0x80;
+const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 const MAX_WORK_PER_TASK: usize = 1 << 26;
 
@@ -699,6 +728,7 @@ pub(super) enum Error {
     InvalidOperand(usize),
     InvalidTarget(usize),
     NonProgressingCycle(usize),
+    InvalidGreedyRegion(usize),
     WorkLimit,
     UnsupportedPattern,
     UnsupportedFeature(&'static str),
@@ -1797,6 +1827,27 @@ impl Program {
         Ok(self)
     }
 
+    pub(super) fn tree_sitter_top_level_patterns(source: &str) -> Result<Vec<String>, Error> {
+        scm::parse(source).map(|patterns| {
+            patterns
+                .into_iter()
+                .map(|pattern| pattern.source().to_owned())
+                .collect()
+        })
+    }
+
+    /// Parses one complete Tree-sitter query pattern and lowers its typed syntax tree to Program.
+    pub(super) fn compile_tree_sitter_query_pattern(
+        source: &str,
+        grammar: &tree_sitter::Language,
+    ) -> Result<Self, Error> {
+        let mut patterns = scm::parse(source)?;
+        if patterns.len() != 1 {
+            return Err(Error::UnsupportedPattern);
+        }
+        scm::compile(&patterns.remove(0), grammar)
+    }
+
     fn with_tree_sitter_query_semantics(mut self) -> Result<Self, Error> {
         self.tree_sitter_query = true;
         self.validate()?;
@@ -1975,21 +2026,6 @@ impl Program {
                     if target >= self.words.len() {
                         return Err(Error::InvalidTarget(pc));
                     }
-                    if target <= pc {
-                        let cycle = &self.words[target..=pc];
-                        let sibling_advance = cycle
-                            .iter()
-                            .any(|word| matches!(split(*word), (NEXT | FOLLOWING, _, _)));
-                        let descendant_advance = cycle
-                            .iter()
-                            .any(|word| matches!(split(*word), (DESCEND, _, _)));
-                        let reverses = cycle
-                            .iter()
-                            .any(|word| matches!(split(*word), (PARENT | CHILD, _, _)));
-                        if !sibling_advance && (!descendant_advance || reverses) {
-                            return Err(Error::NonProgressingCycle(pc));
-                        }
-                    }
                 }
                 _ => return Err(Error::InvalidOpcode(pc)),
             }
@@ -1999,6 +2035,10 @@ impl Program {
             (STOP | EMIT | GOTO, _, _)
         ) {
             return Err(Error::InvalidTarget(self.words.len() - 1));
+        }
+        cycle_progress::validate(&self.words)?;
+        if self.tree_sitter_query {
+            greedy_contract::validate(&self.words)?;
         }
         Ok(())
     }

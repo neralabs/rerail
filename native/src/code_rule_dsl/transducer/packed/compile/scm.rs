@@ -1315,7 +1315,7 @@ mod tests {
             .filter(|path| path.extension().is_some_and(|extension| extension == "scm"))
             .collect::<Vec<_>>();
         paths.sort();
-        let language = ast_grep_language::SupportLang::Python.get_ts_language();
+        let language = crate::code_rule_dsl::language::GrammarDialect::Python.get_ts_language();
         let pinned_nvim = BTreeMap::from([
             (
                 "nvim-treesitter__python__folds.scm",
@@ -1491,7 +1491,7 @@ mod tests {
     #[test]
     fn lowerer_accepts_extensions_and_ignores_deferred_property_semantics() {
         use ast_grep_language::LanguageExt;
-        let language = ast_grep_language::SupportLang::Python.get_ts_language();
+        let language = crate::code_rule_dsl::language::GrammarDialect::Python.get_ts_language();
         let quantified = parse("(parameters (identifier)+ @name)").unwrap();
         assert!(compile(&quantified[0], &language).is_ok());
         let directed = parse("((identifier) @name (#set! role \"name\"))").unwrap();

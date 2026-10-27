@@ -704,7 +704,7 @@ pub(super) fn program_requirements(program: &Program) -> ProgramRequirements {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy_dsl::transducer::{
+    use crate::code_rule_dsl::transducer::packed::{
         CHILD, DESCEND, NEXT, PARENT, RESTORE_CURSOR, SAVE_CURSOR, word,
     };
 
