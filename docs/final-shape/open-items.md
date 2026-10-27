@@ -86,6 +86,14 @@ the same crash hazard as the overlay (observe commits before propagate). Second,
 `git_workspace` tests build temp repos with `git add .`, which the agent git hook blocks, so the
 wiring cannot be tested in this environment; it needs a run outside the hook.
 
+Phase 3 update: two more consumers wait on the same wiring. `prefilter::publish` (a tape's
+prefilter rows, `kind_size` and `edge_freq`) runs only in tests, and `prefilter::select` has no
+caller, so nothing captures a production batch for the anchor lab. Phase 3's check ("`anchor_lab`
+steps no worse than P on the same captures") therefore cannot run yet: P's captures are P's private
+store, which the lab no longer reads. Closure adds: publication in the push path when a tape is
+stored, then a corpus run with `RERAIL_SQL_PROFILE_DIR` to capture batches, and the lab and
+`candidate_replay` over them against P's numbers.
+
 ## O3. Synchronous interning
 
 A new name is interned into `atoms` with one SQLite transaction per batch, under the write lock.
@@ -177,6 +185,10 @@ kept (only if SQL parent climbs prove hot: a climb was 1.6–3× faster than int
 `#kinds:` derivations record the histogram's digest. The counts themselves are recomputed from the
 tape when read. Closure: Phase 3's `file_kind_counts` (the prefilter's access path per file) stores
 them, written by the kinds derivation.
+
+Phase 3 update: `tape_kind_counts` exists (count, descendant sum and preorder postings per tape and
+kind atom), written by `prefilter::publish`. What remains is O2: publication on the push path, after
+which `#kinds:` can read the counts instead of decoding the tape.
 
 ## O10. Files without core facts
 

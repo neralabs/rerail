@@ -17,6 +17,7 @@ mod candidates;
 mod execute;
 mod graph;
 mod kinds;
+mod lab;
 mod lower;
 pub(crate) mod plans;
 pub(crate) mod probes;
@@ -113,6 +114,7 @@ pub(in crate::code_rule_dsl) fn select(
         crate::code_rule_dsl::stats::inputs::Statistics::read(db, plans.iter().map(|plan| (lang, *plan)))
     })?;
     let statement = lower::batch(plans, lang, &files, &statistics);
+    lab::capture::save(store, &statement)?;
     let mut rows = vec![Vec::new(); plans.len()];
     execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32)))?;
     Ok(rows)

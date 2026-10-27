@@ -124,6 +124,53 @@ impl ContentStore {
         Ok(value)
     }
 
+    /// Copies the prefilter rows of `tapes`, the store-wide counts and the regex vocabulary into a
+    /// new store at `path`, for the anchor lab (`code_rule_dsl::prefilter::lab`). Tapes keep their
+    /// identity and grammar but not their bytes, which candidate SQL never reads.
+    pub(crate) fn capture_prefilter(&self, path: &std::path::Path, tapes: &[i64]) -> StoreResult<()> {
+        drop(ContentStore::open(path)?);
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let target = path.to_str().ok_or_else(|| StoreError::Invalid("capture path is not UTF-8".to_owned()))?;
+        connection.execute("ATTACH DATABASE ?1 AS capture", [target])?;
+        // The copies keep their keys, not their parents (sources, hashes), so the capture is
+        // written with foreign keys off; that pragma is per connection and outside transactions.
+        connection.execute_batch("PRAGMA foreign_keys = OFF")?;
+        let copied = (|| -> rusqlite::Result<()> {
+            connection.execute_batch(
+                "BEGIN; CREATE TEMP TABLE capture_tapes(tape_id INTEGER PRIMARY KEY);",
+            )?;
+            insert(&connection, "INSERT OR IGNORE INTO temp.capture_tapes(tape_id)", "", tapes.iter().map(|&tape| [Value::Integer(tape)]))?;
+            // `term_freq` before the vocabulary, so its insert trigger finds no predicate to mark.
+            connection.execute_batch(
+                "INSERT INTO capture.tape_objects SELECT t.tape_id, t.source_id, t.canonical_hash_id, t.grammar_id, \
+                   t.grammar_version, t.tape_format_version, t.codec_id, 0, x'', t.created_generation \
+                   FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);
+                 INSERT INTO capture.prefilter_sets SELECT s.* FROM temp.capture_tapes c JOIN main.prefilter_sets s USING(tape_id);
+                 INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
+                 INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);
+                 INSERT INTO capture.term_coverage SELECT v.* FROM temp.capture_tapes c JOIN main.term_coverage v USING(tape_id);
+                 INSERT INTO capture.kind_size SELECT * FROM main.kind_size;
+                 INSERT INTO capture.edge_freq SELECT * FROM main.edge_freq;
+                 INSERT INTO capture.term_freq SELECT * FROM main.term_freq;
+                 INSERT INTO capture.term_node_freq SELECT * FROM main.term_node_freq;
+                 INSERT INTO capture.term_kind_freq SELECT * FROM main.term_kind_freq;
+                 DELETE FROM capture.vocabulary_pending;
+                 INSERT INTO capture.vocabulary_predicate SELECT * FROM main.vocabulary_predicate;
+                 INSERT INTO capture.vocabulary_term SELECT * FROM main.vocabulary_term;
+                 INSERT INTO capture.vocabulary_literal SELECT * FROM main.vocabulary_literal;
+                 INSERT INTO capture.vocabulary_pending SELECT * FROM main.vocabulary_pending;
+                 DROP TABLE temp.capture_tapes;
+                 COMMIT;",
+            )
+        })();
+        if copied.is_err() && !connection.is_autocommit() {
+            connection.execute_batch("ROLLBACK")?;
+        }
+        connection.execute_batch("PRAGMA foreign_keys = ON")?;
+        connection.execute_batch("DETACH DATABASE capture")?;
+        Ok(copied?)
+    }
+
     /// Deletes a tape, as collection does, for tests of the cascade.
     #[cfg(test)]
     pub(crate) fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {

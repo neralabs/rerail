@@ -18,7 +18,7 @@ pub(super) fn candidates(
 }
 
 /// Fills the `request_file` temp table with the requested tapes.
-fn request(db: &Connection, files: &[i64]) -> Result<()> {
+pub(super) fn request(db: &Connection, files: &[i64]) -> Result<()> {
     db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS request_file(fid INTEGER PRIMARY KEY) WITHOUT ROWID")?;
     db.execute("DELETE FROM request_file", [])?;
     for files in files.chunks(128) {
@@ -34,7 +34,7 @@ fn request(db: &Connection, files: &[i64]) -> Result<()> {
 }
 
 /// Runs `statement` in the caller's transaction on `db`, emitting (plan, tape, preorder) rows.
-fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut(usize, i64, usize)) -> Result<()> {
+pub(super) fn rows(db: &Connection, statement: &Statement, emit: &mut impl FnMut(usize, i64, usize)) -> Result<()> {
     let relation_names: Vec<_> = statement.stages.iter().map(|s| s.name.as_str()).collect();
     let mut live = vec![false; statement.stages.len()];
     let mut populated = vec![false; statement.stages.len()];

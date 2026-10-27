@@ -8,14 +8,31 @@
 //!     over the run, and a warm vocabulary, which a corpus store fills once per term)
 //!   [RERAIL_LAB_DUMP=<dir>] (writes each policy's lowered stages per language)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
-use super::{execute, lower, store::Store};
+//!
+//! From Pulling-it-all-together's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
+//! capture is a store holding one batch's prefilter rows (`capture`), opened as a `ContentStore`,
+//! statements are lowered with the capture's statistics (`stats::inputs`) and run on its
+//! connection. Gone with decoding: clearing `decoded_*` tables and the structural fill.
+pub(super) mod capture;
+#[cfg(test)]
+mod replay;
+
+#[cfg(test)]
+use super::{execute, lower, tests::{open, temp}};
+#[cfg(test)]
+use crate::code_rule_dsl::stats::inputs::Statistics;
+#[cfg(test)]
+use crate::content_store::ContentStore;
+#[cfg(test)]
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(test)]
 const STEP: i32 = 1000;
 
+#[cfg(test)]
 #[test]
 #[ignore = "requires a policy and captured candidate databases"]
 fn anchor_lab() {
@@ -25,6 +42,7 @@ fn anchor_lab() {
     }
 }
 
+#[cfg(test)]
 fn run(policy: &str) {
     let captures = std::env::var("RERAIL_LAB_CAPTURES").expect("RERAIL_LAB_CAPTURES");
     let limit = std::env::var("RERAIL_LAB_LIMIT").map_or(usize::MAX, |n| n.parse().unwrap());
@@ -35,6 +53,28 @@ fn run(policy: &str) {
     )
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let plans = super::plans::plans([compiled.inner.as_ref()]);
+    // One statement per language and batch, lowered with the capture's statistics and run on its
+    // connection; the progress handler counts VM steps for the statement.
+    let lowered = |store: &ContentStore, plans: &[&crate::code_rule_dsl::matcher::AnchorPlan], lang: u32, fids: &[i64]| {
+        let statistics = store
+            .candidate_transaction(false, |db| Statistics::read(db, plans.iter().map(|plan| (lang, *plan))))
+            .unwrap();
+        lower::batch(plans, lang, fids, &statistics)
+    };
+    let run_statement = |store: &ContentStore, statement: &lower::Statement, counter: &Arc<AtomicU64>, emit: &mut dyn FnMut(usize)| {
+        store
+            .candidate_transaction(statement.writes(), |db| {
+                let observed = Arc::clone(counter);
+                db.progress_handler(STEP, Some(move || {
+                    observed.fetch_add(1, Ordering::Relaxed);
+                    false
+                }))?;
+                let result = execute::rows(db, statement, &mut |qid, _, _| emit(qid));
+                db.progress_handler(0, None::<fn() -> bool>)?;
+                result
+            })
+            .unwrap();
+    };
     let mut databases: Vec<_> = std::fs::read_dir(&captures)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -62,14 +102,9 @@ fn run(policy: &str) {
     let mut broadened = std::collections::BTreeSet::new();
     let mut per_plan: std::collections::BTreeMap<(u32, usize), u64> = Default::default();
     for database in &databases {
-        let copy = tempfile::NamedTempFile::new().unwrap();
-        std::fs::copy(database, copy.path()).unwrap();
-        let store = Store::open(copy.path()).unwrap();
-        // Decoded facts are execution work; a capture holds the original run's.
-        store
-            .db
-            .execute_batch("DELETE FROM decoded_properties; DELETE FROM decoded_files; DELETE FROM decoded_spans; DELETE FROM decoded_children;")
-            .unwrap();
+        let copy = temp();
+        std::fs::copy(database, &copy).unwrap();
+        let store = open(&copy);
         let requested: Option<Vec<i64>> = batch.then(|| {
             let json: serde_json::Value = serde_json::from_str(
                 &std::fs::read_to_string(database.with_extension("json")).unwrap(),
@@ -82,14 +117,15 @@ fn run(policy: &str) {
                 .map(|fid| fid.as_i64().unwrap())
                 .collect()
         });
-        let language_files = |store: &Store, lang: u32| -> Vec<i64> {
+        let language_files = |store: &ContentStore, lang: u32| -> Vec<i64> {
             store
-                .db
-                .prepare("SELECT fid FROM fk WHERE lang=?1 ORDER BY fid")
+                .query_rows(
+                    "SELECT s.tape_id FROM prefilter_sets s JOIN tape_objects t USING(tape_id) WHERE t.grammar_id=?1 ORDER BY 1",
+                    [lang],
+                    |row| row.get(0),
+                )
                 .unwrap()
-                .query_map([lang], |row| row.get(0))
-                .unwrap()
-                .map(Result::unwrap)
+                .into_iter()
                 .filter(|fid| requested.as_ref().is_none_or(|files| files.contains(fid)))
                 .collect()
         };
@@ -102,29 +138,11 @@ fn run(policy: &str) {
                     continue;
                 }
                 let refs: Vec<_> = plans.iter().map(Arc::as_ref).collect();
-                let statement = lower::batch_files(&refs, lang, &[]);
-                if statement.universal {
-                    execute::prepare_structural(&store, &fids).unwrap();
-                }
-                execute::rows_for(&store, &statement, &fids, true, |_, _, _| {}).unwrap();
+                let statement = lowered(&store, &refs, lang, &fids);
+                run_statement(&store, &statement, &Arc::new(AtomicU64::new(0)), &mut |_| {});
             }
-            store
-                .db
-                .execute_batch("DELETE FROM decoded_properties; DELETE FROM decoded_files; DELETE FROM decoded_spans; DELETE FROM decoded_children;")
-                .unwrap();
         }
         let counter = Arc::new(AtomicU64::new(0));
-        let observed = Arc::clone(&counter);
-        store
-            .db
-            .progress_handler(
-                STEP,
-                Some(move || {
-                    observed.fetch_add(1, Ordering::Relaxed);
-                    false
-                }),
-            )
-            .unwrap();
         for (&lang, plans) in &plans {
             let fids = language_files(&store, lang);
             if fids.is_empty() {
@@ -133,7 +151,7 @@ fn run(policy: &str) {
             files += fids.len();
             let refs: Vec<_> = plans.iter().map(Arc::as_ref).collect();
             let started = cpu_ns();
-            let statement = lower::batch_files(&refs, lang, &[]);
+            let statement = lowered(&store, &refs, lang, &fids);
             compile += cpu_ns() - started;
             broadened.extend(
                 statement
@@ -157,13 +175,9 @@ fn run(policy: &str) {
                 std::fs::write(format!("{dump}/{stem}.{lang}.sql"), text).unwrap();
             }
             let started = cpu_ns();
-            if statement.universal {
-                execute::prepare_structural(&store, &fids).unwrap();
-            }
-            execute::rows_for(&store, &statement, &fids, true, |qid, _, _| {
+            run_statement(&store, &statement, &counter, &mut |qid| {
                 *rows.entry((lang, qid)).or_default() += 1;
-            })
-            .unwrap();
+            });
             cpu += cpu_ns() - started;
         }
         steps += counter.load(Ordering::Relaxed) * STEP as u64;
@@ -178,7 +192,7 @@ fn run(policy: &str) {
                     {
                         continue;
                     }
-                    let statement = lower::batch_files(&[plan.as_ref()], lang, &[]);
+                    let statement = lowered(&store, &[plan.as_ref()], lang, &fids);
                     if let Ok(dump) = std::env::var("RERAIL_LAB_DUMP") {
                         let text: String = statement
                             .stages
@@ -197,15 +211,8 @@ fn run(policy: &str) {
                             .to_string_lossy();
                         std::fs::write(format!("{dump}/{stem}.{lang}.q{qid}.sql"), text).unwrap();
                     }
-                    store
-                        .db
-                        .execute_batch("DELETE FROM decoded_properties; DELETE FROM decoded_files; DELETE FROM decoded_spans; DELETE FROM decoded_children;")
-                        .unwrap();
                     let before = counter.load(Ordering::Relaxed);
-                    if statement.universal {
-                        execute::prepare_structural(&store, &fids).unwrap();
-                    }
-                    execute::rows_for(&store, &statement, &fids, true, |_, _, _| {}).unwrap();
+                    run_statement(&store, &statement, &counter, &mut |_| {});
                     *per_plan.entry((lang, qid)).or_default() +=
                         (counter.load(Ordering::Relaxed) - before) * STEP as u64;
                 }
@@ -253,6 +260,7 @@ fn run(policy: &str) {
     );
 }
 
+#[cfg(test)]
 fn cpu_ns() -> u64 {
     let mut now = libc::timespec {
         tv_sec: 0,
@@ -262,3 +270,37 @@ fn cpu_ns() -> u64 {
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
     now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
 }
+
+#[cfg(test)]
+#[test]
+fn a_capture_replays_to_the_candidates_of_its_statement() {
+    use crate::code_rule_dsl::{language::{self, GrammarDialect}, matcher::AnchorPlan};
+    let store = open(&temp());
+    let lang = GrammarDialect::TypeScript;
+    let tapes: Vec<i64> = ["function target(a) { return a; }", "const x = target(1);", "let y = 2;"]
+        .iter()
+        .map(|source| super::tests::put(&store, source, lang).0.row())
+        .collect();
+    let rules = [serde_json::json!({"pattern": "target($A)"}), serde_json::json!({"regex": "^tar", "kind": "identifier"})];
+    let matchers: Vec<_> = rules.iter().map(|rule| super::tests::matcher(rule, lang)).collect();
+    let plans: Vec<_> = matchers.iter().map(AnchorPlan::compile).collect();
+    let refs: Vec<_> = plans.iter().collect();
+    let tag = u32::from(language::tape_tag(lang).unwrap());
+    let statistics = store.candidate_transaction(false, |db| Statistics::read(db, refs.iter().map(|plan| (tag, *plan)))).unwrap();
+    let statement = lower::batch(&refs, tag, &tapes, &statistics);
+    let mut expected = Vec::new();
+    execute::candidates(&store, &statement, |plan, tape, pre| expected.push((plan as i64, tape, pre as i64))).unwrap();
+    expected.sort_unstable();
+    assert!(!expected.is_empty());
+
+    let directory = temp();
+    let capture = capture::save_to(&store, &statement, &directory).unwrap();
+    let (summary, rows) = replay::replay(&capture);
+    assert_eq!(rows, expected);
+    assert_eq!(summary["rows"].as_u64(), Some(expected.len() as u64));
+    // The capture holds the batch's rows and not the tapes' bytes.
+    let captured = open(&directory.join(capture.with_extension("sqlite").file_name().unwrap()));
+    let sizes = captured.query_rows("SELECT count(*), sum(length(frame)) FROM tape_objects", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap();
+    assert_eq!(sizes, [(3, 0)]);
+}
+
