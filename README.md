@@ -9,7 +9,7 @@ Rerail checks the code your coding agent writes against your rules while it work
 
 ## What is Rerail
 
-Coding agents drift. They cross architectural seams, repeat approaches you already rejected, and ignore repository conventions they never saw. Writing more rules into the prompt doesn't fix this: it uses up context, goes stale, and still relies on the model noticing when a rule applies.
+Coding agents drift. They break your architecture's patterns, repeat approaches you already rejected, and ignore conventions they never saw. Writing more rules into the prompt doesn't fix this: it uses up context, goes stale, and still relies on the model noticing when a rule applies.
 
 Rerail takes enforcement out of the model loop. Hooks or extensions in your coding agent send each edit the agent makes to a local daemon. A native Rust engine checks the changed code against your repository's rules, by regex, syntax tree and relations. When the agent breaks a rule, Rerail steers it back during the session and records what fired, where and why.
 
@@ -19,18 +19,18 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
 
-| Agent | Integration | In-session commands | Status line |
+| Agent | Integration | Skills | Status line |
 | --- | --- | --- | --- |
-| Claude Code | `.claude-plugin`, `hooks/claude.json`; commands in `~/.claude/commands/` | `/rerail-*` | Yes |
-| Codex | `.codex-plugin`, `hooks/codex.json`; skills in `~/.codex/skills/` | `$rerail-*` skills | No |
-| Cursor | `.cursor-plugin`, `hooks/cursor.json`; commands in `~/.cursor/commands/` | `/rerail-*` | No |
+| Claude Code | `.claude-plugin`, `hooks/claude.json`; skills in `~/.claude/commands/` | `/rerail-*` | Yes |
+| Codex | `.codex-plugin`, `hooks/codex.json`; skills in `~/.codex/skills/` | `$rerail-*` | No |
+| Cursor | `.cursor-plugin`, `hooks/cursor.json`; skills in `~/.cursor/commands/` | `/rerail-*` | No |
 | OMP, Pi | Native extensions (`src/hosts/omp`, `src/hosts/pi`) | `/rerail-*` | Yes |
 
-Every agent gets the same commands:
+Every agent gets the same skills:
 
-| Command | What it does |
+| Skill | What it does |
 | --- | --- |
-| `/rerail` | What Rerail is doing in this repository, and every command (`/rerail-help` is the same) |
+| `/rerail` | What Rerail is doing in this repository, and every skill (`/rerail-help` is the same) |
 | `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
 | `/rerail-create` | Create a rule in your own words |
 | `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
@@ -38,7 +38,7 @@ Every agent gets the same commands:
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
 
-Everything else is a terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
+Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
 ## Quickstart
 
@@ -69,13 +69,9 @@ The agent drafts the rule from your description, tests it against the repository
 
 ## How it works
 
-```mermaid
-flowchart LR
-  agent([Coding agent]) -- edit --> engine[Rerail engine]
-  rules[(Repository rules)] --> engine
-  engine -. steer .-> agent
-  engine --> history[(Sessions and dashboard)]
-```
+<p align="center">
+  <img src="docs/how-it-works.svg" width="880" alt="The coding agent's edits go to the Rerail engine, which checks the changed lines against your rules, steers the agent back when one is broken, and records the session for the dashboard.">
+</p>
 
 1. **Capture.** Hooks (Claude Code, Codex, Cursor) or native extensions (OMP, Pi) observe the session automatically, so the agent never has to remember to call Rerail. Before an edit, Rerail records the file as it was, so it can tell which lines the agent changed.
 2. **Evaluate.** One background daemon keeps the engine and every repository's compiled rules in memory, checks the files the agent touched, and reports only the lines it changed.
@@ -100,20 +96,20 @@ A real session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `java
 
 Core ships no rules. A rule pack is a set of rules published as its own npm package, `@neralabs/rerail-pack-<id>`. Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
 
-| Pack | Rules (on when added) | Ported from |
-| --- | --- | --- |
-| `python` | 136 (112) | Ruff 0.16.9, Bandit 1.9.4 |
-| `javascript` | 71 (24) | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 |
-| `typescript` | 24 (13) | typescript-eslint 8.70.1, eslint-plugin-vitest 1.6.27 |
-| `next` | 21 (21) | @next/eslint-plugin-next 16.3.8 |
-| `sql` | 19 (17) | SQLFluff 4.4.0 |
-| `vue` | 19 (18) | eslint-plugin-vue 10.11.1 |
-| `rust` | 18 (13) | Clippy (Rust 1.99.0) |
-| `blade` | 10 (8) | Bladestan, tlint, stillat/blade-parser |
-| `php` | 7 (3) | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 |
-| `complexity` | 3 (3) | lizard 1.24.0: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
-| `node` | none yet | eslint-plugin-n 18.4.1 (24 candidates) |
-| `react` | none yet | eslint-plugin-react 7.37.5, react-hooks (21 candidates) |
+| Pack | Ported from |
+| --- | --- |
+| `python` | Ruff 0.16.9, Bandit 1.9.4 |
+| `javascript` | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 |
+| `typescript` | typescript-eslint 8.70.1, eslint-plugin-vitest 1.6.27 |
+| `next` | @next/eslint-plugin-next 16.3.8 |
+| `sql` | SQLFluff 4.4.0 |
+| `vue` | eslint-plugin-vue 10.11.1 |
+| `rust` | Clippy (Rust 1.99.0) |
+| `blade` | Bladestan, tlint, stillat/blade-parser |
+| `php` | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 |
+| `complexity` | lizard 1.24.0: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
+| `node` | eslint-plugin-n 18.4.1 (no rules shipped yet) |
+| `react` | eslint-plugin-react 7.37.5, react-hooks (no rules shipped yet) |
 
 Every shipped ported rule is scored against the original tool's recorded findings and must pass the [port readiness gates](docs/port-readiness.md). Ports that do not pass yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md) and the [pack format](docs/pack-format.md).
 
