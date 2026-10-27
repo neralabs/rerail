@@ -13,19 +13,20 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
 | Cyclomatic complexity (limit 6) | language | 3 (3) | Python, TypeScript or JavaScript source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| JavaScript and TypeScript (ESLint core) | language | 65 (22) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
-| TypeScript | language | 22 (11) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 138 (113) | Python source outside tests, scripts and docs |
+| JavaScript and TypeScript (ESLint core) | language | 72 (22) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
+| TypeScript | language | 24 (13) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
+| Python | language | 136 (112) | Python source outside tests, scripts and docs |
 | PHP | language | 7 (3) | PHP source: `*.php` files, not Blade views |
-| Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
-| Rust, SQL | language | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
-| Next.js | framework | 17 (17) | a `next` dependency |
-| Node.js | framework | 22 (22) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
-| React, Vue | framework | 0 | never yet, as above |
+| Blade | language | 7 (5) | Blade templates: `*.blade.php` files |
+| Rust | language | 18 (13) | `*.rs` files |
+| SQL | language | 19 (17) | `*.sql` files |
+| Next.js | framework | 21 (21) | a `next` dependency |
+| Vue | framework | 19 (18) | `*.vue` files |
+| Node.js, React | framework | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
 
 A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`.
 
-Every rule is listed in the mode its own document has (all `steer` today). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
+A rule is listed in the mode its own document has (`steer`), unless `pack.json` sets one: a port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
 
 A pack's `mode` and `on` are the values its rules start with in a repository that adds it, and the values a rule a pack upgrade adds starts with; a rule or pack setting in the repository or a checkout overrides them.
 
@@ -88,7 +89,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "22 typescript-eslint rules ported to Rerail, 11 of them on and 11 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "24 typescript-eslint rules ported to Rerail, 13 of them on and 11 off until turned on, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches TypeScript",
   "match": {
     "any": [

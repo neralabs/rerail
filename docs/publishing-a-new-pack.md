@@ -7,11 +7,30 @@ npm only lets you set up a trusted publisher for a package that already exists. 
 hand, and the release workflow publishes every version after it (see "Release" in [pack-format.md](pack-format.md)).
 Allow about 30 minutes; most of it is the native build.
 
+This runbook is the last step of a new pack's way to npm:
+
+1. The pack is written and passes the validation contract
+   ([language-packs.md, "Start a pack"](language-packs.md#start-a-pack)).
+2. A ported pack's test data and samples are staged in the pull request and published by **Publish pack data** once
+   a code owner approves ([upstream.md, "Publishing pack data"](upstream.md#publishing-pack-data)). Deriving test
+   data is paused for now ([upstream.md](upstream.md#derive-and-bumps-are-paused)).
+3. Its ports start as candidates and are promoted into `rules/` once they pass the conformance check
+   ([conformance/README.md](../conformance/README.md#candidates-and-promotion)).
+4. The pull request merges with its changeset, and the Release packs run on `main` then asks for the first publish:
+   this runbook.
+
 ## Before you start
 
 - The pack is merged on `main`, added at `0.1.0` with a `patch` changeset (see "Versioning and release" in
   [pack-format.md](pack-format.md)), and listed in `src/engine/catalog/pack-list.generated.ts` (`npm run
   generate:packs`; check 7 fails a pack that is not), so set-up fetches it.
+- For a ported pack, its pack data is published: every tool-pack's `test-data.lock` (and `samples.lock`, if it has
+  one) names an archive S3 holds, and no `publish/` is left on `main` (both are CI checks:
+  [docs/upstream.md](upstream.md#ci)). Its shipped rules pass the
+  [conformance check](../conformance/README.md#the-gate); ports still under evaluation stay in `candidates/`, which
+  is never published. A pack with no ported rules has no pack data.
+- For a ported pack, you can read the test data bucket (`aws sso login`, or any AWS credentials with read access to
+  `s3://nera-test-fixtures/rerail/archives/`): the publish gate validates the pack on its test data.
 - `npm whoami` prints your account, a member of the `neralabs` org with publish rights. If not, run `npm login`. It
   must be an interactive login with 2FA, because a token that bypasses 2FA cannot set up a trusted publisher.
 - `gh auth status` shows a login with write access to `neralabs/rerail`. The publish script creates the release tag.
@@ -34,6 +53,7 @@ git worktree add --detach /tmp/rerail-pack-publish origin/main
 cd /tmp/rerail-pack-publish
 npm ci
 npm run build:native     # about 5 minutes from a cold cache
+npm run fixtures:pull -- --pack <id>   # a ported pack's test data, which the publish gate reads
 ```
 
 ## 2. Run the publish gate and pack
@@ -143,6 +163,7 @@ rm -rf /tmp/rule-packs
 | `<name> answers an anonymous request with 200: it is not restricted` | The package is public. Run `npm access set status=private <name>`, then run the script again. |
 | `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
+| The gate says a tool-pack's test data is missing and to run `npm run fixtures:pull` | The worktree has no pack data. Run `npm run fixtures:pull -- --pack <id>` with read access to the bucket, then step 2 again. |
 | `npm view` returns 404 just after publishing | The registry hasn't caught up yet. Use `npm dist-tag ls`. |
 | The workflow's publish fails with an authentication error for one pack | The pack's trusted publisher is missing, expired or has a typo (often the environment name). Redo step 5. |
 | A release run fails at **First publish needed** | A pack has never been published. Start this runbook from the top. |

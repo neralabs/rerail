@@ -19,7 +19,7 @@ against, is `native/src/code_rule_dsl/capabilities.json`.
 2. **The directory is the contract.** What a pack must prove follows from which files it has. There is no separate
    validation manifest.
 3. **Every rule is proven.** By examples it must catch and let pass, or, for a rule ported from another tool, by that
-   tool's recorded findings with every disagreement declared.
+   tool's expected findings on its own tests, with every disagreement declared.
 4. **Packs version on their own.** Each pack is its own npm package, released separately from core.
 
 ## Layout
@@ -39,11 +39,10 @@ packs/<id>/
 ├── conformance.json    the conformance pack schema of conformance/languages/pack.ts, as today
 ├── divergences.json    declared disagreements with the tools, as today
 ├── upstream/
-│   └── <tool>/         the tool's copied tests (fixtures/, rename variants under fixtures/renamed/), its expected
-│                       findings (*.expected.json), the generator, gates.yaml, and UPSTREAM.md when Rerail wrote
-│                       files for the tool to score (an authored corpus); the copied tests and expected findings are
-│                       pack test data, derived from the pins, not in git (below); publish/ while a pull request
-│                       publishes new data
+│   └── <tool>/         gates.yaml, the generator, test-data.lock, samples.lock and SAMPLES.md (optional), and
+│                       UPSTREAM.md when Rerail wrote files for the tool to score; the tool's copied tests
+│                       (fixtures/, rename variants under fixtures/renamed/) and expected findings (*.expected.json)
+│                       are pack test data, not in git (see Pack data); publish/ while a pull request publishes data
 └── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
 ```
 
@@ -122,15 +121,16 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
   with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json`: the expected findings, what the tool reported on its own tests, written by
-  the generator in the same directory. `npm run fixtures:derive` runs the generators against the pinned tool versions
-  (each tool-pack's recipe in `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`); tools live
-  under `.rerail/` (gitignored). Where a tool's tests state their expected findings (as markup in the test files), the
-  generator reads them instead of running the tool: the tool's own test suite requires it to report exactly those.
-  The ESLint-based generators share `scripts/pack-data/eslint-expected.mjs`. Its `source` block names the upstream
-  `origin` (repository `@` commit), the `rules` the run reported, the `files` (units: a path, or a list of paths for a
-  multi-file unit), and `units`, each unit's upstream origin by its key (its path, or its first path): `rules`, the
-  upstream rules whose tests the unit was written from. A unit without an entry (Rerail's probes, or one whose origin
-  is unknown) is scored but is no rule's own evidence for `stays-silent`.
+  the generator in the same directory and run through `npm run fixtures:derive` (each tool-pack's recipe in
+  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored),
+  which is paused for now ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Where a tool's tests state
+  their expected findings (as markup in the test files), the generator reads them instead of running the tool: the
+  tool's own test suite requires it to report exactly those. The ESLint-based generators share
+  `scripts/pack-data/eslint-expected.mjs`. Its `source` block names the upstream `origin` (repository `@` commit), the
+  `rules` the run reported, the `files` (units: a path, or a list of paths for a multi-file unit), and `units`, each
+  unit's upstream origin by its key (its path, or its first path): `rules`, the upstream rules whose tests the unit was
+  written from. A unit without an entry (Rerail's probes, or one whose origin is unknown) is scored but is no rule's
+  own evidence for `stays-silent`.
 - Rename variants (the ECMA tool-packs): the generator writes a renamed copy of every upstream unit under
   `fixtures/renamed/<the original's path>`, its identifiers and string and number literal contents renamed by
   `scripts/pack-data/rename/ecmascript.ts` (same length and shape, one bijective map per file, keywords, the standard
@@ -138,29 +138,65 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   `renamedFrom`, the key of the original unit, which must be an original with an origin. The conformance check scores
   variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names or literals rather
   than the construct fails. A family without variants takes its overfit evidence from its samples alone.
-- Pack test data: the tool's test cases (`fixtures/`, `tests/`, case lists such as `cases.json` and `*.cases.json`,
-  `fixtures.upstream-check.json`, `lizard-*.tsv`), its expected findings (`*.expected.json`), `authored/`, and the
-  per-file provenance record (`provenance.json`, with `LICENSES.md`) are not in
-  git; the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to
-  score (the files the tool's `UPSTREAM.md` lists as Rerail's, and `authored/`) is authored; everything else is
-  derived, which a maintainer regenerates from the pins with `npm run fixtures:derive` (paused for now:
-  [docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Both are one archive per
-  tool-pack in S3, which `upstream/<tool>/test-data.lock` names by sha256 and `npm run fixtures:pull` fetches. A pull
-  request that adds or changes data stages it into the tracked `upstream/<tool>/publish/` (`npm run fixtures:stage`)
-  and removes an authored file by removing its `UPSTREAM.md` row; the publish workflow puts it in S3 and commits the
-  new lock ([docs/upstream.md](upstream.md#publishing-pack-data), [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)).
-  Every consumer (checks 4 and 6, the conformance runner, the generators, the Rust tests) says to pull when it is
-  absent. `gates.yaml`, `samples.lock`, `SAMPLES.md`, `test-data.lock`, `UPSTREAM.md` and the generators stay in git.
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
-- `upstream/<tool>/samples.lock` and `SAMPLES.md` (optional): the tool-pack's real-code samples, real files labelled
-  per rule with the lines it should report or as clean for it, one archive in S3 the lock names by sha256, which
-  `npm run fixtures:pull` fetches and the conformance runner scores (`--samples`, and in `--check`); `SAMPLES.md` lists
-  the sources and their licences. They are never published, and checks 1 to 8 do not read them
-  ([docs/upstream.md, "Samples"](upstream.md#samples)).
+- `upstream/<tool>/test-data.lock`, `samples.lock` and `SAMPLES.md`: the pins of the tool-pack's pack data
+  ([Pack data](#pack-data)).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
-  `rerail-unknown`) and the evidence checked.
+  `rerail-unknown`) and the evidence checked ([conformance/README.md](../conformance/README.md#divergences)).
+
+## Pack data
+
+A tool-pack's test data and real-code samples are not in git and never reach npm. Each kind is one archive in S3 that a
+tracked lock in the tool directory names; [docs/upstream.md](upstream.md) says how the data is made, published and
+judged, and [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data) who does what.
+
+**Test data** is the files under `packs/<id>/upstream/<tool>/` that `PACK_FIXTURE_PATTERNS`
+(`scripts/s3/pack-fixtures.mjs`) matches: the tool's test cases (`fixtures/`, `tests/`, case lists such as
+`cases.json` and `*.cases.json`, `fixtures.upstream-check.json`, `lizard-*.tsv`), its expected findings
+(`*.expected.json`), `authored/`, and the archive's provenance files, `provenance.json` and `LICENSES.md`
+([below](#provenancejson-and-licensesmd)). `.gitignore` covers the patterns. The data is of two kinds:
+
+- **authored**: what Rerail wrote for the tool to score, which nothing can regenerate: the files the tool's own
+  `upstream/<tool>/UPSTREAM.md` lists ([UPSTREAM.md](#upstreammd)), and everything under `upstream/<tool>/authored/`, a
+  contributor's code corpus with its ground truth where the corpus is no public repository a pin can name;
+- **derived**: everything else, upstream's tests copied or derived and the tool's expected findings, which the
+  generators make from the pins.
+
+**Samples** are the tool-pack's labelled real files ([docs/upstream.md, "Samples"](upstream.md#samples)). The
+archive's layout is `scripts/samples/format.ts`: each sample is `<sample-id>/<source path>` beside its
+`<source path>.expected.json` (the source repository, commit, path, sha256 and SPDX licence, and per rule the labelled
+lines), with any context files the sample needs under the same `<sample-id>/`, and `LICENSES.md` at the root. The
+tracked `SAMPLES.md` beside `samples.lock` lists the set's repositories with their licences, commits and file counts,
+says which licence texts the archive's `LICENSES.md` holds, and how the set was trimmed if it was. A tool-pack without
+a `samples.lock` has no samples.
+
+**Archives and locks.** An archive is the canonical tar of its files (one regular-file entry per file, sorted by its
+path's UTF-8 bytes, at its path relative to the tool directory, mode 0644, owner 0, time 0, no directory entries;
+`scripts/s3/test-data-archive.mjs`), compressed with zstd, at
+`s3://nera-test-fixtures/rerail/archives/<pack>/<tool>/<sha256>.tar.zst` for test data and
+`s3://nera-test-fixtures/rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst` for samples (us-east-2). Every
+write is create-only and the bucket is versioned, so changed data is a new archive and a new lock. `test-data.lock`
+and `samples.lock` share one format, which `parseLock` reads: `{ "format": 1, "sha256", "files", "bytes" }`, the
+tar's sha256 (not the compressed file's, so a different zstd build changes nothing), its file count and its bytes.
+Every tool directory with a tracked file outside `publish/` has a `test-data.lock`; `samples.lock` is optional.
+
+**Pulling.** `npm run fixtures:pull` (`-- --pack <id> [--tool <tool>]` for some, `-- --dry-run` to see what it would
+fetch) keeps each archive in `.rerail/pack-data/archives/` and fetches from S3, with the AWS CLI and read access to the
+bucket, only what it has not fetched before. It verifies every archive against its lock before it extracts any, and
+refuses an archive with a path that has a control character, is not NFC, or equals another's ignoring case. It
+extracts the test data into the tool directory, lays the tool-pack's `publish/` over it, deletes the derived files on
+disk that neither holds (stale) and keeps authored ones, saying so; it extracts samples under
+`.rerail/pack-data/samples/<pack>/<tool>/<sha256>/`. It never writes or reads through a symbolic link: when `packs/`,
+a tool directory, its `publish/` or a directory a file goes into is one, it stops before writing anything. Every
+consumer (checks 4 and 6, the conformance runner, the generators, the Rust tests) says to pull when the data is
+absent. Pull again after a checkout or merge that changes a lock.
+
+**In git** under `upstream/<tool>/`: `gates.yaml`, the generators, `UPSTREAM.md`, `test-data.lock`, `samples.lock`,
+`SAMPLES.md`, and, while a pull request publishes data, `publish/`
+([docs/upstream.md](upstream.md#publishing-pack-data)). Structure metric #3 fails while pack test data is tracked in
+the pulled layout, a tool directory lacks its `test-data.lock`, a lock does not parse, or a `publish/` is tracked.
 
 ## Rule text
 
@@ -256,8 +292,9 @@ ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule 
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's expected findings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
-| 6 | Licences | A copied file falls under no `UPSTREAM.md` pattern, a declared pattern matches no file, or a file falls under a pattern its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
+| 6 | Licences | A pulled file falls under a `Not copied` glob, or in a tool's subdirectory is neither authored nor under a `Taken from it` glob; a declared glob matches no pulled file; an `UPSTREAM.md` is malformed, or records a licence off the allowlist; the tool's own `UPSTREAM.md` lists a file outside its tool directory or one that does not exist |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
+| 8 | Text | A rule document's description fails a machine-checkable [description](#description) criterion |
 
 Precisely:
 
@@ -319,33 +356,18 @@ Precisely:
    for each `licenses/<project>/UPSTREAM.md`, one way to satisfy the SPDX expression its `License:` line records: an
    `OR` there lets the package elect either side (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`), and an `AND` must
    be named whole.
-6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` per upstream repository: its
-   `License:` line (an SPDX expression: ids, `AND`, `OR`, `WITH` and parentheses, up to the note after it; a
-   malformed one fails), a `Source` section whose table row gives the repository, a tag, the 40-hex commit and the
-   licence (required; a truncated row fails), a `Taken from it` table whose first column
-   holds backticked pack-path globs starting with `upstream/` (with the upstream paths and how each kind of file was
-   made), and its `Not copied` lines. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
-   `fixtures/`, `tests/`) must match no `Not copied` glob, and then be authored or match some project's glob, and each declared glob must match at least
-   one pulled file (a checkout without the pack's test data fails once per tool, saying to run
-   `npm run fixtures:pull`); files directly in `upstream/` or `upstream/<tool>/` (expected findings, generators) are
-   Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
-   corpus) is listed instead, per file, in the tool's own `upstream/<tool>/UPSTREAM.md`: it is Rerail's, so it adds no
-   licence to `licenses/` or to the package's `license`. That record may list only files under its own
-   `upstream/<tool>/`, and every file it lists must exist. Some way to satisfy every recorded licence must use only licences on the repository
-   allowlist (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
-   paths nothing is copied from, one per line as
-   ``- Not copied: `<upstream path prefix>` as `<pack path glob>` — <project>, <SPDX id>``
-   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); the pack-path
-   glob is required, and a pulled file under it fails, authored or not. A list item that means to be such a line but is
-   spelled otherwise (`* Not copied:`, `- Not Copied:`, an indented one, or one without the backticks) fails too. A
-   file two projects' globs cover takes the longest glob; equal-length longest globs that disagree on licence or copy
-   kind fail. A How cell's copy kind is the most modified of `verbatim`, `extracted`, `renamed` and `adapted` it names
-   (`verbatim …; or adapted …` is `adapted`). A glob may hold at most two `**`; a `**` segment matches zero or more
-   segments (`a/**/x` matches `a/x`). The per-file record (each file, its upstream path and how it was made) is not
-   in git: it is `upstream/<tool>/provenance.json` in the tool-pack's test-data archive, beside `LICENSES.md` with the
-   licence texts, for audit, and no check reads it. `reuse lint` and `node scripts/check/check-licenses.mjs` stay
-   repository-wide gates in CI. Copied test data is not in git, so `REUSE.toml` annotates none of it: its licences are
-   the `licenses/<project>/UPSTREAM.md` records above and each archive's `LICENSES.md`. Structure metric 7
+6. The pack's provenance records ([UPSTREAM.md](#upstreammd)) must parse and agree with the pulled test data. Each
+   `licenses/<project>/UPSTREAM.md` needs a well-formed `License:` expression that some way to satisfy uses only
+   licences on the repository allowlist (`scripts/check/licence-allowlist.json`), a complete `Source` row, and only
+   well-formed `Not copied` lines; the pack needs a `LICENSE`. Every pulled file in a subdirectory of
+   `upstream/<tool>/` (the tool's copied tests: `fixtures/`, `tests/`) must fall under no `Not copied` glob, and then
+   be authored or fall under some project's `Taken from it` glob, where equal-length longest globs that disagree on
+   licence or copy kind fail; files directly in `upstream/` or `upstream/<tool>/` (expected findings, generators) are
+   Rerail's. Each declared glob must match at least one pulled file (a checkout without the pack's test data fails
+   once per tool, saying to run `npm run fixtures:pull`). The tool's own `UPSTREAM.md` may list only files under its
+   own `upstream/<tool>/`, and every file it lists must exist. Check 6 and the publish decide a file's licence by the
+   same rules ([Licence of each file](#licence-of-each-file)). `reuse lint` and
+   `node scripts/check/check-licenses.mjs` are repository-wide gates in CI, not part of check 6, and structure metric 7
    (`npm run check:structure`) checks the rule documents' REUSE licence.
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
@@ -442,21 +464,63 @@ steps are in [publishing-a-new-pack.md](publishing-a-new-pack.md).
 
 ## Licensing
 
-Rerail's own material in a pack is Apache-2.0. Material copied or adapted from an upstream project keeps its licence:
-recorded per repository in `licenses/<project>/UPSTREAM.md` and annotated in the repository's `REUSE.toml`. The pack's `license`
-names every licence its published files carry (for example `Apache-2.0 AND MIT` for rules adapted from an MIT tool).
-The pack's rule documents (`rules/`, and the rule documents under `candidates/`) are annotated in `REUSE.toml` with
-that same expression, `Apache-2.0 AND <upstream>`, so what `reuse lint` reports for them matches what the package
-publishes; whether adapted rule documents need the upstream licence is an open legal question. Only licences on the
-repository allowlist are accepted.
+Rerail's own material in a pack is Apache-2.0. Material copied or adapted from an upstream project keeps its licence,
+recorded per repository in `licenses/<project>/UPSTREAM.md`. The pack's `license` names every licence its published
+files carry (for example `Apache-2.0 AND MIT` for rules adapted from an MIT tool; check 5). The pack's rule documents
+(`rules/`, and the rule documents under `candidates/`) are annotated in `REUSE.toml` with that same expression,
+`Apache-2.0 AND <upstream>`, so what `reuse lint` reports for them matches what the package publishes; whether adapted
+rule documents need the upstream licence is an open legal question. Copied test data is not in git: its licences are
+the `UPSTREAM.md` records and each archive's `LICENSES.md`. `REUSE.toml` annotates a tool's copied paths, pulled and
+under `publish/`, for some tools (the rust and vue packs' entries), so that `reuse lint` passes on such a copy while it
+is staged. Only licences on the repository allowlist (`scripts/check/licence-allowlist.json`) are accepted.
 
-When test data is published, each file's licence is decided as check 6 decides it. A file under a `Not copied` glob is
-refused, even one the tool's `UPSTREAM.md` lists or one under `authored/`. Otherwise a listed file (or one under
-`authored/`) is Rerail's Apache-2.0, and any other file takes the licence of the longest `Taken from it` glob that
-covers it. A file in a subdirectory of `upstream/<tool>/` that none of these takes is refused; one directly in
-`upstream/<tool>/` (expected findings, `cases.json`, `provenance.json`) is Rerail's. A file from an Apache-2.0-only
-source is refused unless that glob's kind is `verbatim`. A licence passes when some way to satisfy its SPDX
-expression uses only allowlisted licences (`AND` binds tighter than `OR`); a malformed expression is refused.
+### UPSTREAM.md
+
+A pack keeps two kinds of provenance record in git.
+
+**`licenses/<project>/UPSTREAM.md`**, one per upstream repository, beside that repository's licence text (verbatim):
+
+- a `License:` line: an SPDX expression (ids, `AND`, `OR`, `WITH` and parentheses), up to the note after it;
+- a `Source` section whose table row gives the repository, a tag, the 40-hex commit and the licence;
+- a `Taken from it` table: per row, backticked pack-path globs starting with `upstream/` in the first column, the
+  upstream paths, and in the last column how that kind of file was made. A How cell's copy kind is the most modified
+  of `verbatim`, `extracted`, `renamed` and `adapted` it names (`verbatim …; or adapted …` is `adapted`). A glob may
+  hold at most two `**`; a `**` segment matches zero or more segments (`a/**/x` matches `a/x`);
+- `Not copied` lines, one per upstream path nothing is copied from (an upstream's material derived from a copyleft
+  project, such as Ruff's fixtures for its pylint ports), each exactly
+  ``- Not copied: `<upstream path prefix>` as `<pack path glob>` — <project>, <SPDX id>``. The pack-path glob is
+  required, and a list item that means to be such a line but is spelled otherwise (`* Not copied:`, `- Not Copied:`,
+  an indented one, or one without the backticks) fails.
+
+The record names patterns, never single files: the per-file record is in each archive
+([below](#provenancejson-and-licensesmd)).
+
+**`upstream/<tool>/UPSTREAM.md`**, the tool's own record, when Rerail wrote files for the tool to score: a table with
+one row per file, its backticked pack path under `upstream/<tool>/` first (`` | `upstream/ruff/fixtures/rerail/noqa/B002.py` | written by Rerail | ``).
+Those files are authored, Rerail's (Apache-2.0), and add no licence to `licenses/` or to the package's `license`.
+Removing a row removes the file from the archive at the next publish, so a pull request that removes one is a publish
+request ([docs/upstream.md](upstream.md#removing-data)). An `authored/` corpus needs no rows.
+
+### provenance.json and LICENSES.md
+
+Each test data archive holds `upstream/<tool>/provenance.json`, every file with its upstream path and how it was made
+(a snapshot taken when the records moved from per-file rows to patterns), and `upstream/<tool>/LICENSES.md`, the
+licence texts. They are for audit: no check, workflow or tool reads them. A samples archive's `LICENSES.md` lists
+each source repository, its licence and the files taken from it ([docs/upstream.md](upstream.md#sample-licences)).
+
+### Licence of each file
+
+Pack check 6 and the publish workflow's prep decide each test data file's licence by the same rules, from the same
+parsing and pattern choice (`readUpstreamSources`, `decidingPattern` and `inToolSubdirectory` in
+`scripts/s3/pack-fixtures.mjs`). A file under a `Not copied` glob is refused, even one the tool's `UPSTREAM.md` lists
+or one under `authored/`. Otherwise a listed file (or one under `authored/`) is Rerail's Apache-2.0, and any other file
+takes the licence of the longest `Taken from it` glob that covers it; equal-length longest globs that disagree on
+licence or copy kind are refused. A file in a subdirectory of `upstream/<tool>/` that none of these takes is refused;
+one directly in `upstream/<tool>/` (expected findings, `cases.json`, `provenance.json`) is Rerail's. The publish adds
+one rule: a file from an Apache-2.0-only source is refused unless that glob's kind is `verbatim`, since a modified
+Apache-2.0 file must carry its change notices. A licence passes when some way to satisfy its SPDX expression uses only
+allowlisted licences (`AND` binds tighter than `OR`); a malformed expression is refused. A sample's licence is its
+repository's recorded one ([docs/upstream.md](upstream.md#sample-licences)).
 
 ## Moving to this layout
 

@@ -280,10 +280,10 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
 The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/` or `packs/next/`
-(framework packs over a supported language), `packs/rust/` or `packs/sql/` (language packs that ship no rules yet,
-their ports kept in `candidates/rules/` until they pass the V1 rule validation gates), `fixtures/packs/valid/` (the
-smallest pack, with an example-proven rule and a ported one) and `fixtures/packs/exemplar/` (a pack for a planned
-language).
+(framework packs over a supported language), `packs/react/` (a pack that ships no rules yet, its ports kept in
+`candidates/rules/` until they pass the [conformance check's gate](../conformance/README.md#the-gate)),
+`fixtures/packs/valid/` (the smallest pack, with an example-proven rule and a ported one) and
+`fixtures/packs/exemplar/` (a pack for a planned language).
 
 ### A pack for a supported language
 
@@ -386,40 +386,46 @@ complete example, for the test-only planned language above.
 
 ### A ported pack
 
-A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes:
+A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes. Each
+tool it ports is a tool-pack, `upstream/<tool>/`, with its own pack data ([pack data](pack-format.md#pack-data)):
 
 1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
    capabilities the pack declares, the pinned `tools`, and per ported rule its `upstream` tool and rule,
-   its `id` (the rule's own id) and `policy` (the same `rules/<id>.json` as the rule's `document`), how findings
-   compare (`line` or `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's
-   code. Every declared capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
-2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, the expected findings
-   the pinned tool reported on them (`expectedFindingsSchema` in `conformance/languages/pack.ts`, with each unit's
-   upstream origin in `source.units`), written by a generator you keep beside it
-   (`packs/python/upstream/ruff/generate.py` is one; the ESLint-based ones share `scripts/pack-data/eslint-expected.mjs`,
-   which also writes the rename variants under `fixtures/renamed/`). These are derived pack test data, never in git
-   in that layout: add the tool-pack's recipe under `scripts/pack-data/recipes/` (one module per pack, listed in its
-   `index.ts`), so `npm run fixtures:derive -- --pack <id>` makes them from the pins (paused for now:
-   [docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Cases you wrote for the tool
-   (listed in its `UPSTREAM.md`) or a corpus with its ground truth under `upstream/<tool>/authored/` are authored.
-   Stage the data into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and commit
-   that; the publish workflow puts it in S3 once a code owner approves, and commits the tool-pack's
-   `upstream/<tool>/test-data.lock` ([docs/upstream.md](upstream.md#publishing-pack-data)). Get the other packs' with
-   `npm run fixtures:pull`. A gated tool-pack also needs its `gates.yaml`
-   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
-3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX expression>` line, a
-   `Source` table (repository, tag, 40-hex commit and licence) and a `Taken from it` table mapping each pack-relative
-   glob of copied files to its upstream path and how it was copied. The copied files are not in git; the archive's
-   `provenance.json` and `LICENSES.md` carry their licence, and `REUSE.toml` covers a pulled or staged copy with one
-   annotation for `upstream/<tool>/fixtures/**` and `upstream/<tool>/publish/fixtures/**`. Add the tool's licence to
-   `package.json`'s `license` (`Apache-2.0 AND MIT` for an MIT tool), and annotate the rule documents in `REUSE.toml`
-   with that expression.
-4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked. Start
-   with `[]` and add an entry only for a disagreement you have checked.
+   its `id` (the rule's own id) and `policy` (the rule's document), how findings compare (`line` or `line+column`) and
+   the capabilities it exercises. A port's clauses report the upstream rule's code. Every declared capability needs a
+   ported rule or an `exemptCapabilities` entry with its evidence. A new port starts as a candidate under
+   `candidates/rules/` ([candidates and promotion](../conformance/README.md#candidates-and-promotion)).
+2. `upstream/<tool>/`: a generator you keep beside the data (`packs/python/upstream/ruff/generate.py` is one; the
+   ESLint-based ones share `scripts/pack-data/eslint-expected.mjs`, which also writes the rename variants under
+   `fixtures/renamed/`), with the tool-pack's recipe under `scripts/pack-data/recipes/` (one module per pack, listed in
+   its `index.ts`), and `gates.yaml`, the upstream manifest
+   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)). The generator copies the
+   tool's tests into `fixtures/` and writes `fixtures.expected.json`, the expected findings the pinned tool reported on
+   them (`expectedFindingsSchema` in `conformance/languages/pack.ts`, with each unit's upstream origin in
+   `source.units`), through `npm run fixtures:derive -- --pack <id>`. That is derived pack test data, never in git:
+   staged into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and published by the
+   publish workflow, which commits the tool-pack's `test-data.lock`
+   ([docs/upstream.md](upstream.md#publishing-pack-data)). **Derive is paused**, so a new tool-pack's data waits
+   until it resumes ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)); the pack's rule documents,
+   `conformance.json` and records can land before it. Cases you write for the tool are authored: list each in the
+   tool's own `UPSTREAM.md`, or keep a corpus with its ground truth under `upstream/<tool>/authored/`. Get the other
+   packs' data with `npm run fixtures:pull`.
+3. `licenses/<project>/`, one per upstream repository: its licence, verbatim, and `UPSTREAM.md` with a
+   `License: <SPDX expression>` line, a `Source` table (repository, tag, 40-hex commit and licence), a `Taken from it`
+   table mapping each pack-relative glob of copied files to its upstream path and how it was copied, and a
+   `Not copied` line for each upstream path under a licence the allowlist refuses
+   ([UPSTREAM.md](pack-format.md#upstreammd)). Add the tool's licence to `package.json`'s `license`
+   (`Apache-2.0 AND MIT` for an MIT tool), and annotate the rule documents in `REUSE.toml` with that expression.
+4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked
+   ([divergences](../conformance/README.md#divergences)). Start with `[]` and add an entry only for a disagreement you
+   have checked.
+5. Optionally, `upstream/<tool>/samples.lock` and `SAMPLES.md`: real-code samples, made with the sample builders and
+   published like test data ([docs/upstream.md](upstream.md#samples)).
 
-Then score one rule with every false positive and false negative listed, and run the contract:
+Then score one rule with every false positive and false negative listed, and run the contract and the gate:
 
 ```sh
-node --import tsx conformance/languages/cli.ts --pack <id> --rule <port id> --fixtures
+npm run conformance:languages -- --pack <id> --rule <port id> --fixtures
 npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"
+npm run conformance:languages -- --check --pack <id>
 ```
