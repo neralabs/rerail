@@ -52,6 +52,7 @@ import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runPacksCommand } from "./packs-cli.js";
+import { runFeedbackCommand } from "./feedback-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
@@ -153,6 +154,9 @@ function usage(): string {
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
+    "  rerail feedback <rule-id> <reason>",
+    "  rerail feedback answer <note-id> yes|always|no",
+    "  rerail feedback sharing [ask|always|never]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
     "  rerail update check [--channel <tag>]",
@@ -550,8 +554,8 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  // `seed`, `rules`, `show-me`, `reset` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "feedback"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
@@ -655,6 +659,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "show-me") return runShowMeCommand(args, usage);
   if (command === "packs") return await runPacksCommand(args, usage);
   if (command === "reset") return runResetCommand(args, usage);
+  if (command === "feedback") return await runFeedbackCommand(args, usage, { home, packageVersion: context.packageVersion });
   const daemonExit = await runDaemonCommand(command, args, home);
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });

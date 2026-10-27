@@ -93,13 +93,26 @@ Rerail keeps one SQLite file per Rerail home: `$RERAIL_HOME/rerail.sqlite` (`~/.
 - `sessions` — one row per harness session (`host`, `cwd`, `repository_id`, `started_at`, `ended_at`). `repository_id` is the key of the checkout's repository (see [Rule scoping](rule-scoping.md)), and it is what attributes history to a repository.
 - `events` — the append-only transcript for a session (`kind`, `observed_at`, `payload_json`, and a `payload_v8` blob when the payload is not JSON-representable).
 - `work_links` — loose associations from a session to external references (`kind` such as `git-branch`, `github-pr`, `linear-issue`; `reference`; optional `url`). No foreign key on purpose, so links can be recorded by any process before or after the session row exists.
+- `steer_feedback` — a coding agent's one-line reason for not following a steer (`rerail feedback`, see [Steer feedback](#steer-feedback)): the rule, its pack and pack version, the coding agent and the session the rule last steered in this repository, the Rerail version, and where the note stands with sharing (`ask`, `local`, `queued`, `sent`, `rejected`). Like `work_links`, no foreign key.
 - `audits` — every run of rules over a session, live or re-run, with independent scope (`repository`, `touched-files`, `ai-output`) and run mode (`steer`, `log`), selected paths, session, source revision, timestamps, violations, and concrete execution failures. Terminal records are immutable; closing or reopening a session interrupts its unfinished audits without discarding partial results.
 
 The daemon serves every repository on the machine. Its listings — sessions, audits, violations, repository audits, and rule activity — take an optional `repository` (a key or alias) and cover the whole machine without it; a session addressed by its id is found whichever repository recorded it. Code-rule path filters (`scope.include`, `scope.exclude`, exclusions winning) narrow a repository to matching paths for all three audit scopes, independently of the `steer` or `log` run mode. Paths are normalized relative to the session's `cwd`.
 
-`rerail reset` deletes the current repository's session history, across all of its worktrees — ended sessions and every session's events, work links, audits, audit requests, and repository audits — in one write transaction. Rules, other repositories' history, audit settings, and presentation preferences stay. The file is never unlinked, so a daemon or harness session holding it open is unaffected, and a still-running session keeps its row (its earlier events are gone) and carries on recording.
+`rerail reset` deletes the current repository's session history, across all of its worktrees — ended sessions and every session's events, work links, steer feedback notes, audits, audit requests, and repository audits — in one write transaction. Rules, other repositories' history, audit settings, and presentation preferences stay. The file is never unlinked, so a daemon or harness session holding it open is unaffected, and a still-running session keeps its row (its earlier events are gone) and carries on recording.
 
 `rerail seed` fills the database with throwaway mock rows — three code rules covering `forbid` with regex, ast, and llm clauses and two conversation rules, stored in the library and added to the current repository (which it sets up, with one conversation rule off), and a session with events and two work links attributed to that repository — so MCP and UI work has data to show. It is idempotent.
+
+### Steer feedback
+
+A steer ends by asking the coding agent to fix the problem, or to tell the user in one line why it won't and record that line with `rerail feedback <rule-id> "<that line>"`. The note is kept in `steer_feedback` with the rule's pack and version and the coding agent the rule last steered in this repository, so pushback on a rule can be read back when tuning it. Nothing is sent until the user says so:
+
+```sh
+rerail feedback <rule-id> <reason>                 # keep the note; with no standing answer, print the question for the agent to ask
+rerail feedback answer <note-id> yes|always|no     # yes: send this note; always: send it and every later one; no: keep every note local, and stop asking
+rerail feedback sharing [ask|always|never]         # show or change the standing answer (kept in $RERAIL_HOME/consent.json)
+```
+
+An approved note is sent by a detached `rerail feedback flush` to Nera's feedback API (`https://nera-rerail-feedback.azurewebsites.net/api/feedback`; `RERAIL_FEEDBACK_URL` overrides it), so the agent's command returns at once. It carries the rule id, pack id and version, the coding agent's name, the reason, the Rerail version and when the note was made: never the session, the repository, paths or code. A note the API refuses as malformed is not retried; one it could not reach stays queued for the next flush. See [Privacy](privacy.md#steer-feedback).
 
 ## Install
 

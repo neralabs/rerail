@@ -108,7 +108,7 @@ Inspection must not depend on an agent deciding to invoke Rerail. Host adapters 
 
 ### Local by default
 
-The model, vectors, and compiled references remain local. Runtime matching makes no network requests.
+The model, vectors, and compiled references remain local. Runtime matching makes no network requests. The one thing Rerail sends about your work is a steer feedback note you approved, and only its rule, pack, coding agent, reason and Rerail version.
 
 ### Evidence before action
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Harness integration
+
+- Steer feedback. A steer's last line now reads ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule id> "<that line>"`.`` (the rule's own id when the block has one rule), and the session-start note asks the same. `rerail feedback <rule-id> <reason>` keeps the note in the new `steer_feedback` table with the rule's pack and pack version, the coding agent and the session the rule last steered in this repository, for tuning rules that keep being pushed back on; `rerail reset` deletes it with the repository's history. Nothing is sent until you say so: with no standing answer the command tells the agent to ask you, and `rerail feedback answer <note-id> yes|always|no` sends that note, sends it and every later one, or keeps every note local and stops asking; `rerail feedback sharing [ask|always|never]` shows or changes the answer, kept in `consent.json`. An approved note goes from a detached `rerail feedback flush` to Nera's feedback API (`RERAIL_FEEDBACK_URL` overrides it) with only the rule, pack, coding agent, reason, Rerail version and time; one the API refuses is not retried, and one it could not reach waits for the next flush. See `docs/privacy.md`.
+
 ## 0.1.0 (2026-10-27)
 
 First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.

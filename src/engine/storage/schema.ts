@@ -334,6 +334,42 @@ export const workLinks = sqliteTable(
 );
 
 /**
+ * Where a feedback note stands with the person's answer about sharing it: `ask` waits for that answer, `local`
+ * stays on this computer for good, `queued` is approved and not yet accepted by Nera's feedback API, `sent` was
+ * accepted, and `rejected` was refused by the API as malformed, so it is never retried.
+ */
+export const STEER_FEEDBACK_SHARING = ["ask", "local", "queued", "sent", "rejected"] as const;
+export type SteerFeedbackSharing = (typeof STEER_FEEDBACK_SHARING)[number];
+
+/**
+ * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept for tuning the rule. The
+ * session is where the rule last steered, when Rerail found it; like `work_links`, no foreign key, and a reset
+ * deletes the notes of the repository's sessions. Only the rule, pack, host, reason, Rerail version and time are
+ * ever sent, and only once the person has said yes.
+ */
+export const steerFeedback = sqliteTable(
+  "steer_feedback",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id").notNull(),
+    packId: text("pack_id"),
+    packVersion: text("pack_version"),
+    host: text("host").$type<RerailHost>(),
+    sessionId: text("session_id"),
+    reason: text("reason").notNull(),
+    rerailVersion: text("rerail_version").notNull(),
+    recordedAt: integer("recorded_at").notNull(),
+    sharing: text("sharing", { enum: STEER_FEEDBACK_SHARING }).notNull(),
+    sentAt: integer("sent_at"),
+  },
+  table => [
+    check("steer_feedback_sharing", sql`${table.sharing} IN (${sql.raw(inList(STEER_FEEDBACK_SHARING))})`),
+    index("steer_feedback_rule_recorded").on(table.ruleId, table.recordedAt),
+    index("steer_feedback_sharing_recorded").on(table.sharing, table.recordedAt),
+  ],
+);
+
+/**
  * Durable audit bookkeeping. This deliberately has no session foreign key:
  * evaluation can begin before a host has recorded its session row, and a
  * reset must not make a live evaluator unable to finish its run.
@@ -597,7 +633,7 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
  * `audit_result_pages` and `audit_unlisted_failures` cascade with `audits`; `sessions` and `policy_session_owners`
  * lose only ended sessions, so running ones keep recording.
  */
-export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits] as const;
+export const SESSION_HISTORY_TABLES = [events, workLinks, steerFeedback, audits, auditRequests, repositoryAudits] as const;
 
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;
