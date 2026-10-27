@@ -6,9 +6,14 @@
 //! `ensure_indexes`, `merge_lattice`, `semi_naive_round` and `run_sql`'s stratum loop, in T's pure SQL mode (no
 //! `RDL_NATIVE`). Its chosen plans and outputs on T's programs are the tests' goldens.
 //!
+//! Two input modes (decision 0009): T's, symbols as text in an attached facts file (`run_sql`, the goldens' mode),
+//! and the product's, a program lowered to integers (`lower`) over the bound base-relation vtabs (decision 0008) with
+//! the statistics in an attached schema (`run_atoms`). The planner is the same in both; only the rendering of symbol
+//! operations (`@cat`, its splits, `flat_bin`'s operator) and where inputs and statistics live differ.
+//!
 //! Not yet ported: the native strata (`native_stratum`, `native_set_fixpoint`, `native_fixpoint`, `join_spec`,
-//! `live_stats`), which run on `logic::native`. Adaptations still to come: the emitted SQL through `sql::sql_ast`,
-//! plans into `compiled_plans`, and inputs read as fact families rather than an attached facts file. Left out of the
+//! `live_stats`), which run on `logic::native`. Adaptations still to come: the emitted SQL through `sql::sql_ast` and
+//! plans into `compiled_plans`. Left out of the
 //! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, traces and profiles) and its 1 GB
 //! page caches (over the 500 MB budget; SQLite's defaults instead).
 
@@ -56,6 +61,34 @@ impl From<super::front::Error> for Error {
 }
 
 type Result<T> = std::result::Result<T, Error>;
+
+pub(in crate::code_rule_dsl) mod lower;
+
+/// Where a run reads its inputs and statistics, and how it holds symbols.
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) struct Inputs {
+    /// The schema prefix of the input relations: T's attached facts file (`f.`) or the bound vtabs (`main.`).
+    facts: String,
+    /// The schema prefix of the `stat_*` tables.
+    stats: String,
+    /// Symbols are atoms: the name atoms of `flat_bin`'s operators `+`, `-` and `*`. `None`: symbols are text.
+    atoms: Option<[i64; 3]>,
+}
+
+impl Inputs {
+    /// T's facts file attached as `f`, statistics in it.
+    fn file() -> Self {
+        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None }
+    }
+    /// `sym_text` of an expression in atoms mode, the expression itself in text mode.
+    fn text(&self, e: &str) -> String {
+        if self.atoms.is_some() { format!("sym_text({e})") } else { e.to_owned() }
+    }
+    /// `sym_atom` of a text expression in atoms mode.
+    fn symbol(&self, e: &str) -> String {
+        if self.atoms.is_some() { format!("sym_atom({e})") } else { e.to_owned() }
+    }
+}
 
 /// A constant of a rule or of the statistics (`stat_val.val`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -170,7 +203,7 @@ pub(in crate::code_rule_dsl) struct Stats {
 }
 
 impl Stats {
-    fn new(db: &Connection, prog: &Program) -> Result<Self> {
+    fn new(db: &Connection, prog: &Program, inputs: &Inputs) -> Result<Self> {
         let consts: BTreeSet<Constant> = prog
             .rules
             .iter()
@@ -179,14 +212,16 @@ impl Stats {
             .flat_map(|a| a.args.iter().filter_map(constant))
             .collect();
         let holes = if consts.is_empty() { "NULL".to_owned() } else { vec!["?"; consts.len()].join(", ") };
-        let mut sql = "SELECT 'meta', k, NULL, v, NULL, NULL, NULL FROM f.stat_meta \
-             UNION ALL SELECT 'col', tbl, col, rows, ndv, sq, sqd FROM f.stat_col \
-             UNION ALL SELECT 'kind', kind, NULL, n, size, NULL, NULL FROM f.stat_kind \
-             UNION ALL SELECT 'edge', pkind, ckind, n, field, NULL, NULL FROM f.stat_edge"
-            .to_owned();
-        sql += &format!(" UNION ALL SELECT 'val', tbl, col, n, val, docs, sqd FROM f.stat_val WHERE val IN ({holes})");
+        let (f, s) = (&inputs.facts, &inputs.stats);
+        let mut sql = format!(
+            "SELECT 'meta', k, NULL, v, NULL, NULL, NULL FROM {s}stat_meta \
+             UNION ALL SELECT 'col', tbl, col, rows, ndv, sq, sqd FROM {s}stat_col \
+             UNION ALL SELECT 'kind', kind, NULL, n, size, NULL, NULL FROM {s}stat_kind \
+             UNION ALL SELECT 'edge', pkind, ckind, n, field, NULL, NULL FROM {s}stat_edge"
+        );
+        sql += &format!(" UNION ALL SELECT 'val', tbl, col, n, val, docs, sqd FROM {s}stat_val WHERE val IN ({holes})");
         for t in &prog.inputs {
-            sql += &format!(" UNION ALL SELECT 'rows', '{t}', NULL, count(*), NULL, NULL, NULL FROM f.{t}");
+            sql += &format!(" UNION ALL SELECT 'rows', '{t}', NULL, count(*), NULL, NULL, NULL FROM {f}{t}");
         }
         let params: Vec<SqlValue> = consts
             .iter()
@@ -300,6 +335,7 @@ pub(in crate::code_rule_dsl) struct Model {
     docof: HashMap<String, (usize, usize)>,
     /// View over one input atom → (input, the input column behind each view column).
     view_src: HashMap<String, (String, Vec<Option<String>>)>,
+    inputs: Inputs,
 }
 
 /// T's input column names; a derived relation's columns are `c0`, `c1`, ….
@@ -401,9 +437,10 @@ impl Model {
                 && a.rel == "kind"
                 && let (Term::Var(v), Some(k)) = (&a.args[0], constant(&a.args[1]))
             {
+                // Lowered programs' kinds are kind atoms, and their statistics are keyed by the atoms' text.
                 kinds.insert(v.as_str(), match k {
                     Constant::Str(s) => s,
-                    Constant::Int(i) => format!("\0{i}"),
+                    Constant::Int(i) => i.to_string(),
                 });
             }
         }
@@ -421,7 +458,7 @@ impl Model {
                 }
                 let n = match &k {
                     Constant::Str(s) => stats.kfreq.get(s).copied().unwrap_or(0),
-                    Constant::Int(_) => 0,
+                    Constant::Int(i) => stats.kfreq.get(&i.to_string()).copied().unwrap_or(0),
                 };
                 return if n == 0 { 0.5 } else { n as f64 };
             }
@@ -651,8 +688,8 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 }
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
-fn make_plan(prog: &Program, db: &Connection) -> Result<Model> {
-    let mut stats = Stats::new(db, prog)?;
+fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
+    let mut stats = Stats::new(db, prog, &inputs)?;
     let mut ndv = HashMap::new();
     for rel in &prog.inputs {
         for col in 0..prog.decls[rel].len() {
@@ -665,7 +702,14 @@ fn make_plan(prog: &Program, db: &Connection) -> Result<Model> {
             stats.fan.insert((rel.clone(), col), if rows != 0 { sq as f64 / rows as f64 } else { 1.0 });
         }
     }
-    // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it).
+    // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
+    // vtabs answer the same probes as T's tables' indexes (`facts::vtab::syntax`), so they are listed as T's.
+    if inputs.atoms.is_some() {
+        for rel in &prog.inputs {
+            stats.indexes.insert(rel.clone(), vtab_indexes(rel));
+        }
+        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs });
+    }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
         let rowid: Vec<String> = st
@@ -685,26 +729,45 @@ fn make_plan(prog: &Program, db: &Connection) -> Result<Model> {
         }
         stats.indexes.insert(rel.clone(), indexes);
     }
-    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new() })
+    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs })
+}
+
+/// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
+fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
+    let lists: &[&[&str]] = match rel {
+        "node" => &[&["n"], &["kind", "n"]],
+        "child" => &[&["c"], &["p", "idx"]],
+        "field" => &[&["p", "f"], &["c"]],
+        "text" => &[&["n"], &["s", "n"]],
+        "intval" | "op" | "tape" => &[&["n"]],
+        "doc" | "pkg" => &[&["d"]],
+        _ => &[],
+    };
+    lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()
 }
 
 // ---- SQL backend -------------------------------------------------------------------------------------------------
 
-fn sql_term(t: &Term, env: &HashMap<String, String>) -> Result<String> {
+fn sql_term(t: &Term, env: &HashMap<String, String>, atoms: Option<[i64; 3]>) -> Result<String> {
     Ok(match t {
         Term::Var(v) => env.get(v).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
         Term::Int(i) => i.to_string(),
         Term::Str(s) => format!("'{}'", s.replace('\'', "''")),
         Term::Top => TOP.to_string(),
         Term::Call(f, args) => {
-            let a = args.iter().map(|x| sql_term(x, env)).collect::<Result<Vec<_>>>()?;
+            let a = args.iter().map(|x| sql_term(x, env, atoms)).collect::<Result<Vec<_>>>()?;
             match (f.as_str(), a.as_slice()) {
+                ("cat", [x, y]) if atoms.is_some() => format!("sym_cat({x}, {y})"),
                 ("cat", [x, y]) => format!("({x} || '.' || {y})"),
                 ("flat_bin", [o, x, y]) => {
                     let big = 1i64 << 40;
+                    let [plus, minus, times] = match atoms {
+                        Some(ops) => ops.map(|o| o.to_string()),
+                        None => ["'+'", "'-'", "'*'"].map(str::to_owned),
+                    };
                     format!(
-                        "(CASE WHEN {x} = {TOP} OR {y} = {TOP} THEN {TOP} WHEN {o} = '+' THEN {x} + {y} WHEN {o} = '-' THEN {x} - {y} \
-                         WHEN {o} = '*' AND abs({x}) < {big} AND abs({y}) < {big} THEN {x} * {y} ELSE {TOP} END)"
+                        "(CASE WHEN {x} = {TOP} OR {y} = {TOP} THEN {TOP} WHEN {o} = {plus} THEN {x} + {y} WHEN {o} = {minus} THEN {x} - {y} \
+                         WHEN {o} = {times} AND abs({x}) < {big} AND abs({y}) < {big} THEN {x} * {y} ELSE {TOP} END)"
                     )
                 }
                 _ => return Err(Error::Plan(format!("no SQL for {t}"))),
@@ -714,11 +777,11 @@ fn sql_term(t: &Term, env: &HashMap<String, String>) -> Result<String> {
     })
 }
 
-fn table(prog: &Program, rel: &str, which: &str) -> String {
-    if prog.inputs.iter().any(|i| i == rel) { format!("f.{rel}") } else { format!("{which}{rel}") }
-}
-
 impl Model {
+    fn table(&self, prog: &Program, rel: &str, which: &str) -> String {
+        if prog.inputs.iter().any(|i| i == rel) { format!("{}{rel}", self.inputs.facts) } else { format!("{which}{rel}") }
+    }
+
     /// One SELECT for a planned rule body. `delta_at` is the plan position of the recursive atom that reads its delta
     /// table. `tables` maps a relation to the (full, delta) tables to read it from instead (the native set fixpoint's
     /// vtabs).
@@ -741,7 +804,7 @@ impl Model {
                 .iter()
                 .enumerate()
                 .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if Some(v.as_str()) == skip))
-                .map(|(c, t)| Ok(format!("{al}.{} = {}", sql_col(&a.rel, c), sql_term(t, env)?)))
+                .map(|(c, t)| Ok(format!("{al}.{} = {}", sql_col(&a.rel, c), sql_term(t, env, self.inputs.atoms)?)))
                 .collect()
         };
         for (idx, s) in order.iter().enumerate() {
@@ -750,7 +813,7 @@ impl Model {
                     let al = a_name();
                     let src = match tables.and_then(|t| t.get(&l.rel)) {
                         Some((full, delta)) => if Some(idx) == delta_at { delta.clone() } else { full.clone() },
-                        None => table(prog, &l.rel, if Some(idx) == delta_at { "delta_" } else { "" }),
+                        None => self.table(prog, &l.rel, if Some(idx) == delta_at { "delta_" } else { "" }),
                     };
                     let mut conds = Vec::new();
                     if s.mode == Some(Mode::Range) {
@@ -766,7 +829,7 @@ impl Model {
                         });
                         let (v, dv) = found.ok_or_else(|| Error::Plan(format!("no document for the range read of {l}")))?;
                         let ra = a_name();
-                        frm.push((format!("f.stat_docrange {ra}"), vec![format!("{ra}.d = {}", sql_term(&dv, &env)?)]));
+                        frm.push((format!("{}stat_docrange {ra}", self.inputs.stats), vec![format!("{ra}.d = {}", sql_term(&dv, &env, self.inputs.atoms)?)]));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
                         conds.push(format!("{al}.{} BETWEEN {ra}.lo AND {ra}.hi", sql_col(&l.rel, rc)));
                     }
@@ -779,7 +842,7 @@ impl Model {
                                     env.insert(v.clone(), c);
                                 }
                             },
-                            Term::Int(_) | Term::Str(_) | Term::Top => conds.push(format!("{c} = {}", sql_term(t, &env)?)),
+                            Term::Int(_) | Term::Str(_) | Term::Top => conds.push(format!("{c} = {}", sql_term(t, &env, self.inputs.atoms)?)),
                             _ => {}
                         }
                     }
@@ -789,12 +852,12 @@ impl Model {
                     let al = a_name();
                     let conds = neg_conds(l, &al, &env, None)?;
                     let conds = if conds.is_empty() { "1".to_owned() } else { conds.join(" AND ") };
-                    wh.push(format!("NOT EXISTS (SELECT 1 FROM {} {al} WHERE {conds})", table(prog, &l.rel, "")));
+                    wh.push(format!("NOT EXISTS (SELECT 1 FROM {} {al} WHERE {conds})", self.table(prog, &l.rel, "")));
                 }
                 Literal::Cmp { l, op, r } => {
                     let lv = if let Term::Var(v) = l { Some(v) } else { None };
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
-                        let e = sql_term(r, &env)?;
+                        let e = sql_term(r, &env, self.inputs.atoms)?;
                         env.insert(lv.expect("a variable").clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
@@ -806,27 +869,29 @@ impl Model {
                         }
                     {
                         // A split of the bound whole: at the "." a bound part places, else at every "." (`rdl_int`).
-                        let w = env[lv].clone();
+                        // In atoms mode the text is `sym_text`'s, and the parts are interned (`sym_atom`).
+                        let inputs = &self.inputs;
+                        let w = inputs.text(&env[lv]);
                         let Term::Call(_, parts) = r else { unreachable!() };
                         let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
-                        if let Some(eq) = env.get(q).cloned() {
+                        if let Some(eq) = env.get(q).map(|e| inputs.text(e)) {
                             wh.push(format!("substr({w}, 1, length({eq}) + 1) = {eq} || '.'"));
-                            env.insert(x.clone(), format!("substr({w}, length({eq}) + 2)"));
-                        } else if let Some(ex) = env.get(x).cloned() {
+                            env.insert(x.clone(), inputs.symbol(&format!("substr({w}, length({eq}) + 2)")));
+                        } else if let Some(ex) = env.get(x).map(|e| inputs.text(e)) {
                             wh.push(format!("substr({w}, -length({ex}) - 1) = '.' || {ex} AND length({w}) > length({ex})"));
-                            env.insert(q.clone(), format!("substr({w}, 1, length({w}) - length({ex}) - 1)"));
+                            env.insert(q.clone(), inputs.symbol(&format!("substr({w}, 1, length({w}) - length({ex}) - 1)")));
                         } else {
                             let al = a_name();
                             frm.push((format!("rdl_int {al}"), vec![format!("{al}.i <= length({w})"), format!("substr({w}, {al}.i, 1) = '.'")]));
-                            env.insert(q.clone(), format!("substr({w}, 1, {al}.i - 1)"));
-                            env.insert(x.clone(), format!("substr({w}, {al}.i + 1)"));
+                            env.insert(q.clone(), inputs.symbol(&format!("substr({w}, 1, {al}.i - 1)")));
+                            env.insert(x.clone(), inputs.symbol(&format!("substr({w}, {al}.i + 1)")));
                         }
                     } else {
                         let op = match *op {
                             "!=" => "<>",
                             o => o,
                         };
-                        wh.push(format!("{} {op} {}", sql_term(l, &env)?, sql_term(r, &env)?));
+                        wh.push(format!("{} {op} {}", sql_term(l, &env, self.inputs.atoms)?, sql_term(r, &env, self.inputs.atoms)?));
                     }
                 }
                 Literal::Agg { var, op, over, atom } => {
@@ -840,10 +905,16 @@ impl Model {
                             format!("{}({al}.{})", if *op == AggOp::Min { "min" } else { "max" }, sql_col(&atom.rel, c))
                         }
                     };
-                    env.insert(var.clone(), format!("(SELECT {what} FROM {} {al} WHERE {conds})", table(prog, &atom.rel, "")));
+                    env.insert(var.clone(), format!("(SELECT {what} FROM {} {al} WHERE {conds})", self.table(prog, &atom.rel, "")));
                 }
                 Literal::Nearest { n, a, kindset } => {
-                    let ks = prog.kindsets[kindset].iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(", ");
+                    // A lowered program's members are kind atoms.
+                    let ks = prog.kindsets[kindset]
+                        .iter()
+                        .map(|k| if k.parse::<i64>().is_ok() { k.clone() } else { format!("'{k}'") })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let f = &self.inputs.facts;
                     // Everything joined so far becomes the seed CTE; the walk is a recursive CTE seeded only from it.
                     let k = ctes.len();
                     let seed_cols: Vec<String> = env.keys().cloned().collect::<BTreeSet<_>>().into_iter().collect();
@@ -862,20 +933,20 @@ impl Model {
                     let scols = seed_cols.iter().map(|v| format!("s.{v}")).collect::<Vec<_>>().join(", ");
                     let out_var = if s.mode == Some(Mode::Climb) {
                         ctes.push(format!(
-                            "walk{k}({cols}, cur) AS (SELECT {scols}, t.par FROM seed{k} s JOIN f.tape t ON t.n = s.{n} WHERE t.par >= 0 \
-                             UNION ALL SELECT {wcols}, t.par FROM walk{k} w JOIN f.node k ON k.n = w.cur AND k.kind NOT IN ({ks}) \
-                             JOIN f.tape t ON t.n = w.cur WHERE t.par >= 0)"
+                            "walk{k}({cols}, cur) AS (SELECT {scols}, t.par FROM seed{k} s JOIN {f}tape t ON t.n = s.{n} WHERE t.par >= 0 \
+                             UNION ALL SELECT {wcols}, t.par FROM walk{k} w JOIN {f}node k ON k.n = w.cur AND k.kind NOT IN ({ks}) \
+                             JOIN {f}tape t ON t.n = w.cur WHERE t.par >= 0)"
                         ));
                         let cond = if env.contains_key(a) { format!(" AND w.cur = w.{a}") } else { String::new() };
                         ctes.push(format!(
-                            "near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w CROSS JOIN f.node k WHERE k.n = w.cur AND k.kind IN ({ks}){cond})"
+                            "near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w CROSS JOIN {f}node k WHERE k.n = w.cur AND k.kind IN ({ks}){cond})"
                         ));
                         a
                     } else {
                         ctes.push(format!(
-                            "walk{k}({cols}, cur, stop) AS (SELECT {scols}, s.{a} + 1, s.{a} + t.size FROM seed{k} s JOIN f.tape t ON t.n = s.{a} WHERE t.size > 0 \
+                            "walk{k}({cols}, cur, stop) AS (SELECT {scols}, s.{a} + 1, s.{a} + t.size FROM seed{k} s JOIN {f}tape t ON t.n = s.{a} WHERE t.size > 0 \
                              UNION ALL SELECT {wcols}, CASE WHEN k.kind IN ({ks}) THEN w.cur + t.size + 1 ELSE w.cur + 1 END, w.stop \
-                             FROM walk{k} w JOIN f.node k ON k.n = w.cur JOIN f.tape t ON t.n = w.cur WHERE w.cur < w.stop)"
+                             FROM walk{k} w JOIN {f}node k ON k.n = w.cur JOIN {f}tape t ON t.n = w.cur WHERE w.cur < w.stop)"
                         ));
                         let cond = if env.contains_key(n) { format!(" AND w.cur = w.{n}") } else { String::new() };
                         ctes.push(format!("near{k} AS (SELECT {wcols}, w.cur AS near_out FROM walk{k} w WHERE w.cur <= w.stop{cond})"));
@@ -889,7 +960,7 @@ impl Model {
                 Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", s.lit))),
             }
         }
-        let sel = head.args.iter().enumerate().map(|(i, t)| Ok(format!("{} AS c{i}", sql_term(t, &env)?))).collect::<Result<Vec<_>>>()?.join(", ");
+        let sel = head.args.iter().enumerate().map(|(i, t)| Ok(format!("{} AS c{i}", sql_term(t, &env, self.inputs.atoms)?))).collect::<Result<Vec<_>>>()?.join(", ");
         let (f0, rest) = frm.split_first().ok_or_else(|| Error::Plan(format!("rule for {head} reads nothing")))?;
         let from_sql = f0.0.clone() + &rest.iter().map(|(f, _)| format!(" CROSS JOIN {f}")).collect::<String>();
         let conds: Vec<String> = frm.iter().flat_map(|(_, c)| c.iter().cloned()).chain(wh).collect();
@@ -902,6 +973,9 @@ impl Model {
 /// A rule's chosen plan, as T's `plan.json` lists it.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Chosen {
+    /// The rule's index in the program, and its body positions in plan order with their modes.
+    pub(in crate::code_rule_dsl) rule: usize,
+    pub(in crate::code_rule_dsl) steps: Vec<(usize, Option<Mode>)>,
     pub(in crate::code_rule_dsl) head: String,
     pub(in crate::code_rule_dsl) anchor: String,
     pub(in crate::code_rule_dsl) walks: Vec<(String, &'static str)>,
@@ -915,6 +989,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) chosen: Vec<Chosen>,
     pub(in crate::code_rule_dsl) outputs: BTreeMap<String, Vec<String>>,
     pub(in crate::code_rule_dsl) iterations: BTreeMap<String, usize>,
+    /// Each output's node columns (atoms mode: node ids are the vtabs', `d << 32 | index`).
+    pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
 }
 
 /// A run's evaluation state on its connection.
@@ -1022,7 +1098,7 @@ impl Run<'_> {
     /// with its one order.
     fn semi_naive_round(&self, scc: &BTreeSet<String>, planned: &[(Atom, Vec<Step>)], first: bool, deltas: &[Delta]) -> Result<i64> {
         for r in scc {
-            self.db.execute_batch(&format!("DROP TABLE IF EXISTS new_{r}; CREATE TABLE new_{r} AS SELECT * FROM {r} WHERE 0;"))?;
+            self.db.execute_batch(&format!("DROP TABLE IF EXISTS new_{r}; CREATE TEMP TABLE new_{r} AS SELECT * FROM {r} WHERE 0;"))?;
         }
         let rec_idx =
             |order: &[Step]| -> Vec<usize> { (0..order.len()).filter(|&i| matches!(&order[i].lit, Literal::Atom(a) if !a.neg && scc.contains(&a.rel))).collect() };
@@ -1079,15 +1155,42 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
+    run(prog, &db, Inputs::file(), None)
+}
+
+/// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
+/// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
+/// symbols the run makes are appended to its `atoms`, and derived relations are `temp` tables, dropped by the next
+/// run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
+pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
+    db.execute_batch("PRAGMA temp_store = MEMORY;")?;
+    super::native::register_symbols(db)?;
+    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops) };
+    let out = run(&lowered.program, db, inputs, Some(lowered));
+    super::native::flush_symbols(db)?;
+    out
+}
+
+fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
+    let db = db;
+    let temp: Vec<(String, String)> = db
+        .prepare("SELECT type, name FROM temp.sqlite_master WHERE type IN ('table', 'view')")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (ty, name) in temp {
+        db.execute_batch(&format!("DROP {} IF EXISTS temp.{name}", if ty == "view" { "VIEW" } else { "TABLE" }))?;
+    }
     // Positions in a symbol, for splitting one at its dots (`$m = @cat($q, $x)` with only $m bound).
     db.execute_batch("CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;")?;
-    let model = make_plan(prog, &db)?;
+    let atoms = inputs.atoms.is_some();
+    let facts = inputs.facts.clone();
+    let model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
-    let mut run = Run { prog, db: &db, model, views: HashSet::new(), made: HashSet::new() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new() };
     for (&rel, rs) in &rules_by {
         let [rule] = rs.as_slice() else { continue };
         if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
@@ -1132,6 +1235,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
             .enumerate()
             .map(|(i, (_, t))| match t.as_str() {
                 "node" | "int" | "flat" => Ok(format!("c{i} INTEGER")),
+                "sym" if atoms => Ok(format!("c{i} INTEGER")),
                 "sym" => Ok(format!("c{i} TEXT")),
                 _ => Err(Error::Plan(format!("{rel}: no SQL type for {t}"))),
             })
@@ -1143,7 +1247,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
             Some(l) => (0..l.keys).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
             None => (0..cols.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", "),
         };
-        db.execute(&format!("CREATE TABLE {rel}({names}, PRIMARY KEY ({key})) WITHOUT ROWID"), [])?;
+        db.execute(&format!("CREATE TEMP TABLE {rel}({names}, PRIMARY KEY ({key})) WITHOUT ROWID"), [])?;
         for row in prog.facts.get(rel).into_iter().flatten() {
             let values: Vec<SqlValue> = row
                 .iter()
@@ -1164,6 +1268,8 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
             let (order, work, _) = run.model.plan_rule(prog, &rule.head, &rule.body, None)?;
             run.ensure_indexes(&order)?;
             outcome.chosen.push(Chosen {
+                rule: prog.rules.iter().position(|r| std::ptr::eq(r, *rule)).expect("a rule of the program"),
+                steps: order.iter().map(|s| (s.at, s.mode)).collect(),
                 head: rule.head.to_string(),
                 anchor: order[0].lit.to_string(),
                 walks: order.iter().filter_map(|s| s.mode.map(|m| (s.lit.to_string(), m.name()))).collect(),
@@ -1183,7 +1289,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
             }
         } else {
             for r in scc {
-                db.execute(&format!("CREATE TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"), [])?;
+                db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"), [])?;
             }
             // First round: every rule over the full (initially empty or seeded) relations.
             let mut changed = run.semi_naive_round(scc, &planned, true, &[])?;
@@ -1219,13 +1325,39 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
             }
         }
     }
+    let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for rel in &prog.outputs {
+        // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).
+        let domains: Vec<lower::Domain> = match lowered {
+            Some(l) if rel != "finding" => l.domains[rel].clone(),
+            _ => Vec::new(),
+        };
         let sql = if rel == "finding" {
-            "SELECT DISTINCT x.c0, d.path, k.start FROM finding x JOIN f.node k ON k.n = x.c1 JOIN f.doc d ON d.d = k.d".to_owned()
+            format!(
+                "SELECT DISTINCT {}, {}, k.start FROM finding x JOIN {facts}node k ON k.n = x.c1 JOIN {facts}doc d ON d.d = k.d",
+                text("x.c0"),
+                text("d.path")
+            )
+        } else if atoms {
+            let cols: Vec<String> = domains
+                .iter()
+                .enumerate()
+                .map(|(i, d)| if *d == lower::Domain::Name { text(&format!("c{i}")) } else { format!("c{i}") })
+                .collect();
+            format!("SELECT {} FROM {rel}", cols.join(", "))
         } else {
             format!("SELECT * FROM {rel}")
         };
         let name = if rel == "finding" { "finding_at".to_owned() } else { rel.clone() };
+        let kinds = lowered.map(|l| l.dialect.kinds());
+        let decode = |i: usize, v: i64| -> Option<String> {
+            let kinds = kinds?;
+            match domains.get(i)? {
+                lower::Domain::Kind => Some(kinds.kind_name((v % i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE)) as u16)?.to_owned()),
+                lower::Domain::Field => Some(kinds.field_name((v & 0xffff) as u16)?.to_owned()),
+                _ => None,
+            }
+        };
         let mut st = db.prepare(&sql)?;
         let width = st.column_count();
         let mut rows: Vec<String> = st
@@ -1233,7 +1365,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
                 (0..width)
                     .map(|i| {
                         Ok(match r.get::<_, SqlValue>(i)? {
-                            SqlValue::Integer(i) => i.to_string(),
+                            SqlValue::Integer(v) => decode(i, v).unwrap_or_else(|| v.to_string()),
                             SqlValue::Real(f) => format!("{f:?}"),
                             SqlValue::Text(s) => s,
                             SqlValue::Null => "None".to_owned(),
@@ -1245,6 +1377,8 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
             })?
             .collect::<rusqlite::Result<_>>()?;
         rows.sort();
+        let nodes = domains.iter().enumerate().filter(|(_, d)| **d == lower::Domain::Node).map(|(i, _)| i).collect();
+        outcome.nodes.insert(name.clone(), nodes);
         outcome.outputs.insert(name, rows);
     }
     Ok(outcome)

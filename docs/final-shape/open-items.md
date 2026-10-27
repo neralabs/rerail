@@ -242,3 +242,8 @@ planner, `stat_val` and `stat_kind` all key on atom ids; `@cat` and the `rdl_int
 functions over the same interner (`setfix::Interner`), flushed after each statement; outputs are
 decoded through `atoms`. The test fixture is T's, atomized at load. Closure: that step, with the
 native modes' outputs equal to the SQL goldens.
+
+Status (2026-10-27): the SQL side is done (decision 0009): `logic::plan::lower` and `run_atoms`, over the
+base-relation vtabs (decision 0008) with T's statistics atomized, give T's plans and outputs on the fixture
+(`t_programs_over_atoms_plan_and_run_like_t`). Open: the native strata over the lowered program, and the planner's
+statistics from `stats::ingest` instead of T's tables.

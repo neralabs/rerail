@@ -19,6 +19,7 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 mod setfix;
+pub(in crate::code_rule_dsl) use setfix::{flush_symbols, register_symbols};
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};

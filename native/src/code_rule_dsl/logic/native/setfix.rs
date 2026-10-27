@@ -86,6 +86,48 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     Ok(syms)
 }
 
+/// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
+/// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. New symbols
+/// reach the table at `flush_symbols`.
+pub fn register_symbols(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    let syms = symbols(conn)?;
+    let s = Arc::clone(&syms);
+    conn.create_scalar_function(c"sym_text", 1, det, move |ctx| {
+        let Some(a) = ctx.get::<Option<i64>>(0)? else { return Ok(None) };
+        let s = s.read().unwrap();
+        if a < 0 || a as usize >= s.atoms.len() {
+            return Err(err(format!("no symbol {a}")));
+        }
+        Ok(Some(s.name(a).to_owned()))
+    })?;
+    let s = Arc::clone(&syms);
+    conn.create_scalar_function(c"sym_atom", 1, det, move |ctx| {
+        let Some(t) = ctx.get::<Option<String>>(0)? else { return Ok(None) };
+        Ok(Some(s.write().unwrap().id(&t)))
+    })?;
+    conn.create_scalar_function(c"sym_cat", 2, det, move |ctx| {
+        let (Some(a), Some(b)) = (ctx.get::<Option<i64>>(0)?, ctx.get::<Option<i64>>(1)?) else { return Ok(None) };
+        let mut s = syms.write().unwrap();
+        if a.min(b) < 0 || a.max(b) as usize >= s.atoms.len() {
+            return Err(err(format!("no symbol {}", if a < 0 || a as usize >= s.atoms.len() { a } else { b })));
+        }
+        Ok(Some(cat(&mut s, a, b)))
+    })?;
+    Ok(())
+}
+
+/// Appends the symbols `conn`'s SQL interned since the last flush to its `atoms` table.
+pub fn flush_symbols(conn: &Connection) -> Result<()> {
+    let key = conn.path().unwrap_or_default().to_owned();
+    let syms = SYMS.lock().unwrap().get(&key).cloned();
+    if let Some(syms) = syms {
+        syms.write().unwrap().flush(conn)?;
+    }
+    Ok(())
+}
+
 enum Pat { Any, Slot(usize), Int(i64), Sym(i64) }
 enum Term { Slot(usize), Const(i64), Cat(usize, usize) }
 
