@@ -1,8 +1,8 @@
 //! Compiled plans, the statistics their decisions read, run-time feedback and SQLite's own
 //! statistics (docs/final-shape/03 §6, 02 "stat-driven compiler"; 05 Phase 3 row 8). Written new:
 //! no source has these. The rules come from PIAT spec §4.9 and §11 (notes/t1-piat-spec.md):
-//! - **`compiled_plans`** keeps each plan under its identity (a 32-byte digest; N's `SemanticId`
-//!   arrives with Phase 5's `stats/identity.rs`) with its decisions and the program they produced.
+//! - **`compiled_plans`** keeps each plan under its identity (`identity::CompiledPlanId`, N's
+//!   `SemanticId` in its own domain) with its decisions and the program they produced.
 //!   Every statistic a decision read is stored with its validity interval: the log2 bucket of the
 //!   value read (§4.9's "log2 buckets of every statistic read"). A plan stays valid while every
 //!   statistic stays in its bucket, so a refresh re-plans only when a decision could change (§11
@@ -33,6 +33,7 @@ const MEMORY: usize = 16 * 1024 * 1024;
 /// Weight of the newest observation in `plan_feedback`.
 const FEEDBACK_WEIGHT: f64 = 0.25;
 
+/// The bytes of a plan's `identity::CompiledPlanId`.
 pub(in crate::code_rule_dsl) type PlanId = [u8; 32];
 
 /// The interval of values over which a decision that read `value` stays valid: its log2 bucket.

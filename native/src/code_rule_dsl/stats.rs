@@ -3,6 +3,7 @@
 //! compiled plans with their validity, feedback and SQLite statistics (`plans`, over the bounded
 //! cache in `cache`).
 pub(in crate::code_rule_dsl) mod cache;
+pub(in crate::code_rule_dsl) mod identity;
 pub(in crate::code_rule_dsl) mod ingest;
 pub(in crate::code_rule_dsl) mod inputs;
 pub(in crate::code_rule_dsl) mod plans;

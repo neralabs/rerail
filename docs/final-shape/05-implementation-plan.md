@@ -150,6 +150,7 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 
 - Packed runtime (`5bf45ff0` copy, `a36418d0`): in the module tree under `transducer`; W's bench-only JIT and Metal backends and the `bench-backends` feature removed.
 - Verifier proofs and query front end (`98e96170`, `692ff6ba` copies; next commit): Tempo's cycle-progress and greedy-contract proofs replace N's backward-goto heuristic in `validate`; `scm.rs` compiles tree-sitter queries to programs; F1 is a test that the verifier's opcodes are exactly the Metal interpreter's.
+- Metal pieces (`cf19c0d9` copy): deferred, not mechanical. The copied files call about 30 other Tempo Metal modules (`metal_grid_plan`, `metal_register_execution`, `metal_closure_continuation`, `metal_frontier_seed`, `metal_output_dispatch`, …) that the plan does not copy, so the diff-port moves their improvements (launch budget, output pages, typed output, dynamic execution, parallel scan, regex frontier with value pooling and NFA scratch) into N's `metal_program_backend` one at a time, each with its Tempo tests. Done with the write-new items (a)–(h), after the copies of Phases 5–11.
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 
@@ -161,6 +162,8 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 | Driver | N `cr/query/mod.rs` (`SqlPlans::compile`, `drive_sql`, `SqlViolationRow`/`SqlFailureRow`) | `demand/driver.rs` | Run on the content-store connection, not a private in-memory one. Rows become match facts in the overlay. |
 | Plan identity | N `cr/query/plan/identity.rs` | `stats/identity.rs` | Key for `compiled_plans`. |
 | Reusable from N's SQL lowering | N `query/plan/sql_ast.rs` (typed SQL AST), `typed_boundary.rs`, `physical.rs` `FactFamilyContract` | `logic/sql/` | Copy these. **Do not copy** `relational_ir.rs`/`relational.rs` (tree axes in SQL). |
+
+**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`); row 3 adapted (next commit); rows 1, 2 and 4 outstanding.**
 
 ### Phase 6: the logic language (§12; B1, B3, B4, B10–B14, I9)
 
