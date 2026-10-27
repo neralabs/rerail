@@ -1,7 +1,7 @@
 # Rule pack structure and validation contract
 
 Status: the layout and the validation contract (checks 1 to 8) are implemented. `test/engine/catalog/packs.test.ts` validates every
-`packs/*` directory: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and `complexity`. Core
+`packs/*` directory: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql`, `complexity` and `rerail`. Core
 ships none of them: set-up and `rerail packs add` install them from npm into `$RERAIL_HOME/packs`, and core reads them
 from there; it lists them by name only, in `src/engine/catalog/pack-list.generated.ts` ([rule packs](rule-packs.md#installing-packs)).
 Each pack is published on its own by the [release workflow](#release). A pack introduces no new file format: it

@@ -1,0 +1,52 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "rerail",
+  "name": "Rerail rule packs",
+  "category": "repository",
+  "covers": "Flags a rule pack's violation message that names an upstream tool or Rerail instead of the change it asks for.",
+  "reason": "holds Rerail rule packs under packs/",
+  "match": {
+    "any": [
+      {
+        "files": [
+          "packs/*/pack.json"
+        ],
+        "label": "packs/*/pack.json files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "rerail-message-tool-names",
+      "document": "rules/rerail-message-tool-names.json",
+      "title": "Leave upstream tool names out of rule pack messages",
+      "group": "Rule messages",
+      "examples": {
+        "caught": {
+          "path": "packs/python/rules/bandit-b113-request-without-timeout.json",
+          "text": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every HTTP call made with requests.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ]\n  },\n  \"clauses\": [\n    {\n      \"id\": \"call\",\n      \"forbid\": {\n        \"ast\": {\n          \"language\": \"python\",\n          \"rule\": {\n            \"pattern\": \"requests.get($URL)\"\n          }\n        }\n      },\n      \"violation\": {\n        \"code\": \"NO_TIMEOUT\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Bandit B113 (request_without_timeout)\"\n      }\n    }\n  ]\n}\n"
+        },
+        "passes": {
+          "path": "packs/python/rules/bandit-b113-request-without-timeout.json",
+          "text": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every HTTP call made with requests.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ]\n  },\n  \"clauses\": [\n    {\n      \"id\": \"call\",\n      \"forbid\": {\n        \"ast\": {\n          \"language\": \"python\",\n          \"rule\": {\n            \"pattern\": \"requests.get($URL)\"\n          }\n        }\n      },\n      \"violation\": {\n        \"code\": \"NO_TIMEOUT\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass a finite timeout to this HTTP call; without one a slow server can hang the program.\"\n      }\n    }\n  ]\n}\n"
+        }
+      }
+    },
+    {
+      "id": "rerail-message-rerail-name",
+      "document": "rules/rerail-message-rerail-name.json",
+      "title": "Leave the name Rerail out of rule pack messages",
+      "group": "Rule messages",
+      "examples": {
+        "caught": {
+          "path": "packs/python/rules/bandit-b113-request-without-timeout.json",
+          "text": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every HTTP call made with requests.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ]\n  },\n  \"clauses\": [\n    {\n      \"id\": \"call\",\n      \"forbid\": {\n        \"ast\": {\n          \"language\": \"python\",\n          \"rule\": {\n            \"pattern\": \"requests.get($URL)\"\n          }\n        }\n      },\n      \"violation\": {\n        \"code\": \"NO_TIMEOUT\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Rerail found an HTTP call without a timeout.\"\n      }\n    }\n  ]\n}\n"
+        },
+        "passes": {
+          "path": "packs/python/rules/bandit-b113-request-without-timeout.json",
+          "text": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every HTTP call made with requests.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ]\n  },\n  \"clauses\": [\n    {\n      \"id\": \"call\",\n      \"forbid\": {\n        \"ast\": {\n          \"language\": \"python\",\n          \"rule\": {\n            \"pattern\": \"requests.get($URL)\"\n          }\n        }\n      },\n      \"violation\": {\n        \"code\": \"NO_TIMEOUT\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass a finite timeout to this HTTP call; without one a slow server can hang the program.\"\n      }\n    }\n  ]\n}\n"
+        }
+      }
+    }
+  ]
+}
