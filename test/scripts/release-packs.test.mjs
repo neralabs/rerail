@@ -9,6 +9,7 @@ import {
   gateFailures,
   heldPacks,
   listPacks,
+  manifestChanged,
   missingChangesets,
   packIds,
   planPacks,
@@ -188,6 +189,20 @@ describe("missingChangesets", () => {
 
   it("passes a published change once any changeset of the pull request names the pack", () => {
     expect(missingChangesets(["packs/php/pack.json", "packs/vue/LICENSE"], [changeset("php", "vue")], packs)).toEqual([]);
+  });
+});
+
+describe("manifestChanged", () => {
+  const manifest = (fields) => JSON.stringify({ name: "@neralabs/rerail-pack-php", version: "0.1.4", files: ["pack.json"], ...fields });
+
+  it("needs no release for a change to publishConfig alone, which only steers npm publish", () => {
+    expect(manifestChanged(manifest({ publishConfig: { access: "restricted" } }), manifest({ publishConfig: { access: "public" } }))).toBe(false);
+  });
+
+  it("counts any other change, beside publishConfig or not, and a package.json the pack did not have", () => {
+    expect(manifestChanged(manifest({ publishConfig: { access: "restricted" } }), manifest({ publishConfig: { access: "public" }, files: ["pack.json", "rules"] }))).toBe(true);
+    expect(manifestChanged(manifest({}), manifest({ peerDependencies: { "@neralabs/rerail": ">=0.2.0" } }))).toBe(true);
+    expect(manifestChanged(undefined, manifest({}))).toBe(true);
   });
 });
 

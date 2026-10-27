@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
@@ -117,6 +118,17 @@ export function changesetBumpFailures(changesets, packs) {
     }
   }
   return failures;
+}
+
+/**
+ * Whether a pack's package.json changed what installing the pack gives, from its text `before` (undefined: the file is
+ * new) to `after`. `publishConfig` only steers `npm publish`, so a change to it alone needs no release.
+ */
+export function manifestChanged(before, after) {
+  if (before === undefined) return true;
+  const { publishConfig: _before, ...was } = JSON.parse(before);
+  const { publishConfig: _after, ...is } = JSON.parse(after);
+  return !isDeepStrictEqual(was, is);
 }
 
 /**
