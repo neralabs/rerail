@@ -2,7 +2,7 @@
 
 24 ports of eslint-plugin-n 18.4.1 rules with its default options. A port starts in `candidates/rules/` and moves to
 `rules/` and `pack.json` once it passes the port readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); eslint-plugin-n
-has no port readiness recording yet (NER-1898), so every port is a candidate today, `pack.json` lists no rules, and the pack ships
+has no port readiness recording yet, so every port is a candidate today, `pack.json` lists no rules, and the pack ships
 none and is never recommended. Each port is scored against the plugin's own findings on its rule tests and on two pinned
 corpora (fastify, prettier), through the engine's production workspace path, with every disagreement declared in
 `divergences.json` (one today: `n-prefer-promises-fs` does not report `fs.watch`). The conformance check (`--check`, run
@@ -33,12 +33,15 @@ no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each
 so a case it runs as a module that reads one of those names and has no module syntax is written as CommonJS (`.js`
 under the fixtures' `"type": "commonjs"` package.json), where Node defines them.
 
-Re-recording and regenerating run offline against the pinned tools under `.rerail/tools/node` (eslint 10.11.0,
-eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and the corpus
-checkouts under `.rerail/corpora/node`:
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/node.ts`) runs `upstream/eslint-plugin-n/generate.mjs` against the pinned tools (eslint
+10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and corpora.
+Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
 ```sh
-node packs/node/upstream/eslint-plugin-n/generate.mjs [--fixtures-only]
+npm run fixtures:derive -- --pack node
+npm run fixtures:push -- --pack node     # on your own branch: archive it and rewrite its test-data.lock
 python3 scripts/generate/packs/node_policies.py
 ```
 
@@ -72,7 +75,7 @@ Default pattern "err": a function whose first parameter is named `err` and has n
 
 ### `n-no-callback-literal`
 
-Matches calls of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened (NER-1834): callbacks named cb/callback need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before changing the call.
+Matches calls of an identifier named `callback` or `cb` (name only, no scope) whose first argument cannot be an error per upstream's couldBeError: a non-null literal, array, object or template literal, or an assignment/sequence/logical/conditional whose possible results all are. The message is softened: callbacks named cb/callback need not be error-first (ws verifyClient, ssh2 authHandler), so it tells the agent to check before changing the call.
 
 ### `n-no-exports-assign`
 

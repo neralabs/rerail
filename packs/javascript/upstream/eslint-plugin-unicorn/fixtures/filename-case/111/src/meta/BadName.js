@@ -1,1 +1,0 @@
-/* Filename: src/meta/BadName.js */

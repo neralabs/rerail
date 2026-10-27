@@ -1,4 +1,0 @@
-
-function f(a) {}
-f();
-      

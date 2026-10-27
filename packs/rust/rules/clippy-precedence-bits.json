@@ -1,0 +1,105 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "clippy-precedence-bits",
+  "revision": 4,
+  "mode": "steer",
+  "description": "Parenthesize shifts used as operands of a bitwise AND, OR or XOR in Rust; the precedence is easy to misread.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bitwise-with-shift",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "matches": "lint"
+          },
+          "utils": {
+            "lint": {
+              "all": [
+                {
+                  "kind": "binary_expression"
+                },
+                {
+                  "has": {
+                    "field": "operator",
+                    "regex": "^[&^|]$"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:<<|>>)$"
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "kind": "binary_expression",
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:<<|>>)$"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "left",
+                          "kind": "binary_expression",
+                          "has": {
+                            "field": "operator",
+                            "regex": "^[-+*/%]$"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "right",
+                          "kind": "binary_expression",
+                          "has": {
+                            "field": "operator",
+                            "regex": "^[-+*/%]$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "suppress": {
+          "clippy": {
+            "lints": [
+              "clippy::precedence_bits",
+              "clippy::restriction",
+              "warnings"
+            ]
+          }
+        },
+        "anchor": "witness.span",
+        "code": "precedence_bits",
+        "message": "Add parentheses around the shift in this bitwise expression, e.g. (a << 4) | b."
+      }
+    }
+  ]
+}

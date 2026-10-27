@@ -1,1 +1,0 @@
-var x; while (x = 0) { var b = 1; }

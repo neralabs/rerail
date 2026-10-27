@@ -1,2 +1,0 @@
-<a target={"_blank"} href={"//example.com/16"} rel={"noopenernoreferrernoreferrernoreferrernoreferrernoreferrer"}></a>
-// features: [], parser: @typescript-eslint/parser

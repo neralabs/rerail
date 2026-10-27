@@ -41,6 +41,10 @@ rerail-down:
 rerail-status:
     @node scripts/dev/rerail-dev.mjs status
 
+# Seed a dashboard browser-test scenario (no-packs, packs-no-session, mature, multi-repo, not-set-up, stopped) into a temp folder and run its daemon in the foreground for design review; --port N picks the port.
+ui-scenario scenario *args:
+    @node --import tsx scripts/dev/ui-scenario.ts {{ scenario }} {{ args }}
+
 # Run the rerail CLI against this checkout's dev home.
 [private]
 rerail-command *args:
@@ -49,6 +53,10 @@ rerail-command *args:
 # Prove the installer end to end against a throwaway local registry (no real ~/.rerail or ~/.npmrc).
 rerail-smoke:
     @bash scripts/dev/rerail-smoke.sh
+
+# Install a package on throwaway Azure VMs (Linux and Windows, x64 and arm64) and check it as a user meets it: run --tarball <file> | --npm <spec> [--env <ids>] [--keep], list, sweep (az login first; docs/environment-matrix.md).
+rerail-env-matrix *args:
+    @node scripts/host/azure/matrix.mjs {{ args }}
 
 # Review every rule pack rule's steer guidance in the browser: approve it or request changes, with comments (--refresh reruns the rules on their cases; decisions are kept in .rerail/guidance-review/).
 rerail-guidance-review *args:

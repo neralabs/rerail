@@ -1,5 +1,6 @@
 """Records PHP_CodeSniffer 4.0.4 for the PHP pack's ported sniffs (rerail/packs/php/conformance.json).
-Run offline, never in CI, with PHP 8.5.11:
+Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request CI),
+with PHP 8.5.11:
 
     python3 generate.py fixtures <PHP_CodeSniffer checkout at tag 4.0.4> <composer project with squizlabs/php_codesniffer 4.0.4>
     python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]

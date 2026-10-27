@@ -122,42 +122,44 @@ export const ENGINE_SOURCES = ["native", "languages", "src/engine", "Cargo.lock"
 
 /**
  * Engine source files only one language family can reach, by family (`languages/*.json`'s `family`: `ecma` for
- * JavaScript and TypeScript, `python` for Python, `rust` for Rust, `php` for PHP, `blade` for Blade). A rule of one
- * family keys on these and the shared files alone, so a change to Python support leaves every ECMAScript rule's cached
- * verdict standing. An entry is a tracked file, or a directory with a trailing `/`.
+ * JavaScript and TypeScript, `python` for Python, `rust` for Rust, `php` for PHP, `blade` for Blade, `sql` for SQL). A
+ * rule of one family keys on these and the shared files alone, so a change to Python support leaves every ECMAScript
+ * rule's cached verdict standing. An entry is a tracked file, or a directory with a trailing `/`.
  *
- * A family earns a list when the gates judge it, so its rules key narrowly, or when its files would otherwise sit in
- * every gated rule's key, as Rust's would: unlisted, a change to Rust support alone would re-judge every rule.
+ * A family earns a list when the gates judge it, so its rules key narrowly: ecma, python, rust (rust/clippy), php,
+ * blade and sql (sql/sqlfluff). Vue (vue/eslint-plugin-vue) stays unlisted, so a Vue rule keys on the whole engine: its
+ * own files would need a reach check of their own first.
  *
  * A file is listed only when it is reachable through its family's adapter alone (`with_adapter!` maps each family to
  * its own), or through a style, grammar or suppression every other family refuses when the rule compiles. The list is
  * thus a ledger of what the engine's own dispatch already decides, never a second opinion on it: the language
  * registry says which families honour which suppressions (`noqa` and `nosec`, read by `suppress/noqa.rs` and
  * `suppress/nosec.rs`, are listed by `languages/python.json` alone, `clippy` by `languages/rust.json`, `phpcs` and
- * `phpstan` by `languages/php.json`), `literal/mod.rs` hosts `eslintDirective` on ECMA comments only, `rustFormat` on
- * Rust strings only and `phpDoc` and PHP strings on PHP only, `formatArgs` style `rust` is refused by every other
- * family, and the rest are each family's vendored grammars, its registry entries and the modules named for it. What
- * another family's rule can still read of a listed file is the wording of a compile error, never whether the rule
- * compiles: a suppression's spec is parsed before the family refuses it, `compile/binds.rs` checks a binding filter's
- * `form` and `scope` names against every family's (Rust's are in `language/adapter/rust.rs`) before the rule's own
- * family narrows them, `compile/resolve.rs` reads a `resolves` name list as Python's, Rust's or PHP's shape
- * (`scope/php_names.rs`'s labels) before each family refuses the others', and `compile/parse.rs` checks a `parse` or
- * `formatArgs` sub-rule's `kind` against its grammar's kinds (`rustFormat`'s are in `literal/rust_format.rs`) before
- * the family refuses the grammar or style. `suppress/eslint.rs` is the one entry a family outside its list reads to
- * decide a verdict: `languages/vue.json` honours `eslint` too, and a Vue rule belongs to no listed family, so it keys
- * on the whole engine regardless.
+ * `phpstan` by `languages/php.json`, `sqlfluff` by `languages/sql.json`), `literal/mod.rs` hosts `eslintDirective` on
+ * ECMA comments only, `rustFormat` on Rust strings only and `phpDoc` and PHP strings on PHP only, `formatArgs` style
+ * `rust` is refused by every other family, and the rest are each family's vendored grammars, its registry entries and
+ * the modules named for it. What another family's rule can still read of a listed file is the wording of a compile
+ * error, never whether the rule compiles: a suppression's spec is parsed before the family refuses it,
+ * `compile/binds.rs` checks a binding filter's `form` and `scope` names against every family's (Rust's are in
+ * `language/adapter/rust.rs`) before the rule's own family narrows them, `compile/resolve.rs` reads a `resolves` name
+ * list as Python's, Rust's or PHP's shape (`scope/php_names.rs`'s labels) before each family refuses the others', and
+ * `compile/parse.rs` checks a `parse` or `formatArgs` sub-rule's `kind` against its grammar's kinds (`rustFormat`'s are
+ * in `literal/rust_format.rs`) before the family refuses the grammar or style. `suppress/eslint.rs` is the one entry a
+ * family outside its list reads to decide a verdict: `languages/vue.json` honours `eslint` too, and a Vue rule belongs
+ * to no listed family, so it keys on the whole engine regardless.
  *
  * A family whose files embed another's program keys on that family too (`policyFamilies`, from the registry's
  * `embeds`). Blade is its own family for that reason rather than PHP's: a Blade template's semantics are the PHP its
  * compiled view holds (`blade/view.rs`, `embed/compiled_view.rs`), read with PHP's family, so every Blade rule keys on
  * PHP's files as well as Blade's, while a PHP rule never reaches Blade's parser (Rerail's port of Forte) and keys on
  * PHP's alone. The one Forte file PHP reaches, the byte scanner `php_view.rs` finds PHP's open tags with
- * (`blade/forte/scan.rs`), is PHP's, which Blade's rules key on anyway. Vue embeds TypeScript the same way but is not
- * gated, so it stays unlisted and keys on the whole engine.
+ * (`blade/forte/scan.rs`), is PHP's, which Blade's rules key on anyway. Vue embeds TypeScript the same way; with no
+ * list of its own, a Vue rule keys on the whole engine.
  *
  * `matcher/`, `compile/`, `workspace/` and `language/adapter/` are shared, `language/adapter.rs` and its concern files
- * included, with three exceptions, all Rust's: `language/adapter/rust.rs`, the adapter itself, and
- * `matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter and style `rust` call. Every
+ * included, with five exceptions: Rust's `language/adapter/rust.rs`, the adapter itself, and
+ * `matcher/arguments/rust.rs` and `matcher/format_args/rust.rs`, which only that adapter and style `rust` call; and
+ * SQL's `language/adapter/sql.rs` and `matcher/arguments_sql.rs`, the call binding only that adapter reads. Every
  * engine file no list names is shared and so part of every rule's key. That is the direction this list fails in: a
  * file nobody listed costs one cold re-judge of everything, never a stale verdict. Adding an entry is therefore the
  * edit to justify, and `test/conformance/port-readiness/engine.test.ts` fails when one matches no engine source at all.
@@ -236,6 +238,15 @@ export const FAMILY_SOURCES: Readonly<Record<string, readonly string[]>> = {
     "native/src/code_rule_dsl/blade/forte/tree.rs",
     "native/src/code_rule_dsl/blade/view.rs",
     "native/src/code_rule_dsl/embed/compiled_view.rs",
+  ],
+  sql: [
+    "languages/sql.json",
+    "native/grammars/tree-sitter-sql/",
+    "native/src/code_rule_dsl/language/adapter/sql.rs",
+    "native/src/code_rule_dsl/matcher/arguments_sql.rs",
+    "native/src/code_rule_dsl/scope/sql.rs",
+    "native/src/code_rule_dsl/suppress/sqlfluff.rs",
+    "native/src/code_rule_dsl/value/sql.rs",
   ],
 } as const;
 

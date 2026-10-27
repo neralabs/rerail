@@ -1,6 +1,6 @@
 /**
  * typescript-eslint-no-unused-expressions (packs/typescript/) must not flag a type test written as an `as` or
- * `satisfies` expression statement whose type is a dotted name with two or more dots (NER-1778). tree-sitter reads
+ * `satisfies` expression statement whose type is a dotted name with two or more dots. tree-sitter reads
  * `e satisfies A.B.C` as a member access `.C` on `e satisfies A.B`, and a member access is an unused expression, so the
  * rule reported 39 `z.x() satisfies z.core.$ZodX;` type tests in one zod file and steered agents to delete them.
  * Upstream typescript-eslint 8.70.1 never reports a `satisfies` statement and judges an `as` statement by the
@@ -72,7 +72,7 @@ const REPORTED: ReadonlyArray<[string, string]> = [
   ["a member access on a parenthesized `satisfies`", "(x satisfies A.B).c;"],
 ];
 
-describe(`${RULE_ID} with dotted type names (NER-1778)`, () => {
+describe(`${RULE_ID} with dotted type names`, () => {
   const compiled = compile();
 
   it.each(NOT_REPORTED)("does not report %s", (_name, source) => {

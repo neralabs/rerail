@@ -34,8 +34,8 @@ is the blocking gate it fails and why.
 |---|---|---|
 | `phpcs-generic-php-deprecated-functions` | PHP_CodeSniffer Generic.PHP.DeprecatedFunctions: Deprecated functions | `matches-upstream-tests`: the engine reports `source-incomplete` on LowerCaseConstant's deliberately broken test files (`.1.inc`, `.2.inc`), which every ported sniff is judged on |
 | `phpcs-generic-php-forbidden-functions` | PHP_CodeSniffer Generic.PHP.ForbiddenFunctions: Forbidden functions | `matches-upstream-tests`: as DeprecatedFunctions |
-| `phpcs-generic-php-no-silenced-errors` | PHP_CodeSniffer Generic.PHP.NoSilencedErrors: No silenced errors | `not-overfit`: its regex names `file_exists` (Rerail's own exemption, NER-1811), a word in upstream's tests but not its code |
-| `phpcs-squiz-php-disallow-size-functions-in-loops` | PHP_CodeSniffer Squiz.PHP.DisallowSizeFunctionsInLoops: Size functions in loops | `not-overfit`: it names `array_push`, from Rerail's own exemption (NER-1812), a word in upstream's tests but not its code |
+| `phpcs-generic-php-no-silenced-errors` | PHP_CodeSniffer Generic.PHP.NoSilencedErrors: No silenced errors | `not-overfit`: its regex names `file_exists` (Rerail's own exemption), a word in upstream's tests but not its code |
+| `phpcs-squiz-php-disallow-size-functions-in-loops` | PHP_CodeSniffer Squiz.PHP.DisallowSizeFunctionsInLoops: Size functions in loops | `not-overfit`: it names `array_push`, from Rerail's own exemption, a word in upstream's tests but not its code |
 | `phpstan-variable-undefined` | PHPStan variable.undefined: Undefined variable | `matches-upstream-tests`: 13 files differ; it needs PHPStan's types |
 | `phpstan-argument-sprintf` | PHPStan argument.sprintf: sprintf() argument count | `matches-upstream-tests`: a format held in a variable with two possible values needs PHPStan's types |
 | `phpstan-array-duplicate-key` | PHPStan array.duplicateKey: Duplicate array key | `matches-upstream-tests`: implicit keys, class constants and PHPDoc-typed keys need PHPStan's types |
@@ -99,13 +99,16 @@ function greet(string $name, int $count): string
 }
 ```
 
-Re-recording runs offline against the pinned tool versions, with PHP 8.5.11:
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/php.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
+laravel and symfony, against the pinned tool versions, with the pinned PHP 8.5.11
+(`conformance/recorders/port-readiness/runtimes/php/build.sh`) and Composer:
 
 ```sh
-python3 upstream/phpcs/generate.py fixtures <PHP_CodeSniffer checkout at 4.0.4> <composer project with squizlabs/php_codesniffer 4.0.4>
-python3 upstream/phpstan/generate.py fixtures <phpstan-src checkout at 2.2.16> <composer project with phpstan/phpstan 2.2.16>
-python3 upstream/psalm/generate.py fixtures <Psalm checkout at 6.19.1> <composer project with vimeo/psalm 6.19.1>
-python3 upstream/<tool>/generate.py corpus <composer project> laravel=<laravel checkout> symfony=<symfony checkout>
+npm run fixtures:derive -- --pack php                 # every tool
+npm run fixtures:derive -- --pack php --tool psalm    # one
+npm run fixtures:push -- --pack php --tool psalm      # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 The Psalm recorder reads which code Psalm leaves unanalysed with the usage-corpus generator it shares with the engine's
@@ -143,14 +146,14 @@ Port of PHP_CodeSniffer 4.0.4 Generic.PHP.LowerCaseConstant. Catches true, false
 
 ### `phpcs-generic-php-no-silenced-errors`
 
-Port of PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors (every @ operator). Divergence (NER-1811): not reported where the @ is part of an idiom that needs it, because removing it changes behaviour:
+Port of PHP_CodeSniffer 4.0.4 Generic.PHP.NoSilencedErrors (every @ operator). Divergence: not reported where the @ is part of an idiom that needs it, because removing it changes behaviour:
 
 - a silenced mkdir(), rmdir() or unlink() of a path that the right operand of a `&&`, `||`, `and` or `or` re-checks with is_dir(), is_file() or file_exists(), where the @ call is that operator's left operand or reaches it only through `!`, parentheses and earlier operands of the same chain (the race-safe `!@mkdir($dir) && !is_dir($dir)`, where the re-check decides whether a warning was a failure);
 - a silenced trigger_error() or user_error() whose second argument, or argument named error_level, is E_USER_DEPRECATED (Symfony's deprecation convention, silenced so only error handlers that opt in log it).
 
 ### `phpcs-squiz-php-disallow-size-functions-in-loops`
 
-Port of PHP_CodeSniffer 4.0.4 Squiz.PHP.DisallowSizeFunctionsInLoops: count(), sizeof() and strlen() in a for, while or do-while condition. Divergence (NER-1812): not reported when the loop changes the value it measures, because hoisting then changes what the loop does. The loop changes it when it assigns or appends to it (=, []=, +=, .=), unsets one of its elements, passes it to array_push, array_unshift, array_pop, array_shift or array_splice, or, for a $this property, calls a method on $this.
+Port of PHP_CodeSniffer 4.0.4 Squiz.PHP.DisallowSizeFunctionsInLoops: count(), sizeof() and strlen() in a for, while or do-while condition. Divergence: not reported when the loop changes the value it measures, because hoisting then changes what the loop does. The loop changes it when it assigns or appends to it (=, []=, +=, .=), unsets one of its elements, passes it to array_push, array_unshift, array_pop, array_shift or array_splice, or, for a $this property, calls a method on $this.
 
 ### `phpcs-squiz-php-eval`
 
@@ -170,7 +173,7 @@ Port of PHPStan 2.2.16 array.duplicateKey (DuplicateKeysInLiteralArraysRule). Re
 
 ### `phpstan-if-always-false`
 
-Port of PHPStan 2.2.16 if.alwaysFalse (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always falsy. Not reported: comparisons, negations, ternaries, isset and empty (PHPStan leaves those to other rules), a condition in a trait, or an if preceded by an inline @var doc comment (PHPStan reads the variable as the PHPDoc type). Divergence (NER-1810): an if whose block holds only class, interface, trait, enum or function declarations and class_alias calls (with comments), such as Symfony's `if (false) { class Router {} }` deprecation stubs, which Composer's class map and IDEs read and which must not be deleted, is not reported.
+Port of PHPStan 2.2.16 if.alwaysFalse (IfConstantConditionRule): an if condition PHP's constant evaluation (variables followed through their one reaching binding) finds always falsy. Not reported: comparisons, negations, ternaries, isset and empty (PHPStan leaves those to other rules), a condition in a trait, or an if preceded by an inline @var doc comment (PHPStan reads the variable as the PHPDoc type). Divergence: an if whose block holds only class, interface, trait, enum or function declarations and class_alias calls (with comments), such as Symfony's `if (false) { class Router {} }` deprecation stubs, which Composer's class map and IDEs read and which must not be deleted, is not reported.
 
 ### `phpstan-if-always-true`
 
@@ -190,7 +193,7 @@ Port of PHPStan 2.2.16 variable.undefined (DefinedVariableRule): a variable read
 
 ### `psalm-forbidden-code`
 
-Port of Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call. Divergence (NER-1809): a var_dump call is not reported when its output is the point, because removing it changes behaviour: when it is a statement that an earlier statement in the same block starts buffering with ob_start() and a later statement reads the buffer with ob_get_clean() or ob_get_contents(), or when it is inside a function or method named dump or dd, where it is the fallback dumper.
+Port of Psalm 6.19.1 ForbiddenCode with no forbiddenFunctions configured: a call PHP resolves to var_dump or shell_exec (not a first-class callable), and a backtick shell command, which Psalm reads as a shell_exec call. Divergence: a var_dump call is not reported when its output is the point, because removing it changes behaviour: when it is a statement that an earlier statement in the same block starts buffering with ob_start() and a later statement reads the buffer with ob_get_clean() or ob_get_contents(), or when it is inside a function or method named dump or dd, where it is the fallback dumper.
 
 ### `psalm-unused-variable`
 

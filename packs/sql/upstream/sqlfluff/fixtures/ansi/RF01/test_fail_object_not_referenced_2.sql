@@ -1,1 +1,0 @@
-SELECT * FROM my_tbl WHERE foo.bar > 0

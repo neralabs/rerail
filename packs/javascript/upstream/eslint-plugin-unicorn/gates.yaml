@@ -1,5 +1,5 @@
 adapter: eslint
-# eslint-plugin-unicorn's documents in rerail's javascript pack (NER-1738).
+# eslint-plugin-unicorn's documents in rerail's javascript pack.
 rerail:
   pack: javascript
   project: eslint-plugin-unicorn
@@ -7,7 +7,7 @@ upstream:
   name: sindresorhus/eslint-plugin-unicorn plugin rules
   repository: https://github.com/sindresorhus/eslint-plugin-unicorn
   # The release rerail's javascript pack records (packs/javascript/licenses/eslint-plugin-unicorn/UPSTREAM.md:
-  # eslint-plugin-unicorn 76.0.0 at this commit), the V1 pack ticket's pin (NER-1738: 76.0.0 @ f70155eb); tag v76.0.0.
+  # eslint-plugin-unicorn 76.0.0 at this commit), the V1 pack's pin (76.0.0 @ f70155eb); tag v76.0.0.
   commit: f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1
   version: 76.0.0
   license: MIT
@@ -59,7 +59,7 @@ known_gaps: []
 # - File types: recommended sets no `files`, so ESLint lints its defaults .js, .mjs and .cjs; those are Gate 2's
 #   in-scope samples. The Gate 6 corpus has no such file (its ECMAScript files are 11 .jsx, 39 .ts and 57 .tsx), so
 #   Gate 6 has no case for any rule here, by construction.
-# - Message text (NER-1740's question for React): no port copies upstream's documentation. unicorn:no-null and
+# - Message text: no port copies upstream's documentation. unicorn:no-null and
 #   unicorn:no-array-for-each paraphrase the messages in the rule code ("Use `undefined` instead of `null`.",
 #   "Use `for…of` instead of `.forEach(…)`."); the other messages and every description are the port's own words.
 # - Upstream's tests run in validation/upstream/eslint-plugin-unicorn-76.0.0. Upstream commits no lockfile, so the

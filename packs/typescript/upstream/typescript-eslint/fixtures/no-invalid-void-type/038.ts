@@ -1,1 +1,0 @@
-function functionGeneric2<T extends void = void>(arg: T) {}

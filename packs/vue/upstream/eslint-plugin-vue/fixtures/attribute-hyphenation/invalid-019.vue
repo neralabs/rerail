@@ -1,1 +1,0 @@
-<template><div><custom :_attr_Jj="prop"></custom></div></template>

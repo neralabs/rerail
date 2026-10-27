@@ -1,6 +1,6 @@
 /**
  * typescript-eslint-class-literal-property-style (packs/typescript/candidates/) must not steer an agent into breaking
- * a class hierarchy without warning (NER-1785). Like typescript-eslint, the rule reports a getter that returns a
+ * a class hierarchy without warning. Like typescript-eslint, the rule reports a getter that returns a
  * literal and advises a readonly field. When a subclass overrides that getter as an accessor
  * (`override get x() { ... }`), turning the base getter into a field fails to compile with TS2611 ("'x' is defined as
  * a property in class 'Base', but is overridden here in 'Derived' as an accessor"). Subclasses usually live in other
@@ -45,7 +45,7 @@ function findings(compiled: NativeCompiledCodeRuleDsl, source: string): { line: 
 
 const ts = (...lines: string[]) => [...lines, ""].join("\n");
 
-describe("typescript-eslint-class-literal-property-style (NER-1785)", () => {
+describe("typescript-eslint-class-literal-property-style", () => {
   it("warns that a subclass accessor override keeps the base getter from becoming a field", async () => {
     const compiled = await compile();
     const source = ts(

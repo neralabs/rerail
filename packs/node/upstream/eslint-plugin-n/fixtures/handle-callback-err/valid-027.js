@@ -1,1 +1,0 @@
-var test = function(any_error) { console.log(any_error); };

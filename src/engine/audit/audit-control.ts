@@ -198,7 +198,7 @@ export class SqliteAuditControlStore {
   /**
    * Claim the audit of one checkout for this session: false while another live session audits it or once one completed.
    * An interrupted attempt was cut short and always runs again. A failed one runs again only when it can now come out
-   * differently: it failed only for files read in part, which no longer fail an audit (NER-1828), or the compiled
+   * differently: it failed only for files read in part, which no longer fail an audit, or the compiled
    * catalog is not the one it ran against (`catalogRevision`; unknown when omitted). Anything else would fail the same
    * way at every session start. The audit runs off the session's request path, so a retry costs background work,
    * never a turn.

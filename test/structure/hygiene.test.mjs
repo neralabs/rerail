@@ -71,6 +71,18 @@ describe("#20 generated files marked", () => {
     );
     expect(result).toEqual({ actual: "100% (0/0)", findings: [] });
   });
+
+  it("asks no header of a binary-format generated file, whether its bytes or its LFS pointer are checked out", () => {
+    const pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1626241\n";
+    const result = generatedMarked(
+      memoryRepo({
+        "native/grammars/sql/src/parser.generated.c.gz": pointer,
+        "native/grammars/rust/src/parser.generated.c.gz": binary(1024),
+        "native/src/pointer.generated.rs": pointer,
+      }),
+    );
+    expect(paths(result)).toEqual(["native/src/pointer.generated.rs"]);
+  });
 });
 
 describe("#21 top-level READMEs", () => {

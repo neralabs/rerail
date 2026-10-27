@@ -754,7 +754,7 @@ fn typescript_declare_global_does_not_shadow() {
 }
 
 /// `global { }` inside `declare module "m"` is the same global augmentation as `declare global { }`:
-/// `global` binds no name, nor do the declarations in its body (NER-1875).
+/// `global` binds no name, nor do the declarations in its body.
 #[test]
 fn typescript_global_augmentation_without_declare_does_not_shadow() {
     typescript(

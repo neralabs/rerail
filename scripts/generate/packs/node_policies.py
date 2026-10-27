@@ -16,7 +16,7 @@ Data read from the pinned tools (through `node`):
 
 Writes (every other policy of the pack is hand-written: packs/node/candidates/rules/n-no-process-exit.json):
 - packs/node/candidates/rules/<id>.json: every ported rule but n-no-process-exit. They are candidates until
-  eslint-plugin-n is gated (NER-1898); a port that passes the port readiness gates joins SHIPPED and is written to
+  eslint-plugin-n is gated; a port that passes the port readiness gates joins SHIPPED and is written to
   packs/node/rules/<id>.json instead, shipped, its candidates/rules copy removed;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
@@ -49,7 +49,7 @@ PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 # set-up's `oxlintRuleOfPort` maps it).
 OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "handle-callback-err", "no-exports-assign",
                      "no-mixed-requires", "no-new-require", "no-path-concat", "no-process-env", "no-sync", "no-top-level-await"}
-# The ports that passed the port readiness gates (none until NER-1898), written to packs/node/rules/; every other port is written
+# The ports that passed the port readiness gates (none yet), written to packs/node/rules/; every other port is written
 # to packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
 SHIPPED = set()
 
@@ -328,7 +328,7 @@ def fn_utils(rx_mod, rx_fn, guarded=False):
     return utils
 
 
-# Upstream also reports `watch`; Rerail does not (NER-1834, declared in packs/node/divergences.json): fs.promises.watch
+# Upstream also reports `watch`; Rerail does not (declared in packs/node/divergences.json): fs.promises.watch
 # returns an async iterator of change events, not an FSWatcher, so it is not a drop-in replacement.
 FS_FNS = "access copyFile open rename truncate rmdir mkdir readdir readlink symlink lstat stat link unlink chmod lchmod lchown chown utimes realpath mkdtemp writeFile appendFile readFile cp glob lutimes opendir rm statfs".split()
 DNS_CALL = "lookup lookupService getServers resolve resolve4 resolve6 resolveAny resolveCname resolveMx resolveNaptr resolveNs resolvePtr resolveSoa resolveSrv resolveTxt reverse setServers".split()

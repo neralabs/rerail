@@ -1,1 +1,0 @@
-foo(Number.NaN * 2)

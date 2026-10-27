@@ -1,5 +1,0 @@
-
-function foox() {
-  return foox();
-}
-      

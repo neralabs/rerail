@@ -1,1 +1,0 @@
-const a: Foo<number> = new Foo;

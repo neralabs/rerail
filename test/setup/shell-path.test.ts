@@ -40,6 +40,16 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
     expect(await readFile(zshrc, "utf8")).toBe("alias ll='ls -l'\n");
   });
 
+  it("falls back to the account's login shell when SHELL is unset, as inside some coding-agent hosts", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const env = { PATH: "/usr/bin:/bin" };
+    expect(await addLauncherToPath({ ...options, env, loginShell: "/bin/zsh" })).toEqual({ status: "changed", locations: [join(home, ".zshrc")] });
+    expect(existsSync(join(home, ".profile"))).toBe(false);
+    // With no login shell known either, the file every POSIX login shell but zsh reads.
+    const other = await machine("/bin/zsh");
+    expect(await addLauncherToPath({ ...other.options, env, loginShell: null })).toEqual({ status: "changed", locations: [join(other.home, ".profile")] });
+  });
+
   it("writes nothing when the running PATH has the directory, or RERAIL_MODIFY_PATH=0", async () => {
     const { home, binDir, env, options } = await machine("/bin/zsh");
     expect(await addLauncherToPath({ ...options, env: { ...env, PATH: `/usr/bin:${binDir}/` } })).toEqual({ status: "skipped" });

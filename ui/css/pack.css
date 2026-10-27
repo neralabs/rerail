@@ -1,0 +1,52 @@
+/*
+ * A rule pack's page and Created by you (views/pack.js): the heading (name, on-count chip, violations share, quiet
+ * Remove pack, what the pack covers), the controls with the whole-pack switch on the On/off column, then the rule
+ * table (render/rules.js; rows in base.css).
+ */
+
+.ppage{margin-top:16px}
+.ppage .ghead.pk{display:block;margin:0 0 18px}
+.ppage .ghead.pk h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
+.ppage .ghead.pk p.sub{margin-top:4px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;max-width:none}
+.ppage .ghead.pk p.sub .n2{display:inline-flex;align-items:center;font-size:11.5px;font-weight:500;line-height:16px;color:var(--muted-foreground);background:var(--subtle);padding:1px 7px;border-radius:var(--radius-md);white-space:nowrap}
+.ppage .ghead.pk p.sub .n2.mix{color:var(--foreground)}
+.ppage .ghead.pk p.sub .shr{font-size:12px;color:var(--muted-foreground)}
+.ppage .ghead.pk p.sub .rmslot:empty{display:none}
+.ppage .ghead.pk p.sub .rmslot .btn{margin-left:6px}
+/* The two-step question continues the sub-line on a line of its own: "Remove all 4 rules in Node? Remove · Cancel". */
+.ppage .ghead.pk p.sub .rmslot:has(.rmask){flex:1 1 100%}
+.ppage .ghead.pk p.sub .rmask{display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 10px;margin:14px 0 12px;max-width:72ch;font-size:13px;line-height:1.5}
+.ppage .ghead.pk p.pitch{margin-top:8px;max-width:72ch;font-size:13px;line-height:1.5;color:var(--muted-foreground)}
+.ppage > .list .empty p.acts{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+
+/* The rarest action is the quietest: a muted link that turns red on hover; the question it asks keeps the red. */
+.btn.danger.quiet{background:transparent;color:var(--muted-foreground)}
+.btn.danger.quiet:hover,.btn.danger.quiet:focus-visible{background:var(--danger-subtle);color:var(--danger-foreground);filter:none}
+
+/* Filter tinted while it narrows the list, so the pill says so without a banner. */
+.filterctl{display:inline-flex;align-items:center;gap:6px}
+.sortctl.on select{background:var(--brand-subtle);color:var(--brand-foreground);font-weight:500}
+.sortctl.on::after{border-color:var(--brand-foreground)}
+.ctlslot{display:inline-flex}
+/* The search takes half the content width: a search box does not need the whole line. */
+.ppage .search{flex:0 1 50%;max-width:50%}
+@media (max-width:760px){.ppage .search{flex-basis:100%;max-width:none}}
+
+/* The whole-pack switch: right-aligned with the column labels' 15px inset, so it sits on the On/off column. */
+.packall{display:inline-flex;justify-content:flex-end;align-items:center;gap:12px;padding:0 15px 0 0;font-size:13px;color:var(--foreground)}
+.packall .t{color:var(--muted-foreground)}
+
+/* Column labels just above the table; the widths mirror .rside (96px count, 32px + 16px to the 34px switch). */
+.colhead{display:grid;grid-template-columns:minmax(0,1fr) minmax(96px,max-content) 34px;gap:0 48px;white-space:nowrap;padding:0 15px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);text-align:right}
+.colhead > span:first-child{text-align:left}
+.colhead > span:last-child{display:flex;justify-content:center;width:34px}
+.colhead span.short{display:none}
+.rtable .row{cursor:pointer}
+.rtable .row:hover{background:var(--subtle-fill)}
+@media (max-width:1100px){
+  .colhead{gap:0 14px;grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 34px}
+  .colhead span.long{display:none} .colhead span.short{display:inline}
+}
+body[data-panel="open"] .colhead{gap:0 14px;grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 34px}
+body[data-panel="open"] .colhead span.long{display:none}
+body[data-panel="open"] .colhead span.short{display:inline}

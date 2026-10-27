@@ -1,1 +1,0 @@
-try { blah(); } catch (err) { /* pass */ }

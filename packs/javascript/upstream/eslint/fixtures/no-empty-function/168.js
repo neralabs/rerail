@@ -1,1 +1,0 @@
-var foo = function() {}; // allow: protectedConstructors

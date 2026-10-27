@@ -1,1 +1,0 @@
-<template><div><div v-bind:is="your-component" v-for="x in list"></div></div></template>

@@ -1,0 +1,1198 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "typescript-eslint-no-unused-private-class-members",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove private and #private class members that nothing in their class reads; they are dead code.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "st": {
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^static$",
+              "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+            }
+          },
+          "acc": {
+            "any": [
+              {
+                "any": [
+                  { "kind": "method_definition" },
+                  { "kind": "method_signature" },
+                  { "kind": "abstract_method_signature" }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(?:get|set)$",
+                  "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^accessor$",
+                  "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+                }
+              }
+            ]
+          },
+          "sameValue": {
+            "any": [
+              { "pattern": "$K" },
+              {
+                "not": { "kind": "template_string", "has": { "stopBy": "neighbor", "kind": "escape_sequence" } },
+                "compare": { "left": "KK", "op": "eq", "right": "N", "text": "key" }
+              },
+              {
+                "not": { "kind": "private_property_identifier" },
+                "compare": { "left": "KN", "op": "eq", "right": "N", "text": "name" }
+              },
+              { "kind": "template_string", "compare": { "left": "KN", "op": "eq", "right": "N", "text": "unquoted" } }
+            ]
+          },
+          "odd": {
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "any": [{ "kind": "number" }, { "kind": "string" }, { "kind": "template_string" }],
+                  "all": [
+                    {
+                      "any": [{ "kind": "number", "not": { "regex": "^(?:0|[1-9][0-9]{0,14})$" } }, { "regex": "\\\\" }]
+                    },
+                    {
+                      "any": [
+                        { "inside": { "stopBy": "neighbor", "field": "index", "kind": "subscript_expression" } },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "inside": { "stopBy": "neighbor", "kind": "class_body" }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "field": "property",
+                            "inside": { "stopBy": "neighbor", "kind": "class_body" }
+                          }
+                        },
+                        { "inside": { "stopBy": "neighbor", "kind": "computed_property_name" } }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    { "kind": "property_identifier" },
+                    { "kind": "private_property_identifier" },
+                    { "kind": "shorthand_property_identifier_pattern" },
+                    { "kind": "identifier" }
+                  ],
+                  "regex": "\\\\"
+                }
+              ]
+            }
+          },
+          "ctor": {
+            "any": [{ "kind": "method_definition" }, { "kind": "method_signature" }],
+            "has": { "stopBy": "neighbor", "field": "name", "regex": "^(?:constructor|'constructor'|\"constructor\")$" },
+            "not": { "matches": "st" }
+          },
+          "pp": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [{ "kind": "accessibility_modifier" }, { "kind": "override_modifier" }]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^readonly$",
+                  "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+                }
+              }
+            ]
+          },
+          "knText": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "any": [
+                    { "kind": "property_identifier" },
+                    { "kind": "private_property_identifier" },
+                    { "kind": "string" },
+                    { "kind": "number" },
+                    { "kind": "template_string" },
+                    { "kind": "null" },
+                    { "kind": "true" },
+                    { "kind": "false" },
+                    { "kind": "regex" }
+                  ],
+                  "pattern": "$N",
+                  "matches": "sameText"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "property",
+                  "any": [
+                    { "kind": "property_identifier" },
+                    { "kind": "private_property_identifier" },
+                    { "kind": "string" },
+                    { "kind": "number" },
+                    { "kind": "template_string" },
+                    { "kind": "null" },
+                    { "kind": "true" },
+                    { "kind": "false" },
+                    { "kind": "regex" }
+                  ],
+                  "pattern": "$N",
+                  "matches": "sameText"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "computed_property_name",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      { "kind": "property_identifier" },
+                      { "kind": "private_property_identifier" },
+                      { "kind": "string" },
+                      { "kind": "number" },
+                      { "kind": "template_string" },
+                      { "kind": "null" },
+                      { "kind": "true" },
+                      { "kind": "false" },
+                      { "kind": "regex" }
+                    ],
+                    "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                    "pattern": "$N",
+                    "matches": "sameText"
+                  }
+                }
+              }
+            ]
+          },
+          "knValue": {
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "any": [
+                    { "kind": "property_identifier" },
+                    { "kind": "private_property_identifier" },
+                    { "kind": "string" },
+                    { "kind": "number" },
+                    { "kind": "template_string" },
+                    { "kind": "null" },
+                    { "kind": "true" },
+                    { "kind": "false" },
+                    { "kind": "regex" }
+                  ],
+                  "pattern": "$N",
+                  "matches": "sameValue"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "property",
+                  "any": [
+                    { "kind": "property_identifier" },
+                    { "kind": "private_property_identifier" },
+                    { "kind": "string" },
+                    { "kind": "number" },
+                    { "kind": "template_string" },
+                    { "kind": "null" },
+                    { "kind": "true" },
+                    { "kind": "false" },
+                    { "kind": "regex" }
+                  ],
+                  "pattern": "$N",
+                  "matches": "sameValue"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "computed_property_name",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      { "kind": "property_identifier" },
+                      { "kind": "private_property_identifier" },
+                      { "kind": "string" },
+                      { "kind": "number" },
+                      { "kind": "template_string" },
+                      { "kind": "null" },
+                      { "kind": "true" },
+                      { "kind": "false" },
+                      { "kind": "regex" }
+                    ],
+                    "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                    "pattern": "$N",
+                    "matches": "sameValue"
+                  }
+                }
+              }
+            ]
+          },
+          "sameText": {
+            "any": [
+              { "kind": "private_property_identifier", "pattern": "$K" },
+              {
+                "not": { "kind": "private_property_identifier" },
+                "compare": { "left": "KN", "op": "eq", "right": "N", "text": "unquoted" }
+              }
+            ]
+          },
+          "mem": {
+            "inside": { "stopBy": "neighbor", "kind": "class_body" },
+            "all": [
+              { "pattern": "$M" },
+              { "not": { "matches": "ctor" } },
+              {
+                "any": [
+                  { "has": { "stopBy": "neighbor", "kind": "accessibility_modifier", "regex": "^private$" } },
+                  {
+                    "has": { "stopBy": "neighbor", "kind": "private_property_identifier" },
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^(?:accessor|abstract)$",
+                        "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+                      }
+                    }
+                  }
+                ]
+              },
+              { "matches": "cls" }
+            ]
+          },
+          "cls": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "class_body",
+              "pattern": "$CB",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [{ "kind": "class" }, { "kind": "class_declaration" }, { "kind": "abstract_class_declaration" }],
+                "all": [
+                  {
+                    "any": [
+                      { "has": { "stopBy": "neighbor", "field": "name", "pattern": "$CN" } },
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "any": [{ "kind": "type_identifier" }, { "kind": "identifier" }]
+                          }
+                        },
+                        "pattern": "$CN"
+                      }
+                    ]
+                  },
+                  {
+                    "any": [
+                      { "inside": { "stopBy": "neighbor", "kind": "export_statement", "pattern": "$CLS" } },
+                      { "pattern": "$CLS" }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "mst0": { "has": { "stopBy": "neighbor", "pattern": "$M", "matches": "st" } },
+          "macc0": { "has": { "stopBy": "neighbor", "pattern": "$M", "matches": "acc" } },
+          "mst": {
+            "inside": {
+              "stopBy": "end",
+              "pattern": "$CLS",
+              "any": [
+                { "has": { "stopBy": "neighbor", "pattern": "$CB", "matches": "mst0" } },
+                {
+                  "has": { "stopBy": "neighbor", "has": { "stopBy": "neighbor", "pattern": "$CB", "matches": "mst0" } }
+                }
+              ]
+            }
+          },
+          "macc": {
+            "inside": {
+              "stopBy": "end",
+              "pattern": "$CLS",
+              "any": [
+                { "has": { "stopBy": "neighbor", "pattern": "$CB", "matches": "macc0" } },
+                {
+                  "has": { "stopBy": "neighbor", "has": { "stopBy": "neighbor", "pattern": "$CB", "matches": "macc0" } }
+                }
+              ]
+            }
+          },
+          "cbi": { "pattern": "$CB", "not": { "matches": "mst0" } },
+          "own": {
+            "any": [
+              { "matches": "st", "inside": { "stopBy": "neighbor", "pattern": "$CB", "matches": "mst0" } },
+              { "not": { "matches": "st" }, "inside": { "stopBy": "neighbor", "matches": "cbi" } }
+            ]
+          },
+          "ocls": {
+            "any": [{ "kind": "class" }, { "kind": "class_declaration" }, { "kind": "abstract_class_declaration" }],
+            "has": { "stopBy": "neighbor", "field": "body", "matches": "cbi" }
+          },
+          "fv": {
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "own",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(?:accessor|abstract)$",
+                      "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+                    }
+                  }
+                },
+                { "kind": "parenthesized_expression", "matches": "fv" }
+              ]
+            }
+          },
+          "fva": {
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "class_body" },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(?:accessor|abstract)$",
+                      "not": { "any": [{ "kind": "property_identifier" }, { "kind": "identifier" }] }
+                    }
+                  }
+                },
+                { "kind": "parenthesized_expression", "matches": "fva" }
+              ]
+            }
+          },
+          "tn": {
+            "any": [
+              { "kind": "type_identifier", "pattern": "$CN" },
+              { "kind": "generic_type", "has": { "stopBy": "neighbor", "field": "name", "pattern": "$CN" } }
+            ]
+          },
+          "ctx": {
+            "inside": {
+              "stopBy": {
+                "any": [
+                  { "kind": "function_declaration" },
+                  { "kind": "generator_function_declaration" },
+                  { "kind": "function_expression" },
+                  { "kind": "generator_function" },
+                  { "kind": "method_definition" },
+                  { "kind": "class_static_block" },
+                  { "kind": "class_body" },
+                  { "kind": "export_statement" },
+                  { "kind": "class" },
+                  { "kind": "class_declaration" },
+                  { "kind": "abstract_class_declaration" },
+                  { "kind": "computed_property_name", "inside": { "stopBy": "neighbor", "kind": "method_definition" } }
+                ]
+              },
+              "any": [
+                { "matches": "cbi" },
+                { "matches": "ocls" },
+                { "kind": "export_statement", "has": { "stopBy": "neighbor", "matches": "ocls" } },
+                {
+                  "kind": "computed_property_name",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [{ "matches": "cbi" }, { "kind": "object", "matches": "ctx" }]
+                    }
+                  }
+                },
+                { "any": [{ "kind": "method_definition" }, { "kind": "class_static_block" }], "matches": "own" },
+                { "any": [{ "kind": "function_expression" }, { "kind": "generator_function" }], "matches": "fv" },
+                {
+                  "not": { "matches": "fva" },
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "parameters",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "required_parameter",
+                          "all": [
+                            { "has": { "stopBy": "neighbor", "kind": "this" } },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "type_annotation",
+                                "has": { "stopBy": "neighbor", "matches": "tn" }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    { "not": { "matches": "mst" } }
+                  ]
+                }
+              ]
+            }
+          },
+          "thisx": {
+            "any": [
+              { "kind": "this" },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "thisx" } }
+            ]
+          },
+          "alias": {
+            "all": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": { "stopBy": "neighbor", "field": "value", "matches": "thisx" }
+                    }
+                  }
+                }
+              },
+              { "not": { "resolves": { "binding": { "occurrence": { "matches": "vwrite" } } } } }
+            ]
+          },
+          "vwrite": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "any": [
+                    { "kind": "assignment_expression" },
+                    { "kind": "augmented_assignment_expression" },
+                    { "kind": "for_in_statement" }
+                  ]
+                }
+              },
+              { "inside": { "stopBy": "neighbor", "kind": "update_expression" } },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    { "kind": "array_pattern" },
+                    { "kind": "object_pattern" },
+                    { "kind": "pair_pattern" },
+                    { "kind": "rest_pattern" },
+                    { "kind": "assignment_pattern" },
+                    { "kind": "object_assignment_pattern" }
+                  ],
+                  "matches": "pwrite"
+                }
+              }
+            ]
+          },
+          "pwrite": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "any": [{ "kind": "assignment_expression" }, { "kind": "for_in_statement" }]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    { "kind": "array_pattern" },
+                    { "kind": "object_pattern" },
+                    { "kind": "pair_pattern" },
+                    { "kind": "rest_pattern" },
+                    { "kind": "assignment_pattern" },
+                    { "kind": "object_assignment_pattern" }
+                  ],
+                  "matches": "pwrite"
+                }
+              }
+            ]
+          },
+          "psite": {
+            "any": [
+              { "has": { "stopBy": "neighbor", "field": "pattern", "kind": "identifier" } },
+              { "has": { "stopBy": "neighbor", "field": "parameter", "kind": "identifier" } }
+            ]
+          },
+          "obj": {
+            "any": [
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "obj" } },
+              { "any": [{ "kind": "this" }, { "kind": "identifier", "matches": "alias" }], "matches": "ctx" },
+              { "kind": "identifier", "pattern": "$CN", "matches": "mst" },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "form": ["parameter", "except"],
+                    "site": { "matches": "psite" },
+                    "annotation": {
+                      "kind": "type_query",
+                      "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$CN" }
+                    }
+                  }
+                },
+                "matches": "mst"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "form": ["parameter", "except"],
+                    "site": { "matches": "psite" },
+                    "annotation": { "matches": "tn" }
+                  }
+                },
+                "not": { "matches": "mst" }
+              }
+            ]
+          },
+          "wo": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "any": [
+                    { "kind": "assignment_expression" },
+                    { "kind": "for_in_statement" },
+                    { "kind": "assignment_pattern" }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "kind": "augmented_assignment_expression",
+                  "matches": "stmt"
+                }
+              },
+              { "inside": { "stopBy": "neighbor", "kind": "update_expression", "matches": "stmt" } },
+              { "inside": { "stopBy": "neighbor", "kind": "pair_pattern", "field": "value" } },
+              { "inside": { "stopBy": "neighbor", "any": [{ "kind": "rest_pattern" }, { "kind": "array_pattern" }] } },
+              { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "wo" } }
+            ]
+          },
+          "stmt": {
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [{ "kind": "expression_statement" }, { "kind": "parenthesized_expression", "matches": "stmt" }]
+            }
+          },
+          "counts": { "any": [{ "not": { "matches": "wo" } }, { "matches": "macc" }] },
+          "mref": {
+            "not": { "inside": { "stopBy": { "not": { "kind": "member_expression" } }, "kind": "type_query" } },
+            "all": [{ "has": { "stopBy": "neighbor", "field": "object", "matches": "obj" } }, { "matches": "counts" }]
+          },
+          "dref": {
+            "matches": "ctx",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "variable_declarator",
+                  "has": { "stopBy": "neighbor", "field": "value", "matches": "thisx" }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [{ "kind": "assignment_expression" }, { "kind": "assignment_pattern" }],
+                  "has": { "stopBy": "neighbor", "field": "right", "matches": "thisx" }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+                  "has": { "stopBy": "neighbor", "field": "value", "matches": "thisx" }
+                }
+              }
+            ]
+          },
+          "ref": {
+            "any": [
+              {
+                "kind": "private_property_identifier",
+                "not": { "inside": { "stopBy": "neighbor", "inside": { "stopBy": "neighbor", "kind": "class_body" } } },
+                "all": [
+                  {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          { "kind": "class" },
+                          { "kind": "class_declaration" },
+                          { "kind": "abstract_class_declaration" }
+                        ],
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "body",
+                          "not": { "pattern": "$CB" },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "has": { "stopBy": "neighbor", "kind": "private_property_identifier", "pattern": "$K" }
+                          }
+                        },
+                        "inside": { "stopBy": "end", "pattern": "$CLS" }
+                      }
+                    }
+                  },
+                  { "inside": { "stopBy": "neighbor", "matches": "counts" } }
+                ]
+              },
+              {
+                "kind": "property_identifier",
+                "inside": { "stopBy": "neighbor", "field": "property", "kind": "member_expression", "matches": "mref" }
+              },
+              {
+                "inside": { "stopBy": "neighbor", "field": "index", "kind": "subscript_expression", "matches": "mref" }
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern",
+                "any": [
+                  { "inside": { "stopBy": "neighbor", "kind": "object_pattern", "matches": "dref" } },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "object_assignment_pattern",
+                      "inside": { "stopBy": "neighbor", "kind": "object_pattern", "matches": "dref" }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "property_identifier",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "key",
+                  "kind": "pair_pattern",
+                  "inside": { "stopBy": "neighbor", "kind": "object_pattern", "matches": "dref" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-private-member",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              { "kind": "property_identifier" },
+              { "kind": "private_property_identifier" },
+              { "kind": "string" },
+              { "kind": "number" },
+              { "kind": "template_string" },
+              { "kind": "null" },
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "regex" }
+            ],
+            "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+            "all": [
+              { "pattern": "$K" },
+              { "any": [{ "kind": "private_property_identifier" }, { "pattern": "$KN" }] },
+              {
+                "any": [
+                  { "inside": { "stopBy": "neighbor", "field": "name", "matches": "mem" } },
+                  { "inside": { "stopBy": "neighbor", "field": "property", "matches": "mem" } },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "computed_property_name",
+                      "inside": { "stopBy": "neighbor", "matches": "mem" }
+                    }
+                  }
+                ]
+              },
+              { "inside": { "stopBy": "end", "pattern": "$CLS", "not": { "matches": "odd" } } },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "pattern": "$M",
+                  "any": [
+                    {
+                      "matches": "st",
+                      "not": { "precedes": { "stopBy": "end", "matches": "knText", "all": [{ "matches": "st" }] } }
+                    },
+                    {
+                      "not": { "matches": "st" },
+                      "all": [
+                        {
+                          "not": {
+                            "precedes": {
+                              "stopBy": "end",
+                              "any": [
+                                { "matches": "knText", "not": { "matches": "st" } },
+                                {
+                                  "matches": "ctor",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "parameters",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+                                      "matches": "pp",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "field": "pattern",
+                                        "kind": "identifier",
+                                        "pattern": "$N",
+                                        "all": [
+                                          {
+                                            "any": [
+                                              { "kind": "private_property_identifier", "pattern": "$K" },
+                                              {
+                                                "not": { "kind": "private_property_identifier" },
+                                                "compare": {
+                                                  "left": "KN",
+                                                  "op": "eq",
+                                                  "right": "N",
+                                                  "text": "unquoted"
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "pattern": "$CLS",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        { "kind": "property_identifier" },
+                        { "kind": "private_property_identifier" },
+                        { "kind": "string" },
+                        { "kind": "number" },
+                        { "kind": "template_string" },
+                        { "kind": "null" },
+                        { "kind": "true" },
+                        { "kind": "false" },
+                        { "kind": "regex" },
+                        { "kind": "shorthand_property_identifier_pattern" }
+                      ],
+                      "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                      "all": [
+                        { "pattern": "$N" },
+                        {
+                          "any": [
+                            { "kind": "private_property_identifier", "pattern": "$K" },
+                            {
+                              "not": { "kind": "private_property_identifier" },
+                              "compare": { "left": "KN", "op": "eq", "right": "N", "text": "unquoted" }
+                            }
+                          ]
+                        },
+                        { "matches": "ref" }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-unused-private-class-members",
+        "message": "Remove private member $K; nothing in its class reads it.",
+        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
+      }
+    },
+    {
+      "id": "unused-private-member-by-value",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              { "kind": "property_identifier" },
+              { "kind": "private_property_identifier" },
+              { "kind": "string" },
+              { "kind": "number" },
+              { "kind": "template_string" },
+              { "kind": "null" },
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "regex" }
+            ],
+            "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+            "all": [
+              { "pattern": "$K" },
+              { "any": [{ "kind": "private_property_identifier" }, { "pattern": "$KN" }] },
+              {
+                "any": [
+                  {
+                    "kind": "template_string",
+                    "has": { "stopBy": "neighbor", "kind": "escape_sequence", "pattern": "$KK" }
+                  },
+                  { "pattern": "$KK" }
+                ]
+              },
+              {
+                "any": [
+                  { "inside": { "stopBy": "neighbor", "field": "name", "matches": "mem" } },
+                  { "inside": { "stopBy": "neighbor", "field": "property", "matches": "mem" } },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "computed_property_name",
+                      "inside": { "stopBy": "neighbor", "matches": "mem" }
+                    }
+                  }
+                ]
+              },
+              { "inside": { "stopBy": "end", "pattern": "$CLS", "matches": "odd" } },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "pattern": "$M",
+                  "any": [
+                    {
+                      "matches": "st",
+                      "not": { "precedes": { "stopBy": "end", "matches": "knValue", "all": [{ "matches": "st" }] } }
+                    },
+                    {
+                      "not": { "matches": "st" },
+                      "all": [
+                        {
+                          "not": {
+                            "precedes": {
+                              "stopBy": "end",
+                              "any": [
+                                { "matches": "knValue", "not": { "matches": "st" } },
+                                {
+                                  "matches": "ctor",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "parameters",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+                                      "matches": "pp",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "field": "pattern",
+                                        "kind": "identifier",
+                                        "pattern": "$N",
+                                        "all": [{ "matches": "sameValue" }]
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "pattern": "$CLS",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        { "kind": "property_identifier" },
+                        { "kind": "private_property_identifier" },
+                        { "kind": "string" },
+                        { "kind": "number" },
+                        { "kind": "template_string" },
+                        { "kind": "null" },
+                        { "kind": "true" },
+                        { "kind": "false" },
+                        { "kind": "regex" },
+                        { "kind": "shorthand_property_identifier_pattern" }
+                      ],
+                      "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                      "all": [{ "pattern": "$N" }, { "matches": "sameValue" }, { "matches": "ref" }]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "@typescript-eslint/no-unused-private-class-members",
+        "message": "Remove private member $K; nothing in its class reads it.",
+        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
+      }
+    },
+    {
+      "id": "unused-private-parameter-property",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+            "has": { "stopBy": "neighbor", "kind": "accessibility_modifier", "regex": "^private$" },
+            "regex": "(?s)^(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|/\\*(?:[^*]|\\*+[^*/])*\\*+/|//[^\\n]*\\n|/[^*/'\"`]|[^'\"`/])*?\\b(?:(?:private|protected|public|readonly|override)(?:\\s|/\\*(?:[^*]|\\*+[^*/])*\\*+/)+)+(?<P>[^\\s:?=/]+(?:\\s*\\?)?(?:(?:\\s|/\\*(?:[^*]|\\*+[^*/])*\\*+/)*:(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|/\\*(?:[^*]|\\*+[^*/])*\\*+/|//[^\\n]*\\n|/[^*/'\"`]|<(?:[^<>]|<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)*>|[^'\"`/<])*?)?)(?:\\s|/\\*(?:[^*]|\\*+[^*/])*\\*+/)*(?:=[^>].*)?$",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "pattern",
+                  "kind": "identifier",
+                  "all": [{ "pattern": "$K" }, { "pattern": "$KN" }]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "method_definition",
+                    "pattern": "$M",
+                    "matches": "ctor",
+                    "all": [
+                      { "matches": "cls" },
+                      { "inside": { "stopBy": "end", "pattern": "$CLS", "not": { "matches": "odd" } } },
+                      {
+                        "not": {
+                          "precedes": {
+                            "stopBy": "end",
+                            "any": [
+                              { "matches": "knText", "not": { "matches": "st" } },
+                              {
+                                "matches": "ctor",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "parameters",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+                                    "matches": "pp",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "pattern",
+                                      "kind": "identifier",
+                                      "pattern": "$N",
+                                      "all": [
+                                        {
+                                          "any": [
+                                            { "kind": "private_property_identifier", "pattern": "$K" },
+                                            {
+                                              "not": { "kind": "private_property_identifier" },
+                                              "compare": { "left": "KN", "op": "eq", "right": "N", "text": "unquoted" }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "pattern": "$CLS",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        { "kind": "property_identifier" },
+                        { "kind": "private_property_identifier" },
+                        { "kind": "string" },
+                        { "kind": "number" },
+                        { "kind": "template_string" },
+                        { "kind": "null" },
+                        { "kind": "true" },
+                        { "kind": "false" },
+                        { "kind": "regex" },
+                        { "kind": "shorthand_property_identifier_pattern" }
+                      ],
+                      "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                      "all": [
+                        { "pattern": "$N" },
+                        {
+                          "any": [
+                            { "kind": "private_property_identifier", "pattern": "$K" },
+                            {
+                              "not": { "kind": "private_property_identifier" },
+                              "compare": { "left": "KN", "op": "eq", "right": "N", "text": "unquoted" }
+                            }
+                          ]
+                        },
+                        { "matches": "ref" }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.P",
+        "code": "@typescript-eslint/no-unused-private-class-members",
+        "message": "Remove private member $K; nothing in its class reads it.",
+        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
+      }
+    },
+    {
+      "id": "unused-private-parameter-property-by-value",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+            "has": { "stopBy": "neighbor", "kind": "accessibility_modifier", "regex": "^private$" },
+            "regex": "(?s)^(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|/\\*(?:[^*]|\\*+[^*/])*\\*+/|//[^\\n]*\\n|/[^*/'\"`]|[^'\"`/])*?\\b(?:(?:private|protected|public|readonly|override)(?:\\s|/\\*(?:[^*]|\\*+[^*/])*\\*+/)+)+(?<P>[^\\s:?=/]+(?:\\s*\\?)?(?:(?:\\s|/\\*(?:[^*]|\\*+[^*/])*\\*+/)*:(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|`(?:[^`\\\\]|\\\\.)*`|/\\*(?:[^*]|\\*+[^*/])*\\*+/|//[^\\n]*\\n|/[^*/'\"`]|<(?:[^<>]|<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>)*>|[^'\"`/<])*?)?)(?:\\s|/\\*(?:[^*]|\\*+[^*/])*\\*+/)*(?:=[^>].*)?$",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "pattern",
+                  "kind": "identifier",
+                  "all": [{ "pattern": "$K" }, { "pattern": "$KN" }, { "pattern": "$KK" }]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "method_definition",
+                    "pattern": "$M",
+                    "matches": "ctor",
+                    "all": [
+                      { "matches": "cls" },
+                      { "inside": { "stopBy": "end", "pattern": "$CLS", "matches": "odd" } },
+                      {
+                        "not": {
+                          "precedes": {
+                            "stopBy": "end",
+                            "any": [
+                              { "matches": "knValue", "not": { "matches": "st" } },
+                              {
+                                "matches": "ctor",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "parameters",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "any": [{ "kind": "required_parameter" }, { "kind": "optional_parameter" }],
+                                    "matches": "pp",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "field": "pattern",
+                                      "kind": "identifier",
+                                      "pattern": "$N",
+                                      "all": [{ "matches": "sameValue" }]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "pattern": "$CLS",
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        { "kind": "property_identifier" },
+                        { "kind": "private_property_identifier" },
+                        { "kind": "string" },
+                        { "kind": "number" },
+                        { "kind": "template_string" },
+                        { "kind": "null" },
+                        { "kind": "true" },
+                        { "kind": "false" },
+                        { "kind": "regex" },
+                        { "kind": "shorthand_property_identifier_pattern" }
+                      ],
+                      "not": { "has": { "stopBy": "neighbor", "kind": "template_substitution" } },
+                      "all": [{ "pattern": "$N" }, { "matches": "sameValue" }, { "matches": "ref" }]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.P",
+        "code": "@typescript-eslint/no-unused-private-class-members",
+        "message": "Remove private member $K; nothing in its class reads it.",
+        "suppress": { "eslint": { "rules": ["@typescript-eslint/no-unused-private-class-members"] } }
+      }
+    }
+  ]
+}

@@ -134,6 +134,7 @@ function usage(): string {
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
+    "  rerail version",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
@@ -514,6 +515,11 @@ function runStateCommand(args: readonly string[]): number {
   return 0;
 }
 
+/** `rerail version`, or the flags people try first. */
+function isVersionRequest(command: string | undefined): boolean {
+  return command === "version" || command === "--version" || command === "-v";
+}
+
 /** Commands that read shared launcher state or this project's database and must run from whichever launcher the user invoked. */
 function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
@@ -541,6 +547,14 @@ async function main(): Promise<number> {
   if (args[0] === "mcp-bridge") {
     if (args.length !== 1) throw new Error("mcp-bridge takes no arguments");
     await runRerailMcpBridge();
+    return 0;
+  }
+  // The version of the package answering: through the launcher, the active one. Nothing else is read for it, and a
+  // `--profile` (internal testing) changes nothing about it.
+  const versionArgs = takeOption(args, "--profile").args;
+  if (isVersionRequest(versionArgs[0])) {
+    if (versionArgs.length !== 1) throw new Error(`${versionArgs[0]} takes no arguments`);
+    process.stdout.write(`${manifest.name.split("/").pop()} ${manifest.version}\n`);
     return 0;
   }
 
@@ -602,7 +616,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (daemonExit !== undefined) return daemonExit;
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
-  // Internal testing: `scan`, explicit full-repository and git-diff audits. `settings` is decided in NER-1883.
+  // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
   if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
   return undefined;
 }

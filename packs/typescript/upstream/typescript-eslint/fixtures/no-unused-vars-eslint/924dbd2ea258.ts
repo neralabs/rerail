@@ -1,6 +1,0 @@
-
-/*eslint @rule-tester/use-every-a:1*/ !function () {
-  var a;
-  return 1;
-};
-    

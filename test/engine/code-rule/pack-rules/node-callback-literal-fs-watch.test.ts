@@ -1,5 +1,5 @@
 /**
- * Two node pack rules must not steer an agent into breaking working code (NER-1834).
+ * Two node pack rules must not steer an agent into breaking working code.
  *
  * n-no-callback-literal (eslint-plugin-n n/no-callback-literal) judges a call by the callee's name alone: any `cb(...)`
  * or `callback(...)` whose first argument is a literal is reported as a literal "in error position". Many callbacks

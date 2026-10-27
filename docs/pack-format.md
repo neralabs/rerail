@@ -40,7 +40,8 @@ packs/<id>/
 ├── divergences.json    declared disagreements with the tools, as today
 ├── upstream/
 │   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder, and
-│                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus)
+│                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus); the copied
+│                       tests and recordings are pack test data, derived from the pins, not in git (below)
 └── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
 ```
 
@@ -81,8 +82,13 @@ Today's `rerail.rule-pack/v1` ([format](rule-packs.md#format)): `id`, `name`, `c
 `match`, `honourSuppressionComments`, and per rule `id`, `title`, `group`, optional `mode`, `on` and
 `examples: { caught, passes }`. One change: a rule now names its document, `rules/<id>.json`, so a pack is
 self-contained. A pack may ship no rules (`"rules": []`) while all its ports are candidates; such a pack is never
-recommended. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's document
-from the pack:
+recommended. A ported rule starts at the level upstream's recommended configuration gives it: a rule upstream sets to
+`warn` (an ESLint-family `"warn"`, a Clippy lint whose default level is `warn`, a PHP_CodeSniffer warning) carries
+`"mode": "log"` in pack.json, so it is recorded and steers no one until a repository switches it to `steer`; a rule
+upstream sets to `error` or `deny` keeps its document's `steer`. Tools with no warning level (Ruff, Bandit, SQLFluff,
+PHPStan, Psalm, tlint, blade-parser) keep the document's mode, and the document itself stays a faithful port with no
+level. `document` is required (`rulePackFileSchema` in `src/engine/catalog/rule-packs.ts`); core reads each rule's
+document from the pack:
 
 ```json
 { "id": "complexity-cyclomatic-python", "document": "rules/complexity-cyclomatic-python.json", "title": "Keep Python functions at cyclomatic complexity 6 or lower", "group": "Complexity" }
@@ -114,10 +120,23 @@ recordings from `upstream/` unless `conformance.json` sets `oracles`:
   the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
   with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json` and `corpus-<name>.expected.json`: what the tool reported on its own tests
-  and on each pinned corpus, produced by the recorder in the same directory. Recorders are run by hand against the
-  pinned tool versions; tools and corpus checkouts live under `.rerail/{tools,corpora}/<id>/` (gitignored). Where a
-  tool's tests state their expected findings (as markup in the test files), the recorder reads them instead of running the
-  tool: the tool's own test suite requires it to report exactly those.
+  and on each pinned corpus, produced by the recorder in the same directory. `npm run fixtures:derive` runs the
+  recorders against the pinned tool versions (each tool-pack's recipe in `scripts/pack-data/recipes/`); tools and
+  corpus checkouts live under `.rerail/` (gitignored). Where a tool's tests state their expected findings (as markup
+  in the test files), the recorder reads them instead of running the tool: the tool's own test suite requires it to
+  report exactly those.
+- Pack test data: the tool's test cases (`fixtures/`, `tests/`, case lists such as `cases.json` and `*.cases.json`,
+  `fixtures.upstream-check.json`, `lizard-*.tsv`), its recordings (`*.expected.json`) and `authored/` are not in git;
+  the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to score
+  (the files the tool's `UPSTREAM.md` lists as Rerail's, and `authored/`) is authored; everything else is derived,
+  which a maintainer regenerates from the pins with `npm run fixtures:derive`. Both are one archive per tool-pack in
+  S3, which `upstream/<tool>/test-data.lock` names by sha256 and `npm run fixtures:pull` fetches; a pull request that
+  adds or changes data checks it in with `git add -f`, removes an authored file by removing its `UPSTREAM.md` row, and
+  a maintainer archives it before merge from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`;
+  [CONTRIBUTING.md](../CONTRIBUTING.md#merging-maintainers), which also names the CI checks a changed lock must pass).
+  Every consumer (checks 4 and 6, the conformance runner, the recorders, the Rust tests) says to pull when it is
+  absent. `gates.yaml`, `goldens.tsv`, `recording.lock`, `test-data.lock`, `UPSTREAM.md` and the recorders stay in
+  git.
 - `upstream/<tool>/protected-identifiers.json` (optional, ECMA family): opts the pack into the identifier-rename gate,
   `test/conformance/identifier-rename.test.ts`, which scores every shipped port again on the fixtures with each
   user-chosen identifier renamed and fails when a score moves. It maps fixture paths or directories to the names and
@@ -287,9 +306,11 @@ Precisely:
    are Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
    corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
    so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
-   `upstream/<tool>/`. Every listed file must exist, every recorded licence must be on the repository allowlist
-   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
-   paths nothing is copied from, one per line as ``- Not copied: `<upstream path prefix>` — <project>, <SPDX id>``
+   `upstream/<tool>/`. Every listed file must exist (a checkout without the pack's test data fails once per record,
+   saying to run `npm run fixtures:pull`), every recorded licence must be on the
+   repository allowlist (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may
+   declare upstream paths nothing is copied from, one per line as
+   ``- Not copied: `<upstream path prefix>` — <project>, <SPDX id>``
    (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a row whose
    upstream path (its second column) starts with one fails. `reuse lint` and `node scripts/check/check-licenses.mjs`
    stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
@@ -328,50 +349,55 @@ table:
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
+A change counts when it touches what the pack publishes: its `package.json` or a path its `files` lists (`pack.json`,
+`rules/`, `licenses/`, `LICENSE`, `NOTICE`, `README.md`); recordings, candidates and `CHANGELOG.md` do not. The
+**Changesets** job of `release-packs.yml` fails a pull request that changes what a pack publishes with no changeset
+of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`); the Release pull request is exempt.
 `npm test` refuses a pending changeset that gives a pack below 1.0.0 a `minor` or `major` bump
 (`changesetBumpFailures` in `scripts/release/packs.mjs`), which `changeset version` would turn into 0.2.0 or 1.0.0.
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
 bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the packs: the core
-package at the repository root keeps its `v<version>` tag release and the root `CHANGELOG.md`, and a changeset naming
-`@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
+package at the repository root is bumped by the same Release pull request when what it ships changes, with its notes
+in the root `CHANGELOG.md` ([README](../README.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
 rules, so its first release is `0.1.1`.
 
 ### Release
 
-`.github/workflows/version-packs.yml` versions the packs and `.github/workflows/release-packs.yml` releases them;
-core's `v*` release (`release.yml`) is separate.
+`.github/workflows/release-pr.yml` versions the packs, with core, and `.github/workflows/release-packs.yml` releases
+them; core's `v*` release (`release.yml`) is separate.
 
-1. **Version.** On each push to `main` with changesets pending, `version-packs.yml` opens or updates the **Version
-   packs** pull request (opened by the `neralabs-ci` app, so CI runs on it). It runs `npm run version:packs`:
-   `changeset version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new versions in
-   `package-lock.json`. Review it like any pull request; merging it is the release. A newer push to `main` cancels an
-   older run. CI runs only its licence and lint jobs on it, since `release-packs.yml` validates and packs every pack
-   on it and `main` runs everything once it is merged.
+1. **Version.** On each push to `main` with anything releasable, `release-pr.yml` opens or updates the **Release**
+   pull request (opened by the `neralabs-ci` app, so CI runs on it). With changesets pending it runs
+   `npm run version:packs`: `changeset version`, then `scripts/release/sync-pack-lockfile.mjs`, which records the new
+   versions in `package-lock.json`. The same pull request bumps core when what core ships has changed. Its
+   description lists every package and version merging it releases, with their changelog entries. Review it like any
+   pull request; merging it is the release. A newer push to `main` cancels an older run, and with nothing releasable
+   an open Release pull request is closed. CI runs only its licence and lint jobs on it, since `release-packs.yml`
+   validates and packs every pack on it and `main` runs everything once it is merged.
 2. **Publish.** On each push to `main`, every pack whose `package.json` version has no git tag
    `@neralabs/rerail-pack-<id>@<version>` goes through the publish gate and is published:
    - the whole pack validation for that pack (`test/engine/catalog/packs.test.ts`, every check and every rule), so a
      check added to the contract gates publishing with no change to the workflow;
    - `npm pack`, then a check that the tarball holds only `package.json` and what `files` publishes, and no
      validation material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
-   - `npm publish --access restricted --tag next` with npm trusted publishing (the `release` environment, so a
+   - `npm publish --access restricted --tag latest` with npm trusted publishing (the `release` environment, so a
      reviewer approves the run), a check that the registry refuses the package to an anonymous reader, and the tag.
+     Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used
+     from then on. A pack held at an older `latest` (step 3) is published under `next` instead, and its hold stays.
 
    Packs are published one by one, and any failed run can be run again: a version already tagged is skipped, and
    one the registry already has without its tag (a run that failed after publishing) is checked and tagged, not
-   published again. A pull request that touches packs runs the gate and the packing as a dry run.
-3. **Promote.** Publishing changes nothing for users: set-up and `rerail packs add <id>` fetch under `latest` (on
-   the default update channel), so a version is used once it is promoted. Run the workflow from `main` (Actions →
-   Release packs → Run workflow) with no inputs: its first job lists, in the run summary, every pack whose
-   `package.json` version is released and is not `latest` yet, and its promote job, once a reviewer approves the
-   `release` environment, points each one's `latest` at that version. A pack that fails to promote, or whose
-   dist-tags cannot be read, does not stop the others; the run fails naming it and can be run again. Promotions run
-   one at a time.
-
-   To promote one pack alone, give its id. To put an older released version back, give the id and that version: the
-   pack is also tagged `held` there, and runs with no inputs leave it alone (the summary names it) until the pack is
-   promoted by id again, which releases the hold. A version that was never released fails the run. By hand, from a
-   2FA npm login: `npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest` (and `held` to hold it). To try a
-   version before promoting it: `rerail packs add <id>@next`.
+   published again. The run's **Published dist-tags** job then lists each published pack's dist-tags in the run
+   summary and fails if one's `latest` (`next` for a held pack) is not the version just published. A pull request
+   that touches packs runs the gate and the packing as a dry run.
+3. **Put back.** To put an older released version back, run the workflow from `main` (Actions → Release packs → Run
+   workflow) with the pack's id and that version. Its first job lists, in the run summary, what it will move, and its
+   promote job, once a reviewer approves the `release` environment, points the pack's `latest` at that version and
+   tags it `held` there. Publishes and runs with no inputs leave a held pack's `latest` alone (the summary names it)
+   until the pack is promoted by id again, at its `package.json` version, which releases the hold. Run with no inputs,
+   the workflow points `latest` at every pack's released version that is not `latest` yet, less any held. A pack that
+   fails to move, or whose dist-tags cannot be read, does not stop the others; the run fails naming it and can be run
+   again. A version that was never released fails the run. These runs go one at a time.
 
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.

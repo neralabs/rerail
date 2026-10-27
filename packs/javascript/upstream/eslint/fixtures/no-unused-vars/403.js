@@ -1,1 +1,0 @@
-do var foo; while (b);

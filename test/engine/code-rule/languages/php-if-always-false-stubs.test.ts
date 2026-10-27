@@ -1,5 +1,5 @@
 /**
- * phpstan-if-always-false (packs/php/, candidate) must not steer an agent into deleting a declaration stub (NER-1810).
+ * phpstan-if-always-false (packs/php/, candidate) must not steer an agent into deleting a declaration stub.
  * `if (false) { class Router {} }` is a deliberate idiom: the class never exists at runtime (a class_alias call
  * declares the name), but Composer's class map, IDEs and static analysers see a declaration for it. Symfony ships it
  * for every deprecated alias (src/Symfony/Bundle/FrameworkBundle/Routing/Router.php:20 and 23 more on the pack's

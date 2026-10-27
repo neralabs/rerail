@@ -1,1 +1,0 @@
-Lead @auth($arg) Trail

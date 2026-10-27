@@ -16,11 +16,24 @@ concurrency:
 # Real-session jobs call hosted models with repository secrets, and the installed-packs job reads the restricted
 # rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
 # pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
-# fails the job.
+# fails the job. The jobs that read the packs' test data (the Rust tests, unit tests, conformance harnesses and port
+# readiness) are guarded the same way: the archives the tool-packs' test-data.lock files name reach the Actions cache
+# from S3 under an OIDC token, which GitHub does not give those pull requests either. A test-data job holds that token
+# and only fills the cache (.github/actions/pack-test-data, `fetch: "true"`); the jobs that read the data hold none,
+# and restore, verify and extract what it saved (`fetch: "false"`). The data reaches CI only as the archives the locks
+# name (CONTRIBUTING.md, "Pack test data"). A pull request that changes a lock is also checked twice: S3 must hold every
+# archive and recording the locks name (test-data-in-s3, so nothing merges that main cannot read), and each tool-pack
+# whose test-data.lock it changes is derived again from its pins with no credentials and must come out byte for byte as
+# the archive (test-data-reproduces).
 #
-# The Version packs pull request (changeset-release/main, from version-packs.yml) changes only pack versions,
-# changelogs and package-lock.json, and is rewritten on every push to main. It runs the licence and lint jobs only:
-# release-packs.yml validates and packs every pack on it, and main runs everything once it is merged.
+# GitHub reports a job skipped because a job it needs failed as skipped, and a skipped required check passes. So the
+# one required check is ci-result ("CI result"), which needs every job and fails when any failed or was cancelled; a
+# job skipped by its own condition (forks, Dependabot, the Release pull request, the path filters) does not fail it.
+#
+# The Release pull request (changeset-release/main, from release-pr.yml) changes only versions (the packs', and
+# core's in package.json), changelogs and package-lock.json, and is rewritten on every push to main. It runs the
+# licence and lint jobs only: release-packs.yml validates and packs every pack on it, main runs everything once it is
+# merged, and release.yml builds and smokes core again on its tag.
 
 jobs:
   licenses:
@@ -79,6 +92,9 @@ jobs:
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
   # engine embeds. Pushes to main always run the Rust jobs.
+  #
+  # The filters see only the git diff. The packs' test data is not in git (CONTRIBUTING.md): a change to it is a change
+  # to a tool-pack's test-data.lock, which is under packs/**, and a pull request that checks data in adds it there too.
   #
   # Port readiness is filtered on pushes to main as well, against the push's previous head (main takes squash merges
   # only and no force pushes, so a push is one commit), but only when CI finished green on that head. Otherwise (it
@@ -144,6 +160,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.gitattributes'
               - '.github/actions/lfs/**'
+              - '.github/actions/pack-test-data/**'
+              - 'scripts/s3/**'
             # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
             port-readiness:
               - 'packs/**'
@@ -159,15 +177,292 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/port-readiness.yml'
               - '.github/actions/**'
+              - 'scripts/s3/**'
 
-  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
-  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts.
-  rust:
-    name: Rust engine (${{ matrix.name }})
-    needs: changes
-    if: needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main'
+  # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
+  # tool-pack's archives for the unit and conformance jobs, and the three tool-packs the Rust tests read, each its own
+  # key. It holds the OIDC token, which only a miss uses, runs nothing but the pull (scripts/s3/pack-fixtures.mjs, this
+  # commit's code), and never extracts a cache entry; the jobs that read the data restore it holding no token. The
+  # Release pull request reads none. Port readiness has a test-data job of its own (port-readiness.yml).
+  test-data:
+    name: Pack test data
+    if: >-
+      ${{
+        github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # id-token: the archives from S3 on a cache miss, with credentials only the action's pull step holds.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Every tool-pack first: on a miss the single tool-packs below then read the archives it downloaded, not S3.
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: python
+          tool: ruff
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: sql
+          tool: sqlfluff
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: vue
+          tool: eslint-plugin-vue
+          fetch: "true"
+
+  # S3 holds every archive each test-data.lock names and every recording each recording.lock names
+  # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
+  # fails here until a maintainer has pushed what it names (the error says how), so it cannot merge with data that only
+  # its own cache scope holds: main's runs read S3 and never record. Nothing needs this job, so the others still report.
+  # It runs this commit's script alone, under the read role, where the test-data job does.
+  test-data-in-s3:
+    name: Pack test data is in S3
+    if: >-
+      ${{
+        github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # id-token: the read role, whose credentials only the check step holds.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The script needs no npm packages.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # As in .github/actions/pack-test-data: the credentials are this step's outputs, not exported.
+      - id: credentials
+        name: Assume the test data read role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - name: Check S3 holds every locked archive and recording
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: node scripts/s3/pack-fixtures.mjs check
+
+  # The tool-packs whose test-data.lock a pull request changes, for test-data-reproduces: against the merge commit's
+  # first parent and against the event's base commit (the same commit unless the base moved), each compared with the
+  # merge commit, so a lock counts as changed when either differs. A lock the pull request deletes names no tool-pack
+  # left to derive. Pull requests only; it runs no code from the checkout.
+  test-data-locks:
+    name: Find the changed test data locks
+    if: >-
+      ${{
+        github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main' &&
+        github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tool-packs: ${{ steps.locks.outputs.tool-packs }}
+    steps:
+      # The merge commit and its first parent.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      # The checkout keeps no credentials, so the event's base commit is fetched with the token, as port readiness's
+      # report job fetches.
+      - id: locks
+        name: List the tool-packs whose test-data.lock changed
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          refs=()
+          parent="$(git rev-parse -q --verify 'HEAD^1' || true)"
+          if [ -n "$parent" ]; then refs+=("$parent"); fi
+          if [ -n "$EVENT_BASE" ] && [ "$EVENT_BASE" != "$parent" ]; then
+            auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+            if git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$EVENT_BASE"; then
+              refs+=("$EVENT_BASE")
+            else
+              echo "::warning::could not fetch the pull request's base $EVENT_BASE: comparing the locks with ${parent:-nothing} only"
+            fi
+          fi
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "::error::the pull request has no base commit to compare its test-data.lock files with"
+            exit 1
+          fi
+          locks="$(for ref in "${refs[@]}"; do git diff --name-only --no-renames "$ref" HEAD -- 'packs/*/upstream/*/test-data.lock'; done | LC_ALL=C sort -u)"
+          tool_packs='[]'
+          while IFS= read -r lock; do
+            [[ "$lock" =~ ^packs/([a-z0-9-]+)/upstream/([a-z0-9._-]+)/test-data\.lock$ ]] || continue
+            git cat-file -e "HEAD:$lock" 2> /dev/null || continue
+            tool_packs="$(jq -c --arg pack "${BASH_REMATCH[1]}" --arg tool "${BASH_REMATCH[2]}" '. + [{ pack: $pack, tool: $tool }]' <<< "$tool_packs")"
+          done <<< "$locks"
+          echo "tool-packs=$tool_packs" >> "$GITHUB_OUTPUT"
+          echo "test-data.lock changed against the base: $(jq -r 'if length == 0 then "none" else map("\(.pack)/\(.tool)") | join(", ") end' <<< "$tool_packs")"
+
+  # Each tool-pack whose test-data.lock the pull request changes, derived again from its pins (npm run fixtures:derive,
+  # without --update) and compared byte for byte with the data the lock's archive holds, so an archive is what its
+  # pins make and not whatever the run that packed it (a maintainer's, or a bump's) put in. The derivation runs
+  # upstream's code, so the job holds no token: the archives come from the test-data job's cache entry (`fetch:
+  # "false"`), and the runtimes are the ones port-readiness-bump.yml's bump job installs. Without --update the tracked
+  # files (the UPSTREAM.md tables) must come out unchanged too. No leg when no lock changed.
+  test-data-reproduces:
+    name: Test data reproduces from the pins (${{ matrix.pack }} · ${{ matrix.tool }})
+    needs: [test-data-locks, test-data]
+    if: needs.test-data-locks.outputs.tool-packs != '' && needs.test-data-locks.outputs.tool-packs != '[]'
+    runs-on: ubuntu-24.04
+    # The derivation clones, installs and runs the pinned upstream, as the bump job does within the same limit.
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.test-data-locks.outputs.tool-packs) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Every tool-pack's data: a generator may read another tool-pack's, and this is the entry the test-data job warms.
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
+
+      - id: clippy-toolchain
+        name: Read the Rust toolchain Clippy's runtime pins
+        if: matrix.tool == 'clippy'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
+          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
+          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
+          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
+          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned Rust toolchain with clippy
+        if: matrix.tool == 'clippy'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
+          components: clippy
+
+      # The pulled data is the oracle: copied out under the same paths before the derivation removes the derived files.
+      - id: derive
+        name: Derive the tool-pack again and compare it with the pulled data
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          oracle="$RUNNER_TEMP/oracle"
+          mkdir -p "$oracle/packs/$PACK/upstream"
+          cp -a "packs/$PACK/upstream/$TOOL" "$oracle/packs/$PACK/upstream/"
+          npm run fixtures:derive -- --pack "$PACK" --tool "$TOOL" --compare "$oracle"
+
+      # When it differs, what Linux derived from the pins, for a maintainer to review and archive (CONTRIBUTING.md,
+      # "Pack test data": the derived data of a failed reproduction). It is pack test data only, made in this job without
+      # credentials; archiving it is the maintainer's decision, never this job's.
+      - name: Keep the derived data
+        if: failure() && steps.derive.outcome == 'failure'
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: |
+          set -euo pipefail
+          # The script is JavaScript: its ${…} are template literals, not shell expansions.
+          # shellcheck disable=SC2016
+          node --input-type=module -e '
+            import { toolPackFiles } from "./scripts/s3/pack-fixtures.mjs";
+            const directory = `packs/${process.env.PACK}/upstream/${process.env.TOOL}`;
+            for (const path of toolPackFiles(".", directory)) process.stdout.write(`${directory}/${path}\0`);
+          ' | tar --null -T - -cf "$RUNNER_TEMP/derived.tar"
+
+      - name: Upload the derived data
+        if: failure() && steps.derive.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: derived-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/derived.tar
+          retention-days: 7
+          if-no-files-found: error
+
+  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
+  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
+  # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
+  # saved, so the job runs where that job does (the note at the top).
+  rust:
+    name: Rust engine (${{ matrix.name }})
+    needs: [changes, test-data]
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && github.head_ref != 'changeset-release/main' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -191,6 +486,29 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
+      # SQLFluff's recordings and fixtures, and eslint-plugin-vue's fixtures.
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: python
+          tool: ruff
+          fetch: "false"
+
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: sql
+          tool: sqlfluff
+          fetch: "false"
+
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: vue
+          tool: eslint-plugin-vue
+          fetch: "false"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -299,24 +617,41 @@ jobs:
   port-readiness:
     name: Port readiness
     needs: [changes, build]
-    if: needs.changes.outputs.port-readiness != 'false'
-    # The report job posts the results as a pull request comment; the gates read the recordings' attestations.
+    if: >-
+      ${{
+        needs.changes.outputs.port-readiness != 'false' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    # The report job posts the results as a pull request comment; the test-data job pulls each planned tool-pack's test
+    # data, from S3 on a cache miss (the gates legs, which can run upstream's code, get no OIDC token).
     permissions:
       contents: read
+      id-token: write
       issues: write
       pull-requests: write
-      attestations: read
     uses: ./.github/workflows/port-readiness.yml
     with:
       base: ${{ github.event.pull_request.base.sha || github.event.before }}
       # A pull request judges only the tool-packs of the packs it touches; a push to main judges every one.
       select: ${{ github.event_name == 'pull_request' }}
 
+  # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
+  # restored from what the test-data job saved.
   unit:
     name: Unit tests (${{ matrix.shard }}/2)
-    needs: build
+    needs: [build, test-data]
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -330,12 +665,50 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
+
       - uses: ./.github/actions/node-deps
         with:
           built: "true"
 
       - name: Unit tests
         run: npm test -- --shard=${{ matrix.shard }}/2
+
+  # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
+  # (`--dev` serves ui/ as committed), which needs the build's native engine.
+  ui-e2e:
+    name: Dashboard browser tests
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/node-deps
+        with:
+          built: "true"
+
+      - name: Install Chromium and its system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Dashboard browser tests
+        run: npm run test:ui:e2e
+
+      - name: Upload the Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-e2e-report
+          path: .rerail/e2e/
+          retention-days: 7
 
   integration:
     name: Integration tests
@@ -405,7 +778,9 @@ jobs:
 
       # The file names the variable, not the token: npm reads NODE_AUTH_TOKEN from the step that runs it.
       - name: Authenticate npm to read the packs
-        run: printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+        run: |
+          # shellcheck disable=SC2016 # npm expands ${NODE_AUTH_TOKEN} itself; the file must not hold the token.
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - name: Rule packs from npm
         env:
@@ -413,11 +788,20 @@ jobs:
           RERAIL_INSTALLED_PACKS_NPM: "1"
         run: npx vitest run integration/installed-packs.test.ts
 
+  # The conformance harnesses score every pack's ported rules on its test data, restored from what the test-data job
+  # saved.
   tools:
     name: Scripts, reference examples, conformance, and rule playground
-    needs: build
+    needs: [build, test-data]
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -426,6 +810,10 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
 
       - uses: ./.github/actions/node-deps
         with:
@@ -657,3 +1045,47 @@ jobs:
           cat "$results/codex.log"
           cat "$results/cursor.log"
           exit "$status"
+
+  # The one required check (the note at the top). It needs every other job, runs whatever happened to them, and fails
+  # when any of them failed or was cancelled. A job skipped by its own condition passes: forks and Dependabot get no
+  # secrets or OIDC token, the Release pull request runs only the licence and lint jobs, the path filters skip what a
+  # change cannot affect, and test-data-locks and test-data-reproduces run only on pull requests that change a lock.
+  ci-result:
+    name: CI result
+    needs:
+      - licenses
+      - lint
+      - changes
+      - test-data
+      - test-data-in-s3
+      - test-data-locks
+      - test-data-reproduces
+      - rust
+      - build
+      - port-readiness
+      - unit
+      - integration
+      - installed-packs
+      - tools
+      - real-sessions
+      - provider-smoke
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Fail when a job failed or was cancelled
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          {
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries | sort_by(.key) | .[] | "| \(.key) | \(.value.result) |"' <<< "$NEEDS"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          failed="$(jq -r '[to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key] | sort | join(", ")' <<< "$NEEDS")"
+          if [ -n "$failed" ]; then
+            echo "::error::failed or cancelled: $failed"
+            exit 1
+          fi

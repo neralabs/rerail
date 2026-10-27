@@ -1,1 +1,0 @@
-/*eslint @rule-tester/use-every-a:1*/ var a;

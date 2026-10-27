@@ -1,1 +1,0 @@
-math.pow(a, b)

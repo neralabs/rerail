@@ -19,14 +19,17 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 | `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
 
-Re-recording runs offline against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own
-install, on CPython 3.13):
+Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
+([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+(`scripts/pack-data/recipes/python.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
+django, against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own install, on CPython
+3.13). The cases Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request with
+`git add -f`.
 
 ```sh
-python3.14 upstream/ruff/generate.py fixtures <ruff checkout at 0.16.9> <ruff 0.16.9 executable>
-python3.14 upstream/ruff/generate.py corpus <ruff 0.16.9 executable> django=<django checkout>
-python3.14 upstream/bandit/generate.py fixtures <bandit checkout at 1.9.4> <bandit 1.9.4 executable>
-python3.14 upstream/bandit/generate.py corpus <bandit 1.9.4 executable> django=<django checkout>
+npm run fixtures:derive -- --pack python                # every tool
+npm run fixtures:derive -- --pack python --tool ruff    # one
+npm run fixtures:push -- --pack python --tool ruff      # on your own branch: archive it and rewrite its test-data.lock
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -85,7 +88,7 @@ Only matches `xml.sax.parse/parseString/make_parser` calls that are direct child
 
 ### `bandit-b406-import-xml-sax`
 
-Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions (NER-1827).
+Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions.
 
 ### `bandit-b501-request-with-no-cert-validation`
 
@@ -109,7 +112,7 @@ A `shell=` keyword counts as truthy per Bandit's has_shell: anything but a falsy
 
 ### `bandit-b610-django-extra-used`
 
-Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported (NER-1827).
+Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported.
 
 ### `bandit-b613-trojansource`
 
@@ -505,7 +508,7 @@ Port of Ruff's F707 (default-except-not-last) with default settings: a bare `exc
 
 ### `ruff-f722-forward-annotation-syntax-error`
 
-Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `"..."` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function ("`await` statement outside of a function": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it. Divergence: a string after the first element of a subscript whose generic resolves to a jaxtyping import (`Float[Array, "b n"]`, `jaxtyping.Float[...]`, `jt.Shaped[...]`) is a jaxtyping shape, which jaxtyping parses with its own grammar, not a forward annotation, so it is not reported. Ruff 0.16.9 reports it (NER-1827). A shape inside a string annotation (`"Float[Array, 'b n']"`) is still reported.
+Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `"..."` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function ("`await` statement outside of a function": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it. Divergence: a string after the first element of a subscript whose generic resolves to a jaxtyping import (`Float[Array, "b n"]`, `jaxtyping.Float[...]`, `jt.Shaped[...]`) is a jaxtyping shape, which jaxtyping parses with its own grammar, not a forward annotation, so it is not reported. Ruff 0.16.9 reports it. A shape inside a string annotation (`"Float[Array, 'b n']"`) is still reported.
 
 ### `ruff-f811-redefined-while-unused`
 

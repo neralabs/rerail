@@ -1,1 +1,0 @@
-select 1 from table_1 as a join table_2 as a using(pk)
