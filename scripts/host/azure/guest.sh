@@ -93,6 +93,9 @@ provision_linux() {
   version="$(sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p" "$WORK/SHASUMS256.txt")"
   [ -n "$version" ] || { echo "no Node ${RERAIL_ENV_NODE}.x for linux-${arch}" >&2; exit 1; }
   fetch "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" -o "$WORK/node.tar.xz"
+  # A Node already in /usr/local (a GitHub runner's) leaves its npm's files behind under the new one's, and the mix fails
+  # with "Class extends value undefined"; a fresh VM has none to remove.
+  rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
   tar -xJf "$WORK/node.tar.xz" -C /usr/local --strip-components=1
 }
 
