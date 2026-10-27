@@ -5,6 +5,7 @@
 //! - lattices declared on any relation, `.decl r(k: t; v: L) merge @join widen k`, besides T's `.lattice`;
 //! - `min` and `max` aggregates, `$m = min $v : { atom }`, besides `count`;
 //! - the matcher atom `ast($D, $P, { … })`, whose matcher text is kept for the transducer lowering (§3);
+//! - JSON strings, and `.policy { … }` for lint-rule documents (`yaml`, the second syntax of B12);
 //! - named errors for aggregation in recursion (unless the head is a monotone lattice) and unbounded lattices.
 //!
 //! §12's other named errors are not here: an unbounded value cycle needs a definition of its bound (T's own programs
@@ -56,9 +57,17 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
             out.push((Tok::Var(src[pos + 1..end].to_owned()), start));
             pos = end;
         } else if c == b'"' {
-            let end = rest[1..].find('"').ok_or_else(|| Error::Syntax(format!("unterminated string at {:?}", near(src, pos))))?;
-            out.push((Tok::Str(rest[1..1 + end].to_owned()), start));
-            pos += end + 2;
+            // A JSON string (T's had no escapes): `Term::Str` prints as one, and matcher text embeds JSON.
+            let mut end = pos + 1;
+            while end < bytes.len() && bytes[end] != b'"' {
+                end += if bytes[end] == b'\\' { 2 } else { 1 };
+            }
+            if end >= bytes.len() {
+                return Err(Error::Syntax(format!("unterminated string at {:?}", near(src, pos))));
+            }
+            let value = serde_json::from_str(&src[pos..=end]).map_err(|e| Error::Syntax(format!("bad string at {:?}: {e}", near(src, pos))))?;
+            out.push((Tok::Str(value), start));
+            pos = end + 1;
         } else if c.is_ascii_digit() || (c == b'-' && bytes.get(pos + 1).is_some_and(u8::is_ascii_digit)) {
             let end = digits(pos + 1);
             let value = src[pos..end].parse().map_err(|_| Error::Syntax(format!("bad integer {:?}", &src[pos..end])))?;
@@ -290,6 +299,8 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) magic_report: Option<crate::code_rule_dsl::logic::magic::Report>,
     /// Gated negations (`magic::gate_negations`), by their `done_` relation, in the order they were made.
     pub(in crate::code_rule_dsl) gates: Vec<(String, crate::code_rule_dsl::logic::magic::Gate)>,
+    /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
+    pub(in crate::code_rule_dsl) policies: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -577,6 +588,11 @@ impl Parser<'_> {
                 }
                 prog.kindsets.insert(name, kinds);
             }
+            "policy" => {
+                let text = self.braces()?;
+                let policy = serde_json::from_str(&text).map_err(|e| Error::Syntax(format!("bad .policy document: {e}")))?;
+                prog.policies.push(policy);
+            }
             _ => return self.fail("a directive"),
         }
         Ok(())
@@ -761,3 +777,4 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
 
 #[cfg(test)]
 mod tests;
+pub(in crate::code_rule_dsl) mod yaml;
