@@ -1,0 +1,143 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-render-fstrings",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer render_fstrings at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2100_sql_grammar/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
+      "**/__pycache__/**",
+      "**/tmp/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "fstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "all": [
+                          {
+                            "all": [
+                              {
+                                "kind": "string"
+                              },
+                              {
+                                "regex": "(?i)^[rub]*f"
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "kind": "concatenated_string",
+                                "stopBy": "neighbor"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "kind": "concatenated_string"
+                          },
+                          {
+                            "has": {
+                              "all": [
+                                {
+                                  "kind": "string"
+                                },
+                                {
+                                  "regex": "(?i)^[rub]*f"
+                                }
+                              ],
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "format_specifier"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "has": {
+                            "regex": "^render(?:_|$)",
+                            "stopBy": "neighbor",
+                            "field": "name"
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "all": [
+                    {
+                      "kind": "module"
+                    },
+                    {
+                      "regex": {
+                        "$option": "sourceGate",
+                        "cases": {
+                          "true": "render|f\"|f'",
+                          "false": "(?s).*"
+                        }
+                      }
+                    }
+                  ],
+                  "stopBy": "end"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "render_fstring",
+        "anchor": "witness.span",
+        "message": "render_fstring: fstring"
+      }
+    }
+  ]
+}
