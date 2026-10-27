@@ -1,4 +1,5 @@
-use super::super::{FactFamilyContract, StatementRelations, UtilityDefinitionId};
+use super::physical::{FactFamilyContract, StatementRelations};
+use crate::code_rule_dsl::stats::identity::UtilityDefinitionId;
 use super::sql_ast::{
     PhysicalRelation, SqlAstNode, SqlBinaryOperator, SqlColumn, SqlExpression, SqlParameter,
     SqlProjection, SqlValue,
@@ -246,14 +247,14 @@ impl CteAst {
     }
 }
 
-pub(in crate::code_rule_dsl::query) struct TypedBoundaryAst {
+pub(in crate::code_rule_dsl) struct TypedBoundaryAst {
     producers: Vec<u64>,
     utility_definitions: Vec<UtilityDefinitionId>,
     ctes: Vec<CteAst>,
 }
 
 impl TypedBoundaryAst {
-    pub(in crate::code_rule_dsl::query) fn new(
+    pub(in crate::code_rule_dsl) fn new(
         relations: &StatementRelations,
         producers: impl IntoIterator<Item = u64>,
     ) -> Self {
@@ -345,7 +346,7 @@ impl TypedBoundaryAst {
         }
     }
 
-    pub(in crate::code_rule_dsl::query) fn render(&self) -> String {
+    pub(in crate::code_rule_dsl) fn render(&self) -> String {
         debug_assert!(
             self.utility_definitions
                 .windows(2)
@@ -359,7 +360,7 @@ impl TypedBoundaryAst {
             .join(",\n")
     }
 
-    pub(in crate::code_rule_dsl::query) fn verify_rendered_sources(
+    pub(in crate::code_rule_dsl) fn verify_rendered_sources(
         sql: &str,
     ) -> Result<(), String> {
         if sql.contains("rerail_matches") {

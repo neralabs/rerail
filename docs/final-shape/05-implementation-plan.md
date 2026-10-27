@@ -163,7 +163,7 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 | Plan identity | N `cr/query/plan/identity.rs` | `stats/identity.rs` | Key for `compiled_plans`. |
 | Reusable from N's SQL lowering | N `query/plan/sql_ast.rs` (typed SQL AST), `typed_boundary.rs`, `physical.rs` `FactFamilyContract` | `logic/sql/` | Copy these. **Do not copy** `relational_ir.rs`/`relational.rs` (tree axes in SQL). |
 
-**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`); row 3 adapted (next commit); rows 1, 2 and 4 outstanding.**
+**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`); rows 3 (`4c54f94d`) and 4 (next commit) adapted; rows 1 and 2 outstanding.**
 
 ### Phase 6: the logic language (§12; B1, B3, B4, B10–B14, I9)
 

@@ -10,6 +10,7 @@ mod json;
 mod language;
 mod lines;
 mod literal;
+mod logic;
 mod matcher;
 mod model;
 mod module_graph;
