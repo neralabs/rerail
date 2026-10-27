@@ -502,7 +502,9 @@ pub(super) fn execute_batch(
         .collect()
 }
 
-pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 2;
+/// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as Pulling-it-all-together's
+/// `ftsk` spelled them, so dialects never share a token.
+pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 3;
 
 #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
 fn exact_anchor_key(program: &Program) -> Option<(u16, &[u8])> {
@@ -522,20 +524,29 @@ fn exact_anchor_key(program: &Program) -> Option<(u16, &[u8])> {
     Some((kind, &program.strings[usize::from(string)]))
 }
 
-pub(crate) fn kind_index_token(kind: u16) -> String {
-    format!("k{kind:04x}")
+/// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +
+/// kind code`) in the prefilter's spelling. `None` for a dialect without a tape tag.
+pub(crate) fn kind_index_token(lang: crate::code_rule_dsl::language::GrammarDialect, kind: u16) -> Option<String> {
+    let tag = crate::code_rule_dsl::language::tape_tag(lang)?;
+    Some(crate::code_rule_dsl::prefilter::kind_token(
+        crate::code_rule_dsl::facts::core::kind_atom(tag, kind),
+    ))
 }
 
 fn search_index_document(
     tape_id: crate::content_store::TapeId,
     file: &TapeDoc,
 ) -> crate::content_store::TapeSearchIndex {
+    use ast_grep_core::Doc;
+    let lang = *file.get_lang();
     let mut kinds = String::new();
     for node in 0..file.transducer_len() as u32 {
         if node != 0 {
             kinds.push(' ');
         }
-        kinds.push_str(&kind_index_token(file.transducer_kind(node)));
+        kinds.push_str(
+            &kind_index_token(lang, file.transducer_kind(node)).expect("a stored tape's dialect has a tape tag"),
+        );
     }
     crate::content_store::TapeSearchIndex {
         tape_id,

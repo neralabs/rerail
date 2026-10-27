@@ -360,8 +360,8 @@ pub(super) fn restore_persisted_file(
                 index_version: crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(kind))
-                    .collect(),
+                    .map(|&kind| crate::code_rule_dsl::transducer::kind_index_token(matcher.language, kind))
+                    .collect::<Option<_>>()?,
             })
         })
         .collect::<Option<Vec<_>>>();

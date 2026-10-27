@@ -3601,7 +3601,7 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let lookup = |tape_id| SearchKindLookup {
         tape_id,
         index_version: POSITIONAL_INDEX_VERSION,
-        kind_tokens: vec![kind_index_token(call)],
+        kind_tokens: vec![kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap()],
     };
     assert_eq!(
         store
