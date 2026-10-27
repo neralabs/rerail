@@ -81,6 +81,14 @@ export const PUBLISH_MANIFEST_FORMAT: "rerail.pack-data-publish/v1";
 export function publishPath(path: string): (ToolPack & { path: string }) | undefined;
 export function isPackFixture(path: string): boolean;
 export function listedAuthored(record: string, text: string): string[];
+export interface UpstreamSources {
+  licence: string | undefined;
+  source: { repository: string; tag: string | undefined; commit: string | undefined; licence: string | undefined } | undefined;
+  taken: { glob: string; how: string }[];
+  notCopied: { prefix: string; glob: string | undefined }[];
+}
+export function readUpstreamSources(text: string): UpstreamSources;
+export function pathGlob(glob: string): RegExp;
 export function toolRecords(root?: string): string[];
 export function authoredListing(root?: string): Set<string>;
 export function packFixtureKind(path: string, authored?: ReadonlySet<string>): "authored" | "derived" | undefined;

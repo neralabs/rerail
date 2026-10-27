@@ -101,6 +101,11 @@ describe("validatePack", () => {
   const writeJson = (path: string, value: unknown): void => writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
   const editJson = (path: string, edit: (value: Record<string, unknown>) => unknown): void =>
     writeJson(path, edit(z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(path, "utf8")))));
+  /** The fixture pack's licenses/examplelint/UPSTREAM.md, rewritten by `edit`. */
+  const editUpstream = (directory: string, edit: (text: string) => string): void => {
+    const path = join(directory, "licenses", "examplelint", "UPSTREAM.md");
+    writeFileSync(path, edit(readFileSync(path, "utf8")));
+  };
 
   /** pack.json with the `pass-statement` rule's listing replaced by `edit`'s result. */
   const editPassStatement = (directory: string, edit: (rule: Record<string, unknown>) => Record<string, unknown>): void =>
@@ -339,19 +344,42 @@ describe("validatePack", () => {
       { package: ['package.json: license "Apache-2.0" names Apache-2.0; the pack carries Apache-2.0, MIT (Apache-2.0 and what licenses/*/UPSTREAM.md records)'] },
     ],
     [
-      "a copied file no UPSTREAM.md lists",
-      directory => writeFileSync(join(directory, "upstream", "examplelint", "fixtures", "more.py"), "assert d\n"),
-      { licences: ["upstream/examplelint/fixtures/more.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+      "a copied file once its glob is removed",
+      directory => editUpstream(directory, text => text.replace(/^\| `upstream\/examplelint\/fixtures\/\*\*`.*\n/mu, "")),
+      { licences: ["upstream/examplelint/fixtures/asserts.py is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)"] },
     ],
     [
-      "a file copied from an upstream path its UPSTREAM.md lists as not copied",
-      directory => appendFileSync(join(directory, "licenses", "examplelint", "UPSTREAM.md"), "\n- Not copied: `tests/` — a copyleft project, GPL-3.0-only\n"),
-      { licences: ["licenses/examplelint/UPSTREAM.md lists upstream/examplelint/fixtures/asserts.py as copied from tests/asserts.py, under tests/, which it lists as not copied"] },
+      "a glob that matches no file",
+      directory => editUpstream(directory, text => `${text}| \`upstream/examplelint/tests/**\` | \`tests/\` | verbatim |\n`),
+      { licences: ["licenses/examplelint/UPSTREAM.md: `upstream/examplelint/tests/**` matches no copied file"] },
     ],
     [
-      "an authored file the tool's UPSTREAM.md does not list",
-      directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
-      { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+      // As ruff's licenses/pylint/UPSTREAM.md refuses its fixtures/pylint/: the pack mirrors upstream's layout.
+      "a file under a not-copied glob",
+      directory => {
+        editUpstream(directory, text => `${text}\n- Not copied: \`tests/pylint/\` as \`upstream/examplelint/fixtures/pylint/**\` — a copyleft project, GPL-2.0-or-later\n`);
+        mkdirSync(join(directory, "upstream", "examplelint", "fixtures", "pylint"));
+        writeFileSync(join(directory, "upstream", "examplelint", "fixtures", "pylint", "a.py"), "assert e\n");
+      },
+      { licences: ["upstream/examplelint/fixtures/pylint/a.py matches `upstream/examplelint/fixtures/pylint/**`, which licenses/examplelint/UPSTREAM.md lists as not copied (tests/pylint/)"] },
+    ],
+    [
+      "a not-copied line with no pack-path glob",
+      directory => editUpstream(directory, text => `${text}\n- Not copied: \`tests/pylint/\` — a copyleft project, GPL-2.0-or-later\n`),
+      { licences: ['licenses/examplelint/UPSTREAM.md: "Not copied: `tests/pylint/`" names no pack-path glob (`… as `<glob>``)'] },
+    ],
+    [
+      "an UPSTREAM.md with no Source row",
+      directory => editUpstream(directory, text => text.replace(/^\| https:.*\n/mu, "")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "an authored file the tool's UPSTREAM.md does not list, outside every glob",
+      directory => {
+        writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n");
+        editUpstream(directory, text => text.replace("`upstream/examplelint/fixtures/**`", "`upstream/examplelint/fixtures/asserts.py`"));
+      },
+      { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)"] },
     ],
     [
       "a description that names its tool and holds code",

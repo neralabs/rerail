@@ -182,6 +182,46 @@ export function listedAuthored(record, text) {
     .map((file) => `packs/${pack}/${file}`);
 }
 
+/** The licence an UPSTREAM.md records (pack check 6 reads it too). */
+const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
+/** A "Not copied" line of a licenses/<project>/UPSTREAM.md: the upstream prefix, then the pack-path glob it would land under. */
+const NOT_COPIED = /^- Not copied: `([^`]+)`(?: as `([^`]+)`)?/u;
+/** A "Taken from it" row: its first cell is a backticked pack-path glob under upstream/. */
+const TAKEN_GLOB = /^`(upstream\/[^`]+)`$/u;
+
+/** A markdown table row's cells, trimmed, with a wholly backticked cell's backticks removed when `unquote`. */
+function tableCells(line, unquote = false) {
+  const cells = line.trim().replace(/^\|/u, "").replace(/\|$/u, "").split("|").map((cell) => cell.trim());
+  return unquote ? cells.map((cell) => /^`([^`]*)`$/u.exec(cell)?.[1] ?? cell) : cells;
+}
+
+/**
+ * What a pack's licenses/<project>/UPSTREAM.md records (docs/pack-format.md): its `License:` SPDX id, its Source row
+ * (repository, tag, commit, licence), the pack-path globs of its "Taken from it" table with each one's copy kind (the
+ * first word of its How cell), and its "Not copied" lines (the upstream prefix and, when the line has one, the
+ * pack-path glob). Pack check 6 and the publish licence check both read it; neither reads an archive's provenance.json.
+ */
+export function readUpstreamSources(text) {
+  let source;
+  const taken = [];
+  const notCopied = [];
+  for (const line of text.split("\n")) {
+    const refused = NOT_COPIED.exec(line);
+    if (refused !== null) notCopied.push({ prefix: refused[1], glob: refused[2] });
+    if (!line.startsWith("|")) continue;
+    const cells = tableCells(line, true);
+    if (source === undefined && /^https?:\/\//u.test(cells[0])) source = { repository: cells[0], tag: cells[1], commit: cells[2], licence: cells[3] };
+    const glob = TAKEN_GLOB.exec(tableCells(line)[0])?.[1];
+    if (glob !== undefined) taken.push({ glob, how: /^[a-z-]+/u.exec(cells.at(-1))?.[0] ?? "" });
+  }
+  return { licence: UPSTREAM_LICENSE.exec(text)?.[1], source, taken, notCopied };
+}
+
+/** A matcher for a glob over `/`-separated paths (`*` stays within a segment, `**` crosses them), as PACK_FIXTURE_PATTERNS are read. */
+export function pathGlob(glob) {
+  return globToRegExp(glob);
+}
+
 /** The repository paths of every tool's UPSTREAM.md in the checkout at `root` (packs/<id>/upstream/<tool>/UPSTREAM.md), sorted. */
 export function toolRecords(root = ROOT) {
   const records = [];
@@ -1184,14 +1224,14 @@ function publishRequests(tree, at) {
   return new Map([...requests].sort(([a], [b]) => byBytes(a, b)));
 }
 
-/** The licence of Rerail's own files, every pack test data file no licenses/<project>/UPSTREAM.md lists. */
+/** The licence of Rerail's own files: authored pack test data, and any file no licenses/<project>/UPSTREAM.md pattern covers. */
 const RERAIL_LICENCE = "Apache-2.0";
-/** The licence an UPSTREAM.md records (metrics/07-pack-licence-annotations.mjs's UPSTREAM_LICENSE). */
-const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
-/** A pack's licenses/<project>/UPSTREAM.md, which lists the files copied from that upstream and its licence. */
+/** A pack's licenses/<project>/UPSTREAM.md, which records an upstream repository, its licence and what was taken from it. */
 const LICENSES_RECORD = /^packs\/([^/]+)\/licenses\/[^/]+\/UPSTREAM\.md$/u;
 /** The repository's licence allowlist: the SPDX ids anything put in S3 may be under. */
 const LICENCE_ALLOWLIST = "scripts/check/licence-allowlist.json";
+/** The one copy kind an Apache-2.0-only source's files may be under until counsel confirms otherwise: §4(b) asks a modified file to carry its change notices. */
+const APACHE_ONLY_COPY = "verbatim";
 
 /**
  * Whether data under the SPDX expression `expression` may go to S3: `A OR B` when either side may, `A AND B` (terms as
@@ -1212,23 +1252,49 @@ function licenceAllowlist() {
 }
 
 /**
- * The licence of each pack test data file a pack's licenses/<project>/UPSTREAM.md lists, by repository path, as the
- * commit's tree (`tree`, read through `blob`) records it; a listed file whose UPSTREAM.md records none gets a note,
- * which no allowlist takes.
+ * The upstream sources a commit's tree (`tree`, read through `blob`) records: the authored files its tools'
+ * UPSTREAM.md list, and per pack, each licenses/<project>/UPSTREAM.md's licence, "Taken from it" patterns and "Not
+ * copied" patterns. Returns a function from a tool directory and an archive path to that file's licence; a file under
+ * a "Not copied" pattern, an Apache-2.0-only source's file that is not verbatim, or a project with no "License:" gets
+ * a note in its place, which no allowlist takes.
  */
-function upstreamLicences(tree, blob) {
-  const licences = new Map();
+function sourcesAt(tree, blob) {
+  const authored = new Set();
+  const projects = new Map();
   for (const path of tree.keys()) {
+    if (/^packs\/[^/]+\/upstream\/[^/]+\/UPSTREAM\.md$/u.test(path)) for (const file of listedAuthored(path, blob(path).toString("utf8"))) authored.add(file);
     const match = LICENSES_RECORD.exec(path);
     if (match === null) continue;
-    const text = blob(path).toString("utf8");
-    const licence = UPSTREAM_LICENSE.exec(text)?.[1] ?? `no licence (${path} records no "License:")`;
-    for (const line of text.split("\n")) {
-      const file = UPSTREAM_ROW.exec(line)?.[1];
-      if (file !== undefined) licences.set(`packs/${match[1]}/${file}`, licence);
-    }
+    const { licence, taken, notCopied } = readUpstreamSources(blob(path).toString("utf8"));
+    const project = {
+      record: path,
+      licence: licence ?? `no licence (${path} records no "License:")`,
+      taken: taken.map(({ glob, how }) => ({ glob, how, matcher: globToRegExp(glob) })),
+      notCopied: notCopied.filter(({ glob }) => glob !== undefined).map(({ prefix, glob }) => ({ prefix, glob, matcher: globToRegExp(glob) })),
+    };
+    projects.set(match[1], [...(projects.get(match[1]) ?? []), project]);
   }
-  return licences;
+  return (directory, path) => {
+    const repositoryFile = `${directory}/${path}`;
+    if (authored.has(repositoryFile) || AUTHORED_CORPUS.test(repositoryFile)) return RERAIL_LICENCE;
+    const [, pack] = directory.split("/");
+    const packFile = repositoryFile.slice(`packs/${pack}/`.length);
+    for (const project of projects.get(pack) ?? []) {
+      const refused = project.notCopied.find(({ matcher }) => matcher.test(packFile));
+      if (refused !== undefined) return `not copied (${project.record} lists ${refused.prefix} as \`${refused.glob}\` as not copied)`;
+    }
+    let covering;
+    for (const project of projects.get(pack) ?? []) {
+      for (const pattern of project.taken) {
+        if (pattern.matcher.test(packFile) && (covering === undefined || pattern.glob.length > covering.pattern.glob.length)) covering = { project, pattern };
+      }
+    }
+    if (covering === undefined) return RERAIL_LICENCE;
+    const { project, pattern } = covering;
+    if (project.licence === "Apache-2.0" && pattern.how !== APACHE_ONLY_COPY)
+      return `Apache-2.0, ${pattern.how || "no copy kind"} not ${APACHE_ONLY_COPY} (${project.record}: \`${pattern.glob}\`; a modified Apache-2.0 file must carry its change notices)`;
+    return project.licence;
+  };
 }
 
 /**
@@ -1296,7 +1362,7 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
   const lockAt = (label) => (tree.has(label) ? { label: `${label} at ${at}`, ...parseLock(blob(label).toString("utf8"), `${label} at ${at}`) } : undefined);
   const discarded = [];
   const signIn = signer(aws, discarded, "archive");
-  const licensed = upstreamLicences(tree, blob);
+  const licensed = sourcesAt(tree, blob);
 
   let mergeBase;
   /** The authored files the tool directory's UPSTREAM.md lists at the merge base with HEAD and no longer lists at the commit. */
@@ -1364,7 +1430,7 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       // The archive passes the check upload and confirm make, before anything asks for approval.
       if (kind === "samples") verifiedSamples(compressed, { label, ...archive }, key);
       else verifiedEntries(compressed, { label, ...archive }, key, toolPack.directory);
-      const licenceOf = kind === "samples" ? sampleLicences(entries) : (path) => licensed.get(`${toolPack.directory}/${path}`) ?? RERAIL_LICENCE;
+      const licenceOf = kind === "samples" ? sampleLicences(entries) : (path) => licensed(toolPack.directory, path);
       const licences = {};
       for (const { path } of entries) {
         const licence = licenceOf(path);

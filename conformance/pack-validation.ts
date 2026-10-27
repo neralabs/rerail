@@ -26,7 +26,7 @@ import {
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
-import { packFixtureAbsence } from "../scripts/s3/pack-fixtures.mjs";
+import { packFixtureAbsence, pathGlob, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -76,12 +76,8 @@ export interface ValidatePackOptions {
 const VALIDATION_MATERIAL = [CONFORMANCE_FILE, "divergences.json", "upstream", "candidates"] as const;
 /** Rerail's own licence for its material in a pack. */
 const RERAIL_LICENSE = "Apache-2.0";
-const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
+/** A row of a tool's own UPSTREAM.md, which lists Rerail's files: its first cell names a pack-relative path. */
 const UPSTREAM_ROW = /^\|\s*`([^`]+)`/u;
-/** A row's upstream path, its second column. */
-const UPSTREAM_SOURCE = /^\|\s*`[^`]+`\s*\|\s*`([^`]+)`/u;
-/** An upstream path prefix an UPSTREAM.md declares nothing may be copied from (a copyleft project's material). */
-const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;
 
 let allowlist: ReadonlySet<string> | undefined;
 /** The repository's licence allowlist, the one `scripts/check/check-licenses.mjs` enforces. */
@@ -358,20 +354,31 @@ const spdxIds = (expression: string): string[] =>
     .map(part => part.trim())
     .filter(part => part.length > 0);
 
-interface Licences {
+/** A pack-path glob a `licenses/<project>/UPSTREAM.md` declares, with the record declaring it. */
+interface SourcePattern {
+  glob: string;
+  record: string;
+  matcher: RegExp;
+}
+
+interface Sources {
   /** The licence each `licenses/<project>/UPSTREAM.md` records. */
   recorded: Map<string, string>;
-  /** Pack-relative paths the UPSTREAM.md tables list. */
-  listed: Map<string, string>;
+  /** The "Taken from it" globs: what each upstream repository's files are, by pack path. */
+  taken: SourcePattern[];
+  /** The "Not copied" globs: pack paths no file may have, with the upstream prefix each stands for. */
+  notCopied: (SourcePattern & { prefix: string })[];
   failures: string[];
 }
 
-function readLicences(directory: string): Licences {
+/** Per upstream repository (`licenses/<project>/UPSTREAM.md`): its licence, its Source row, and its patterns, compiled once. */
+function readSources(directory: string): Sources {
   const recorded = new Map<string, string>();
-  const listed = new Map<string, string>();
+  const taken: SourcePattern[] = [];
+  const notCopied: (SourcePattern & { prefix: string })[] = [];
   const failures: string[] = [];
   const licenses = join(directory, "licenses");
-  if (!existsSync(licenses)) return { recorded, listed, failures };
+  if (!existsSync(licenses)) return { recorded, taken, notCopied, failures };
   for (const project of readdirSync(licenses, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort(compareDeterministicStrings)) {
     const record = `licenses/${project}/UPSTREAM.md`;
     const path = join(directory, record);
@@ -380,20 +387,47 @@ function readLicences(directory: string): Licences {
       continue;
     }
     if (!readdirSync(join(licenses, project)).some(name => name !== "UPSTREAM.md")) failures.push(`licenses/${project}/: no upstream licence text beside UPSTREAM.md`);
-    const text = readFileSync(path, "utf8");
-    const licence = UPSTREAM_LICENSE.exec(text)?.[1];
-    if (licence === undefined) failures.push(`${record}: no "License: <SPDX id>" line`);
-    else recorded.set(project, licence);
-    const notCopied = [...text.matchAll(NOT_COPIED)].map(match => match[1]!);
-    for (const line of text.split("\n")) {
-      const file = UPSTREAM_ROW.exec(line)?.[1];
-      if (file !== undefined && !listed.has(file)) listed.set(file, record);
-      const source = UPSTREAM_SOURCE.exec(line)?.[1];
-      const refused = source === undefined ? undefined : notCopied.find(prefix => source.startsWith(prefix));
-      if (refused !== undefined) failures.push(`${record} lists ${file} as copied from ${source}, under ${refused}, which it lists as not copied`);
+    const sources = readUpstreamSources(readFileSync(path, "utf8"));
+    if (sources.licence === undefined) failures.push(`${record}: no "License: <SPDX id>" line`);
+    else recorded.set(project, sources.licence);
+    if (sources.source === undefined) failures.push(`${record}: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)`);
+    for (const { glob } of sources.taken) taken.push({ glob, record, matcher: pathGlob(glob) });
+    for (const { prefix, glob } of sources.notCopied) {
+      if (glob === undefined) failures.push(`${record}: "Not copied: \`${prefix}\`" names no pack-path glob (\`… as \`<glob>\`\`)`);
+      else notCopied.push({ prefix, glob, record, matcher: pathGlob(glob) });
     }
   }
-  return { recorded, listed, failures };
+  return { recorded, taken, notCopied, failures };
+}
+
+/**
+ * Check 6's per-file checks over the files deeper than `upstream/<tool>/` (`files`, pack-relative): (c) none matches a
+ * "Not copied" glob; (b) each is Rerail's (`authored`, first) or matches some "Taken from it" glob; (a) each glob
+ * matches at least one copied file. A glob matching nothing because the checkout lacks its tool's test data gives one
+ * failure per tool, saying to pull it.
+ */
+function sourceFailures(directory: string, sources: Sources, authored: ReadonlySet<string>, files: readonly string[]): string[] {
+  const failures: string[] = [];
+  const matched = new Set<SourcePattern>();
+  for (const file of files) {
+    for (const refused of sources.notCopied.filter(pattern => pattern.matcher.test(file)))
+      failures.push(`${file} matches \`${refused.glob}\`, which ${refused.record} lists as not copied (${refused.prefix})`);
+    if (authored.has(file)) continue;
+    const covering = sources.taken.filter(pattern => pattern.matcher.test(file));
+    for (const pattern of covering) matched.add(pattern);
+    if (covering.length === 0)
+      failures.push(`${file} is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)`);
+  }
+  const absent = new Set<string>();
+  for (const pattern of sources.taken.filter(pattern => !matched.has(pattern))) {
+    const absence = packFixtureAbsence(join(directory, pattern.glob.replaceAll("*", "x")));
+    if (absence === undefined) failures.push(`${pattern.record}: \`${pattern.glob}\` matches no copied file`);
+    else if (!absent.has(absence)) {
+      absent.add(absence);
+      failures.push(`${pattern.record}: \`${pattern.glob}\` matches no file: ${absence}`);
+    }
+  }
+  return failures;
 }
 
 /**
@@ -678,7 +712,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
 
   // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and restricted, no
   // dependencies, no validation material published, licence agreeing with what licenses/ records.
-  const licences = readLicences(directory);
+  const sources = readSources(directory);
   const packagePath = join(directory, "package.json");
   if (!existsSync(packagePath)) fail("package", "package.json is missing");
   else {
@@ -710,29 +744,27 @@ export async function validatePack(directory: string, options: ValidatePackOptio
         if (!manifest.files.some(file => publishes(file, path))) fail("package", `package.json: files does not publish ${path}`);
       }
       const named = [...new Set(spdxIds(manifest.license))].sort(compareDeterministicStrings);
-      const carried = [...new Set([RERAIL_LICENSE, ...licences.recorded.values()])].sort(compareDeterministicStrings);
+      const carried = [...new Set([RERAIL_LICENSE, ...sources.recorded.values()])].sort(compareDeterministicStrings);
       if (named.join(",") !== carried.join(","))
         fail("package", `package.json: license ${JSON.stringify(manifest.license)} names ${named.join(", ")}; the pack carries ${carried.join(", ")} (${RERAIL_LICENSE} and what licenses/*/UPSTREAM.md records)`);
     }
   }
 
-  // Check 6: licences. Every copied file is listed in an UPSTREAM.md, every listed file exists, no listed file is
-  // copied from an upstream path its UPSTREAM.md lists as "Not copied" (readLicences), and every recorded licence is
-  // on the repository allowlist. Under upstream/<tool>/, the expected findings and the generator (files directly in
-  // it) are Rerail's; everything in its subdirectories (fixtures/, tests/) is copied from the tool, unless the tool's
-  // own upstream/<tool>/UPSTREAM.md lists it as Rerail's.
-  for (const failure of licences.failures) fail("licences", failure);
+  // Check 6: licences. Per upstream repository, licenses/<project>/UPSTREAM.md records its licence (on the repository
+  // allowlist), its Source row, the pack-path globs of the files taken from it and the globs nothing may be copied to
+  // (readSources). Under upstream/<tool>/, the expected findings and the generator (files directly in it) are Rerail's;
+  // every file in its subdirectories (fixtures/, tests/) is Rerail's when the tool's own upstream/<tool>/UPSTREAM.md
+  // lists it, and otherwise must match a "Taken from it" glob (sourceFailures). Per-file provenance is in each test-data
+  // archive's provenance.json, which no check reads.
+  for (const failure of sources.failures) fail("licences", failure);
   if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
-  for (const [project, licence] of licences.recorded) {
+  for (const [project, licence] of sources.recorded) {
     if (!allowedLicenses().has(licence)) fail("licences", `licenses/${project}/UPSTREAM.md: ${licence} is not on the repository licence allowlist`);
   }
   const { authored, failures: authoredFailures } = readAuthored(directory);
   for (const failure of authoredFailures) fail("licences", failure);
-  for (const file of filesUnder(directory, join(directory, "upstream"))) {
-    if (file.split("/").length > 3 && !licences.listed.has(file) && !authored.has(file))
-      fail("licences", `${file} is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it`);
-  }
-  for (const failure of missingListed(directory, licences.listed)) fail("licences", failure);
+  const deeper = filesUnder(directory, join(directory, "upstream")).filter(file => file.split("/").length > 3);
+  for (const failure of sourceFailures(directory, sources, authored, deeper)) fail("licences", failure);
 
   // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.
   for (const failure of manifestFailures(directory, packJson, options.listed ?? resolve(dirname(directory)) === PACKS_DIRECTORY)) fail("manifest", failure);

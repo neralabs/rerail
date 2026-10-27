@@ -1157,16 +1157,41 @@ describe("pack --from (the publish workflow's prep)", () => {
 
   it("refuses, before writing anything, a file whose licence the allowlist does not take, listing it with its licence", async () => {
     const context = published();
-    const upstream = (licence) => `# Tool\n\nLicense: ${licence}\n\n| File | Upstream path |\n|---|---|\n| \`upstream/t/fixtures/upstream/b.py\` | b.py |\n`;
+    const upstream = (licence) =>
+      `# Tool\n\nLicense: ${licence}\n\n## Source\n\n| Repository | Tag | Commit | Licence |\n|---|---|---|---|\n| https://example.com/tool | \`v1\` | \`${"1".repeat(40)}\` | ${licence} |\n\n## Taken from it\n\n| Pack paths | Upstream paths | How |\n|---|---|---|\n| \`upstream/t/fixtures/**\` | \`tests/\` | verbatim: as taken |\n`;
     branch(context.root, "gpl", { "packs/p/licenses/tool/UPSTREAM.md": upstream("GPL-3.0-only"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
     const message = await packFailure(context, "gpl");
     expect(message).toContain("1 file(s) going to S3 are under a licence scripts/check/licence-allowlist.json does not take");
     expect(message).toContain("  packs/p/upstream/t/fixtures/upstream/b.py: GPL-3.0-only");
     expect(existsSync(join(dirname(context.root), "out-gpl"))).toBe(false);
 
+    // The glob covers the authored fixtures/rerail/a.py too: authored comes first, so it stays Rerail's.
     branch(context.root, "mit", { "packs/p/licenses/tool/UPSTREAM.md": upstream("MIT"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
     const { manifest } = await packed(context, "mit");
     expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 3, MIT: 1 });
+  });
+
+  it("refuses a file under a Not copied glob", async () => {
+    const context = published();
+    const notCopied = "\n## Not copied\n\n- Not copied: `tests/upstream/` as `upstream/t/fixtures/upstream/**` — other, GPL-3.0-only\n";
+    const text = `# Tool\n\nLicense: MIT\n\n| \`upstream/t/fixtures/**\` | \`tests/\` | verbatim |\n${notCopied}`;
+    branch(context.root, "refused", { "packs/p/licenses/tool/UPSTREAM.md": text, "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    expect(await packFailure(context, "refused")).toContain(
+      "  packs/p/upstream/t/fixtures/upstream/b.py: not copied (packs/p/licenses/tool/UPSTREAM.md lists tests/upstream/ as `upstream/t/fixtures/upstream/**` as not copied)",
+    );
+  });
+
+  it("refuses an Apache-2.0-only source's file that is not verbatim, and takes a verbatim one", async () => {
+    const context = published();
+    const text = (how) => `# Tool\n\nLicense: Apache-2.0\n\n| \`upstream/t/fixtures/**\` | \`tests/\` | ${how}: as taken |\n`;
+    branch(context.root, "extracted", { "packs/p/licenses/tool/UPSTREAM.md": text("extracted"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    expect(await packFailure(context, "extracted")).toContain(
+      "  packs/p/upstream/t/fixtures/upstream/b.py: Apache-2.0, extracted not verbatim (packs/p/licenses/tool/UPSTREAM.md: `upstream/t/fixtures/**`; a modified Apache-2.0 file must carry its change notices)",
+    );
+
+    branch(context.root, "verbatim", { "packs/p/licenses/tool/UPSTREAM.md": text("verbatim"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    const { manifest } = await packed(context, "verbatim");
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 4 });
   });
 });
 
