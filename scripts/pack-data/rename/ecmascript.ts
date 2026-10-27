@@ -2,8 +2,9 @@
  * The ECMA rename for upstream-labelled rename variants: a generator writes a renamed copy of each upstream test unit
  * (`writeRenameVariants`, conformance/recorders/eslint-record.mjs) and upstream lints the copy like any unit, so a port
  * that matches the tests' own names and values (`foo`, `MyClass`, `"bar"`, `42`) instead of the construct the rule is
- * about fails on the copy. Reads the source with TypeScript's parser (TS or TSX by extension). Node's type stripping
- * runs this file from the generators, so it imports nothing but `typescript` and uses erasable syntax only.
+ * about fails on the copy. Reads the source with TypeScript's parser as TypeScript would by its extension (JavaScript
+ * with JSX, JSX, TS or TSX). Node's type stripping runs this file from the generators, so it imports nothing but
+ * `typescript` and uses erasable syntax only.
  *
  * - Same length: each renamed word keeps its UTF-16 length and character shape (upper stays upper, lower stays
  *   lower, digits stay digits, `_`/`$`/non-ASCII stay put, a Hungarian `I` before an uppercase letter stays), so a
@@ -17,8 +18,8 @@
  * - Protected: keywords and contextual keywords, the ES standard library (globals and every member declared in
  *   TypeScript's lib.es*.d.ts) and a curated host list (DOM/Node/React/module names); intrinsic JSX tags and the
  *   attributes on intrinsic elements; any name with an occurrence that cannot be rewritten in place (unicode
- *   escapes); module specifiers, import attributes and directives (`"use strict"`); escape sequences inside
- *   literals. Comments, regular expressions and JSX text are never touched.
+ *   escapes); module specifiers, import attributes, directives (`"use strict"`) and meta-property names (`import.meta`,
+ *   `new.target`); escape sequences inside literals. Comments, regular expressions and JSX text are never touched.
  */
 import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
@@ -194,11 +195,15 @@ function escapeLength(raw: string, index: number): number {
 const WORD_START = /[A-Za-z_$]/;
 const WORD_PART = /[A-Za-z0-9_$]/;
 
+/** How TypeScript reads the file, as it would by extension: `.js`, `.mjs` and `.cjs` as JavaScript (JSX allowed). */
 function scriptKind(fileName: string): ts.ScriptKind {
-  return /\.[jt]sx$/.test(fileName) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  if (/\.tsx$/.test(fileName)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/.test(fileName)) return ts.ScriptKind.JSX;
+  if (/\.[cm]?js$/.test(fileName)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
 }
 
-/** Renames `source`'s identifiers, literal words and numbers (see module doc). `fileName` picks TS or TSX parsing. */
+/** Renames `source`'s identifiers, literal words and numbers (see module doc). `fileName` picks how it is parsed. */
 export function renameSource(source: string, fileName: string): RenameResult {
   const protection = protectedNames();
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true, scriptKind(fileName));
@@ -250,7 +255,8 @@ export function renameSource(source: string, fileName: string): RenameResult {
       const intrinsicTag = (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent) || ts.isJsxClosingElement(parent)) && parent.tagName === node && isIntrinsicTag(parent.tagName);
       const intrinsicAttribute = ts.isJsxAttribute(parent) && parent.name === node && isIntrinsicTag(parent.parent.parent.tagName);
       const keywordLike = ts.isIdentifier(node) && ts.identifierToKeywordKind(node) !== undefined;
-      if (source.slice(start, node.end) !== text || intrinsicTag || intrinsicAttribute || keywordLike) pinned.add(text);
+      const metaProperty = ts.isMetaProperty(parent) && parent.name === node;
+      if (source.slice(start, node.end) !== text || intrinsicTag || intrinsicAttribute || keywordLike || metaProperty) pinned.add(text);
       occur(text, { start, offset: ts.isPrivateIdentifier(node) ? 1 : 0 });
       return;
     }
@@ -314,7 +320,7 @@ export function syntaxDiagnostics(source: string, fileName: string): string[] {
   const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true, scriptKind(fileName));
   const program = ts.createProgram({
     rootNames: [fileName],
-    options: { noEmit: true, noLib: true, types: [], jsx: ts.JsxEmit.Preserve },
+    options: { noEmit: true, noLib: true, types: [], jsx: ts.JsxEmit.Preserve, allowJs: true },
     host: {
       ...ts.createCompilerHost({}),
       getSourceFile: name => (name === fileName ? file : undefined),
