@@ -88,7 +88,7 @@ export function normalPythonName(name: string): string {
   return name.toLowerCase().replace(/[-_.]+/gu, "-");
 }
 
-/** The parts of a runtime's pin files this check reads; the recorder holds the rest to its own rules (runtimes.ts). */
+/** The parts of a runtime's pin files this check reads. */
 const npmManifestSchema = z.object({ dependencies: z.record(z.string(), z.string()).default({}) });
 const composerManifestSchema = z.object({ require: z.record(z.string(), z.string()).default({}) });
 const pyprojectSchema = z.object({ project: z.object({ dependencies: z.array(z.string()).default([]) }) });
@@ -133,7 +133,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
     package: name,
     version,
     disagreements,
-    bump: `npm run port-readiness:bump -- --pack ${pack} --tool ${tool}, then record it again (the nightly opens this as a pull request)`,
+    bump: `npm run upstream:bump -- --pack ${pack} --tool ${tool}, then derive it again (the nightly opens this as a pull request)`,
   };
 }
 
@@ -141,7 +141,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
  * Clippy's pin. It ships with the Rust toolchain, so the release to follow is Rust's: `TOOLCHAIN` in
  * packs/rust/upstream/common.py, which the pack's generators refuse any other toolchain than. The repository's own
  * rust-toolchain.toml pins the toolchain Rerail is built with, not the Clippy the pack ports, so it is not read here.
- * Every other pin must name the same release: the recorder's runtime (`runtimes/<upstream.runtime>/rust-toolchain.toml`,
+ * Every other pin must name the same release: the tool-pack's runtime (`runtimes/<upstream.runtime>/rust-toolchain.toml`,
  * its channel), gates.yaml's `upstream.version` and conformance.json's `tools[clippy].version` (Clippy's own version,
  * 0.1.<minor> for Rust 1.<minor>.<patch>), and gates.yaml's `upstream.commit` (common.py's `CLIPPY_COMMIT`).
  */
@@ -176,7 +176,7 @@ export function clippyPin(root: string, pack = "rust", tool = "clippy"): Upstrea
     package: "rust",
     version,
     disagreements,
-    bump: "npm run port-readiness:bump -- --pack rust --tool clippy, then record it again (the nightly opens this as a pull request)",
+    bump: "npm run upstream:bump -- --pack rust --tool clippy, then derive it again (the nightly opens this as a pull request)",
   };
 }
 
@@ -457,7 +457,7 @@ if (invoked) {
   try {
     behind = parseArgs({ options: { behind: { type: "string" } }, strict: true }).values.behind;
   } catch {
-    process.stderr.write("usage: npm run port-readiness:upstream-releases [-- --behind <file>]\n");
+    process.stderr.write("usage: npm run upstream:releases [-- --behind <file>]\n");
     process.exitCode = 2;
   }
   if (process.exitCode !== 2) {

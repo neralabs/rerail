@@ -82,7 +82,6 @@ upstream:
   lints: [".py"]
 ${popularity()}`,
     "packs/demo/upstream/bandit/generate.py": `"""Records Bandit 1.9.4 for the demo pack."""\nVERSION = "1.9.4"\nORIGIN = "https://github.com/PyCQA/bandit@${BANDIT_COMMIT}"\nPYYAML = "1.9.4.1"\n`,
-    "packs/demo/upstream/bandit/recording.lock": '{"pins": {"version": "1.9.4"}}\n',
     "packs/demo/conformance.json": `{\n  "tools": [\n    { "name": "bandit", "version": "1.9.4" },\n    { "name": "other", "version": "1.9.4" }\n  ],\n  "rules": []\n}\n`,
     "packs/demo/README.md": "Rules ported from Bandit 1.9.4 (tag v1.9.4), not 11.9.4 or 1.9.40.\n",
     [`${RUNTIMES_DIRECTORY}/bandit-1.9.4/pyproject.toml`]: '[project]\nname = "runtime"\ndependencies = ["Bandit[toml] == 1.9.4", "pyyaml==1.9.4"]\n\n[tool.uv]\npackage = false\n',
@@ -103,7 +102,7 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.deepEqual(bump.from, { version: "1.9.4", tag: "1.9.4", commit: BANDIT_COMMIT });
   assert.deepEqual(bump.to, { version: "1.9.5", tag: "1.9.5", commit: BANDIT_NEXT });
   assert.deepEqual(bump.renames, [{ from: `${RUNTIMES_DIRECTORY}/bandit-1.9.4`, to: `${RUNTIMES_DIRECTORY}/bandit-1.9.5` }]);
-  assert.deepEqual(bump.record, ["demo/bandit"]);
+  assert.deepEqual(bump.derive, ["demo/bandit"]);
   applyBump(root, bump);
 
   const gates = readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8");
@@ -115,8 +114,6 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.equal(readFileSync(join(root, RUNTIMES_DIRECTORY, "bandit-1.9.5/.python-version"), "utf8"), "3.13.12\n");
   assert.equal(readFileSync(join(root, "packs/demo/conformance.json"), "utf8"), `{\n  "tools": [\n    { "name": "bandit", "version": "1.9.5" },\n    { "name": "other", "version": "1.9.4" }\n  ],\n  "rules": []\n}\n`);
   assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/generate.py"), "utf8"), `"""Records Bandit 1.9.4 for the demo pack."""\nVERSION = "1.9.5"\nORIGIN = "https://github.com/PyCQA/bandit@${BANDIT_NEXT}"\nPYYAML = "1.9.4.1"\n`);
-  // The recorder rewrites the lock; the bump leaves it.
-  assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/recording.lock"), "utf8"), '{"pins": {"version": "1.9.4"}}\n');
   // The pins now agree at 1.9.5, as the nightly's check reads them.
   const pin = upstreamPins(root).find((entry) => entry.toolPack === "demo/bandit")!;
   assert.deepEqual([pin.version, pin.disagreements], ["1.9.5", []]);
@@ -134,6 +131,9 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.match(markdown, /\[1\.9\.4\.\.\.1\.9\.5\]\(https:\/\/github\.com\/PyCQA\/bandit\/compare\/1\.9\.4\.\.\.1\.9\.5\)/u);
   assert.ok(markdown.includes(`rename ${RUNTIMES_DIRECTORY}/bandit-1.9.4/ → ${RUNTIMES_DIRECTORY}/bandit-1.9.5/`), markdown);
   assert.ok(markdown.includes(`--- packs/demo/upstream/bandit/gates.yaml\n@@ 9\n-  commit: ${BANDIT_COMMIT}\n+  commit: ${BANDIT_NEXT}\n@@ 10\n-  version: 1.9.4\n+  version: 1.9.5\n`), markdown);
+  // The data publishes through publish/: derived again and staged whole, never recorded or pushed.
+  assert.ok(markdown.includes("npm run fixtures:derive -- --pack demo --tool bandit --update && npm run fixtures:stage -- --pack demo --tool bandit --all\n"), markdown);
+  assert.doesNotMatch(markdown, /recording|port-readiness|fixtures:push/u);
 });
 
 /** An ESLint-family gates.yaml: upstream, its release tag, and optionally the environment the pack is linted in. */
@@ -207,8 +207,8 @@ const TSE_TAGS = {
 test("an npm tool-pack's bump follows annotated tags, moves the scope's packages at that release, and renames its runtime wherever a gates.yaml names it", async () => {
   const root = checkout({
     "packs/ts/upstream/typescript-eslint/gates.yaml": eslintGates({ pack: "ts", tool: "typescript-eslint", repository: TSE, commit: "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7", version: "8.70.1", runtime: "typescript-eslint-8.70.1", installed: "@typescript-eslint/eslint-plugin/dist" }),
-    // Another tool-pack lints in that runtime: it is renamed there too, and that tool-pack is recorded again.
-    "packs/ts/upstream/other/gates.yaml": eslintGates({ pack: "ts", tool: "other", repository: "demo/other", commit: "c".repeat(40), version: "1.0.0", runtime: "other-1.0.0", installed: "@demo/other", environment: "typescript-eslint-8.70.1" }),
+    // Another tool-pack derives with that runtime: it is renamed there too, and that tool-pack is derived again.
+    "packs/ts/upstream/other/gates.yaml": eslintGates({ pack: "ts", tool: "other", repository: "demo/other", commit: "c".repeat(40), version: "1.0.0", runtime: "typescript-eslint-8.70.1", installed: "@demo/other" }),
     "packs/ts/conformance.json": JSON.stringify({ tools: [{ name: "typescript-eslint", version: "8.70.1" }, { name: "other", version: "1.0.0" }] }, null, 2),
     "packs/ts/upstream/generate.mjs": [
       "// The checkout is github.com/typescript-eslint/typescript-eslint at v8.70.1 (23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7).",
@@ -228,7 +228,7 @@ test("an npm tool-pack's bump follows annotated tags, moves the scope's packages
   });
   const bump = (await planBump(root, "ts", "typescript-eslint", "8.72.0", recorded(TSE_TAGS).sources))!;
   assert.deepEqual(bump.to, { version: "8.72.0", tag: "v8.72.0", commit: "a4c2603d3e4fd43b33bc25b82457716e9f7cef71" });
-  assert.deepEqual(bump.record, ["ts/typescript-eslint", "ts/other"]);
+  assert.deepEqual(bump.derive, ["ts/typescript-eslint", "ts/other"]);
   applyBump(root, bump);
 
   const runtime = JSON.parse(readFileSync(join(root, RUNTIMES_DIRECTORY, "typescript-eslint-8.72.0/package.json"), "utf8")) as unknown;
@@ -244,7 +244,7 @@ test("an npm tool-pack's bump follows annotated tags, moves the scope's packages
   assert.match(gates, /\n {2}commit: a4c2603d3e4fd43b33bc25b82457716e9f7cef71\n {2}version: 8\.72\.0\n/u);
   assert.match(gates, /\n {2}runtime: typescript-eslint-8\.72\.0\n/u);
   assert.match(gates, /\n {4}tag: v8\.72\.0\n/u);
-  assert.match(readFileSync(join(root, "packs/ts/upstream/other/gates.yaml"), "utf8"), /\n {4}runtime: typescript-eslint-8\.72\.0\n/u);
+  assert.match(readFileSync(join(root, "packs/ts/upstream/other/gates.yaml"), "utf8"), /\n {2}runtime: typescript-eslint-8\.72\.0\n/u);
   assert.equal(readFileSync(join(root, "packs/ts/upstream/generate.mjs"), "utf8"), [
     "// The checkout is github.com/typescript-eslint/typescript-eslint at v8.72.0 (a4c2603d3e4fd43b33bc25b82457716e9f7cef71).",
     'const VERSIONS = { eslint: "8.70.1", "@typescript-eslint/parser": "8.72.0", "@typescript-eslint/eslint-plugin": "8.72.0", "@typescript-eslint/utils": "8.70.0" };',
@@ -277,7 +277,7 @@ test("a generator that pins npm's gitHead of the release moves to the new releas
   assert.deepEqual(bump.notes, [`The generators pin npm's \`gitHead\` of eslint-plugin-react-hooks: 1ddff43c41147b880c22eb363e07aade5a71c5d9 for 7.1.1, ${"f".repeat(40)} for 7.2.0.`]);
 });
 
-test("a Packagist upstream in a shared runtime keeps the directory and the tag's v, and every tool-pack installing that runtime is recorded again", async () => {
+test("a Packagist upstream in a shared runtime keeps the directory and the tag's v, and only the tool-packs whose runtime it is are derived again", async () => {
   const gates = (adapter: string, tool: string, repository: string, commit: string, version: string, runtime: string) => `adapter: ${adapter}
 rerail:
   pack: blade
@@ -295,7 +295,6 @@ upstream:
 ${popularity()}`;
   const root = checkout({
     "packs/blade/upstream/blade-parser/gates.yaml": gates("blade-parser", "blade-parser", "stillat/blade-parser", "23a962f99bca451f8738ed2475a70129fb33f07c", "2.1.0", "blade"),
-    // tlint installs the Blade toolkit too (manifest.ts's EXTRA_RUNTIMES).
     "packs/blade/upstream/tlint/gates.yaml": gates("tlint", "tlint", "tighten/tlint", "e768bedce2bd84930712f9412ecbf2d4c586735c", "9.7.0", "tlint-9.7.0"),
     "packs/blade/conformance.json": JSON.stringify({ tools: [{ name: "blade-parser", version: "2.1.0" }, { name: "tlint", version: "9.7.0" }] }, null, 2),
     [`${RUNTIMES_DIRECTORY}/blade/composer.json`]: `${JSON.stringify({ name: "toolkit", require: { "laravel/framework": "13.34.0", "Stillat/Blade-Parser": "v2.1.0" } }, null, 2)}\n`,
@@ -309,7 +308,7 @@ ${popularity()}`;
   });
   const bump = (await planBump(root, "blade", "blade-parser", "2.2.0", sources))!;
   assert.deepEqual(bump.renames, []);
-  assert.deepEqual(bump.record, ["blade/blade-parser", "blade/tlint"]);
+  assert.deepEqual(bump.derive, ["blade/blade-parser"]);
   applyBump(root, bump);
   assert.equal(readFileSync(join(root, RUNTIMES_DIRECTORY, "blade/composer.json"), "utf8"), `${JSON.stringify({ name: "toolkit", require: { "laravel/framework": "13.34.0", "Stillat/Blade-Parser": "v2.2.0" } }, null, 2)}\n`);
   assert.match(readFileSync(join(root, "packs/blade/upstream/blade-parser/gates.yaml"), "utf8"), /\n {2}version: 2\.2\.0\n {2}license: MIT\n(?:.*\n)* {2}runtime: blade\n/u);
@@ -406,8 +405,8 @@ test("Clippy's bump reads the toolchain from the release's channel manifest and 
   const root = clippyCheckout();
   const { sources } = recorded({ ...CLIPPY_ANSWERS, [`${GITHUB}/rust-lang/rust/contents/src/tools?ref=1.99.1`]: tools("f3bfc2411549eab24928aeb8b373bf1f6290f943") });
   const bump = (await planBump(root, "rust", "clippy", "1.99.1", sources))!;
-  // Clippy is gated: its tool-pack is recorded again with the new toolchain.
-  assert.deepEqual(bump.record, ["rust/clippy"]);
+  // Clippy's tool-pack is derived again with the new toolchain.
+  assert.deepEqual(bump.derive, ["rust/clippy"]);
   assert.deepEqual(bump.to, { version: "1.99.1", tag: "rust-1.99.0", commit: "49e2f89a2605a9a340e04955fdbefa9803e6027a" });
   applyBump(root, bump);
   assert.equal(readFileSync(join(root, "packs/rust/upstream/common.py"), "utf8"), `"""Pins (each generator refuses anything else):
@@ -475,10 +474,10 @@ test("the CLI: --dry-run writes nothing, a bump writes the summary and the JSON 
   const run = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--summary", join(out, "bump.md"), "--json", join(out, "bump.json")], root, sources.fetch);
   assert.equal(run.code, 0);
   assert.match(readFileSync(join(out, "bump.md"), "utf8"), /^## `demo\/bandit`: `bandit` 1\.9\.4 → 1\.9\.5\n/u);
-  const json = JSON.parse(readFileSync(join(out, "bump.json"), "utf8")) as { changed: boolean; version: string; record: unknown; files: string[] };
+  const json = JSON.parse(readFileSync(join(out, "bump.json"), "utf8")) as { changed: boolean; version: string; derive: unknown; files: string[] };
   assert.equal(json.changed, true);
   assert.equal(json.version, "1.9.5");
-  assert.deepEqual(json.record, [{ pack: "demo", tool: "bandit" }]);
+  assert.deepEqual(json.derive, [{ pack: "demo", tool: "bandit" }]);
   assert.ok(json.files.includes(`${RUNTIMES_DIRECTORY}/bandit-1.9.5/pyproject.toml`));
 
   const again = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--json", join(out, "again.json")], root, sources.fetch);

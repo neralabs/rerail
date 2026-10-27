@@ -285,7 +285,7 @@ test("a patch or minor release upstream is reported and listed for the bump as a
   assert.equal(patch.code, 0, patch.stdout);
   assert.match(patch.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.5 \| patch \| behind \|$/mu);
   assert.match(patch.summary, /^1 of 2 upstreams are behind their latest stable release; the nightly's bump pull request moves them:$/mu);
-  assert.match(patch.summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.9\.5, a patch release: npm run port-readiness:bump -- --pack demo --tool bandit, /mu);
+  assert.match(patch.summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.9\.5, a patch release: npm run upstream:bump -- --pack demo --tool bandit, /mu);
   assert.match(patch.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: patch\): /mu);
   assert.doesNotMatch(patch.stdout, /::error/u);
   assert.deepEqual(patch.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "1.9.5", gap: "patch", breaking: false }]);
