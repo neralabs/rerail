@@ -33,6 +33,9 @@ mod stats;
 #[cfg(feature = "code-rule-profile")]
 mod profile;
 mod query;
+// Admission reads these once the batch budget is wired; until then only tests call it.
+#[allow(dead_code)]
+mod residency;
 mod scope;
 mod semver;
 mod soundness;
