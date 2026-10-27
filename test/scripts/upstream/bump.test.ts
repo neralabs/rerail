@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
+import { DERIVE_PAUSED } from "../../../scripts/pack-data/paused.js";
 import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 import { applyBump, main, planBump, renderBump, type Sources } from "../../../scripts/upstream/bump.js";
 import { upstreamPins, type Fetch } from "../../../scripts/upstream/releases.js";
@@ -131,8 +132,11 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.match(markdown, /\[1\.9\.4\.\.\.1\.9\.5\]\(https:\/\/github\.com\/PyCQA\/bandit\/compare\/1\.9\.4\.\.\.1\.9\.5\)/u);
   assert.ok(markdown.includes(`rename ${RUNTIMES_DIRECTORY}/bandit-1.9.4/ → ${RUNTIMES_DIRECTORY}/bandit-1.9.5/`), markdown);
   assert.ok(markdown.includes(`--- packs/demo/upstream/bandit/gates.yaml\n@@ 9\n-  commit: ${BANDIT_COMMIT}\n+  commit: ${BANDIT_NEXT}\n@@ 10\n-  version: 1.9.4\n+  version: 1.9.5\n`), markdown);
-  // The data publishes through publish/: derived again and staged whole, never recorded or pushed.
-  assert.ok(markdown.includes("npm run fixtures:derive -- --pack demo --tool bandit --update && npm run fixtures:stage -- --pack demo --tool bandit --all\n"), markdown);
+  // Derive and bumps are paused: the summary lists the stale data and points at the pause, with no derive command.
+  assert.ok(markdown.includes("### Stale test data\n\nThe new pins make each tool-pack's test data stale:\n\n- `demo/bandit`\n"), markdown);
+  assert.ok(markdown.includes(`### Regenerate locally\n\nNot yet: ${DERIVE_PAUSED}.\n`), markdown);
+  assert.ok(markdown.includes("docs/upstream.md#derive-and-bumps-are-paused"), markdown);
+  assert.doesNotMatch(markdown, /fixtures:derive|fixtures:stage/u);
   assert.doesNotMatch(markdown, /recording|port-readiness|fixtures:push/u);
 });
 
@@ -432,29 +436,31 @@ test("the bump stops when no tag names the pinned commit, when the new release h
 });
 
 /** Run the CLI over `root`; its exit code and output. */
-async function cli(args: string[], root: string, fetch: Fetch): Promise<{ code: number; stdout: string }> {
+async function cli(args: string[], root: string, fetch: Fetch): Promise<{ code: number; stdout: string; stderr: string }> {
   const written: string[] = [];
+  const errors: string[] = [];
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
     written.push(String(chunk));
     return true;
   });
+  vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+    errors.push(String(chunk));
+    return true;
+  });
   const code = await main(args, root, fetch, {});
   vi.restoreAllMocks();
-  return { code, stdout: written.join("") };
+  return { code, stdout: written.join(""), stderr: errors.join("") };
 }
 
-test("the CLI: --dry-run writes nothing, a bump writes the summary and the JSON the nightly reads, and a second run is a no-op", async () => {
+test("the CLI: --dry-run writes the summary and the JSON and moves no pin, and a pinned release is a no-op", async () => {
   const root = banditCheckout();
   const { sources } = recorded(BANDIT_TAGS);
   const gates = readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8");
-  const dry = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--dry-run"], root, sources.fetch);
+  const out = join(root, "out");
+  const dry = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--dry-run", "--summary", join(out, "bump.md"), "--json", join(out, "bump.json")], root, sources.fetch);
   assert.equal(dry.code, 0);
   assert.match(dry.stdout, /^would bump demo\/bandit 1\.9\.4 → 1\.9\.5/u);
   assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8"), gates);
-
-  const out = join(root, "out");
-  const run = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--summary", join(out, "bump.md"), "--json", join(out, "bump.json")], root, sources.fetch);
-  assert.equal(run.code, 0);
   assert.match(readFileSync(join(out, "bump.md"), "utf8"), /^## `demo\/bandit`: `bandit` 1\.9\.4 → 1\.9\.5\n/u);
   const json = JSON.parse(readFileSync(join(out, "bump.json"), "utf8")) as { changed: boolean; version: string; derive: unknown; files: string[] };
   assert.equal(json.changed, true);
@@ -462,16 +468,32 @@ test("the CLI: --dry-run writes nothing, a bump writes the summary and the JSON 
   assert.deepEqual(json.derive, [{ pack: "demo", tool: "bandit" }]);
   assert.ok(json.files.includes(`${RUNTIMES_DIRECTORY}/bandit-1.9.5/pyproject.toml`));
 
+  applyBump(root, (await planBump(root, "demo", "bandit", "1.9.5", sources))!);
   const again = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--json", join(out, "again.json")], root, sources.fetch);
   assert.equal(again.code, 0);
   assert.equal(again.stdout, "demo/bandit already pins 1.9.5\n");
   assert.deepEqual(JSON.parse(readFileSync(join(out, "again.json"), "utf8")), { toolPack: "demo/bandit", version: "1.9.5", changed: false });
 });
 
-test("without --version the CLI bumps to the registry's latest stable release", async () => {
+test("while derive and bumps are paused the CLI refuses to apply a bump, pointing at the pause, and writes nothing", async () => {
+  const root = banditCheckout();
+  const { sources } = recorded(BANDIT_TAGS);
+  const gates = readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8");
+  const out = join(root, "out");
+  const run = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--summary", join(out, "bump.md"), "--json", join(out, "bump.json")], root, sources.fetch);
+  assert.equal(run.code, 1);
+  assert.equal(run.stderr, `demo/bandit: ${DERIVE_PAUSED}\n`);
+  assert.match(run.stderr, /docs\/upstream\.md#derive-and-bumps-are-paused/u);
+  assert.equal(run.stdout, "");
+  assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8"), gates);
+  assert.ok(existsSync(join(root, RUNTIMES_DIRECTORY, "bandit-1.9.4")));
+  assert.ok(!existsSync(out));
+});
+
+test("without --version the CLI plans the bump to the registry's latest stable release", async () => {
   const root = banditCheckout();
   const { sources } = recorded({ ...BANDIT_TAGS, "https://pypi.org/pypi/bandit/json": { releases: { "1.9.4": [{ yanked: false }], "1.9.5": [{ yanked: false }], "2.0.0rc1": [{ yanked: false }] } } });
-  const run = await cli(["--pack", "demo", "--tool", "bandit"], root, sources.fetch);
+  const run = await cli(["--pack", "demo", "--tool", "bandit", "--dry-run"], root, sources.fetch);
   assert.equal(run.code, 0);
-  assert.match(run.stdout, /^bumped demo\/bandit 1\.9\.4 → 1\.9\.5/u);
+  assert.match(run.stdout, /^would bump demo\/bandit 1\.9\.4 → 1\.9\.5/u);
 });

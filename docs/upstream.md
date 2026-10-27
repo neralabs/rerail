@@ -7,7 +7,7 @@ whether upstream would still answer the same: the snapshot goes stale only when 
 
 | Artifact | Lock | Made by |
 | --- | --- | --- |
-| Pack test data: upstream's tests, the expected findings (`fixtures.expected.json`), Rerail's authored cases | `packs/<id>/upstream/<tool>/test-data.lock` | the generators, through `npm run fixtures:derive` (a maintainer, or the bump workflow) |
+| Pack test data: upstream's tests, the expected findings (`fixtures.expected.json`), Rerail's authored cases | `packs/<id>/upstream/<tool>/test-data.lock` | the generators, through `npm run fixtures:derive` (a maintainer, or the bump workflow), paused for now ([Derive and bumps are paused](#derive-and-bumps-are-paused)) |
 | Real-code samples | `packs/<id>/upstream/<tool>/samples.lock` | the sample builders in `scripts/samples/`, a library API called from tests and maintainers' one-off scripts (there is no command) |
 
 Both are published the same way ([Publishing pack data](#publishing-pack-data)): the data goes into the pull request
@@ -65,7 +65,7 @@ names no unit origins rests on its clean samples alone. Candidates are scored an
 ## Take a new snapshot
 
 A snapshot changes only on purpose, in one of three ways, each ending in a pull request that carries the new data in
-`publish/`:
+`publish/`. All three are paused for now ([Derive and bumps are paused](#derive-and-bumps-are-paused)):
 
 - **A bump** moves the pins to a newer upstream release and derives the data again
   ([Bump pull requests](#bump-pull-requests)); the nightly starts one for every tool-pack behind.
@@ -167,15 +167,23 @@ upstream path and how it was made, a snapshot taken when the tables moved) and `
 licence texts), for audit. Nothing in the repository reads `provenance.json`; pack check 6, the publish licence check
 and structure metric 7 work from the tracked patterns.
 
-The generators and `fixtures:derive` still write per-file rows, so until the follow-up:
+The generators still write per-file rows: an ECMA tool-pack's generator (javascript, typescript) would fail, and every
+other one would rewrite `UPSTREAM.md` back to per-file rows, which pack check 6 rejects. So until the follow-up, every
+path that derives refuses, with the message `derive and bumps are paused until the generators write per-repo
+provenance; see docs/upstream.md#derive-and-bumps-are-paused`:
 
-- an ECMA tool-pack's derive (javascript, typescript) fails, since its rename variants look up their originals' rows;
-- every other row-writing derive, run with `--update`, rewrites `UPSTREAM.md` back to per-file rows and must not be
-  committed;
-- `upstream-releases.yml`'s `bump-dispatch` job does not start bumps. The release check still runs and reports which
-  tool-packs are behind.
+- `npm run fixtures:derive` refuses every tool-pack before it removes a file or runs a generator, and exits 1
+  (`scripts/pack-data/derive.ts`, `scripts/pack-data/paused.ts`);
+- `npm run upstream:bump` only plans a bump (`--dry-run`); asked to apply one, it refuses, writes nothing and exits 1.
+  Its summary's "Regenerate locally" section points here instead of giving derive commands;
+- `upstream-bump.yml`, dispatched by hand, bumps and re-snapshots (`resnapshot`) alike, fails at its `scope` job's first
+  step, so no other job starts;
+- `upstream-releases.yml`'s `bump-dispatch` job does not start bumps (`if: false && ...`). The release check still runs
+  and reports which tool-packs are behind.
 
-Do not derive, re-snapshot or bump a tool-pack until the follow-up lands.
+To resume, the follow-up makes the generators write per-repo provenance, then drops `refuseWhilePaused` from
+`deriveToolPack`, the CLI's refusal and the summary's pointer from `scripts/upstream/bump.ts`, the refusing step from
+`upstream-bump.yml` and the leading `false &&` from `bump-dispatch`.
 
 ## Upstream releases
 
@@ -209,10 +217,11 @@ with that list.
 
 ### Bump pull requests
 
-An upstream release is a pin change plus the test data derived from the new pins. Each night `bump-dispatch` points
-the work branch `auto/bump-run/upstream` at main's commit and dispatches `upstream-bump.yml` there once, with every
-tool-pack behind (`[{pack, tool, version}]`, sorted by pack then tool), leaving out each `<pack>/<tool>@<version>` a
-closed, unmerged bump pull request already declined.
+An upstream release is a pin change plus the test data derived from the new pins. Bumps are paused for now
+([Derive and bumps are paused](#derive-and-bumps-are-paused)); this section describes them as they run once the pause
+lifts. Each night `bump-dispatch` points the work branch `auto/bump-run/upstream` at main's commit and dispatches
+`upstream-bump.yml` there once, with every tool-pack behind (`[{pack, tool, version}]`, sorted by pack then tool),
+leaving out each `<pack>/<tool>@<version>` a closed, unmerged bump pull request already declined.
 
 ```sh
 npm run upstream:bump -- --pack python --tool ruff [--version 0.17.1] [--dry-run]  # scripts/upstream/bump.ts

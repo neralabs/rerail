@@ -43,6 +43,10 @@ under `upstream/eslint-plugin-n/publish/`. The recipe
 10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0).
 Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The derive and stage commands below take a
+snapshot once the pause lifts.
+
 ```sh
 npm run fixtures:derive -- --pack node
 npm run fixtures:stage -- --pack node    # copy what changed into upstream/eslint-plugin-n/publish/

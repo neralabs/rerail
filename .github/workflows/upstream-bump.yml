@@ -20,6 +20,9 @@ name: Upstream bump
 # branch's cache scope, which no trusted run reads (the scope job empties it before each run), and the jobs that run it
 # hold no credential: no OIDC token, no write token. The test data they start from is pulled by a job of its own, which
 # runs only main's code.
+#
+# Paused, bumps and re-snapshots alike, until the generators write per-repo provenance (docs/upstream.md, "Derive and
+# bumps are paused"): the scope job's first step fails, so no other job starts. To resume, delete that step.
 
 # upstream-bump-publish.yml reads this title to tell a re-snapshot from a bump.
 run-name: ${{ inputs.resnapshot && 'Re-snapshot the upstream pins' || 'Bump the upstream releases' }}
@@ -60,6 +63,11 @@ jobs:
     outputs:
       tool-packs: ${{ steps.check.outputs.tool-packs }}
     steps:
+      - name: Refuse while derive and bumps are paused
+        run: |
+          echo "::error::derive and bumps are paused until the generators write per-repo provenance; see docs/upstream.md#derive-and-bumps-are-paused"
+          exit 1
+
       - id: check
         name: Check the work branch and the list, and empty the branch's cache scope
         env:

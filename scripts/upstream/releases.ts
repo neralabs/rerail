@@ -133,7 +133,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
     package: name,
     version,
     disagreements,
-    bump: `npm run upstream:bump -- --pack ${pack} --tool ${tool}, then derive it again (the nightly opens this as a pull request)`,
+    bump: `npm run upstream:bump -- --pack ${pack} --tool ${tool}, then derive it again, once derive and bumps resume (paused: docs/upstream.md#derive-and-bumps-are-paused)`,
   };
 }
 
@@ -176,7 +176,7 @@ export function clippyPin(root: string, pack = "rust", tool = "clippy"): Upstrea
     package: "rust",
     version,
     disagreements,
-    bump: "npm run upstream:bump -- --pack rust --tool clippy, then derive it again (the nightly opens this as a pull request)",
+    bump: "npm run upstream:bump -- --pack rust --tool clippy, then derive it again, once derive and bumps resume (paused: docs/upstream.md#derive-and-bumps-are-paused)",
   };
 }
 

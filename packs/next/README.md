@@ -31,6 +31,10 @@ under `upstream/eslint-plugin-next/publish/`. The recipe
 (`scripts/pack-data/recipes/next.ts`) runs `upstream/eslint-plugin-next/generate.mjs` against the pinned plugin (Node
 23.6 or later):
 
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
+pause lifts.
+
 ```sh
 npm run fixtures:derive -- --pack next
 npm run fixtures:stage -- --pack next    # copy what changed into upstream/eslint-plugin-next/publish/

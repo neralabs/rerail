@@ -143,7 +143,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   per-file provenance record (`provenance.json`, with `LICENSES.md`) are not in
   git; the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to
   score (the files the tool's `UPSTREAM.md` lists as Rerail's, and `authored/`) is authored; everything else is
-  derived, which a maintainer regenerates from the pins with `npm run fixtures:derive`. Both are one archive per
+  derived, which a maintainer regenerates from the pins with `npm run fixtures:derive` (paused for now:
+  [docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Both are one archive per
   tool-pack in S3, which `upstream/<tool>/test-data.lock` names by sha256 and `npm run fixtures:pull` fetches. A pull
   request that adds or changes data stages it into the tracked `upstream/<tool>/publish/` (`npm run fixtures:stage`)
   and removes an authored file by removing its `UPSTREAM.md` row; the publish workflow puts it in S3 and commits the

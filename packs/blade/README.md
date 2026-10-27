@@ -226,6 +226,10 @@ under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/blade.t
 over its fixtures, against the pinned tool versions, with the pinned PHP 8.5.11 first on `PATH` (each generator's
 docstring has the setup):
 
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
+pause lifts.
+
 ```sh
 npm run fixtures:derive -- --pack blade                    # every tool
 npm run fixtures:derive -- --pack blade --tool bladestan   # one

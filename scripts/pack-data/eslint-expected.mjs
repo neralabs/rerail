@@ -2,7 +2,8 @@
 // the generating machine out of fixtures, each unit's upstream origin and the ECMA rename variants, and
 // ESLint's findings in the expected-findings format `rerail/conformance/languages/pack.ts` reads (`expectedFindingsSchema`).
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
-// pull request CI).
+// pull request CI). Paused for now: derive refuses until the generators write per-repo provenance
+// (docs/upstream.md#derive-and-bumps-are-paused).
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -232,34 +233,4 @@ export function withOrigins(fixtures, kept, origins, variants, unparsed, finding
     units: Object.fromEntries(entries),
     findings: findings.filter(finding => !dropped.has(finding.path)),
   };
-}
-
-/** A row of an UPSTREAM.md file table: `| \`<file>\` | \`<upstream path>\` | <copy> |`. */
-const UPSTREAM_ROW = /^\| `([^`]+)` \| `([^`]+)` \|/u;
-
-/**
- * Rewrites `licence` (the tool's licenses/<project>/UPSTREAM.md) so its file table lists each rename variant file the
- * expected findings keep (`units`, their `files`) as derived from the upstream test file its original's row names, and no other
- * file under `fixtures/renamed/`. The originals' rows, the table's order and the rest of the file stay as they are;
- * the variant rows follow them, sorted. An original the table does not list is an error: its variant would have no
- * source.
- */
-export function writeVariantRows(licence, tool, units) {
-  const fixtures = `upstream/${tool}/fixtures/`;
-  const variantPrefix = `${fixtures}${RENAMED_DIRECTORY}/`;
-  const lines = readFileSync(licence, "utf8").split("\n");
-  const first = lines.findIndex(line => UPSTREAM_ROW.test(line));
-  if (first < 0) throw new Error(`${licence} has no file table`);
-  let last = first;
-  while (last + 1 < lines.length && UPSTREAM_ROW.test(lines[last + 1])) last += 1;
-  const originals = lines.slice(first, last + 1).filter(row => !UPSTREAM_ROW.exec(row)[1].startsWith(variantPrefix));
-  const upstreamOf = new Map(originals.map(row => UPSTREAM_ROW.exec(row).slice(1, 3)));
-  const variantRows = units.filter(unit => isVariantPath(unitKey(unit))).flatMap(unitPaths).map(path => {
-    const original = path.slice(RENAMED_DIRECTORY.length + 1);
-    const upstream = upstreamOf.get(`${fixtures}${original}`);
-    if (upstream === undefined) throw new Error(`${licence} lists no ${fixtures}${original}, the original of the rename variant ${path}`);
-    return `| \`${fixtures}${path}\` | \`${upstream}\` | derived (\`fixtures/${original}\` with its names and literals renamed) |`;
-  }).sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
-  const text = [...lines.slice(0, first), ...originals, ...variantRows, ...lines.slice(last + 1)].join("\n");
-  if (text !== lines.join("\n")) writeFileSync(licence, text);
 }

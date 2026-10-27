@@ -399,7 +399,8 @@ A pack whose rules reproduce another tool's rules adds the validation material, 
    (`packs/python/upstream/ruff/generate.py` is one; the ESLint-based ones share `scripts/pack-data/eslint-expected.mjs`,
    which also writes the rename variants under `fixtures/renamed/`). These are derived pack test data, never in git
    in that layout: add the tool-pack's recipe under `scripts/pack-data/recipes/` (one module per pack, listed in its
-   `index.ts`), so `npm run fixtures:derive -- --pack <id>` makes them from the pins. Cases you wrote for the tool
+   `index.ts`), so `npm run fixtures:derive -- --pack <id>` makes them from the pins (paused for now:
+   [docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Cases you wrote for the tool
    (listed in its `UPSTREAM.md`) or a corpus with its ground truth under `upstream/<tool>/authored/` are authored.
    Stage the data into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and commit
    that; the publish workflow puts it in S3 once a code owner approves, and commits the tool-pack's

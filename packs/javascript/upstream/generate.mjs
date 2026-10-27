@@ -27,7 +27,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, withOrigins, writeRenameVariants, writeVariantRows } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { isVariantPath, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
 import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -304,7 +304,6 @@ for (const path of linted.unparsed.filter(path => !isVariantPath(path))) {
 }
 const kept = files.filter(file => !unparsedSet.has(file));
 const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
-writeVariantRows(join(HERE, "..", "licenses", TOOL, "UPSTREAM.md"), TOOL, units);
 writeJson(join(HERE, TOOL, "fixtures.expected.json"), {
   tool: TOOL,
   version: VERSION,
