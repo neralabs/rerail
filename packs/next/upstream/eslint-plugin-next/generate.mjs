@@ -23,7 +23,7 @@ import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, assertPortableCase, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, isVariantPath, lint, pinnedRequire, withOrigins, writeRecording, writeRenameVariants } from "../../../../conformance/recorders/eslint-record.mjs";
 import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
