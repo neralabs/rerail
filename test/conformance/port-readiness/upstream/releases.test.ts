@@ -361,7 +361,7 @@ test("gates.yaml and the runtime disagreeing about the pin fails, as does a runt
   const { code, stdout } = await nightly(root, releasing(root, {}));
   assert.equal(code, 1);
   assert.match(stdout, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.4 \| current \| pins disagree \|$/mu);
-  assert.match(stdout, /gates\.yaml upstream\.version is 1\.9\.4 but conformance\/recorders\/port-readiness\/runtimes\/bandit-1\.9\.4\/pyproject\.toml pins bandit 1\.9\.3/u);
+  assert.match(stdout, /gates\.yaml upstream\.version is 1\.9\.4 but scripts\/pack-data\/runtimes\/bandit-1\.9\.4\/pyproject\.toml pins bandit 1\.9\.3/u);
   assert.match(stdout, /^::error title=Upstream release \(demo\/bandit\)::demo\/bandit pins disagree/mu);
 
   // Pins that disagree fail even when upstream is ahead by a release that is not breaking.
@@ -373,7 +373,7 @@ test("gates.yaml and the runtime disagreeing about the pin fails, as does a runt
   roots.push(missing);
   const unread = await nightly(missing, releasing(missing, {}));
   assert.equal(unread.code, 1);
-  assert.match(unread.stdout, /`demo\/bandit`: conformance\/recorders\/port-readiness\/runtimes\/bandit-1\.9\.4\/pyproject\.toml cannot be read/u);
+  assert.match(unread.stdout, /`demo\/bandit`: scripts\/pack-data\/runtimes\/bandit-1\.9\.4\/pyproject\.toml cannot be read/u);
 });
 
 test("a registry that cannot be read fails rather than passing", async () => {
