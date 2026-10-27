@@ -174,6 +174,23 @@ const fence = (text: string): string => {
   return "`".repeat(longest + 1);
 };
 
+/** The repositories of `samples` that `texts` has a licence text for at any of their commits, sorted. */
+function reposWithText(samples: readonly Sample[], texts: (repo: string, commit: string) => LicenceText[] | undefined): string[] {
+  const repos = [...new Set(samples.map((sample) => sample.source.repo))].sort(byText);
+  return repos.filter((repo) => samples.some((sample) => sample.source.repo === repo && (texts(repo, sample.source.commit)?.length ?? 0) > 0));
+}
+
+/**
+ * What the archive's LICENSES.md holds, for SAMPLES.md: licence texts for every repository, for none (ESLint test-set
+ * sets: the licence ids the test set recorded, which publishedSamples holds to RECORDED_LICENCES), or for some.
+ */
+export function licensesClaim(repos: number, withText: readonly string[]): string {
+  if (withText.length === repos) return "The archive's `LICENSES.md` lists every file with its repository's licence text.";
+  const ids = "the licence id the ESLint test set recorded, which is the one `scripts/samples/licences.ts` records for the repository";
+  if (withText.length === 0) return `The archive's \`LICENSES.md\` lists every file with its repository's licence: ${ids}. It holds no licence texts.`;
+  return `The archive's \`LICENSES.md\` lists every file with its repository's licence. It holds the licence text of ${withText.join(", ")} only; for every other repository it holds ${ids}, and no licence text.`;
+}
+
 /**
  * The archive's LICENSES.md: per source repository its licence, the files taken from it (as the archive holds them),
  * and the licence texts read at their commits. ESLint test-set sources carry the licence the test set recorded.
@@ -181,10 +198,11 @@ const fence = (text: string): string => {
 export function licensesMarkdown(samples: readonly Sample[], texts: (repo: string, commit: string) => LicenceText[] | undefined): string {
   const byRepo = new Map<string, Sample[]>();
   for (const sample of samples) byRepo.set(sample.source.repo, [...(byRepo.get(sample.source.repo) ?? []), sample]);
+  const allText = reposWithText(samples, texts).length === byRepo.size;
   const lines = [
     "# Sources",
     "",
-    "Every sample in this archive is a copy of one file of an open-source repository, at the commit its `.expected.json` names (`source.commit`; for a SWE task's file, that commit with the task's reference solution applied). Each repository below is listed with its licence, the files taken from it, and its licence text as read at those commits. The files remain under their repositories' licences.",
+    `Every sample in this archive is a copy of one file of an open-source repository, at the commit its \`.expected.json\` names (\`source.commit\`; for a SWE task's file, that commit with the task's reference solution applied). Each repository below is listed with its licence, the files taken from it, and ${allText ? "its licence text as read at those commits" : "its licence text as read at those commits where one was read (otherwise the licence the ESLint test set recorded)"}. The files remain under their repositories' licences.`,
     "",
   ];
   for (const repo of [...byRepo.keys()].sort(byText)) {
@@ -214,15 +232,21 @@ export function licensesMarkdown(samples: readonly Sample[], texts: (repo: strin
 
 /**
  * The tool-pack's SAMPLES.md, committed beside samples.lock: which repositories the sample set takes files from,
- * under which licence and at which commits, and the archive. The licence texts are in the archive's LICENSES.md.
+ * under which licence and at which commits, and the archive, with what its LICENSES.md holds (`texts`, as for
+ * licensesMarkdown).
  */
-export function samplesMarkdown(toolPack: string, lock: { sha256: string; files: number; bytes: number }, samples: readonly Sample[]): string {
+export function samplesMarkdown(
+  toolPack: string,
+  lock: { sha256: string; files: number; bytes: number },
+  samples: readonly Sample[],
+  texts: (repo: string, commit: string) => LicenceText[] | undefined,
+): string {
   const byRepo = new Map<string, Sample[]>();
   for (const sample of samples) byRepo.set(sample.source.repo, [...(byRepo.get(sample.source.repo) ?? []), sample]);
   const lines = [
     `# Real-code samples: ${toolPack}`,
     "",
-    `The sample set \`samples.lock\` pins (archive \`rerail/archives/samples/${toolPack}/${lock.sha256}.tar.zst\`, ${lock.files} files, ${lock.bytes} bytes) holds ${samples.length} sample(s): files copied from the repositories below, each under its repository's licence. The archive's \`LICENSES.md\` lists every file with its repository's licence text. None of it is published with the pack.`,
+    `The sample set \`samples.lock\` pins (archive \`rerail/archives/samples/${toolPack}/${lock.sha256}.tar.zst\`, ${lock.files} files, ${lock.bytes} bytes) holds ${samples.length} sample(s): files copied from the repositories below, each under its repository's licence. ${licensesClaim(byRepo.size, reposWithText(samples, texts))} None of it is published with the pack.`,
     "",
     "| Repository | Licence | Commits | Files |",
     "|---|---|---|---:|",

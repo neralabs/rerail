@@ -8,7 +8,7 @@ import { buildArchive, readArchive } from "../../../scripts/s3/test-data-archive
 import { eslintTestSetSamples, fixedCopyPath } from "../../../scripts/samples/convert-eslint-test-set.js";
 import { packRuleIds, type PackConformance } from "../../../scripts/samples/conformance.js";
 import { LABELS_SUFFIX, sampleLabelsSchema } from "../../../scripts/samples/format.js";
-import { copyleftReason, licenceTexts } from "../../../scripts/samples/licences.js";
+import { copyleftReason, licenceTexts, licensesMarkdown, samplesMarkdown } from "../../../scripts/samples/licences.js";
 import { archiveEntries, dedupe, labelsText, sampleId, sha256, type Sample } from "../../../scripts/samples/samples.js";
 
 const COMMIT = "0".repeat(40);
@@ -120,6 +120,29 @@ describe("licences", () => {
     write("dask/dask", "LICENSE.txt", "Permission is hereby granted, free of charge");
     expect(() => licenceTexts(cache, "dask/dask", COMMIT)).toThrow(/do not read as BSD-3-Clause/u);
     expect(() => licenceTexts(cache, "someone/unknown", COMMIT)).toThrow(/no licence is recorded/u);
+  });
+
+  it("are claimed in SAMPLES.md and LICENSES.md as texts only for the repositories whose texts the archive holds", () => {
+    const samples = [sample({ source: { ...sample().source, repo: "a/x" } }), sample({ path: "b.py", source: { ...sample().source, repo: "b/y", path: "b.py" } })];
+    const lock = { sha256: "f".repeat(64), files: 4, bytes: 10 };
+    const text = [{ file: "LICENSE", text: "MIT License" }];
+    const claims = (texts: (repo: string) => typeof text | undefined) => {
+      const samplesMd = samplesMarkdown("p/t", lock, samples, texts);
+      return { samplesMd, intro: licensesMarkdown(samples, texts).split("\n")[2]! };
+    };
+
+    const all = claims(() => text);
+    expect(all.samplesMd).toContain("The archive's `LICENSES.md` lists every file with its repository's licence text.");
+    expect(all.intro).toContain("and its licence text as read at those commits.");
+
+    const none = claims(() => undefined);
+    expect(none.samplesMd).toContain("It holds no licence texts.");
+    expect(none.samplesMd).not.toContain("with its repository's licence text");
+    expect(none.intro).toContain("where one was read (otherwise the licence the ESLint test set recorded)");
+
+    const some = claims((repo) => (repo === "a/x" ? text : []));
+    expect(some.samplesMd).toContain("It holds the licence text of a/x only; for every other repository it holds the licence id the ESLint test set recorded");
+    expect(some.samplesMd).not.toContain("with its repository's licence text");
   });
 });
 

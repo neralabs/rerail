@@ -1,6 +1,6 @@
 # Real-code samples: javascript/eslint
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/javascript/eslint/9ef26c65e7d8338afb9e5ebf660d6fdaaebaa78e6635ae9aa96d8e8cc6d10aed.tar.zst`, 3347 files, 39279925 bytes) holds 1673 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
+The sample set `samples.lock` pins (archive `rerail/archives/samples/javascript/eslint/9ef26c65e7d8338afb9e5ebf660d6fdaaebaa78e6635ae9aa96d8e8cc6d10aed.tar.zst`, 3347 files, 39279925 bytes) holds 1673 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence: the licence id the ESLint test set recorded, which is the one `scripts/samples/licences.ts` records for the repository. It holds no licence texts. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|
