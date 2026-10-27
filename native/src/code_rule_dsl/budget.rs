@@ -264,6 +264,55 @@ impl MatchDeadline {
     }
 }
 
+/// An evaluation's suspended budget. Resuming restores its exact poll countdowns.
+#[allow(dead_code)]
+pub(super) struct Context {
+    deadline: Option<MatchDeadline>,
+    matcher: u32,
+    steps: u32,
+}
+// P's suspended budgets, for its admission loop (outside the module tree until wired).
+#[allow(dead_code)]
+impl Context {
+    pub(super) fn capture() -> Self {
+        Self {
+            deadline: MATCH_BUDGET.with_borrow(Clone::clone),
+            matcher: BUDGET_COUNTDOWN.get(),
+            steps: STEP_COUNTDOWN.get(),
+        }
+    }
+    pub(super) fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
+        Self {
+            deadline: Some(MatchDeadline::new(closed, Limit::Work(units))),
+            matcher: 0,
+            steps: 0,
+        }
+    }
+    pub(super) fn observed(&self) -> bool {
+        self.deadline
+            .as_ref()
+            .is_some_and(|d| d.observed() || d.nested.load(Ordering::Relaxed))
+    }
+    pub(super) fn run<T>(&mut self, run: impl FnOnce() -> T) -> T {
+        let old = Self::capture();
+        MATCH_BUDGET.set(self.deadline.clone());
+        BUDGET_COUNTDOWN.set(self.matcher);
+        STEP_COUNTDOWN.set(self.steps);
+        struct Restore<'a>(&'a mut Context, Context);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.matcher = BUDGET_COUNTDOWN.get();
+                self.0.steps = STEP_COUNTDOWN.get();
+                MATCH_BUDGET.set(self.1.deadline.clone());
+                BUDGET_COUNTDOWN.set(self.1.matcher);
+                STEP_COUNTDOWN.set(self.1.steps);
+            }
+        }
+        let _restore = Restore(self, old);
+        run()
+    }
+}
+
 pub(super) struct MatchBudget {
     deadline: MatchDeadline,
 }
@@ -271,6 +320,15 @@ impl MatchBudget {
     /// A budget of `units` polls: the same work runs out at the same poll, on any machine and load.
     pub(super) fn work(closed: &Arc<AtomicBool>, units: u64) -> Self {
         Self::install(MatchDeadline::new(closed, Limit::Work(units)))
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn resume(context: Context) -> Self {
+        let deadline = context.deadline.expect("prepared file budget");
+        MATCH_BUDGET.set(Some(deadline.clone()));
+        BUDGET_COUNTDOWN.set(context.matcher);
+        STEP_COUNTDOWN.set(context.steps);
+        Self { deadline }
     }
 
     /// A wall-clock budget, for a fast path whose miss only falls back.
@@ -328,6 +386,24 @@ impl Drop for MatchBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suspended_context_preserves_poll_countdowns_and_cancellation() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let mut first = Context::work(&closed, 1);
+        let mut second = Context::work(&closed, 1);
+        assert!(!first.run(step_budget_exhausted));
+        assert!(!second.run(step_budget_exhausted));
+        for _ in 0..STEP_CHECK_INTERVAL - 1 {
+            assert!(!first.run(step_budget_exhausted));
+        }
+        assert!(first.run(step_budget_exhausted));
+        assert!(first.observed());
+        assert!(!second.observed());
+        closed.store(true, Ordering::Relaxed);
+        assert!(second.run(matcher_budget_exhausted));
+        assert!(second.observed());
+    }
 
     #[test]
     fn a_deadline_records_spent_only_when_it_becomes_exhausted() {

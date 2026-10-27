@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn incremental_explanations_survive_input_release_and_only_visit_new_queries() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempdir();
     let connection = Connection::open_in_memory().unwrap();
     // SAFETY: this profiler drops before its connection.
     let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
@@ -326,21 +326,19 @@ fn callback_survives_a_session_move_between_workers() {
 #[test]
 fn positional_fts_bulk_publication_exposes_per_document_helper_executions() {
     for files in [1, 10, 101] {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = tempdir();
         let connection = Connection::open_in_memory().unwrap();
         // SAFETY: this profiler drops before its connection.
         let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
         // Use the production FTS declaration, including its contentless-delete layout.
         connection
             .execute_batch(
-                include_str!("../../matcher/anchors/sql/schema.sql")
-                    .split(';')
-                    .next()
-                    .unwrap(),
+                // P's `matcher/anchors/sql/schema.sql` declaration (W's store builds `search_kind_fts`).
+                "CREATE VIRTUAL TABLE ftsk USING fts5(k, content='', contentless_delete=1, detail=full)",
             )
             .unwrap();
         let before = profiler.state.borrow().sql_started;
-        connection.execute("WITH RECURSIVE files(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM files WHERE id<?1) INSERT INTO ftsk(rowid,k) SELECT id,'k1' FROM files", [files]).unwrap();
+        connection.execute("WITH RECURSIVE files(id) AS (VALUES(1) UNION ALL SELECT id+1 FROM files WHERE id<?1) INSERT INTO ftsk(rowid,k) SELECT id,'k1' FROM files", [files as i64]).unwrap();
         let publication = profiler.state.borrow().sql_started - before;
         profiler.checkpoint(&connection).unwrap();
         let state = profiler.state.borrow();
@@ -381,7 +379,7 @@ fn positional_fts_bulk_publication_exposes_per_document_helper_executions() {
 
 #[test]
 fn authored_comments_and_interleaved_open_cursors_remain_engine_submissions() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempdir();
     let connection = Connection::open_in_memory().unwrap();
     // SAFETY: this profiler drops before its connection.
     let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
@@ -396,4 +394,20 @@ fn authored_comments_and_interleaved_open_cursors_remain_engine_submissions() {
     let state = profiler.state.borrow();
     assert_eq!(state.origin_started, [2, 0, 0]);
     assert_eq!(state.origin_completed, [2, 0, 0]);
+}
+
+/// A fresh directory for one profiler (W has no `tempfile`).
+struct TempDir(std::path::PathBuf);
+impl TempDir {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+fn tempdir() -> TempDir {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("rerail-sql-profile-{}-{nonce}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    std::fs::create_dir_all(&dir).unwrap();
+    TempDir(dir)
 }

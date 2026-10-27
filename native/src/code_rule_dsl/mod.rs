@@ -21,6 +21,9 @@ mod module_graph;
 mod module_path;
 mod origin;
 mod package_manifest;
+// P's phase clocks; read by profiling once stages are named (05 Phase 11 row 2).
+#[allow(dead_code)]
+mod phase_clock;
 mod php_literal;
 mod php_view;
 mod placement;
@@ -30,7 +33,9 @@ pub(crate) mod prefilter;
 // Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
 #[allow(dead_code)]
 mod stats;
+// P's hooks are called from its matcher and relational code; W wires them with 03's stage names.
 #[cfg(feature = "code-rule-profile")]
+#[allow(dead_code)]
 mod profile;
 mod query;
 // Admission reads these once the batch budget is wired; until then only tests call it.
