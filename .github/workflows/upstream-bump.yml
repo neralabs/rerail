@@ -1,23 +1,28 @@
-name: Port readiness bump
+name: Upstream bump
 
 # The producer of the night's bump pull request (docs/port-readiness.md, "Bump pull requests"). The nightly
-# (port-readiness-nightly.yml) lists the tool-packs behind their upstream's latest stable release, points the work
-# branch auto/bump-run/upstream at main's commit and dispatches this workflow on it once, with that list. Here each
-# listed tool-pack's pins move to its release (port-readiness:bump) in a leg of its own, and every tool-pack the bump
-# made stale is derived, recorded and packed again on Linux; each leg's result is one artifact, `bump-<pack>--<tool>`:
-# the patch, the bump's summary and JSON, the per-rule summaries, the new archives and the new recordings.
-# port-readiness-bump-publish.yml then checks each artifact on main, running the pin edits again with main's code and
-# admitting only the files deriving, recording and packing write beside them, composes the verified patches into one
-# commit per tool-pack, uploads the archives and recordings to S3 and opens one pull request, which a maintainer
-# reviews and merges like any other; nothing merges itself.
+# (upstream-releases.yml) lists the tool-packs behind their upstream's latest stable release, points the work branch
+# auto/bump-run/upstream at main's commit and dispatches this workflow on it once, with that list. Here each listed
+# tool-pack's pins move to its release (upstream:bump) in a leg of its own, and every tool-pack the bump made stale is
+# derived again on Linux and staged whole into its publish/ directory (fixtures:stage --all); each leg's result is one
+# artifact, `bump-<pack>--<tool>`: the patch (the pins and the staged data) and the bump's summary and JSON.
+# upstream-bump-publish.yml then checks each artifact on main, running the pin edits again with main's code and
+# admitting only the files deriving and staging write beside them, composes the verified patches into one commit per
+# tool-pack, opens one pull request and dispatches pack-data-publish.yml for it with replace, whose upload a code owner
+# approves after reading its summary; nothing merges itself.
 #
-# The generators and the recorder run upstream's code at a release nobody has reviewed, with unlocked transitive
-# packages and Composer. So this runs on the work branch, never main: whatever that code does with the run's cache token
-# lands in the work branch's cache scope, which no trusted run reads (the scope job empties it before each run), and the
-# jobs that run it hold no credential: no OIDC token, no write token. The test data they start from is pulled by jobs
-# of their own, which run only main's code.
+# With `resnapshot`, the listed tool-packs are derived again at the release they already pin (each `version` must be
+# it): a generator or recipe change, a runtime pin's, or data only Linux makes, through the same pull request and
+# publish. A maintainer starts one by pointing auto/bump-run/upstream at main's head and dispatching this workflow there.
+#
+# The generators run upstream's code at a release nobody has reviewed, with unlocked transitive packages and Composer.
+# So this runs on the work branch, never main: whatever that code does with the run's cache token lands in the work
+# branch's cache scope, which no trusted run reads (the scope job empties it before each run), and the jobs that run it
+# hold no credential: no OIDC token, no write token. The test data they start from is pulled by a job of its own, which
+# runs only main's code.
 
-run-name: Bump the upstream releases
+# upstream-bump-publish.yml reads this title to tell a re-snapshot from a bump.
+run-name: ${{ inputs.resnapshot && 'Re-snapshot the upstream pins' || 'Bump the upstream releases' }}
 
 on:
   workflow_dispatch:
@@ -26,18 +31,22 @@ on:
         description: 'The tool-packs to bump, as JSON sorted by pack then tool: [{"pack": "<id>", "tool": "<tool>", "version": "<release>"}].'
         required: true
         type: string
+      resnapshot:
+        description: Derive the listed tool-packs again at the release each already pins (its `version`), rather than bump them.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: port-readiness-bump
+  group: upstream-bump
   cancel-in-progress: false
 
 jobs:
   # Refuses any ref but the work branch, and any list but a sorted one of distinct tool-packs, then deletes every cache
   # entry in the branch's scope: an earlier run's upstream code may have saved one there (under a key a later run
-  # restores, with files outside the paths it names), and the test-data jobs below hold an OIDC token. The concurrency
+  # restores, with files outside the paths it names), and the test-data job below holds an OIDC token. The concurrency
   # group above means no earlier run is still going. It runs nothing from the checkout. Its output is the checked list,
   # which the other jobs' matrices read.
   scope:
@@ -106,104 +115,16 @@ jobs:
         with:
           fetch: "true"
 
-  # One leg per listed tool-pack: the recording archive its current lock names, which its bump leg compares the new
-  # recording with. As port-readiness.yml's test-data job warms it, under the key the bump leg restores; from S3 under the
-  # read role on a miss. A tool-pack without a recording.lock has none. Main's code only.
-  recordings:
-    name: Pull the recording (${{ matrix.pack }} · ${{ matrix.tool }})
-    needs: scope
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
 
-      - id: recording-lock
-        name: Key the recording the current lock names
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: |
-          set -euo pipefail
-          lock="packs/$PACK/upstream/$TOOL/recording.lock"
-          [ -f "$lock" ] || exit 0
-          archive="$(jq -r '.files["recording.tar.zst"].sha256 // empty' "$lock")"
-          [ -n "$archive" ] || exit 0
-          {
-            echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
-            echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
-          } >> "$GITHUB_OUTPUT"
-
-      - id: recordings
-        name: Look up the recording the current lock names
-        if: steps.recording-lock.outputs.key != ''
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ steps.recording-lock.outputs.paths }}
-          key: ${{ steps.recording-lock.outputs.key }}
-          lookup-only: true
-
-      - id: recordings-credentials
-        name: Assume the test data read role for the recording
-        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
-        with:
-          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
-          aws-region: us-east-2
-          output-credentials: true
-          output-env-credentials: false
-
-      - name: Set up Node.js v24 for the recording
-        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-          package-manager-cache: false
-
-      - id: recordings-download
-        name: Download the recording from S3
-        if: steps.recording-lock.outputs.key != '' && steps.recordings.outputs.cache-hit != 'true'
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-          PATHS: ${{ steps.recording-lock.outputs.paths }}
-          AWS_ACCESS_KEY_ID: ${{ steps.recordings-credentials.outputs.aws-access-key-id }}
-          AWS_SECRET_ACCESS_KEY: ${{ steps.recordings-credentials.outputs.aws-secret-access-key }}
-          AWS_SESSION_TOKEN: ${{ steps.recordings-credentials.outputs.aws-session-token }}
-          AWS_REGION: us-east-2
-        run: |
-          set -euo pipefail
-          node scripts/s3/pack-fixtures.mjs recordings --pack "$PACK" --tool "$TOOL"
-          [ -f "$PATHS" ] || exit 0
-          echo "complete=true" >> "$GITHUB_OUTPUT"
-
-      - name: Save the recording
-        if: steps.recordings-download.outputs.complete == 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ steps.recording-lock.outputs.paths }}
-          key: ${{ steps.recording-lock.outputs.key }}
-
-  # One leg per listed tool-pack, each failing alone: moves its pins to the release (port-readiness:bump), then derives,
-  # records and packs every tool-pack the bump made stale, on Linux with the runtimes the record legs install, and keeps
-  # what changed in the tree as a patch beside the new archives. Only the bump step gets the read-only GITHUB_TOKEN, for
-  # GitHub's API (release tags), and it runs before any upstream code. The test data comes from the cache the test-data
-  # job filled, with no credentials. A leg whose recordings leg failed still runs: its recorder then finds no recording
-  # to compare with, and its per-rule summary says "not compared".
+  # One leg per listed tool-pack, each failing alone: moves its pins to the release (upstream:bump), then derives every
+  # tool-pack the bump made stale on Linux and stages each one's whole derived set into its publish/, and keeps what
+  # changed in the tree as a patch. With resnapshot, the bump must find the pins already at the release, and the leg's
+  # own tool-pack is derived again. Only the bump step gets the read-only GITHUB_TOKEN, for GitHub's API (release tags),
+  # and it runs before any upstream code. The test data comes from the cache the test-data job filled, with no
+  # credentials.
   bump:
     name: Bump ${{ matrix.pack }}/${{ matrix.tool }} to ${{ matrix.version }}
-    needs: [scope, test-data, recordings]
-    if: ${{ !cancelled() && needs.test-data.result == 'success' }}
+    needs: [scope, test-data]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -221,7 +142,8 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      # Before the bump moves anything: the archives main's test-data.lock files name.
+      # Before the bump moves anything: the archives main's test-data.lock files name, which deriving starts from and
+      # staging compares with.
       - uses: ./.github/actions/pack-test-data
         with:
           fetch: "false"
@@ -239,90 +161,51 @@ jobs:
         if: matrix.pack == 'php' || matrix.pack == 'blade'
         uses: ./.github/actions/php
 
-      # The recording archive the current lock names, from the cache the recordings leg and the gate legs save into
-      # (port-readiness.yml, the same key), read before the bump moves the lock: the recorder compares the new recording
-      # with it, so the pull request's per-rule summary says what upstream now answers differently. The record below is
-      # --full, so it is only compared with, never built on: when the cache lacks it (this job holds no S3 credentials),
-      # the summary says "not compared".
-      - id: base-lock
-        name: Read the recording the current lock names
-        if: hashFiles(format('packs/{0}/upstream/{1}/recording.lock', matrix.pack, matrix.tool)) != ''
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: |
-          set -euo pipefail
-          lock="packs/$PACK/upstream/$TOOL/recording.lock"
-          archive="$(jq -r '.files["recording.tar.zst"].sha256 // empty' "$lock")"
-          [ -n "$archive" ] || exit 0
-          {
-            echo "key=port-readiness-recording-$PACK-$TOOL-$archive"
-            echo "paths=.rerail/port-readiness/recordings/$archive.tar.zst"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Restore the recording the current lock names
-        if: steps.base-lock.outputs.key != ''
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ steps.base-lock.outputs.paths }}
-          key: ${{ steps.base-lock.outputs.key }}
-
       - name: Bump the pins
         env:
           PACK: ${{ matrix.pack }}
           TOOL: ${{ matrix.tool }}
           VERSION: ${{ matrix.version }}
           GH_TOKEN: ${{ github.token }}
-        run: npm run port-readiness:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --summary "$RUNNER_TEMP/bump/summary.md" --json "$RUNNER_TEMP/bump/bump.json"
+        run: npm run upstream:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --summary "$RUNNER_TEMP/bump/summary.md" --json "$RUNNER_TEMP/bump/bump.json"
 
-      # The bump names the tool-packs whose recordings it made stale: its own, and any other that installs a runtime it
-      # changed. Each is derived from the new pins (its UPSTREAM.md rows rewritten), recorded again when gated (its
-      # recording.lock rewritten, and the per-rule summary of what upstream now answers differently kept for the pull
-      # request), then packed: its test data becomes the archive under .rerail/pack-data/archives/ that its rewritten
-      # test-data.lock names.
-      - name: Derive, record and pack the bumped tool-packs
+      # The bump names the tool-packs whose test data it made stale (`derive`): its own, and any other whose upstream
+      # runs in a runtime it changed; a re-snapshot names its own alone. Each is derived from the pins (its UPSTREAM.md
+      # rows rewritten), then staged whole into its publish/ (`--all`: the publish replaces the archive with exactly
+      # this data, so a case upstream dropped is dropped too).
+      - name: Derive and stage the stale tool-packs
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.version }}
+          RESNAPSHOT: ${{ inputs.resnapshot }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/bump/changes"
-          mapfile -t legs < <(jq -r 'if .changed then ([{ pack, tool }] + .record | unique | .[] | "\(.pack) \(.tool)") else empty end' "$RUNNER_TEMP/bump/bump.json")
+          changed="$(jq -r '.changed' "$RUNNER_TEMP/bump/bump.json")"
+          if [ "$RESNAPSHOT" = "true" ] && [ "$changed" = "true" ]; then
+            echo "::error::a re-snapshot derives at the pinned release, but $PACK/$TOOL does not pin $VERSION: list the release it pins"
+            exit 1
+          fi
+          mapfile -t legs < <(jq -r --arg resnapshot "$RESNAPSHOT" '
+            if .changed then ([{ pack: (.toolPack | split("/")[0]), tool: (.toolPack | split("/")[1]) }] + .derive | unique | .[] | "\(.pack) \(.tool)")
+            elif $resnapshot == "true" then .toolPack | split("/") | "\(.[0]) \(.[1])"
+            else empty end
+          ' "$RUNNER_TEMP/bump/bump.json")
           for leg in "${legs[@]}"; do
             read -r pack tool <<< "$leg"
-            # The test data first, from the new pins (the recorder refuses a tool-pack whose test data is absent), then
-            # the recording, then the archive of both. The recording is --full: the bump moves every config id it
-            # records (the pins, or the runtime pins), so no locked answer would be reused, and this job could not
-            # fetch the other tool-packs' archives without S3 credentials anyway.
             npm run fixtures:derive -- --pack "$pack" --tool "$tool" --update
-            if [ -f "packs/$pack/upstream/$tool/gates.yaml" ]; then
-              npm run port-readiness:record -- --pack "$pack" --tool "$tool" --full --changes "$RUNNER_TEMP/bump/changes/$pack--$tool.md"
-            fi
-            node scripts/s3/pack-fixtures.mjs pack --pack "$pack" --tool "$tool"
+            npm run fixtures:stage -- --pack "$pack" --tool "$tool" --all
           done
 
-      # Only what git tracks: the pins, and the recording.lock and test-data.lock files. The test data itself is never
-      # committed: each changed test-data.lock's archive goes beside the patch, as archives/<pack>/<tool>/<sha256>.tar.zst,
-      # and the recording archive each changed recording.lock names as recordings/<sha256>.tar.zst (by its tar's sha256),
-      # for the publish workflow's upload.
-      - name: Keep the bump as a patch, with its archives and recordings
+      # Only what git tracks: the pins, the UPSTREAM.md and licence files deriving rewrites, and each stale tool-pack's
+      # publish/. The test data in its pulled layout is ignored, and no lock changes here: the publish writes them.
+      - name: Keep the bump as a patch
         run: |
           set -euo pipefail
-          git add -A -- packs conformance/recorders/port-readiness/runtimes
+          git add -A -- packs scripts/pack-data/runtimes
           git diff --cached --binary > "$RUNNER_TEMP/bump/bump.patch"
-          git diff --cached --stat
-          mapfile -t locks < <(git diff --cached --name-only --no-renames | grep -E '^packs/[a-z0-9-]+/upstream/[a-z0-9._-]+/test-data\.lock$' || true)
-          for lock in "${locks[@]}"; do
-            IFS=/ read -r _ pack _ tool _ <<< "$lock"
-            archive="$pack/$tool/$(jq -r .sha256 "$lock").tar.zst"
-            mkdir -p "$RUNNER_TEMP/bump/archives/$pack/$tool"
-            cp ".rerail/pack-data/archives/$archive" "$RUNNER_TEMP/bump/archives/$archive"
-          done
-          mapfile -t recording_locks < <(git diff --cached --name-only --no-renames --diff-filter=AM | grep -E '^packs/[a-z0-9-]+/upstream/[a-z0-9._-]+/recording\.lock$' || true)
-          if [ "${#recording_locks[@]}" -gt 0 ]; then
-            mkdir -p "$RUNNER_TEMP/bump/recordings"
-          fi
-          for lock in "${recording_locks[@]}"; do
-            archive="$(jq -r '.files["recording.tar.zst"].sha256' "$lock")"
-            cp ".rerail/port-readiness/recordings/$archive.tar.zst" "$RUNNER_TEMP/bump/recordings/$archive.tar.zst"
-          done
+          git diff --cached --stat -- . ':(exclude)packs/*/upstream/*/publish/**'
+          echo "staged in publish/: $(git diff --cached --name-only -- 'packs/*/upstream/*/publish/**' | wc -l) file(s)"
 
       - name: Upload the bump
         uses: actions/upload-artifact@v7
