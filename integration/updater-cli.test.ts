@@ -8,7 +8,8 @@ import { pathToFileURL } from "node:url";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  // A test that timed out keeps running, and its CLI children may still be writing under the directory (ENOTEMPTY).
+  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true, maxRetries: 5 })));
 });
 
 interface PackageManifest {
@@ -236,7 +237,7 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 60_000);
+  }, 90_000); // npm pack, a real npm install of the tarball from the registry, then twelve CLI runs: about 30s locally, 45s to 60s in CI.
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
