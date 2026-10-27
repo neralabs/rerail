@@ -10,7 +10,8 @@ licenses/ruff/UPSTREAM.md lists them), writes Rerail's own cases (NOQA, PROBES) 
 upstream/ruff/UPSTREAM.md), and runs Ruff with every ported rule selected over every file. It runs Ruff isolated from any
 configuration, at target version py310 (Ruff's CLI default and the engine's default `pythonVersion`, which the ports
 keep), with `# noqa` honoured, as Ruff runs by default. Each finding is the rule's code, path, line and column
-(Ruff's, 1-based, in characters)."""
+(Ruff's, 1-based, in characters). `source.units` names each copied fixture's origin: the rules RULES lists it for, whose
+upstream tests lint it (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
@@ -603,7 +604,8 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     common.write_record("ruff", f"Ruff {VERSION}", ours, "`NOQA`, `PROBES`")
     files = sorted(files + ours)
     common.write(HERE / "fixtures.expected.json", "ruff", version,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files},
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files,
+                  "units": common.origins(RULES)},
                  ruff(executable, files, target))
 
 

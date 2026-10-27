@@ -24,6 +24,8 @@
 // `authored.mjs` holds Rerail's own cases, inputs a port once misread; each is written as
 // `fixtures/<rule>/rerail-<name>.vue` and listed in `UPSTREAM.md` beside this file. Then every fixture is linted by every
 // rule, and `fixtures.expected.json` records all findings (a fixture of one rule may also be reported by another).
+// Its `source.units` names each upstream case's origin: the rule whose RuleTester cases it came from (Rerail's own
+// cases have none).
 //
 // Findings are `{ rule, path, line, column }`: ESLint's line, and its 1-based column converted from UTF-16 code
 // units to code points, as the conformance standard counts them.
@@ -170,6 +172,7 @@ function fixtures(checkout) {
   rmSync(root, { recursive: true, force: true });
   const cases = [];
   const files = [];
+  const units = {};
   for (const rule of RULES) {
     const { upstream } = rule;
     const name = upstream.rule.replace(/^vue\//, "");
@@ -209,6 +212,7 @@ function fixtures(checkout) {
           mkdirSync(join(root, name), { recursive: true });
           writeFileSync(join(root, path), outcome.code);
           files.push(path);
+          units[path] = { rules: [upstream.rule] };
           cases.push({ ...entry, kept: true, file: `fixtures/${path}`,
             copy: outcome.lang === undefined ? "verbatim" : `derived: wrapped in <script${outcome.lang === "ts" ? ' lang="ts"' : ""}>` });
         });
@@ -231,7 +235,8 @@ function fixtures(checkout) {
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
   console.log(packFixturesWritten([join(HERE, "cases.json")]));
   writeLicense(checkout, cases.filter(c => c.kept));
-  write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files }, findings);
+  const sortedUnits = Object.fromEntries(Object.entries(units).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files, units: sortedUnits }, findings);
   const kept = cases.filter(c => c.kept).length;
   console.log(`cases: ${kept} kept of ${cases.length}`);
 }

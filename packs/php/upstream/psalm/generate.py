@@ -16,7 +16,7 @@ error_message (an issue type, optionally ` - src/somefile.php:<line>:<column> - 
 report neither issue; `SKIPPED-` cases, which the tests skip as known Psalm bugs, are recorded without that check.
 
 Each finding is the issue type, path, line, and column: Psalm's column counts bytes, so the column is recounted in
-code points from Psalm's byte offset (`from`)."""
+code points from Psalm's byte offset (`from`). `source.units` names each case's origin: the issue its test is (TESTS)."""
 
 from __future__ import annotations
 
@@ -34,7 +34,8 @@ sys.path.insert(0, str(HERE.parent))
 import common  # noqa: E402
 
 ISSUES = ["ForbiddenCode", "UnusedVariable"]
-TESTS = ["UnusedVariableTest", "ForbiddenCodeTest"]
+# Each issue's own test.
+TESTS = {"UnusedVariableTest": "UnusedVariable", "ForbiddenCodeTest": "ForbiddenCode"}
 ORIGIN = "https://github.com/vimeo/psalm@e2ca44251c1f1aa2e35452d426895746b47de64e"
 SCRATCH = HERE.parents[3] / ".rerail" / "scratch" / "psalm"
 # Psalm reads these; an agent's environment changes its output.
@@ -116,6 +117,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
         for case in json.loads(read.stdout):
             assert case["php_version"] is None or float(case["php_version"]) <= 8.5, case
             case["path"] = f"{test}/{case['provider']}/{case['name']}.php"
+            case["test"] = test
             cases.append(case)
     assert len({case["path"] for case in cases}) == len(cases)
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -138,7 +140,9 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
             failures.append(f"{case['path']}: valid, Psalm reports {[(i['type'], i['line_from']) for i in kept]}")
     assert not failures, "\n".join(failures)
     common.write(HERE / "fixtures.expected.json", "psalm", version(project),
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": ISSUES, "files": sorted(c["path"] for c in cases)},
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": ISSUES, "files": sorted(c["path"] for c in cases),
+                  "units": {case["path"]: {"rules": [TESTS[case["test"]]]}
+                            for case in sorted(cases, key=lambda c: c["path"])}},
                  findings)
 
 

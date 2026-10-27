@@ -12,7 +12,8 @@ noted) and its SQL holds no Jinja (Rerail reads raw SQL; the cases run here with
 them). SQLFluff then lints every copy with every chosen rule, and the run is required to reproduce the upstream test
 on a rule's own cases: no finding of the rule on a `pass_str`, at least one on a `fail_str`, and exactly the
 `violations` positions (or `line_numbers`) where the case lists them. So the recording on a rule's own cases is the
-upstream test's expectation, and on the other rules' cases the tool's output. `fixtures.cases.json` keeps per case
+upstream test's expectation, and on the other rules' cases the tool's output. `source.units` names each upstream copy's
+origin: the rule whose YAML test file it came from (Rerail's own cases have none). `fixtures.cases.json` keeps per case
 what the standard recording has no field for: the upstream expectation, the reference parser's verdict on the copy
 (PostgreSQL 18.6 for ansi and postgres cases, SQLite 3.50.4 for sqlite ones) and, for ansi cases, whether SQLFluff's
 postgres dialect reports the same findings (a pack without an ansi dialect reads them as PostgreSQL).
@@ -214,7 +215,7 @@ def write_recording(path: pathlib.Path, source: dict, findings: list[dict]) -> N
 def fixtures() -> None:
     target = HERE / "fixtures"
     shutil.rmtree(target, ignore_errors=True)
-    files, findings, cases, left_out = [], [], [], {}
+    files, findings, cases, left_out, units = [], [], [], {}, {}
     for code in RULES:
         kept, left = load_cases(code)
         left_out[code] = left
@@ -243,10 +244,13 @@ def fixtures() -> None:
                                           == sorted(map(_key, found))}
             cases.append(row)
             files.append(relative)
+            if not case.get("own"):
+                units[relative] = {"rules": [code]}
             findings += [{"rule": f["rule"], "path": relative, "line": f["line"], "column": f["column"]}
                          for f in found]
     write_recording(HERE / "fixtures.expected.json",
-                    {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files}, findings)
+                    {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files,
+                     "units": dict(sorted(units.items()))}, findings)
     (HERE / "fixtures.cases.json").write_text(json.dumps(
         {"tool": TOOL, "version": common.TOOLS["sqlfluff"], "origin": ORIGIN, "portConfiguration": RULES,
          "leftOut": left_out, "cases": cases}, indent=1, ensure_ascii=False) + "\n")

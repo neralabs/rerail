@@ -20,7 +20,12 @@ A finding is the identifier, the template and the template line. Where a templat
 fixture renders foo.blade.php, some several times; an included template is inlined into its includer), each
 (identifier, line) counts as often as the render reporting it most often reports it, so a line is neither lost nor
 counted once per render. Only the ported identifiers are recorded (`IDENTIFIERS`), with the message of the rule the
-pack ports where another reports the same identifier."""
+pack ports where another reports the same identifier.
+
+BladeRuleTest is one test for every rule, and its templates are shared by its fixtures, so no template belongs to a
+rule by where it lies. `source.units` names a template's origin by the test's own assertions instead: the ported
+identifiers BladeRuleTest expects on it (every finding is one, as the harness requires). A template the test expects
+no ported identifier on has no entry."""
 
 from __future__ import annotations
 
@@ -122,8 +127,11 @@ def fixtures(checkout: pathlib.Path) -> None:
         return template.relative_to(resolved).as_posix() if template.is_relative_to(resolved) else None
 
     findings = merge(record(checkout, {"mode": "fixtures"}), relative)
+    expected = {path: sorted({f["rule"] for f in findings if f["path"] == path}) for path in files}
     common.write(HERE / "fixtures.expected.json", "bladestan", VERSION,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files}, findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files,
+                  "units": {path: {"rules": rules} for path, rules in sorted(expected.items()) if rules}},
+                 findings)
 
 
 def main() -> None:

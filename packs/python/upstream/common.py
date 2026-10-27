@@ -41,6 +41,15 @@ def write(path: pathlib.Path, tool: str, version: str, source: dict, findings: l
     pack_fixtures.recording_written(path, source)
 
 
+def origins(files_by_rule: dict[str, list[str]]) -> dict[str, dict]:
+    """`source.units`: each copied upstream file, by path, with the rules whose upstream tests it came from."""
+    rules_by_file: dict[str, set[str]] = {}
+    for rule, files in files_by_rule.items():
+        for file in files:
+            rules_by_file.setdefault(file, set()).add(rule)
+    return {file: {"rules": sorted(rules)} for file, rules in sorted(rules_by_file.items())}
+
+
 def shipped(tool: str) -> set[str]:
     """The upstream rules of the pack's shipped ports (conformance.json policies under rules/) for `tool`."""
     return {rule["upstream"]["rule"] for rule in json.loads(PACK.read_text())["rules"]

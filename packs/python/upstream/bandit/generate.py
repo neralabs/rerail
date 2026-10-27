@@ -8,7 +8,8 @@ under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
 licenses/bandit/UPSTREAM.md lists them), writes Rerail's own cases (NOSEC, PROBES) to fixtures/rerail/ (listed in
 upstream/bandit/UPSTREAM.md), and runs Bandit with every ported test over every file, as bare `bandit` does: `# nosec`
 honoured, every severity and confidence. A file Bandit reports an error for is skipped. Each finding is the test id,
-path, line and column (`col_offset` + 1: Bandit's is 0-based)."""
+path, line and column (`col_offset` + 1: Bandit's is 0-based). `source.units` names each copied example's origin: the
+tests TESTS lists it for (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
@@ -318,7 +319,8 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     findings, errors = bandit(executable, files, target)
     assert not errors, errors
     common.write(HERE / "fixtures.expected.json", "bandit", version,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files}, findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files,
+                  "units": common.origins(TESTS)}, findings)
 
 
 def main() -> None:

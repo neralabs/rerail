@@ -17,6 +17,7 @@ Each analysis unit (a method's files, analysed together) is recorded as:
     exactly the expected (message, line) multiset;
   - for the other ported identifiers, PHPStan's output at level max over the unit.
 Methods read_tests.php cannot read statically (data providers, helpers, skipped on this PHP) are left out.
+`source.units` names each unit's origin, by its first file: the identifiers of the class whose test analyses it.
 
 Each finding is the identifier, path and line (PHPStan reports no columns). PHPStan is run with the agent environment
 variables unset: it prints a banner before its JSON when it detects an agent."""
@@ -208,7 +209,8 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path, dump: pathlib.Path |
     if dump is not None:
         dump.write_text(json.dumps(findings, indent=1) + "\n")
     common.write(HERE / "fixtures.expected.json", "phpstan", version(project),
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files},
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files,
+                  "units": dict(sorted((unit["files"][0], {"rules": sorted(unit["identifiers"])}) for unit in units))},
                  [{key: finding[key] for key in ("rule", "path", "line")} for finding in findings])
 
 

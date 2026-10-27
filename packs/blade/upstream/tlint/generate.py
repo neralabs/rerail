@@ -12,8 +12,8 @@ ported lint over every copy, as `tlint lint` runs a file, and the recording on a
 exactly the lines its test asserts, in order (`$lints[0]->getNode()->getLine()`, `$lints[1]`, ...; none where it
 asserts `assertEmpty($lints)`): so the recording is the upstream test's expectation, and on the other lints' copies
 the tool's output. Each finding is the lint's class name, the path and its node's line (the `line` of
-`tlint lint --json`). None of the lints takes configuration; tlint's `tighten` preset enables all six, its `laravel`
-preset the last three."""
+`tlint lint --json`). `source.units` names each copy's origin: the lint whose test hands it the template. None of the
+lints takes configuration; tlint's `tighten` preset enables all six, its `laravel` preset the last three."""
 
 from __future__ import annotations
 
@@ -87,7 +87,8 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
         if reported != lines:
             raise SystemExit(f"{test}::{method} asserts lines {lines}; {lint} reports {reported} on {file}")
     common.write(HERE / "fixtures.expected.json", "tlint", VERSION,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": LINTS, "files": files}, findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": LINTS, "files": files,
+                  "units": {file: {"rules": [lint]} for file, lint, *_ in sorted(cases)}}, findings)
     write_licenses(checkout, cases)
 
 

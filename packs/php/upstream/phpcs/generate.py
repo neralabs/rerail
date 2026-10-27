@@ -10,7 +10,8 @@ runs PHP_CodeSniffer with every ported sniff (ruleset.xml: the sniffs alone, wit
 copy, and requires its reports on a sniff's own files to be,
 line by line, the counts its test's getErrorList() and getWarningList() expect: so the recording on a sniff's own
 files is the upstream test's expectation, and on the other sniffs' files the tool's output. Each finding is the
-sniff (`Standard.Category.Sniff`), path, line and column (PHP_CodeSniffer's, in characters, tab width 0)."""
+sniff (`Standard.Category.Sniff`), path, line and column (PHP_CodeSniffer's, in characters, tab width 0).
+`source.units` names each copy's origin: the sniff whose test it is."""
 
 from __future__ import annotations
 
@@ -94,7 +95,8 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
         reported = Counter(f["line"] for f in findings if f["path"] == file and f["rule"] == sniff)
         assert +expected == +reported, (file, dict(expected), dict(reported))
     common.write(HERE / "fixtures.expected.json", "phpcs", version(project),
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": SNIFFS, "files": files}, findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": SNIFFS, "files": files,
+                  "units": {file: {"rules": [owned[file]]} for file in files}}, findings)
 
 
 def main() -> None:

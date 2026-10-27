@@ -22,7 +22,8 @@ line:column) and the `//~` annotations (lint and line); every difference is writ
 The recording, fixtures.expected.json, is a second run with `-W clippy::<lint>` for every ported lint added, so each
 lint is recorded over every test (in-source `allow`/`expect` still apply): each finding is the lint, test path, and
 the primary span's 1-based line and column (code points), one per distinct primary span (start and end): two
-diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings."""
+diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings. `source.units`
+names each upstream test's origin: the lints TESTS lists it for (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
@@ -660,8 +661,11 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
             if d["code"] in ported and d["file"] == test:
                 key = (d["code"], test, d["line"], d["column"], d["end"])
                 findings[key] = {"rule": d["code"], "path": test, "line": d["line"], "column": d["column"]}
+    units = {test: {"rules": sorted(lint for lint, files in TESTS.items() if test in files)}
+             for test in tests if test not in probes}
     common.write(HERE / "fixtures.expected.json",
-                 {"kind": "fixtures", "origin": common.CLIPPY_ORIGIN, "rules": lints, "files": tests},
+                 {"kind": "fixtures", "origin": common.CLIPPY_ORIGIN, "rules": lints, "files": tests,
+                  "units": units},
                  list(findings.values()))
     (HERE / "fixtures.upstream-check.json").write_text(json.dumps(
         {"clippy": common.CLIPPY_VERSION, "origin": common.CLIPPY_ORIGIN,

@@ -13,7 +13,8 @@ fixtures/<X>Test/<n>.blade.php (n counts them in Pest's order; the pack's licens
 license.md is copied beside it). run.php then runs every ported validator over every copy, as the tests run one, and
 the recording on a validator's own copy is required to be the test's expectation: exactly the count of errors its
 `toHaveCount()` expects, with every message its `toBe()` expects. Each finding is the validator's class name, the path
-and the start line of the node the validation error reports (its BladeError position). Validators are constructed as
+and the start line of the node the validation error reports (its BladeError position). `source.units` names each copy's
+origin: the validator whose test hands it the parser. Validators are constructed as
 the tests construct them (no
 custom or ignored directives), and the parser runs on a bare container (no Laravel application booted): it knows
 Blade's core directives and no custom one."""
@@ -83,6 +84,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
     target = HERE / "fixtures"
     shutil.rmtree(target, ignore_errors=True)
     files: list[str] = []
+    units: dict[str, dict] = {}  # file -> the validator whose test it came from
     copies: list[tuple] = []  # (file, test file, test, dataset) for UPSTREAM.md: the first run giving each template
     runs: list[tuple] = []  # (file, validator, test file, test, dataset, expectations): every run, for verification
     for validator, name in VALIDATORS.items():
@@ -98,6 +100,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
                 (target / file).parent.mkdir(parents=True, exist_ok=True)
                 (target / file).write_bytes(template.encode())
                 files.append(file)
+                units[file] = {"rules": [validator]}
                 copies.append((file, test.as_posix(), entry["test"], entry["dataset"]))
             runs.append((written[template], validator, where, entry["expectations"]))
     findings, skipped = run(project, target, files)
@@ -114,7 +117,8 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
             raise SystemExit(f"{where} expects messages {dict(messages)}; {validator} reports "
                              f"{[f['message'] for f in reported]} on {file}")
     common.write(HERE / "fixtures.expected.json", "blade-parser", VERSION,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(VALIDATORS), "files": files},
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(VALIDATORS), "files": files,
+                  "units": dict(sorted(units.items()))},
                  [{key: f[key] for key in ("rule", "path", "line")} for f in findings])
     write_licenses(checkout, copies)
 
