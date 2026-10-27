@@ -1,6 +1,6 @@
 # Rerail rule pack: Rust
 
-Ports of 34 Clippy 0.1.99 lints. Eighteen pass the [port readiness gates](../../docs/port-readiness.md) and ship in `rules/` and `pack.json`: `clippy-builtin-type-shadow`, `clippy-inconsistent-digit-grouping`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names` and `needless_raw_string_hashes` (pedantic) and `partial_pub_fields` and `precedence_bits` (restriction) off, so they ship off (`"on": false`). The other 16 are candidates in `candidates/rules/`, judged by the same gates without blocking ([candidates/README.md](candidates/README.md)). Each port is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path, with its disagreements declared in `divergences.json` (214 entries, each with its evidence); every shipped rule's are declared.
+18 Clippy 0.1.99 lints ported to Rerail, each passing the [port readiness gates](../../docs/port-readiness.md), in `rules/` and `pack.json`: `clippy-builtin-type-shadow`, `clippy-inconsistent-digit-grouping`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names` and `needless_raw_string_hashes` (pedantic) and `partial_pub_fields` and `precedence_bits` (restriction) off, so they ship off (`"on": false`). 16 more ports are candidates in `candidates/rules/`, judged by the same gates without blocking ([candidates/README.md](candidates/README.md)). Each port is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path. The shipped rules agree with Clippy on every finding there, with no declared divergence; `divergences.json` holds the candidates' disagreements, each with its evidence.
 
 This pack follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
@@ -17,24 +17,17 @@ This pack follows the [pack structure and validation contract](../../docs/pack-f
 
 ## Scores
 
-The totals count every port, shipped or candidate; the per-rule table below lists the shipped rules, and
-[candidates/README.md](candidates/README.md) lists the candidates'. Scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust 1.99.0; fixtures and both
-corpora). FP and FN count unexplained points only; an explained point is one a divergence names, and recall counts
-an explained FN against the pack.
+The 18 shipped rules, scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust
+1.99.0; fixtures and both corpora); the totals sum the per-rule rows below. FP and FN count unexplained points only;
+an explained point is one a divergence names, and recall counts an explained FN against the pack. No shipped rule has
+a declared divergence. The candidates' scores, and the totals over every port, are in
+[candidates/README.md](candidates/README.md).
 
 | Source | Rules | TP | FP | FN | Explained FP | Explained FN |
 |---|---|---|---|---|---|---|
-| fixtures (Clippy's UI tests and Rerail's probes) | 34 | 397 | 2 | 2 | 0 | 7 |
-| ripgrep corpus | 34 | 614 | 0 | 0 | 11 | 6 |
-| tokio corpus | 34 | 555 | 0 | 0 | 98 | 95 |
-
-Divergences by kind (`divergences.json`):
-
-| Kind | fixtures | ripgrep | tokio | Total | What |
-|---|---|---|---|---|---|
-| `rerail-unknown` | 7 | 2 | 90 | 99 | Code tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a rule's JSON-number bounds cannot name |
-| `not-comparable` | 0 | 15 | 100 | 115 | Items and files a `cfg` leaves out of the recording's build (macOS, `--all-features`, no `tokio_unstable`, `loom`, `docsrs` or `miri`), `cfg_attr` levels whose predicate is false there, `#[tokio::test]`'s expansion, grep-index's crate-root `#![allow(warnings)]` (read per file), and the ui-toml variants on corpora recorded with Clippy's defaults |
-| `upstream-wrong` | 0 | 0 | 0 | 0 | |
+| fixtures (Clippy's UI tests and Rerail's probes) | 18 | 167 | 0 | 0 | 0 | 0 |
+| ripgrep corpus | 18 | 4 | 0 | 0 | 0 | 0 |
+| tokio corpus | 18 | 8 | 0 | 0 | 0 | 0 |
 
 Per rule (TP / FP / FN, explained points in parentheses):
 

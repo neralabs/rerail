@@ -1,8 +1,8 @@
 # Rerail rule pack: SQL
 
-22 code rules for SQL, ported from SQLFluff 4.4.0. 19 pass every blocking [port readiness](../../docs/port-readiness.md)
-gate and ship: they live in `rules/` and `pack.json` lists them, 17 on and PG01 and PG02 off. The other 3 (AL05, AM02
-and RF01) are candidates: they live in `candidates/rules/` and move to `rules/` and `pack.json` once they pass every
+19 code rules for SQL, ported from SQLFluff 4.4.0, each passing every blocking
+[port readiness](../../docs/port-readiness.md) gate: they live in `rules/` and `pack.json` lists them, 17 on and PG01
+and PG02 off. 3 more ports (AL05, AM02 and RF01) are candidates: they live in `candidates/rules/` and move to `rules/` and `pack.json` once they pass every
 blocking gate ([candidates/README.md](candidates/README.md) says where each stops). Each port is scored against SQLFluff's own findings on SQLFluff's tests and
 on pinned public corpora (postgres, mattermost, anki, application-services), with every disagreement declared in
 `divergences.json`. The conformance check (`--check`, run in CI) gates the shipped rules and reports the candidates.
@@ -38,15 +38,15 @@ to lower case, a quoted one is exact, and a whole-row reference (`to_json(t)`) u
 are written for ANSI, PostgreSQL, MySQL and SQLite (the four dialects copied). The recorder lints each fixture with its
 own dialect and each ANSI one again with `--dialect postgres` (`fixtures.cases.json`, `postgresDialect.sameFindings`):
 167 ANSI cases find the same either way and 26 do not. Where a port follows PostgreSQL and the fixture's dialect reads
-otherwise, the case is a `not-comparable` divergence, its evidence the PostgreSQL reading. Of the 59 divergences, 58
-are `not-comparable` (dialect readings, MySQL-only and SQLite-only syntax, files PostgreSQL rejects, and SQLFluff's
-dialect gates for PG01 and AM02) and 1 is `rerail-unknown` (a grammar gap in RF01: a redundantly bracketed join).
+otherwise, the case is a `not-comparable` divergence, its evidence the PostgreSQL reading. The shipped rules' 46
+divergences are all `not-comparable`: dialect readings, MySQL-only and SQLite-only syntax, and SQLFluff's dialect gate
+for PG01.
 
 ## Scores
 
-TP/FP/FN of each port against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
-findings a declared divergence explains. Every port has no false positive and no false negative on the fixtures outside
-its declared divergences, and no shipped rule has a false positive on the four pinned corpora; that says nothing
+TP/FP/FN of each shipped rule against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
+findings a declared divergence explains. Every shipped rule has no false positive and no false negative on the fixtures
+outside its declared divergences, and none has a false positive on the four pinned corpora; that says nothing
 about other SQL, and a port's reading is PostgreSQL's wherever the dialects differ.
 Corpus false negatives do not fail the gate.
 
@@ -89,8 +89,7 @@ others run around the errors (`source-partial`). Per source:
 | anki | 112 | 15 | 97 | 29 | 68 (70%) |
 | application-services | 21 | 15 | 6 | 4 | 2 (33%) |
 
-The corpus false negatives are mostly these files: of the 63 the report lists (at most 50 per port and corpus), 59
-are in a file with a syntax error. `--rule <id>` prints each syntax-error file at its first error (`SYNTAX
+Most of the shipped rules' corpus false negatives are in a file with a syntax error. `--rule <id>` prints each syntax-error file at its first error (`SYNTAX
 path:line:column`).
 
 ## Port readiness

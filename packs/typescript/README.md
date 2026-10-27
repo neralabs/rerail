@@ -46,9 +46,8 @@ node --import tsx conformance/languages/cli.ts --pack typescript --rule typescri
 
 ## Not ported: `no-restricted-types`
 
-Every typescript-eslint 8.70.1 rule that needs no type information has a port here, shipped or candidate, except
-`no-restricted-types`. It reports only the types a project lists in its `types` option, and that list is empty by
-default. At its default options it reports nothing, so there is nothing to port. A project that wants a type banned
+typescript-eslint 8.70.1's `no-restricted-types` reports only the types a project lists in its `types` option, and that
+list is empty by default. At its default options it reports nothing, so there is nothing to port. A project that wants a type banned
 writes its own code rule.
 
 ## Rule details

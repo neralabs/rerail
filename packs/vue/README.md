@@ -1,25 +1,22 @@
 # Rerail rule pack: Vue
 
-Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. 19 ship, each
+19 eslint-plugin-vue 10.11.1 rules for Vue single-file components, ported to Rerail with their default options, each
 passing every blocking port readiness gate ([docs/port-readiness.md](../../docs/port-readiness.md)), judged against
 `upstream/eslint-plugin-vue/gates.yaml`'s recording of eslint-plugin-vue's own RuleTester cases and of the pinned
 corpora: 18 on, as `flat/recommended` turns them on, and `no-setup-props-reactivity-loss` off until turned on (no
 recommended configuration of eslint-plugin-vue turns it on). The ports cover `.vue` files only (`rerail.in_scope`), so
 each upstream case it lints as a bare script is recorded as the component that holds it, wrapped in `<script>` as
-`generate.mjs` writes its fixtures, and scored on upstream's answer there. The other 5 are candidates under `candidates/rules/`,
-scored and reported but never gating a check, until they pass the gates: 3 stop at `matches-upstream-tests` on cases
-no single-file, type-free read can answer as upstream does (a prop type imported from another file, a switch the
-TypeScript checker finds exhaustive, a type the checker infers, a TypeScript `<script setup>` without `lang`), 1 at
-`compact` (`no-dupe-v-else-if`) and 1 at `not-overfit` (`no-unused-refs`). Each
+`generate.mjs` writes its fixtures, and scored on upstream's answer there. 5 more ports are candidates under
+`candidates/rules/`, scored and reported but never gating a check, until they pass the gates
+([candidates/README.md](candidates/README.md) says where each stops). Each
 reads the component's two documents: its tree-sitter-vue tree, and the ECMAScript program its scripts and template
 expressions make (the `script-block` program a clause reads with `ast.embedded`, or reaches from a template node with
 `embedded`; `host` leads back from a program node to the template node it stands for). Each port
 is scored against eslint-plugin-vue's own findings on its RuleTester cases, on cases Rerail wrote for inputs a port once
 misread (`fixtures/<rule>/rerail-*.vue`, listed in `upstream/eslint-plugin-vue/UPSTREAM.md`) and on three pinned corpora
-(element-plus, vue-vben-admin, hoppscotch), through the engine's production workspace path. Every port agrees with
-eslint-plugin-vue on every fixture case: 1,106 findings on the 773 fixture files, with no false positive or false
-negative and no declared divergence. On the corpora (2,111 files) the ports agreed on all 221 findings when last scored,
-before they were ported to the two documents.
+(element-plus, vue-vben-admin, hoppscotch), through the engine's production workspace path. Every shipped rule agrees
+with eslint-plugin-vue on every fixture case, with no false positive or false negative and no declared divergence, and
+agreed on every corpus finding when last scored, before the rules were ported to the two documents.
 
 It is checked by:
 

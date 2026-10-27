@@ -3,6 +3,9 @@
 The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
 and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
+Every typescript-eslint 8.70.1 rule that needs no type information has a port, shipped or a candidate here, except
+`no-restricted-types` (the pack README says why).
+
 ## `no-magic-numbers` passes the gates and stays a candidate
 
 It passes the blocking port readiness gates but `passes-conformance` ([docs/port-readiness.md](../../../docs/port-readiness.md)) and agrees with typescript-eslint on every fixture and every vscode file. A shipped rule's vscode

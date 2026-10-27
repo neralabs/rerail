@@ -12,6 +12,12 @@ start off if it ever ships, to be turned on for MySQL or ANSI SQL.
 TP/FP/FN of each candidate against SQLFluff 4.4.0, as the pack README's scores. Each has no false positive and no false
 negative on the fixtures outside its declared divergences; AM02 has one false positive on postgres.
 
+Over every port, shipped and candidate: of the 59 divergences, 58 are `not-comparable` (dialect readings, MySQL-only
+and SQLite-only syntax, files PostgreSQL rejects, and SQLFluff's dialect gates for PG01 and AM02) and 1 is
+`rerail-unknown` (a grammar gap in RF01: a redundantly bracketed join); the candidates hold 13 of them, AL05's 7, RF01's
+5 and AM02's 1. Of the 63 corpus false negatives the report lists (at most 50 per port and corpus), RF01's 7 among
+them, 59 are in a file with a syntax error.
+
 | Port | SQLFluff rule | Status | Fixtures | postgres | mattermost | anki | application-services | Skips files with syntax errors |
 |---|---|---|---|---|---|---|---|---|
 | `sqlfluff-al05-aliasing-unused` | AL05 | candidate | 9/0/0 (7 div.) | 61/0/0 | 0/0/0 | 1/0/0 | 0/0/0 | yes |

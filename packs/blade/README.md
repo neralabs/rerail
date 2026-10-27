@@ -1,9 +1,9 @@
 # Rerail rule pack: Blade
 
-17 ports of rules for Laravel Blade templates: Bladestan 0.11.7 (8 PHPStan 2.2.16 rules over the compiled template),
-tlint 9.7.0 (5 lints) and stillat/blade-parser 2.1.0 (4 validators). 10 ship: tlint's 5, blade-parser's
+10 rules for Laravel Blade templates, ported to Rerail: tlint 9.7.0's 5 lints, stillat/blade-parser 2.1.0's
 `DebugDirectiveValidator`, `ForElseStructureValidator` and `ComponentShorthandVariableParameterValidator`, and
-Bladestan's `if.alwaysTrue` and `identical.alwaysTrue`. The two Bladestan rules start off (`"on": false`): PHPStan
+Bladestan 0.11.7's `if.alwaysTrue` and `identical.alwaysTrue` (PHPStan 2.2.16 rules over the compiled template). 7
+more ports are candidates ([candidates/README.md](candidates/README.md)). The two Bladestan rules start off (`"on": false`): PHPStan
 registers them at level 4 and Bladestan's recommended level is 0, so they are experimental. A port starts in
 `candidates/rules/` and moves to `rules/` and `pack.json` once it passes every blocking port readiness gate
 ([docs/port-readiness.md](../../docs/port-readiness.md)); each of the pack's three tools is gated. Every port is scored

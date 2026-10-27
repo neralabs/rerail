@@ -3,6 +3,14 @@
 The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
 and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
+3 stop at `matches-upstream-tests` on cases no single-file, type-free read can answer as upstream does (a prop type
+imported from another file, a switch the TypeScript checker finds exhaustive, a type the checker infers, a TypeScript
+`<script setup>` without `lang`), 1 at `compact` (`no-dupe-v-else-if`) and 1 at `not-overfit` (`no-unused-refs`).
+
+Over all 24 ports, shipped and candidate: every one agrees with eslint-plugin-vue on every fixture case, 1,106 findings
+on the 773 fixture files, with no false positive or false negative and no declared divergence. On the corpora (2,111
+files) the ports agreed on all 221 findings when last scored, before they were ported to the two documents.
+
 ## Rule details
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.

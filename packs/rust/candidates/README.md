@@ -10,8 +10,24 @@ tell from a span-keeping macro) are the only ones `divergences.json` leaves unde
 
 ## Scores
 
-Each candidate's TP / FP / FN, explained points in parentheses, from the same run as the pack README's scores (whose
-totals count every port, shipped or candidate):
+From the same run as the pack README's scores. The totals over every port, the 18 shipped and the 16 candidates; FP
+and FN count unexplained points only, and an explained point is one a divergence names:
+
+| Source | Rules | TP | FP | FN | Explained FP | Explained FN |
+|---|---|---|---|---|---|---|
+| fixtures (Clippy's UI tests and Rerail's probes) | 34 | 397 | 2 | 2 | 0 | 7 |
+| ripgrep corpus | 34 | 614 | 0 | 0 | 11 | 6 |
+| tokio corpus | 34 | 555 | 0 | 0 | 98 | 95 |
+
+Divergences by kind (`divergences.json`), every one a candidate's:
+
+| Kind | fixtures | ripgrep | tokio | Total | What |
+|---|---|---|---|---|---|
+| `rerail-unknown` | 7 | 2 | 90 | 99 | Code tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a rule's JSON-number bounds cannot name |
+| `not-comparable` | 0 | 15 | 100 | 115 | Items and files a `cfg` leaves out of the recording's build (macOS, `--all-features`, no `tokio_unstable`, `loom`, `docsrs` or `miri`), `cfg_attr` levels whose predicate is false there, `#[tokio::test]`'s expansion, grep-index's crate-root `#![allow(warnings)]` (read per file), and the ui-toml variants on corpora recorded with Clippy's defaults |
+| `upstream-wrong` | 0 | 0 | 0 | 0 | |
+
+Each candidate's TP / FP / FN, explained points in parentheses:
 
 | Rule | fixtures | ripgrep | tokio |
 |---|---|---|---|
