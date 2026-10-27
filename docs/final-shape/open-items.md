@@ -12,6 +12,10 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
+| O7 | Phase 2 | `tid` and text-hash sidecars wait for the vocabulary | open (Phase 3) |
+| O8 | Phase 2 | Tape v9np is not locked | open (conditional) |
+| O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
+| O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -76,6 +80,12 @@ filesystem watcher, editor buffers) are wired into the workspace scan when Phase
 (core facts) exists. Closure: a workspace scan pushes its root, and core facts are derivations that
 read `#path:` names.
 
+Phase 2 update: the consumer exists (`facts::families`: `#core:` reads `#path:`, `#kinds:` reads
+`#core:`). Wiring waits on two things. First O1: a scan that pushes through the store directly has
+the same crash hazard as the overlay (observe commits before propagate). Second, the
+`git_workspace` tests build temp repos with `git add .`, which the agent git hook blocks, so the
+wiring cannot be tested in this environment; it needs a run outside the hook.
+
 ## O3. Synchronous interning
 
 A new name is interned into `atoms` with one SQLite transaction per batch, under the write lock.
@@ -101,3 +111,28 @@ roots.
 The overlay counts bytes by an estimate per entry and assumes a single pushing thread (readers may
 be concurrent). Closure: measure real resident bytes against the estimate under the 500 MB budget;
 a second pusher needs per-scope ordering of layers.
+
+## O7. `tid` and text-hash sidecars
+
+`core::Sidecars` holds `par`, `cidx`, `cidx_named` and line starts. `tid` (each token's id in the
+language vocabulary) and text hashes need Phase 3's vocabulary. Closure: Phase 3 adds them to
+`Sidecars`, keyed by (tape digest, vocabulary length) as 03 §16 says.
+
+## O8. Tape v9np
+
+05 Phase 2 locks v9np "later (G8, X)", using P `experiments/tape-v8`, and copies it into
+`cr/tape/v9np.rs` only when its 4 measurements pass. W is on v8 (v7 plus N's supertype table). Closure:
+run the 4 measurements against v8; copy v9np only if they pass.
+
+## O9. Kind histograms are not stored
+
+`#kinds:` derivations record the histogram's digest. The counts themselves are recomputed from the
+tape when read. Closure: Phase 3's `file_kind_counts` (the prefilter's access path per file) stores
+them, written by the kinds derivation.
+
+## O10. Files without core facts
+
+A path whose blob is not stored, is not UTF-8, has no dialect, or stops the parser at a limit gets
+core and kinds outputs of `ABSENT`. That is consistent (an edit that makes it parse rebinds it), but
+a rule must treat `ABSENT` as unknown, not as empty. Closure: Phase 8's findings layer reports these
+files as Unknown under the loose contract.

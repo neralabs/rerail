@@ -98,6 +98,14 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 | `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs become tape sidecars (`par`, `cidx`, line starts, `tid`) and narrow fact families with derivation rows. No per-node SQL rows. |
 | Supertypes | N `cr/tape.rs` TMPTAPE5 delta (da080ae1, cd981e90) | W `cr/tape.rs` | Port the delta onto W's v7 as a new format version with abstract node classes. Lock v9np later (G8, X) using P `experiments/tape-v8/src/{main.rs, sql.rs}` (copy into `cr/tape/v9np.rs` when its 4 measurements pass). |
 
+**Status (2026-10-27): done, except v9np (O8, conditional).**
+
+- Tape v8 (`c3dd82e4`): N's TMPTAPE5 supertypes delta ported onto W's v7.
+- Core facts (`f5ccdfd8` copy, `0417cd7e`, `baff0c35`): facts-a's `Facts::build` reads any dialect's tape; kinds are atoms `tag·1024 + code`; supertype postings; sidecars `par`, `cidx`, `cidx_named`, line starts; a content digest.
+- Families (`3295791f`, `2ce1fbe2`): `#core:` and `#kinds:` derivations. A rename re-runs core and cuts off at kinds; a new kind reaches its reader. Same results over the overlay.
+- Gate: full `cargo test --lib`, run once: 1512 passed, 12 failed, 22 ignored; 143 s user + 9 s sys CPU. The 12 failures are the same environmental ones as Phase 1 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
+- Open items: O2 update, O7–O10 in `open-items.md`.
+
 ### Phase 3: prefilter, vocabulary, regex, statistics (§6, §16; H1–H4, E11, E13, E15)
 
 | Copy | From | To | Adaptations |
