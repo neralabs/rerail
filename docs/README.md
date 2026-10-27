@@ -2,6 +2,7 @@
 
 ## Using Rerail
 - [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+- [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
 - [reference.md](reference.md): how rules and their configuration work, the database, updates, the daemon and its API,
   and audits
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated

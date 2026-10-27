@@ -19,7 +19,7 @@ Rule checking runs on your machine and makes no network requests. No account or 
 
 ## Quickstart
 
-You need Node.js 24 or later on macOS, Linux with glibc 2.28 or later, or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine.
+You need Node.js 24 or later and Git, on macOS, Linux with glibc 2.28 or later (not Alpine or other musl Linux), or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine. If set-up or Rerail goes wrong, see [Troubleshooting](docs/troubleshooting.md).
 
 ```sh
 cd your-repo
