@@ -2,6 +2,8 @@
 
 Rerail checks the code your coding agent writes against your rules while it works, and steers it back in the same session.
 
+Works with [![Claude Code](docs/images/agents/claude-code.svg)](https://claude.com/product/claude-code) [![Codex](docs/images/agents/codex.svg)](https://developers.openai.com/codex) [![Cursor](docs/images/agents/cursor.svg)](https://cursor.com) [![OMP](docs/images/agents/omp.svg)](https://omp.sh) [![Pi](docs/images/agents/pi.svg)](https://pi.dev)
+
 [![CI](https://github.com/neralabs/rerail/actions/workflows/ci.yml/badge.svg)](https://github.com/neralabs/rerail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -15,40 +17,16 @@ Rerail takes enforcement out of the model loop. Hooks or extensions in your codi
 
 Rule checking runs on your machine and makes no network requests. No account or API key is needed.
 
-## Supported coding agents
-
-Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
-
-| Agent | Integration | Skills | Status line |
-| --- | --- | --- | --- |
-| Claude Code | `.claude-plugin`, `hooks/claude.json`; skills in `~/.claude/commands/` | `/rerail-*` | Yes |
-| Codex | `.codex-plugin`, `hooks/codex.json`; skills in `~/.codex/skills/` | `$rerail-*` | No |
-| Cursor | `.cursor-plugin`, `hooks/cursor.json`; skills in `~/.cursor/commands/` | `/rerail-*` | No |
-| OMP, Pi | Native extensions (`src/hosts/omp`, `src/hosts/pi`) | `/rerail-*` | Yes |
-
-Every agent gets the same skills:
-
-| Skill | What it does |
-| --- | --- |
-| `/rerail` | What Rerail is doing in this repository, and every skill (`/rerail-help` is the same) |
-| `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
-| `/rerail-create` | Create a rule in your own words |
-| `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
-| `/rerail-manage` | Open the dashboard |
-| `/rerail-update` | Update Rerail to the newest version |
-| `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
-
-Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
-
 ## Quickstart
 
-You need Node.js 24 or later on macOS, Linux (glibc) or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine.
+You need Node.js 24 or later on macOS, Linux with glibc 2.28 or later, or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine.
 
 ```sh
 cd your-repo
 npx @neralabs/rerail setup   # install under ~/.rerail, connect your coding agents, start Rerail here
-rerail manage                # open the dashboard (a new shell picks up the rerail launcher)
 ```
+
+Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
 Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) lists everything set-up writes and how to remove it.
 
@@ -118,12 +96,35 @@ rerail manage                 # Rule packs page: add it to this repository
 | `blade` | Bladestan, tlint, stillat/blade-parser |
 | `php` | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 |
 | `complexity` | lizard 1.24.0: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
-| `node` | eslint-plugin-n 18.4.1 (no rules shipped yet) |
-| `react` | eslint-plugin-react 7.37.5, react-hooks (no rules shipped yet) |
 
-Every shipped ported rule is scored against the original tool's recorded findings and must pass the [port readiness gates](docs/port-readiness.md). Ports that do not pass yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md) and the [pack format](docs/pack-format.md).
+Every shipped ported rule is scored against the original tool's recorded findings before it ships. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md) and the [pack format](docs/pack-format.md).
 
 Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+
+## Supported coding agents
+
+Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
+
+| Agent | Integration | In-session commands | Status line |
+| --- | --- | --- | --- |
+| Claude Code | `.claude-plugin`, `hooks/claude.json`; commands in `~/.claude/commands/` | `/rerail-*` | Yes |
+| Codex | `.codex-plugin`, `hooks/codex.json`; skills in `~/.codex/skills/` | `$rerail-*` skills | No |
+| Cursor | `.cursor-plugin`, `hooks/cursor.json`; commands in `~/.cursor/commands/` | `/rerail-*` | No |
+| OMP, Pi | Native extensions (`src/hosts/omp`, `src/hosts/pi`) | `/rerail-*` | Yes |
+
+Every agent gets the same commands; Codex has them as `$rerail-*` skills:
+
+| Command | What it does |
+| --- | --- |
+| `/rerail` | What Rerail is doing in this repository, and every command (`/rerail-help` is the same) |
+| `/rerail-start`, `/rerail-stop` | Start or stop Rerail in this checkout and the worktrees inside it; rules and history are kept |
+| `/rerail-create` | Create a rule in your own words |
+| `/rerail-show-me` | See Rerail catch a broken rule in this repository and steer the fix, then clean up |
+| `/rerail-manage` | Open the dashboard |
+| `/rerail-update` | Update Rerail to the newest version |
+| `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
+
+Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
 ## Internal testing
 
@@ -132,19 +133,7 @@ Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; 
 > still testing them internally. They are not supported, they may change or be removed in any release without notice,
 > and nothing in this README promises they work. Do not build on them or rely on them in your workflow.
 
-Each is tagged with an `Internal testing:` comment where it is defined, and every description a person or a coding agent reads for one (CLI usage, MCP tools, OMP and Pi tools and commands) starts with `[Internal testing]`, through `internalTesting()` in `src/engine/internal-testing.ts`.
-
-| Feature | Where it surfaces |
-| --- | --- |
-| Full-repository scanning | `rerail scan`; the `audit_requests_create`, `audit_requests_list`, `repository_audits_list` and `repository_audit_entries_list` operations; the automatic first repository audit at session start |
-| Conversation rules, cosine (similarity) and command (tool-call) alike | `kind: "conversation"` rules, shown in the dashboard with an `Internal testing` badge; `/cosine-rules` and the `conversation_rules` tool in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](docs/tool-call-rules.md)) |
-| Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate` in OMP and Pi |
-| Block mode | `mode: "block"`, stored and delivered exactly like `steer`; the dashboard shows it as not in this version |
-| Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile` and `--profile` |
-| Event stream | `rerail events` |
-| Steer strategies `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in the audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |
-
-`rerail settings` and the `audit_settings_*` operations are not tagged yet: their scope is still being decided. The daemon's HTTP API, OpenAPI document and MCP endpoint are described in the [reference](docs/reference.md#run); the dashboard uses them internally. Found something in this list? Feedback is welcome in an issue, labelled as internal testing.
+Their list, and where each one surfaces, is in [Internal testing](docs/internal-testing.md). Found one? Feedback is welcome in an issue, labelled as internal testing.
 
 ## Repository structure
 
@@ -194,7 +183,7 @@ Each is tagged with an `Internal testing:` comment where it is defined, and ever
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to start work and what a pull request needs. Contributions are licensed under Apache-2.0, with no CLA, and third-party material must use a permissive licence and be recorded in `UPSTREAM.md` and `REUSE.toml`. How core is released is in [docs/release.md](docs/release.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to start work and what a pull request needs. Contributions are licensed under Apache-2.0, with no CLA. Third-party material must use a permissive licence, and where it came from and under which licence must be recorded with it. How core is released is in [docs/release.md](docs/release.md).
 
 To build from a checkout you need Node.js 24+, npm, Rust (pinned in `rust-toolchain.toml`), [`just`](https://github.com/casey/just) and [Git LFS](https://git-lfs.com). The model weights and an engine data table are stored in LFS, so install it before you clone.
 
@@ -211,4 +200,4 @@ Found a false positive, a missed violation or a confusing steer? [Open an issue]
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party material bundled with Rerail, including the `minishlab/potion-base-8M` model (MIT), the Blade parser ported from Forte 1.1.0 (MIT), the vendored grammars and the ported rules, is listed with its licence in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) and `LICENSES/`.
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party material bundled with Rerail, including the `minishlab/potion-base-8M` model (MIT), the Blade parser ported from Forte 1.1.0 (MIT), the vendored grammars and the ported rules, is listed with its licence in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) and `LICENSES/`. The coding agents' names and logos are trademarks of their owners.
