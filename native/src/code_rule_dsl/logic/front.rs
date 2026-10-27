@@ -192,6 +192,52 @@ pub(in crate::code_rule_dsl) fn cmp_binds(l: &Term, op: &str, r: &Term, bound: &
     None
 }
 
+// T's `repr`s, which its transformed programs are compared in.
+impl fmt::Display for Term {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Term::Var(v) => write!(f, "${v}"),
+            Term::Wild => f.write_str("_"),
+            Term::Int(n) => write!(f, "{n}"),
+            Term::Str(s) => f.write_str(&serde_json::to_string(s).expect("a string serializes")),
+            Term::Top => f.write_str("top"),
+            Term::Call(name, args) => write!(f, "@{name}({})", join(args)),
+        }
+    }
+}
+
+impl fmt::Display for Atom {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}({})", if self.neg { "!" } else { "" }, self.rel, join(&self.args))
+    }
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Atom(a) => write!(f, "{a}"),
+            Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
+            Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
+            Literal::Agg { var, op, over, atom } => {
+                let op = if *op == AggOp::Min { "min" } else { "max" };
+                write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
+            }
+            Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
+            Literal::Ast { document, node, matcher } => write!(f, "ast(${document}, ${node}, {matcher})"),
+        }
+    }
+}
+
+impl fmt::Display for Rule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} :- {}", self.head, join(&self.body))
+    }
+}
+
+pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
+    items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct Rule {
     pub(in crate::code_rule_dsl) head: Atom,
@@ -237,6 +283,13 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) kindsets: BTreeMap<String, Vec<String>>,
     /// `.demand` relations, or `*` for every derived one.
     pub(in crate::code_rule_dsl) demand: Vec<String>,
+    /// Set by `magic`: demanded relations computed in full, and why.
+    pub(in crate::code_rule_dsl) demand_dropped: Vec<(String, String)>,
+    /// Set by `magic`: the extras its magic rules kept.
+    pub(in crate::code_rule_dsl) magic_extras: Option<usize>,
+    pub(in crate::code_rule_dsl) magic_report: Option<crate::code_rule_dsl::logic::magic::Report>,
+    /// Gated negations (`magic::gate_negations`), by their `done_` relation, in the order they were made.
+    pub(in crate::code_rule_dsl) gates: Vec<(String, crate::code_rule_dsl::logic::magic::Gate)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -245,16 +298,32 @@ pub(in crate::code_rule_dsl) enum Error {
     /// A relation depends negatively on another in its own component.
     NotStratifiable { message: String, component: BTreeSet<String>, negated: String },
     /// An aggregate reads its own component, and the head is not a lattice the aggregate is monotone in.
-    AggregationInRecursion { head: String, aggregated: String },
+    AggregationInRecursion { head: String, aggregated: String, component: BTreeSet<String> },
     /// A lattice of unbounded height with no `widen`.
     UnboundedLattice { relation: String },
+    /// A demanded relation is used with its key unbound: its demand would be everything (magic sets).
+    UnboundDemand { message: String, relation: String },
+}
+
+impl Error {
+    /// The component and relation of a stratification failure (a negation or an aggregation inside its own
+    /// component): T raised `NotStratifiable` for both, and magic sets recovers from either the same way.
+    pub(in crate::code_rule_dsl) fn unstratified(&self) -> Option<(&BTreeSet<String>, &str)> {
+        match self {
+            Error::NotStratifiable { component, negated, .. } => Some((component, negated)),
+            Error::AggregationInRecursion { component, aggregated, .. } => Some((component, aggregated)),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Syntax(m) | Error::NotStratifiable { message: m, .. } => f.write_str(m),
-            Error::AggregationInRecursion { head, aggregated } => {
+            Error::Syntax(m) | Error::NotStratifiable { message: m, .. } | Error::UnboundDemand { message: m, .. } => {
+                f.write_str(m)
+            }
+            Error::AggregationInRecursion { head, aggregated, .. } => {
                 write!(f, "aggregation in recursion: {head} aggregates {aggregated} in its own component")
             }
             Error::UnboundedLattice { relation } => {
@@ -569,40 +638,41 @@ pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, boo
 pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
     let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut edges = Edges::new();
-    let mut aggs = Vec::new();
+    // Aggregation edges that are not monotone: negative, and named apart when they close a cycle.
+    let mut aggs = BTreeSet::new();
     for r in &prog.rules {
         for l in &r.body {
             let Some(a) = l.atom() else { continue };
             if !derived.contains(&a.rel) {
                 continue;
             }
-            let agg = matches!(l, Literal::Agg { .. });
-            let monotone = match l {
-                Literal::Agg { op, .. } => prog.lattice.get(&r.head.rel).is_some_and(|d| {
+            let agg = match l {
+                Literal::Agg { op, .. } => !prog.lattice.get(&r.head.rel).is_some_and(|d| {
                     matches!((op, d.lattice()), (AggOp::Count | AggOp::Max, "max") | (AggOp::Min, "min"))
                 }),
                 _ => false,
             };
-            if agg {
-                aggs.push((r.head.rel.clone(), a.rel.clone(), monotone));
+            if agg && !a.gated {
+                aggs.insert((r.head.rel.clone(), a.rel.clone()));
             }
-            edges.entry(r.head.rel.clone()).or_default().insert((a.rel.clone(), (a.neg && !a.gated) || (agg && !monotone)));
+            edges.entry(r.head.rel.clone()).or_default().insert((a.rel.clone(), (a.neg || agg) && !a.gated));
         }
     }
     let sccs = tarjan(&derived, &edges);
     for scc in &sccs {
-        if let Some((head, aggregated, _)) = aggs.iter().find(|(h, a, m)| !m && scc.contains(h) && scc.contains(a)) {
-            return Err(Error::AggregationInRecursion { head: head.clone(), aggregated: aggregated.clone() });
-        }
         for v in scc {
             for (w, neg) in edges.get(v).into_iter().flatten() {
-                if *neg && scc.contains(w) {
-                    return Err(Error::NotStratifiable {
-                        message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
-                        component: scc.clone(),
-                        negated: w.clone(),
-                    });
+                if !*neg || !scc.contains(w) {
+                    continue;
                 }
+                if aggs.contains(&(v.clone(), w.clone())) {
+                    return Err(Error::AggregationInRecursion { head: v.clone(), aggregated: w.clone(), component: scc.clone() });
+                }
+                return Err(Error::NotStratifiable {
+                    message: format!("not stratifiable: {v} depends negatively on {w} in its own component"),
+                    component: scc.clone(),
+                    negated: w.clone(),
+                });
             }
         }
     }
