@@ -13,7 +13,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
 | O7 | Phase 2 | `tid` and text-hash sidecars wait for the vocabulary | open (Phase 3) |
-| O8 | Phase 2 | Tape v9np is not locked | open (conditional) |
+| O8 | Phase 2 | Tape format: v9np (structure-only, regular) is not decided or built; W runs v8 | open |
 | O9 | Phase 2 | Kind histograms are digests only; their rows are not stored | open (Phase 3) |
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 
@@ -118,11 +118,59 @@ a second pusher needs per-scope ordering of layers.
 language vocabulary) and text hashes need Phase 3's vocabulary. Closure: Phase 3 adds them to
 `Sidecars`, keyed by (tape digest, vocabulary length) as 03 §16 says.
 
-## O8. Tape v9np
+## O8. Tape format
 
-05 Phase 2 locks v9np "later (G8, X)", using P `experiments/tape-v8`, and copies it into
-`cr/tape/v9np.rs` only when its 4 measurements pass. W is on v8 (v7 plus N's supertype table). Closure:
-run the 4 measurements against v8; copy v9np only if they pass.
+**Two different "v8"s.** P's tape spike (2026-10-25, `research/tape-v8-measurements.md`,
+`experiments/tape-v8/`) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
+rejected it: 11.1–13.5 B/node, 1.24–1.59× v7 (1.47–1.90× after zstd). W's `TMPTAPE8` is something
+else: v7 plus N's supertype table (`c3dd82e4`, `3cf93edb`). No other tape format past v7 exists in
+any worktree, branch or repo under `~/orca` (searched 2026-10-27).
+
+**Target.** P decision 0003 (`decisions/README.md`): **v9np**, a structure-only, regular,
+column-stored tape. `kf` u16 with flags folded into the kind code space (named, extra, missing,
+error and contextual aliases as distinct codes); `start(i) = base[i/16] + off[i]`; `end(i)` from
+the start of the node's last descendant plus `tail[i]`; `size` u16/u32 per document; no stored
+parent (rebuilt with a stack where a consumer needs it). Measured 8.25–8.55 B/node (0.93–1.01× v7;
+zstd 0.94–1.06×). Gains: random access (v7 113–490 ns → v9 23–199 ns), random spans, SQL span
+extraction 2.7–8×, and columns that upload to JIT/Metal as they are, without restoring into
+`MetalNode` (v7 restore 3.7–7.8 ns/node). Sequential scans are not faster. Status: **proposed,
+pending pre-lock measurements**, never accepted.
+
+**Requirements from the discussion** (P session 2026-10-25):
+- The format must be completely regular. v4 to v7 were irregular in intermediate versions (overflow
+  pairs, sorted flag lists, alias tables), and it doesn't work unless it is regular.
+- ast-index-spike experimented with multiple trees for different ranges within a file. That has to
+  be taken into account (embedded documents, Blade, Vue).
+- Don't overload the tape with things only associated with the source structure. Per-file alias
+  string tables, the digest and length header, and Blade's omissions go to sidecars keyed by the
+  content digest, or are recomputed. Derived-document maps and host errors already live in
+  `file_documents`.
+- Blade stores nothing more or less than the tree-sitter-php tape it replaced. Today its
+  compiled-view tape drops nodes over synthetic placeholder segments, so a directive call has no
+  `function` child. Proposed fix: the plain tree-sitter-php tape, with omission through the segment
+  map sidecar. Error spans stay in the tape as tree-sitter emits them, as ast-index-spike does. It
+  is fine for Blade to store something compatible with the generic structure, in a generic way.
+- Tapes must stay processable in SQL with ast-index-spike techniques. A format change has to show
+  clear benefits; a size increase (8 → 11 B/node, about 30%) was not acceptable, hence v9np.
+- Tempo keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
+  at-rest format and the resident page format should be designed together.
+
+**Pre-lock measurements** (`research/tape-regularity.md` "Open measurements"). The spike used
+crates.io grammars, not Rerail's vendored and patched ones, so each must be rerun on Rerail's:
+1. Alias and folded code-space counts per Rerail grammar (≤ 1023; the spike saw 194–277).
+2. Whether `extra` is uniform per kind in Rerail's grammars.
+3. At-rest zstd size against v7/v8 on the full data-layer repository and CPython.
+4. GPU: column upload against `MetalNode` expansion, end to end on the per-edit gate.
+5. Width distribution: documents above 65,536 nodes or 64 KiB of source (spike: 24 of 6,251).
+
+**Not yet decided:** where W's supertype memberships go in v9np (a column, or a sidecar keyed by
+the tape digest, since they are a grammar property of the structure); whether the parent column is
+kept (only if SQL parent climbs prove hot: a climb was 1.6–3× faster than interval containment).
+
+**Closure.** Run the five measurements on Rerail's grammars; record an accepted decision (cite
+0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` into
+`cr/tape/v9np.rs` and adapt (05 Phase 2). Until then everything reads tapes only through
+`TapeDoc`'s `transducer_*` accessors, so the switch stays local to `tape.rs`.
 
 ## O9. Kind histograms are not stored
 
