@@ -8,7 +8,10 @@
 //!   c3 r)` (n gets flat_bin(op, l, r)). With a second argument it writes the result straight into that table, or
 //!   with `@name` keeps it in memory for the `lattice_result` virtual table (`CREATE VIRTUAL TABLE temp.cv USING
 //!   lattice_result(name)`: rows (c0, c1), O(1) lookup on `c0 = ?`), otherwise writes `<p>_out(c0, c1)`. Returns
-//!   "rows waves visits solve_ms total_ms".
+//!   "rows waves visits solve_ms total_ms". T's lattice was flat only; here a third argument names a declared
+//!   `Lattice` (`flat`, `min`, `max`, or one the logic declares) and a fourth the changes after which a node widens,
+//!   which a lattice of unbounded height requires. `flat` without `widen` is T's semantics, kept as the CPU
+//!   binding and the reference for the transducer's file-local lattices.
 //! - `set_fixpoint_open/run/close` and the `set_rel` vtab evaluate one component of set-valued relations natively
 //!   (see `setfix.rs`).
 //!
@@ -24,7 +27,7 @@ use std::borrow::Cow;
 use std::ffi::CStr;
 use std::sync::Mutex;
 use std::os::raw::c_int;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
 pub const TOP: i64 = 4611686018427387904;
@@ -42,7 +45,82 @@ fn flat_bin(op: &str, a: i64, b: i64) -> i64 {
         _ => TOP,
     }
 }
-fn join(a: i64, b: i64) -> i64 { if a == BOT { b } else if b == BOT || a == b { a } else { TOP } }
+fn join(a: i64, b: i64) -> i64 { Flat.join(a, b) }
+
+/// A lattice over `i64` values (integers or atoms) under which `lattice_fixpoint` runs (§12 `.decl … merge @join
+/// widen k`). `BOT` is the absent value: `join` and `transfer` see it only through the provided methods.
+pub(in crate::code_rule_dsl) trait Lattice: Send + Sync {
+    /// The least upper bound of two present values.
+    fn lub(&self, a: i64, b: i64) -> i64;
+    /// The greatest value, which absorbs every transfer.
+    fn top(&self) -> i64;
+    /// Whether every ascending chain is finite; one that is not runs only with `widen`.
+    fn finite(&self) -> bool;
+    /// Replaces `new`, the next value of a node that has changed `k` times already, by one on a finite chain above
+    /// `old`. Finite lattices keep `new`.
+    fn widen(&self, old: i64, new: i64) -> i64 {
+        let _ = old;
+        new
+    }
+    fn join(&self, a: i64, b: i64) -> i64 {
+        if a == BOT { b } else if b == BOT { a } else { self.lub(a, b) }
+    }
+    /// The arithmetic transfer `flat_bin` names by `op`, with `top` absorbing.
+    fn transfer(&self, op: u8, a: i64, b: i64) -> i64 {
+        let top = self.top();
+        if a == top || b == top { return top; }
+        match op {
+            b'+' => a + b,
+            b'-' => a - b,
+            b'*' if a.abs() < BIG && b.abs() < BIG => a * b,
+            _ => top,
+        }
+    }
+}
+
+/// T's flat lattice: one value, or TOP when two differ. Height 3.
+pub(in crate::code_rule_dsl) struct Flat;
+impl Lattice for Flat {
+    fn lub(&self, a: i64, b: i64) -> i64 { if a == b { a } else { TOP } }
+    fn top(&self) -> i64 { TOP }
+    fn finite(&self) -> bool { true }
+}
+
+/// The greatest value seen; unbounded, so it widens to TOP.
+pub(in crate::code_rule_dsl) struct Max;
+impl Lattice for Max {
+    fn lub(&self, a: i64, b: i64) -> i64 { a.max(b) }
+    fn top(&self) -> i64 { TOP }
+    fn finite(&self) -> bool { false }
+    fn widen(&self, old: i64, new: i64) -> i64 { if new > old { TOP } else { new } }
+}
+
+/// The least value seen (the order is reversed: smaller is higher); unbounded, so it widens to its top, -TOP.
+pub(in crate::code_rule_dsl) struct Min;
+impl Lattice for Min {
+    fn lub(&self, a: i64, b: i64) -> i64 { a.min(b) }
+    fn top(&self) -> i64 { -TOP }
+    fn finite(&self) -> bool { false }
+    fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
+}
+
+/// Declared lattices by name: the built-ins, and those the logic declares (`declare`), such as the typing's
+/// approximate type terms (Phase 10).
+static LATTICES: LazyLock<Mutex<Vec<(String, Arc<dyn Lattice>)>>> = LazyLock::new(|| {
+    Mutex::new(vec![("flat".to_owned(), Arc::new(Flat) as Arc<dyn Lattice>), ("max".to_owned(), Arc::new(Max)), ("min".to_owned(), Arc::new(Min))])
+});
+
+/// Declares `lattice` under `name`, replacing an earlier declaration.
+pub(in crate::code_rule_dsl) fn declare(name: &str, lattice: Arc<dyn Lattice>) {
+    let mut lattices = LATTICES.lock().unwrap();
+    lattices.retain(|(n, _)| n != name);
+    lattices.push((name.to_owned(), lattice));
+}
+
+fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+    LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
+        .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
+}
 
 struct FlatJoin;
 impl Aggregate<i64, Option<i64>> for FlatJoin {
@@ -52,8 +130,12 @@ impl Aggregate<i64, Option<i64>> for FlatJoin {
 }
 
 /// Semi-naive waves over the component's graph: a wave re-evaluates the dependents of the nodes that changed in the
-/// previous one, each from all of its inputs (the seed, copy sources and binary transfers).
-fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<String> {
+/// previous one, each from all of its inputs (the seed, copy sources and binary transfers), in `lat`. A node that
+/// has changed `widen` times takes `lat.widen` of its next value; a lattice of unbounded height needs one.
+fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn Lattice, widen: Option<u32>) -> Result<String> {
+    if !lat.finite() && widen.is_none() {
+        return Err(user_err(format!("unbounded lattice for {p}: declare `widen k`")));
+    }
     let t = Instant::now();
     let pairs = |sql: String| -> Result<Vec<(i64, i64)>> {
         let mut st = conn.prepare(&sql)?;
@@ -75,7 +157,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
     let n = seeds.iter().map(|r| r.0).chain(copies.iter().flat_map(|r| [r.0, r.1]))
         .chain(bins.iter().flat_map(|r| [r.0, r.2, r.3])).max().map_or(0, |m| m as usize + 1);
     let mut seed = vec![BOT; n];
-    for &(k, v) in &seeds { seed[k as usize] = join(seed[k as usize], v); }
+    for &(k, v) in &seeds { seed[k as usize] = lat.join(seed[k as usize], v); }
     // In-edges per node (to evaluate it) and out-edges (to find dependents), as CSR.
     let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
         edges.sort_unstable();
@@ -92,17 +174,16 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
     let absorb = std::env::var("RDL_ABSORB").is_ok();
     let eval = |v: usize, val: &[i64]| -> i64 {
         let mut x = seed[v];
-        for &s in &cin[cin_s[v] as usize..cin_s[v + 1] as usize] { x = join(x, val[s as usize]); }
+        for &s in &cin[cin_s[v] as usize..cin_s[v + 1] as usize] { x = lat.join(x, val[s as usize]); }
         for &bi in &bin_i[bin_s[v] as usize..bin_s[v + 1] as usize] {
             let (_, o, l, r) = bins[bi as usize];
             let (a, b) = (val[l as usize], val[r as usize]);
-            if absorb && (a == TOP || b == TOP) {
+            if absorb && (a == lat.top() || b == lat.top()) {
                 // TOP absorbs: the transfer's result is known before the other input arrives. A Datalog join waits
                 // for both; this differs only for keys whose other input never gets a value.
-                x = join(x, TOP);
+                x = lat.join(x, lat.top());
             } else if a != BOT && b != BOT {
-                let op = match o { b'+' => "+", b'-' => "-", b'*' => "*", _ => "?" };
-                x = join(x, flat_bin(op, a, b));
+                x = lat.join(x, lat.transfer(o, a, b));
             }
         }
         x
@@ -110,6 +191,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
     let mut val = seed.clone();
     let mut frontier: Vec<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
     let (mut stamp, mut waves, mut visits) = (vec![0u32; n], 0u32, 0u64);
+    let mut changes = vec![0u32; if widen.is_some() { n } else { 0 }];
     while !frontier.is_empty() {
         waves += 1;
         let mut cand = Vec::new();
@@ -119,7 +201,15 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>) -> Result<
             }
         }
         visits += cand.len() as u64;
-        let upd: Vec<(u32, i64)> = cand.iter().filter_map(|&v| { let x = eval(v as usize, &val); (x != val[v as usize]).then_some((v, x)) }).collect();
+        let upd: Vec<(u32, i64)> = cand.iter().filter_map(|&v| {
+            let (v, old) = (v as usize, val[v as usize]);
+            let mut x = eval(v, &val);
+            if let Some(k) = widen && x != old {
+                if changes[v] >= k && old != BOT { x = lat.widen(old, x) }
+                changes[v] += 1;
+            }
+            (x != old).then_some((v as u32, x))
+        }).collect();
         frontier = upd.iter().map(|u| u.0).collect();
         for (v, x) in upd { val[v as usize] = x; }
     }
@@ -220,12 +310,16 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
     })?;
     db.create_aggregate_function(c"flat_join", 1, det, FlatJoin)?;
-    for nargs in [1, 2] {
+    // lattice_fixpoint(p[, target[, lattice[, widen]]]): the lattice by declared name (`flat` by default), and the
+    // changes after which a node widens. A NULL target is the default `<p>_out`.
+    for nargs in [1, 2, 3, 4] {
         db.create_scalar_function(c"lattice_fixpoint", nargs, FunctionFlags::SQLITE_UTF8, |ctx| {
             let p: String = ctx.get(0)?;
-            let target: Option<String> = if ctx.len() > 1 { Some(ctx.get(1)?) } else { None };
+            let target: Option<String> = if ctx.len() > 1 { ctx.get(1)? } else { None };
+            let lat = lattice(&if ctx.len() > 2 { ctx.get::<String>(2)? } else { "flat".to_owned() })?;
+            let widen: Option<i64> = if ctx.len() > 3 { ctx.get(3)? } else { None };
             let conn = unsafe { ctx.get_connection()? };
-            lattice_fixpoint(&conn, &p, target.as_deref())
+            lattice_fixpoint(&conn, &p, target.as_deref(), &*lat, widen.map(|k| k.max(0) as u32))
         })?;
     }
     db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, |ctx| {

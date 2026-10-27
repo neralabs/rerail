@@ -66,3 +66,45 @@ fn set_fixpoint_closes_a_linear_rule_over_its_edges() {
     expected.extend([2, 3, 4].iter().flat_map(|&a| [(a, 2), (a, 3), (a, 4)]));
     assert_eq!(closure, expected);
 }
+
+/// A chain that keeps rising (a counter around a cycle) needs `widen`; with it, the cycle's nodes widen to the
+/// lattice's top after k changes. Min is the same with the order reversed.
+#[test]
+fn unbounded_lattices_run_only_with_widen() {
+    let db = connection();
+    db.execute_batch(
+        "CREATE TEMP TABLE c_seed(c0, c1); INSERT INTO c_seed VALUES (0, 1), (2, 1);
+         CREATE TEMP TABLE c_copy(c0, c1); INSERT INTO c_copy VALUES (1, 0);
+         CREATE TEMP TABLE c_bin(c0, c1, c2, c3); INSERT INTO c_bin VALUES (0, '+', 1, 2), (3, '-', 2, 1);",
+    )
+    .unwrap();
+    let unbounded = db.query_row("SELECT lattice_fixpoint('c', NULL, 'max')", [], |r| r.get::<_, String>(0));
+    assert!(unbounded.unwrap_err().to_string().contains("unbounded lattice"));
+    db.query_row("SELECT lattice_fixpoint('c', NULL, 'max', 3)", [], |r| r.get::<_, String>(0)).unwrap();
+    // 0 = max(1, 1 + 2's 1) rises with 1 around the cycle until it widens; 3 = 2 - 1 then absorbs TOP.
+    assert_eq!(pairs(&db, "SELECT c0, c1 FROM c_out ORDER BY c0"), [(0, TOP), (1, TOP), (2, 1), (3, TOP)]);
+    db.execute_batch("UPDATE c_bin SET c1 = '-' WHERE c0 = 0").unwrap();
+    db.query_row("SELECT lattice_fixpoint('c', NULL, 'min', 3)", [], |r| r.get::<_, String>(0)).unwrap();
+    assert_eq!(pairs(&db, "SELECT c0, c1 FROM c_out ORDER BY c0"), [(0, -TOP), (1, -TOP), (2, 1), (3, -TOP)]);
+}
+
+/// A finite lattice declared by the logic runs without `widen`.
+#[test]
+fn a_declared_lattice_replaces_the_join() {
+    struct Or;
+    impl super::Lattice for Or {
+        fn lub(&self, a: i64, b: i64) -> i64 { a | b }
+        fn top(&self) -> i64 { 0b111 }
+        fn finite(&self) -> bool { true }
+    }
+    super::declare("bits", std::sync::Arc::new(Or));
+    let db = connection();
+    db.execute_batch(
+        "CREATE TEMP TABLE b_seed(c0, c1); INSERT INTO b_seed VALUES (0, 1), (1, 2);
+         CREATE TEMP TABLE b_copy(c0, c1); INSERT INTO b_copy VALUES (2, 0), (2, 1), (0, 2);
+         CREATE TEMP TABLE b_bin(c0, c1, c2, c3);",
+    )
+    .unwrap();
+    db.query_row("SELECT lattice_fixpoint('b', NULL, 'bits')", [], |r| r.get::<_, String>(0)).unwrap();
+    assert_eq!(pairs(&db, "SELECT c0, c1 FROM b_out ORDER BY c0"), [(0, 3), (1, 2), (2, 3)]);
+}
