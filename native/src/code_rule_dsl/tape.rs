@@ -2142,6 +2142,40 @@ impl TapeDoc {
         &self.source[self.transducer_span(node)]
     }
 
+    /// A node's source bytes, for the packed CPU and Metal backends.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn transducer_text(&self, node: u32) -> &[u8] {
+        &self.source.as_bytes()[self.transducer_span(node)]
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn transducer_is_named_leaf(&self, node: u32) -> bool {
+        self.node_is_named(node) && self.data[node as usize].first == NONE
+    }
+
+    /// A collision-free encoding of the recursive kind and child structure used by ast-grep's
+    /// repeated-capture equality when neither side is a named leaf.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn transducer_structural_key(&self, node: u32) -> String {
+        fn encode(tape: &TapeDoc, node: u32, bytes: &mut Vec<u8>) {
+            bytes.extend_from_slice(&tape.transducer_kind(node).to_le_bytes());
+            let children = tape.transducer_children(node).collect::<Vec<_>>();
+            bytes.extend_from_slice(&(children.len() as u32).to_le_bytes());
+            for child in children {
+                encode(tape, child, bytes);
+            }
+        }
+        let mut bytes = Vec::new();
+        encode(self, node, &mut bytes);
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut key = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            key.push(char::from(HEX[usize::from(byte >> 4)]));
+            key.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        key
+    }
+
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
     pub(super) fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
         self.supertypes.iter().copied()

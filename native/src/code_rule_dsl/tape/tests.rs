@@ -28,6 +28,30 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
 }
 
 #[test]
+fn packed_backend_accessors_read_text_named_leaves_and_structure() {
+    let source = "f(a); g(b); h(a, b);\n";
+    let (_, tape, _, grammar) = fixture(source, GrammarDialect::TypeScript);
+    let calls: Vec<u32> = (0..tape.transducer_len() as u32)
+        .filter(|&node| grammar.kind_name(tape.transducer_kind(node)) == Some("call_expression"))
+        .collect();
+    assert_eq!(calls.len(), 3);
+    for node in 0..tape.transducer_len() as u32 {
+        assert_eq!(tape.transducer_text(node), tape.transducer_text_str(node).as_bytes());
+        let leaf = tape.transducer_children(node).next().is_none();
+        let name = grammar.kind_name(tape.transducer_kind(node));
+        if name == Some("identifier") {
+            assert!(tape.transducer_is_named_leaf(node));
+        }
+        if !leaf {
+            assert!(!tape.transducer_is_named_leaf(node));
+        }
+    }
+    let keys: Vec<_> = calls.iter().map(|&call| tape.transducer_structural_key(call)).collect();
+    assert_eq!(keys[0], keys[1], "same shape, different identifiers");
+    assert_ne!(keys[0], keys[2], "an extra argument changes the structure");
+}
+
+#[test]
 fn scala_contextual_aliases_preserve_native_node_identity() {
     let source = "object A { def f(x: Int) = g(x) }";
     let (native, _, image, grammar) = fixture(source, GrammarDialect::Scala);
