@@ -10,7 +10,7 @@
 //! digest is the output digest of the scope's page derivation (`facts::pages`): a page set that is
 //! recomputed identical cuts off. Pages no name binds are collected (reclamation.rs).
 
-use super::{CODEC_ZSTD, ContentStore, HashKey, StoreError, StoreResult, compress};
+use super::{CODEC_ZSTD, ContentStore, StoreError, StoreResult, compress};
 use rusqlite::OptionalExtension;
 use sha2::{Digest as _, Sha256};
 use std::io::Cursor;
@@ -21,7 +21,8 @@ pub const TREE_PAGE_FILES: usize = 64;
 /// What one directory's result depends on.
 #[derive(Clone, Copy, Debug)]
 pub struct TreePageKey<'a> {
-    pub tree: HashKey,
+    /// The directory's tree, as its name is bound (`facts::observe::tree_name`).
+    pub tree: [u8; 32],
     pub prefix: &'a str,
     /// The context chain (package markers and other ancestry the result reads), as one digest.
     pub context: [u8; 32],
@@ -33,10 +34,7 @@ impl TreePageKey<'_> {
     pub fn key(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(b"rerail.tree-page-key/v1\0");
-        hash.update(self.tree.algorithm.to_le_bytes());
-        for lane in self.tree.lanes {
-            hash.update(lane.to_le_bytes());
-        }
+        hash.update(self.tree);
         hash.update((self.prefix.len() as u64).to_le_bytes());
         hash.update(self.prefix.as_bytes());
         hash.update(self.context);

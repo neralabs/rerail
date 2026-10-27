@@ -8,7 +8,7 @@ fn store(label: &str) -> ContentStore {
 }
 
 fn key(tree: u8, plan: u8) -> TreePageKey<'static> {
-    TreePageKey { tree: HashKey::git_sha1([tree; 20]), prefix: "src", context: [0; 32], plan: [plan; 32] }
+    TreePageKey { tree: [tree; 32], prefix: "src", context: [0; 32], plan: [plan; 32] }
 }
 
 fn page(bytes: &[u8], file_count: usize) -> TreePage {
