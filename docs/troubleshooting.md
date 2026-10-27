@@ -72,7 +72,8 @@ repository cannot put its own `git` first. On Windows those are `C:\Program File
 `~\scoop\apps\git\current\cmd`. The install command fits the system: `apt-get`, `dnf`, `pacman` or `zypper` (without
 `sudo` when you are root), `xcode-select --install` on macOS, `winget install --id Git.Git -e` on Windows; elsewhere
 it says to use your package manager or https://git-scm.com. A Git that lives anywhere else is not found: install it
-in one of these places.
+in one of these places. On macOS `/usr/bin/git` is always there, but only as a stub for Apple's developer tools:
+Rerail counts it only once the Command Line Tools are installed (`xcode-select --install`), or Xcode with Git.
 
 ### Windows PowerShell: `npx.ps1 cannot be loaded`
 

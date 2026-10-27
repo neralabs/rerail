@@ -225,9 +225,12 @@ export function launcherShim(currentLink: string, nodePath: string, platform: No
       "@echo off",
       `rem ${LAUNCHER_HEADER}`,
       "setlocal",
-      // A non-ASCII node outside the Rerail home cannot be spelled: node on PATH runs instead, as when it is gone.
-      `set "RERAIL_NODE=${batchPath(nodePath, home) ?? "node"}"`,
-      'if not exist "%RERAIL_NODE%" set "RERAIL_NODE=node"',
+      // A non-ASCII node outside the Rerail home cannot be spelled, so it, like a node that is gone, falls back to the
+      // node.exe on PATH. Found by %~$PATH, which searches PATH alone: a bare `node` would make cmd try the current
+      // folder first, where a repository's own node.exe or node.bat would run on every `rerail`.
+      `set "RERAIL_NODE=${batchPath(nodePath, home) ?? ""}"`,
+      'if not exist "%RERAIL_NODE%" for %%I in (node.exe) do set "RERAIL_NODE=%%~$PATH:I"',
+      "if not defined RERAIL_NODE (echo rerail: Node.js is not on PATH. Install Node.js 24 or newer from https://nodejs.org 1>&2 & exit /b 9009)",
       // cmd reads a batch file line by line, so once `install --remove` has deleted this file, any line after node's
       // would end the run with "The batch file cannot be found." `(goto)` ends the batch at once while the rest of
       // its line, already expanded, still runs: node runs last, and its exit code is the command's.

@@ -76,6 +76,28 @@ try {
   Write-Host ($legacyOut.Result + $legacyErr.Result)
   if ($legacyRun.ExitCode -ne 0) { throw "rerail.cmd failed on code page 437 (exit $($legacyRun.ExitCode))" }
 
+  Step "A launcher whose recorded node is gone runs node.exe from PATH, never a repository's"
+  # cmd tries the current folder before PATH for a bare command name, so a repository holding a node.bat would run it
+  # on every `rerail`. A copy of the launcher, beside it so %~dp0 still finds `current`, records a node that is gone.
+  $fallback = "$rerailHome\bin\rerail-fallback.cmd"
+  $lines = (Get-Content $launcher) -replace '^set "RERAIL_NODE=.*"$', 'set "RERAIL_NODE=C:\gone\node.exe"'
+  [IO.File]::WriteAllLines($fallback, [string[]]$lines)
+  New-Item -ItemType Directory -Force "$base\hostile-repo" | Out-Null
+  Write-RerailUtf8 "$base\hostile-repo\node.bat" "@echo the repository's node.bat ran`r`n"
+  $env:SMOKE_FALLBACK = $fallback
+  $hostile = New-Object Diagnostics.ProcessStartInfo("cmd.exe")
+  $hostile.Arguments = '/d /s /c "call "%SMOKE_FALLBACK%" version"'
+  $hostile.WorkingDirectory = "$base\hostile-repo"
+  $hostile.UseShellExecute = $false; $hostile.CreateNoWindow = $true
+  $hostile.RedirectStandardOutput = $true; $hostile.RedirectStandardError = $true
+  $hostileRun = [Diagnostics.Process]::Start($hostile)
+  $hostileOut = $hostileRun.StandardOutput.ReadToEndAsync(); $hostileErr = $hostileRun.StandardError.ReadToEndAsync()
+  $hostileRun.WaitForExit()
+  Remove-Item -Force $fallback
+  Write-Host ($hostileOut.Result + $hostileErr.Result)
+  if (($hostileOut.Result + $hostileErr.Result) -match "node\.bat ran") { throw "rerail.cmd ran node.bat from the current folder" }
+  if ($hostileRun.ExitCode -ne 0) { throw "rerail.cmd did not fall back to node.exe on PATH (exit $($hostileRun.ExitCode))" }
+
   Step "Starting Rerail in the project"
   # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
   Write-Host ((& $launcher start --repo $project) -join "`n")

@@ -129,7 +129,11 @@ export interface ConnectProblem extends RefreshProblem {
 export interface ConnectResult {
   /** The coding agents named whose config this call changed: not connected, or not wholly, before. */
   changed: Harness[];
-  /** Every coding agent on this computer that Rerail is connected to now, these included. */
+  /**
+   * Every coding agent on this computer that holds a registration of the root now, these included: one whose
+   * registration is out of date (its hooks name a Node that has moved since, say) is still connected, its hooks
+   * still run, and `rerail update` brings it up to date.
+   */
   all: Harness[];
   /** The coding agents named that could not be connected, with the reason; their config is left as it was. */
   failures: ConnectProblem[];
@@ -156,7 +160,11 @@ export async function connectCodingAgents(root: string, home: string, agents: re
     }
   }
   for (const id of detectHarnesses(home)) {
-    if ((await connection(root, home, id)).connected) result.all.push(id);
+    try {
+      if (await isRegistered(root, home, id)) result.all.push(id);
+    } catch {
+      // A config that cannot be read connects nothing; set-up names it when it was asked to connect it.
+    }
   }
   return result;
 }

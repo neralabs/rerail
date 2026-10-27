@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gitCandidates, readGitBlobs } from "../../src/engine/git.js";
+import { gitCandidates, gitInstalled, readGitBlobs } from "../../src/engine/git.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -68,5 +68,24 @@ describe("gitCandidates", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("gitInstalled", () => {
+  const probe = (files: readonly string[], developerDir?: string) => ({ exists: (path: string) => files.includes(path), developerDir: () => developerDir });
+
+  it("takes macOS's /usr/bin/git, always present as a stub, only with Apple's developer tools that carry Git", () => {
+    // No Command Line Tools and no Xcode: the stub would open the installer, so Rerail says Git is missing.
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git"]))).toBe(false);
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git", "/Library/Developer/CommandLineTools/usr/bin/git"]))).toBe(true);
+    const xcode = "/Applications/Xcode.app/Contents/Developer";
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git", `${xcode}/usr/bin/git`], xcode))).toBe(true);
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git"], xcode))).toBe(false);
+  });
+
+  it("takes any other Git that is there, Homebrew's on a Mac included", () => {
+    expect(gitInstalled("/opt/homebrew/bin/git", "darwin", probe(["/opt/homebrew/bin/git"]))).toBe(true);
+    expect(gitInstalled("/usr/bin/git", "linux", probe(["/usr/bin/git"]))).toBe(true);
+    expect(gitInstalled("/usr/local/bin/git", "linux", probe([]))).toBe(false);
   });
 });

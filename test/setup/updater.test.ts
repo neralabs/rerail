@@ -83,7 +83,10 @@ describe("managed launcher shims", () => {
     vi.stubEnv("LOCALAPPDATA", String.raw`${profile}\AppData\Local`);
     try {
       const shim = launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\AppData\Local\Volta\100%\node.exe`, "win32");
-      expect(shim).toContain(String.raw`set "RERAIL_NODE=node"`);
+      // Unspellable, so node.exe from PATH alone: a bare `node` would let cmd run one from the current folder first.
+      expect(shim).toContain(String.raw`set "RERAIL_NODE="`);
+      expect(shim).toContain(String.raw`for %%I in (node.exe) do set "RERAIL_NODE=%%~$PATH:I"`);
+      expect(shim).not.toMatch(/RERAIL_NODE=node"/u);
       expect(shim).toContain(String.raw`"%RERAIL_NODE%" "%~dp0..\current\dist\cli\cli.js" %*`);
       expect(shim).not.toContain("%LOCALAPPDATA%");
       expect(/^[\x20-\x7e\r\n]*$/u.test(shim)).toBe(true);

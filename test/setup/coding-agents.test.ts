@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
+import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
@@ -121,6 +122,21 @@ describe("connectCodingAgents", () => {
     expect(await readFile(settings, "utf8")).toBe(commented);
     expect(await readdir(join(home, ".claude"))).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.bak$/u)]));
     expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(join(root, "dist", "hosts", "cursor", "cursor-hook.js"));
+  });
+
+  it("counts an agent as connected when its registration is out of date, as after Node moved, without touching it", async () => {
+    const { root, home } = await fixture();
+    // Registered by a Node that has moved since (nvm switched, or Homebrew's versioned keg is gone).
+    const settings = join(home, ".claude", "settings.json");
+    const registered = await readFile(settings, "utf8");
+    const stale = registered.replaceAll(pinnedNodePath(), "/old/node-v24.0.0/bin/node");
+    expect(stale).not.toBe(registered);
+    await writeFile(settings, stale);
+
+    const result = await connectCodingAgents(root, home, []);
+    expect(result.all).toEqual(["claude-code"]);
+    expect(result.changed).toEqual([]);
+    expect(await readFile(settings, "utf8")).toBe(stale);
   });
 });
 

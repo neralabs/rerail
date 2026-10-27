@@ -57,11 +57,40 @@ export class GitUnavailableError extends Error {
 
 let probed: { path: string | undefined; looked: readonly string[] } | undefined;
 
+/** What {@link gitInstalled} asks of the machine; tests pass their own. */
+export interface GitProbe {
+  exists(path: string): boolean;
+  /** The developer folder `xcode-select` points at, or undefined when none is set. */
+  developerDir(): string | undefined;
+}
+
+const machine: GitProbe = {
+  exists: existsSync,
+  developerDir() {
+    // Without DEVELOPER_DIR, which overrides the answer and which a repository's environment could set.
+    const selected = spawnSync("/usr/bin/xcode-select", ["-p"], { encoding: "utf8", env: { PATH: "/usr/bin:/bin" } });
+    return selected.status === 0 ? selected.stdout.trim() : undefined;
+  },
+};
+
+/**
+ * Whether `path` is a Git that runs. On macOS `/usr/bin/git` is always there, a stub that runs the Git of Apple's
+ * developer tools, and without them opens the Command Line Tools installer instead; so it counts only when the
+ * Command Line Tools are installed, or an Xcode `xcode-select` points at carries Git.
+ */
+export function gitInstalled(path: string, platform: NodeJS.Platform = process.platform, probe: GitProbe = machine): boolean {
+  if (!probe.exists(path)) return false;
+  if (platform !== "darwin" || path !== "/usr/bin/git") return true;
+  if (probe.exists("/Library/Developer/CommandLineTools/usr/bin/git")) return true;
+  const developerDir = probe.developerDir();
+  return developerDir !== undefined && probe.exists(posix.join(developerDir, "usr", "bin", "git"));
+}
+
 /** The system Git, probed once per process; throws {@link GitUnavailableError} when none is installed. */
 export function gitExecutable(): string {
   if (probed === undefined) {
     const looked = gitCandidates();
-    probed = { path: looked.find(existsSync), looked };
+    probed = { path: looked.find(path => gitInstalled(path)), looked };
   }
   if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
   return probed.path;
