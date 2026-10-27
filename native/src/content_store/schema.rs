@@ -348,19 +348,54 @@ CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
 CREATE TABLE IF NOT EXISTS prefilter_sets (
     tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
     version INTEGER NOT NULL CHECK(version >= 0),
-    nodes INTEGER NOT NULL CHECK(nodes >= 0)
+    nodes INTEGER NOT NULL CHECK(nodes >= 0),
+    edges BLOB NOT NULL
 ) STRICT;
 CREATE TABLE IF NOT EXISTS tape_kind_counts (
     tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
     kind INTEGER NOT NULL,
     n INTEGER NOT NULL CHECK(n > 0),
+    size INTEGER NOT NULL CHECK(size >= 0),
     postings BLOB NOT NULL,
     PRIMARY KEY (tape_id, kind)
 ) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS kind_freq (
+-- Ingestion statistics (stats/ingest.rs, from Typing-support's `stats.py`): nodes of each kind
+-- and the sum of their descendants, and direct edges by (parent kind, child kind, field; 0 is
+-- none). A tape's own edges are its set's `edges` segment (`nera_edges`), subtracted when it goes.
+CREATE TABLE IF NOT EXISTS kind_size (
     kind INTEGER PRIMARY KEY,
-    n INTEGER NOT NULL
+    n INTEGER NOT NULL,
+    size INTEGER NOT NULL
 ) STRICT;
+CREATE TABLE IF NOT EXISTS edge_freq (
+    pkind INTEGER NOT NULL,
+    ckind INTEGER NOT NULL,
+    field INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (pkind, ckind, field)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS edge_freq_by_child ON edge_freq(ckind);
+-- Fact relations' column statistics, merged per batch of documents (`ingest::merge_facts`):
+-- per column, rows, distinct values, the sum of squared value counts corpus-wide (`sq`) and
+-- within a document (`sqd`); per value of a value column, its count, documents and `sqd`.
+CREATE TABLE IF NOT EXISTS fact_stats (
+    tbl TEXT NOT NULL,
+    col TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    ndv INTEGER NOT NULL,
+    sq INTEGER NOT NULL,
+    sqd INTEGER NOT NULL,
+    PRIMARY KEY (tbl, col)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS fact_value_stats (
+    tbl TEXT NOT NULL,
+    col TEXT NOT NULL,
+    val ANY,
+    n INTEGER NOT NULL,
+    docs INTEGER NOT NULL,
+    sqd INTEGER NOT NULL,
+    PRIMARY KEY (tbl, col, val)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS term_postings (
     lang INTEGER NOT NULL,
     term TEXT NOT NULL,
@@ -379,7 +414,7 @@ CREATE TABLE IF NOT EXISTS term_freq (
 ) STRICT, WITHOUT ROWID;
 -- Planner statistics (stats/inputs.rs, from Data-layer-rule-expressivity's `value_frequency`
 -- and `value_kind_frequency`): nodes per (term, kind) and covered nodes per kind, over every
--- tape with a set. A kind's uncovered nodes are `kind_freq.n - term_kind_freq.n`.
+-- tape with a set. A kind's uncovered nodes are `kind_size.n - term_kind_freq.n`.
 CREATE TABLE IF NOT EXISTS term_node_freq (
     lang INTEGER NOT NULL,
     term TEXT NOT NULL,
@@ -403,8 +438,13 @@ CREATE INDEX IF NOT EXISTS term_coverage_residue ON term_coverage(kind) WHERE re
 -- Publication adds the counts in one statement per table; removal, including a cascade from a
 -- collected tape, counts down here.
 CREATE TRIGGER IF NOT EXISTS tape_kind_count_delete AFTER DELETE ON tape_kind_counts BEGIN
-    UPDATE kind_freq SET n=n-OLD.n WHERE kind=OLD.kind;
-    DELETE FROM kind_freq WHERE kind=OLD.kind AND n<=0;
+    UPDATE kind_size SET n=n-OLD.n, size=size-OLD.size WHERE kind=OLD.kind;
+    DELETE FROM kind_size WHERE kind=OLD.kind AND n<=0;
+END;
+CREATE TRIGGER IF NOT EXISTS prefilter_set_delete AFTER DELETE ON prefilter_sets BEGIN
+    UPDATE edge_freq SET n=edge_freq.n-e.n FROM nera_edges(OLD.edges) e
+        WHERE edge_freq.pkind=e.pkind AND edge_freq.ckind=e.ckind AND edge_freq.field=e.field;
+    DELETE FROM edge_freq WHERE n<=0;
 END;
 CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
     UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;

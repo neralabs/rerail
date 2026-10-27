@@ -100,7 +100,7 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
     assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN ('Target','target')"), 0);
     assert_eq!(store.prefilter_version(tape).unwrap(), None);
     store.remove_prefilter(replacement).unwrap();
-    for table in ["term_postings", "term_freq", "term_coverage", "tape_kind_counts", "kind_freq"] {
+    for table in ["term_postings", "term_freq", "term_coverage", "tape_kind_counts", "kind_size", "edge_freq"] {
         assert_eq!(count(&store, &format!("SELECT count(*) FROM {table}")), 0, "{table}");
     }
 }
@@ -181,6 +181,6 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
         }
         assert_eq!(seen, doc.transducer_len(), "every node is in exactly one kind's postings");
     }
-    let stored = store.query_rows("SELECT kind,n FROM kind_freq ORDER BY kind", [], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, i64>(1)?))).unwrap();
+    let stored = store.query_rows("SELECT kind,n FROM kind_size ORDER BY kind", [], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, i64>(1)?))).unwrap();
     assert_eq!(stored, totals.into_iter().filter(|(_, n)| *n > 0).collect::<Vec<_>>());
 }

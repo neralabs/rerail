@@ -122,13 +122,14 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 
 Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse than P on the same captures.
 
-**Status (2026-10-27): rows 1–6 done (parts of 2–3 deferred, below); rows 7–8 and the lab outstanding.**
+**Status (2026-10-27): rows 1–7 done (parts of 2–3 deferred, below); row 8 and the lab outstanding.**
 
 - Anchor store (`8165bd54` copy, `d24a2231`, `21028281`): rows in the content store keyed by `tape_id` (`prefilter_sets`, `tape_kind_counts`, `kind_freq`, `term_postings`, `term_freq`, `term_coverage`), cascading from `tape_objects`; `nera_postings` on every store connection; `ftsk` folded into `search_kind_fts` with kind-atom tokens (`POSITIONAL_INDEX_VERSION` 3). Five store tests ported. Nothing publishes the rows from the scan yet (with O2). `reader.rs`, `session.rs`, `preparation_tests.rs` and the lowering tests were dropped here and return with the lowering row.
 - Lowering + vocabulary (`0afc80d4`, `45fa3c1f` copies; next commit): `prefilter::select(store, lang, plans, tapes)` lowers a batch of plans to one scheduled SQL program over the store's tape-keyed rows. Decoded steps (relations, pattern parent hops, uncovered-text confirmation) became inexact supersets narrowed per tape; transducers confirm (§7). Vocabulary tables in the store schema, regex functions on every connection. Deferred: `nera_tree` for the §17 SQL fallback, atom-keyed vocabulary, `R[tid]` (Phase 4 (g)), `plan_feedback` (row 8). Nothing calls `select` yet (O2).
 - Probes (`daebe5db`): `matcher/anchors/text.rs` → `prefilter/probes.rs`, with suffixes, required literals and prefix ranges; the vocabulary fill seeks anchored predicates by range and probes before every regex.
 - Kind vocabulary (`19980059`): N's `search_kind_vocab` and frequency-ordered kind probes, as is.
-- Plan-input statistics (`ac32af4e` copy; next commit): D's batched `Statistics::read`/`choose` over `kind_freq`, `term_node_freq`, `term_kind_freq` (`PREFILTER_VERSION` 3); `pattern()` orders requirements by estimated rows instead of a run-time `count(*)`. `edge_freq` and `kind_size` come with row 7.
+- Plan-input statistics (`ac32af4e` copy; next commit): D's batched `Statistics::read`/`choose` over `kind_freq` (now `kind_size`), `term_node_freq`, `term_kind_freq` (`PREFILTER_VERSION` 3); `pattern()` orders requirements by estimated rows instead of a run-time `count(*)`. `edge_freq` and `kind_size` come with row 7.
+- Ingestion statistics (`67200d8d` copy; next commit): `kind_size` and `edge_freq` from each tape at publication, subtracted by triggers (edges from a per-set `nera_edges` segment) (`PREFILTER_VERSION` 4); T's signed `fact_stats` merge for fact relations held as SQL tables. No reader of `edge_freq`/`kind_size` until transducer plans (Phase 4).
 
 ### Phase 4: transducer runtime (§3, §5, §7; D2, D3, D9, E5–E9, F1, F2)
 

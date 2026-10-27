@@ -51,6 +51,7 @@ pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupte
     let lang = u32::from(language::tape_tag(*doc.get_lang()).ok_or_else(|| StoreError::Invalid("unregistered tape language".to_owned()))?);
     let mut positions = kinds::Builder::default();
     let mut counts = [0_u32; LANG_STRIDE as usize];
+    let mut statistics = crate::code_rule_dsl::stats::ingest::TapeStatistics::new(lang);
     for pre in 0..doc.transducer_len() as u32 {
         if pre.is_multiple_of(256) && interrupted() {
             return Err(StoreError::Invalid("index construction interrupted".to_owned()));
@@ -58,18 +59,20 @@ pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupte
         let kind = kind_code(doc, pre);
         positions.push(kind, pre);
         counts[usize::from(kind)] += 1;
+        statistics.node(doc, pre, kind);
     }
     let kinds = counts
         .iter()
         .enumerate()
         .filter(|(_, n)| **n != 0)
-        .map(|(code, &n)| (lang * LANG_STRIDE + code as u32, n, std::mem::take(&mut positions.segments[code])))
+        .map(|(code, &n)| (lang * LANG_STRIDE + code as u32, n, statistics.sizes[code], std::mem::take(&mut positions.segments[code])))
         .collect();
     let mut set = TapePrefilter {
         tape_id,
         lang,
         nodes: doc.transducer_len() as u32,
         kinds,
+        edges: statistics.edges(),
         postings: Default::default(),
         cover: Default::default(),
         missing: Default::default(),

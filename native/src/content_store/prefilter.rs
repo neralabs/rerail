@@ -18,14 +18,15 @@
 //!   under `RESIDUE_CAP`.
 
 use super::bounded_insert::insert;
-use super::postings::append_delta;
+use super::postings::{append_delta, pack_edges};
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
 use rusqlite::{Transaction, params, types::Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
-/// 3: term postings carry their node count, which the planner statistics sum.
-pub(crate) const PREFILTER_VERSION: i64 = 3;
+/// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
+/// edges (`kind_size`, `edge_freq`).
+pub(crate) const PREFILTER_VERSION: i64 = 4;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -43,8 +44,10 @@ pub(crate) struct TapePrefilter {
     pub lang: u32,
     /// The tape's node count: candidate SQL enumerates every node of a tape from it.
     pub nodes: u32,
-    /// (kind atom, count, delta-varint postings), sorted by atom.
-    pub kinds: Vec<(u32, u32, Vec<u8>)>,
+    /// (kind atom, count, sum of descendants, delta-varint postings), sorted by atom.
+    pub kinds: Vec<(u32, u32, u64, Vec<u8>)>,
+    /// Direct edges: (parent kind atom, child kind atom, field, count), sorted.
+    pub edges: Vec<(u32, u32, u16, u32)>,
     /// Clean leaf terms: (kind atom, term) → preorders, ascending.
     pub postings: BTreeMap<(u32, String), Vec<u32>>,
     /// Per kind atom: the coverage flags and the number of unclean leaves.
@@ -150,8 +153,8 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter) -> StoreResult<()> {
     // Publishing again replaces: the cascade and triggers count the old rows down.
     transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
     transaction.execute(
-        "INSERT INTO prefilter_sets(tape_id,version,nodes) VALUES(?1,?2,?3)",
-        params![tape, PREFILTER_VERSION, set.nodes],
+        "INSERT INTO prefilter_sets(tape_id,version,nodes,edges) VALUES(?1,?2,?3,?4)",
+        params![tape, PREFILTER_VERSION, set.nodes, pack_edges(&set.edges)],
     )?;
     // The residue cap applies to the store, not the tape: a kind whose unclean leaves, with the
     // ones already published, exceed it keeps them on the coverage path instead.
@@ -181,17 +184,25 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter) -> StoreResult<()> {
     let lang = i64::from(set.lang);
     insert(
         transaction,
-        "INSERT INTO tape_kind_counts(tape_id,kind,n,postings)",
+        "INSERT INTO tape_kind_counts(tape_id,kind,n,size,postings)",
         "",
-        set.kinds.iter().map(|(kind, n, positions)| {
-            [tape.into(), i64::from(*kind).into(), i64::from(*n).into(), Value::Blob(positions.clone())]
+        set.kinds.iter().map(|(kind, n, size, positions)| {
+            [tape.into(), i64::from(*kind).into(), i64::from(*n).into(), (*size as i64).into(), Value::Blob(positions.clone())]
         }),
     )?;
     insert(
         transaction,
-        "INSERT INTO kind_freq(kind,n)",
-        "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n",
-        set.kinds.iter().map(|(kind, n, _)| [i64::from(*kind).into(), i64::from(*n).into()]),
+        "INSERT INTO kind_size(kind,n,size)",
+        "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n,size=size+excluded.size",
+        set.kinds.iter().map(|(kind, n, size, _)| [i64::from(*kind).into(), i64::from(*n).into(), (*size as i64).into()]),
+    )?;
+    insert(
+        transaction,
+        "INSERT INTO edge_freq(pkind,ckind,field,n)",
+        "ON CONFLICT(pkind,ckind,field) DO UPDATE SET n=n+excluded.n",
+        set.edges.iter().map(|&(parent, child, field, n)| {
+            [i64::from(parent).into(), i64::from(child).into(), i64::from(field).into(), i64::from(n).into()]
+        }),
     )?;
     // In key order (term, then kind), so consecutive rows land on neighbouring leaves.
     let mut rows = postings.iter_mut().collect::<Vec<_>>();

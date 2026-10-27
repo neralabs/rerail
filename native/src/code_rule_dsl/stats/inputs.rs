@@ -1,7 +1,7 @@
 //! Plan inputs read in one batch from SQL-owned summaries (ast-index-spike S241).
 //! These immutable values describe a decision; they are not a second frequency owner.
 //! From Data-layer-rule-expressivity's `matcher/anchors/sql/statistics/mod.rs`: the summaries are
-//! the content store's (`kind_freq`, `term_node_freq`, `term_kind_freq`), keyed by kind atom.
+//! the content store's (`kind_size`, `term_node_freq`, `term_kind_freq`), keyed by kind atom.
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
 use crate::code_rule_dsl::prefilter::LANG_STRIDE;
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
@@ -61,7 +61,7 @@ impl Statistics {
             let sql = format!("WITH wanted(lang,code,term) AS (VALUES {rows})
                 SELECT w.lang,w.code,w.term,coalesce(k.n,0),coalesce(v.n,0),
                        max(0,coalesce(k.n,0)-coalesce(c.n,0))
-                FROM wanted w LEFT JOIN kind_freq k ON k.kind=w.lang*{LANG_STRIDE}+CASE WHEN w.code=65535 THEN 0 ELSE w.code END
+                FROM wanted w LEFT JOIN kind_size k ON k.kind=w.lang*{LANG_STRIDE}+CASE WHEN w.code=65535 THEN 0 ELSE w.code END
                 LEFT JOIN term_node_freq v ON v.lang=w.lang AND v.kind=k.kind AND v.term=w.term
                 LEFT JOIN term_kind_freq c ON c.kind=k.kind");
             let parameters = requests.iter().flat_map(|Key(lang, required)| {
