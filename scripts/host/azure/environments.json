@@ -71,6 +71,24 @@
       "size": "Standard_D4ps_v5",
       "license": "Windows_Client",
       "expect": "pass"
+    },
+    {
+      "id": "macos-26-arm64",
+      "os": "macos",
+      "runner": "macos-26",
+      "expect": "pass"
+    },
+    {
+      "id": "macos-15-arm64",
+      "os": "macos",
+      "runner": "macos-15",
+      "expect": "pass"
+    },
+    {
+      "id": "macos-15-x64",
+      "os": "macos",
+      "runner": "macos-15-intel",
+      "expect": "pass"
     }
   ]
 }

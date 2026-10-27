@@ -1,5 +1,7 @@
 # Runs on a throwaway Azure Windows VM for scripts/host/azure/matrix.mjs, which prepends `$RerailEnv` (a hashtable
-# of settings) and sends this file through Azure Run Command. Windows PowerShell 5.1: nothing here needs PowerShell 7.
+# of settings) and scripts/host/windows-host.ps1 (the steps it shares with the release gate,
+# scripts/host/windows-install-smoke.ps1), and sends the result through Azure Run Command. Windows PowerShell 5.1:
+# nothing here needs PowerShell 7.
 #
 # As SYSTEM it provisions what a user brings (Node from its nodejs.org installer, Git for Windows from its installer,
 # both machine-wide in their default folders) and the package under test, then signs the VM's ordinary user in at
@@ -18,7 +20,20 @@ $Work = "C:\rerail-env"
 function Send-Blob([string]$File, [string]$Url) {
   Invoke-WebRequest -UseBasicParsing -Method Put -Uri $Url -InFile $File -Headers @{ "x-ms-blob-type" = "BlockBlob" } | Out-Null
 }
-function Write-Utf8([string]$File, [string]$Text) { [IO.File]::WriteAllText($File, $Text, (New-Object Text.UTF8Encoding $false)) }
+
+# A download, retried: a new VM's first minutes on the network see failures a person would simply retry.
+function Get-WithRetry([string]$Uri, [string]$OutFile = "") {
+  for ($attempt = 1; ; $attempt++) {
+    try {
+      if ($OutFile) { Invoke-WebRequest -UseBasicParsing -ErrorAction Stop $Uri -OutFile $OutFile; return }
+      return Invoke-WebRequest -UseBasicParsing -ErrorAction Stop $Uri
+    } catch {
+      if ($attempt -ge 5) { throw }
+      Write-Host "download of $Uri failed ($($_.Exception.Message)); retrying"
+      Start-Sleep ($attempt * 5)
+    }
+  }
+}
 
 if ($Mode -eq "provision") {
   $ErrorActionPreference = "Stop"
@@ -30,23 +45,23 @@ if ($Mode -eq "provision") {
     Start-Transcript -Path $provisionLog -Force | Out-Null
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64" } else { "x64" }
     # The newest release of the requested major, from the installer a user downloads from nodejs.org.
-    $sums = (Invoke-WebRequest -UseBasicParsing "https://nodejs.org/dist/latest-v$($RerailEnv.Node).x/SHASUMS256.txt").Content
+    $sums = (Get-WithRetry "https://nodejs.org/dist/latest-v$($RerailEnv.Node).x/SHASUMS256.txt").Content
     $msi = ([regex]::Match($sums, "node-v[\d.]+-$arch\.msi")).Value
     if (-not $msi) { throw "no Node $($RerailEnv.Node).x installer for $arch" }
     $version = ([regex]::Match($msi, "v[\d.]+")).Value
-    Invoke-WebRequest -UseBasicParsing "https://nodejs.org/dist/$version/$msi" -OutFile "$Work\$msi"
+    Get-WithRetry "https://nodejs.org/dist/$version/$msi" "$Work\$msi"
     $install = Start-Process msiexec.exe -ArgumentList "/i `"$Work\$msi`" /qn /norestart" -Wait -PassThru
     if ($install.ExitCode -ne 0) { throw "Node installer exited $($install.ExitCode)" }
     # Git for Windows, machine-wide in its default folder, as its installer puts it.
-    $release = Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/git-for-windows/git/releases/latest"
+    $release = (Get-WithRetry "https://api.github.com/repos/git-for-windows/git/releases/latest").Content | ConvertFrom-Json
     $pattern = if ($arch -eq "arm64") { '^Git-[\d.]+-arm64\.exe$' } else { '^Git-[\d.]+-64-bit\.exe$' }
     $asset = $release.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
     if ($null -eq $asset) { throw "no Git for Windows installer for $arch in $($release.tag_name)" }
-    Invoke-WebRequest -UseBasicParsing $asset.browser_download_url -OutFile "$Work\$($asset.name)"
+    Get-WithRetry $asset.browser_download_url "$Work\$($asset.name)"
     $install = Start-Process "$Work\$($asset.name)" -ArgumentList "/VERYSILENT /NORESTART /NOCANCEL /SP- /SUPPRESSMSGBOXES" -Wait -PassThru
     if ($install.ExitCode -ne 0) { throw "Git installer exited $($install.ExitCode)" }
     if ($RerailEnv.BundleUrl) {
-      Invoke-WebRequest -UseBasicParsing $RerailEnv.BundleUrl -OutFile "$Work\bundle.tar"
+      Get-WithRetry $RerailEnv.BundleUrl "$Work\bundle.tar"
       New-Item -ItemType Directory -Force "$Work\bundle" | Out-Null
       & tar.exe -xf "$Work\bundle.tar" -C "$Work\bundle"
       if ($LASTEXITCODE -ne 0) { throw "could not unpack the bundle" }
@@ -55,7 +70,7 @@ if ($Mode -eq "provision") {
   } catch {
     Write-Host "provisioning failed: $_"
     Stop-Transcript | Out-Null
-    Write-Utf8 "$Work\results.json" (@{ env = $RerailEnv.Id; provisioned = $false; facts = @{}; steps = @() } | ConvertTo-Json -Compress)
+    Write-RerailUtf8 "$Work\results.json" (@{ env = $RerailEnv.Id; provisioned = $false; facts = @{}; steps = @() } | ConvertTo-Json -Compress)
     Send-Blob "$Work\results.json" $RerailEnv.ResultUrl
     Send-Blob $provisionLog $RerailEnv.LogUrl
     exit 1
@@ -85,12 +100,13 @@ $ErrorActionPreference = "Continue"
 $Out = Join-Path $env:USERPROFILE "rerail-env"
 $Log = Join-Path $Out "test.log"
 $Project = Join-Path $env:USERPROFILE "proj"
-$Launcher = Join-Path $env:USERPROFILE ".rerail\bin\rerail.cmd"
+$RerailHome = Join-Path $env:USERPROFILE ".rerail"
+$Launcher = Join-Path $RerailHome "bin\rerail.cmd"
 New-Item -ItemType Directory -Force $Out | Out-Null
-Write-Utf8 $Log ""
+Write-RerailUtf8 $Log ""
 $env:BROWSER = "none"; $env:NPM_CONFIG_UPDATE_NOTIFIER = "false"; $env:NO_COLOR = "1"
 $Steps = New-Object Collections.ArrayList
-$State = @{ SetupOk = $false; DaemonPort = $null; Registry = $null; Verdaccio = $null }
+$State = @{ SetupOk = $false; DaemonPort = $null; Registry = $null }
 
 # Runs a native command, returning its combined output as one string and failing on a non-zero exit.
 function Exec([string]$File, [string[]]$Arguments) {
@@ -99,11 +115,14 @@ function Exec([string]$File, [string[]]$Arguments) {
   return $output
 }
 
+# Runs a step, keeping each line it prints as it prints it, so a step that throws keeps what it printed before.
 function Step([string]$Name, [scriptblock]$Body) {
   Add-Content -Path $Log -Value "`n==== $Name"
   $started = Get-Date
   $ok = $true
-  try { $output = (& $Body 2>&1 | ForEach-Object { "$_" }) -join "`n" } catch { $ok = $false; $output = "$output`n$($_.Exception.Message)" }
+  $lines = New-Object Collections.Generic.List[string]
+  try { & $Body 2>&1 | ForEach-Object { $lines.Add("$_") } } catch { $ok = $false; $lines.Add($_.Exception.Message) }
+  $output = $lines -join "`n"
   Add-Content -Path $Log -Value $output
   $detail = if ($output.Length -gt 1500) { $output.Substring($output.Length - 1500) } else { $output }
   [void]$Steps.Add([ordered]@{ name = $Name; ok = $ok; seconds = [int]((Get-Date) - $started).TotalSeconds; detail = $detail })
@@ -140,53 +159,14 @@ if ($RerailEnv.BundleUrl) {
   # Packages under test (core and every rule pack) from a registry on this VM, as npmjs will serve them after
   # launch; everything else still comes from npmjs.
   Step "registry" {
-    $node = (Get-Command node).Source
-    $npmCli = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin\npm-cli.js"
-    $port = Exec $node @("-e", "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{process.stdout.write(String(s.address().port));s.close()})")
-    $State.Registry = "http://127.0.0.1:$port"
-    $storage = "$Out\verdaccio\storage" -replace '\\', '/'
-    $htpasswd = "$Out\verdaccio\htpasswd" -replace '\\', '/'
-    New-Item -ItemType Directory -Force "$Out\verdaccio" | Out-Null
-    Write-Utf8 "$Out\verdaccio\config.yaml" @"
-storage: $storage
-auth:
-  htpasswd:
-    file: $htpasswd
-    max_users: 1
-uplinks:
-  npmjs:
-    url: https://registry.npmjs.org/
-packages:
-  "@neralabs/*":
-    access: `$all
-    publish: `$authenticated
-  "**":
-    access: `$all
-    proxy: npmjs
-max_body_size: 200mb
-log: { type: stdout, level: warn }
-"@
-    # No output redirection: a redirected Start-Process would hold this shell's handles.
-    $State.Verdaccio = Start-Process -PassThru -WindowStyle Hidden -FilePath $node -ArgumentList @(
-      "`"$npmCli`"", "exec", "--yes", "--", "verdaccio@6", "--config", "`"$Out\verdaccio\config.yaml`"", "--listen", "127.0.0.1:$port")
-    $ready = $false
-    for ($i = 0; $i -lt 180 -and -not $ready; $i++) {
-      try { Invoke-WebRequest -UseBasicParsing "$($State.Registry)/-/ping" | Out-Null; $ready = $true } catch { Start-Sleep 1 }
-    }
-    if (-not $ready) { throw "the local registry did not answer within 180 s" }
-    $password = [guid]::NewGuid().ToString("N")
-    $body = @{ name = "publisher"; password = $password } | ConvertTo-Json -Compress
-    $token = (Invoke-RestMethod -UseBasicParsing -Method Put -ContentType "application/json" -Body $body "$($State.Registry)/-/user/org.couchdb.user:publisher").token
-    Write-Utf8 "$Out\publisher.npmrc" "//127.0.0.1:$port/:_authToken=$token`n"
-    foreach ($tarball in Get-ChildItem "$Work\bundle\*.tgz") {
-      Exec "npm.cmd" @("publish", $tarball.FullName, "--tag", "latest", "--registry", $State.Registry, "--userconfig", "$Out\publisher.npmrc", "--loglevel=warn") | Out-Null
-    }
-    Write-Utf8 (Join-Path $env:USERPROFILE ".npmrc") "@neralabs:registry=$($State.Registry)/`n"
-    "registry $($State.Registry) serves: $((Get-ChildItem "$Work\bundle\*.tgz" | ForEach-Object { $_.Name }) -join ' ')"
+    $tarballs = @(Get-ChildItem "$Work\bundle\*.tgz" | ForEach-Object { $_.FullName })
+    $State.Registry = Start-RerailRegistry -Root "$Out\registry" -Tarballs $tarballs
+    Write-RerailUtf8 (Join-Path $env:USERPROFILE ".npmrc") "@neralabs:registry=$($State.Registry.Url)/`n"
+    "registry $($State.Registry.Url) serves: $(($tarballs | ForEach-Object { Split-Path -Leaf $_ }) -join ' ')"
   }
 } else {
   Step "registry" {
-    if ($RerailEnv.NpmToken) { Write-Utf8 (Join-Path $env:USERPROFILE ".npmrc") "//registry.npmjs.org/:_authToken=$($RerailEnv.NpmToken)`n" }
+    if ($RerailEnv.NpmToken) { Write-RerailUtf8 (Join-Path $env:USERPROFILE ".npmrc") "//registry.npmjs.org/:_authToken=$($RerailEnv.NpmToken)`n" }
     "installing @neralabs/rerail@$($RerailEnv.NpmSpec) from npmjs"
   }
 }
@@ -195,46 +175,24 @@ Step "project" {
   New-Item -ItemType Directory -Force "$Project\src", "$env:USERPROFILE\.claude", "$env:USERPROFILE\.codex", "$env:USERPROFILE\.cursor" | Out-Null
   Set-Location $Project
   Exec git @("init", "-q") | Out-Null
-  Write-Utf8 "$Project\package.json" '{ "name": "proj", "private": true, "dependencies": { "react": "^19.0.0" }, "devDependencies": { "typescript": "^5.0.0" } }'
-  Write-Utf8 "$Project\src\index.ts" "export const answer = 42;`n"
+  Write-RerailUtf8 "$Project\package.json" '{ "name": "proj", "private": true, "dependencies": { "react": "^19.0.0" }, "devDependencies": { "typescript": "^5.0.0" } }'
+  Write-RerailUtf8 "$Project\src\index.ts" "export const answer = 42;`n"
   Exec git @("add", "-A") | Out-Null
   Exec git @("-c", "user.name=rerail", "-c", "user.email=rerail@example.invalid", "commit", "-qm", "init") | Out-Null
   "project at $Project; coding-agent folders: .claude .codex .cursor"
 }
 
-# Set-up's machine-readable lane: each step is a JSON object whose options carry the exact launcher arguments for
-# each answer. Answer as a person accepting the defaults would: allow sessions, read this repo, start with the packs
-# shown. The first run is npx (it installs); later answers go to the installed launcher.
 Step "setup" {
-  Set-Location $Project
   $spec = if ($RerailEnv.NpmSpec) { $RerailEnv.NpmSpec } else { "latest" }
-  $json = (& npx.cmd --yes "@neralabs/rerail@$spec" setup --json --repo $Project 2> "$Out\setup-stderr.txt") -join "`n"
-  $answers = @{ "sessions" = "allow"; "read-repo" = "yes"; "confirm-packs" = "start" }
-  for ($i = 1; $i -le 6; $i++) {
-    Write-Utf8 "$Out\setup-$i.json" $json
-    # Windows PowerShell's ConvertFrom-Json returns nothing for empty input rather than failing.
-    try { $step = $json | ConvertFrom-Json } catch { $step = $null }
-    if ($null -eq $step) { throw "set-up printed no JSON step: $json`n$(Get-Content -Raw "$Out\setup-stderr.txt")" }
-    "step $($step.step): $($step.screen)"
-    if ($step.step -eq "done") {
-      if ($step.screen -notmatch "Rerail is on") { throw "set-up finished without turning Rerail on" }
-      $State.SetupOk = $true
-      return
-    }
-    if ($null -eq $step.question) { throw "set-up stopped at $($step.step)" }
-    $want = $answers[$step.question.id]
-    $option = $step.question.options | Where-Object { $_.answer -eq $want } | Select-Object -First 1
-    if ($null -eq $option) { throw "no '$want' answer for question $($step.question.id)" }
-    $json = (& $Launcher @($option.next.args) 2> "$Out\setup-stderr.txt") -join "`n"
-  }
-  throw "set-up did not finish in 6 answers"
+  Invoke-RerailSetup -Spec $spec -Project $Project -Launcher $Launcher -LogDir $Out
+  $State.SetupOk = $true
 }
 
 if ($State.SetupOk) {
   Step "status" {
+    Assert-RerailManagedInstall -RerailHome $RerailHome
     $status = Exec $Launcher @("status")
     $status
-    if ((Get-Item "$env:USERPROFILE\.rerail\current").LinkType -ne "Junction") { throw "~\.rerail\current is not a junction" }
     if ($status -notmatch "Engine: ok") { throw "the daemon has no working native engine" }
     $match = [regex]::Match($status, "running at http://127\.0\.0\.1:(\d+)/")
     if (-not $match.Success) { throw "no daemon URL in rerail status" }
@@ -253,29 +211,10 @@ if ($State.SetupOk) {
     "a new terminal finds $($found.Source)"
   }
 
-  # Each agent's registered SessionStart command run the way that agent runs it (Claude Code: exec form; Codex:
-  # through PowerShell), then the daemon is asked what it recorded: an exit code alone proves nothing.
   Step "hooks" {
-    $payloads = @{}
-    foreach ($agent in @("claude", "codex")) {
-      $payloads[$agent] = "$Out\payload-$agent.json"
-      Write-Utf8 $payloads[$agent] (@{ session_id = "env-$agent"; cwd = $Project; hook_event_name = "SessionStart"; source = "startup" } | ConvertTo-Json -Compress)
-    }
-    $claude = (Get-Content -Raw "$env:USERPROFILE\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
-    if ($null -eq $claude.args) { throw "the Claude Code hook is not in exec form: $($claude.command)" }
-    Write-Utf8 "$Out\claude-args.json" (ConvertTo-Json -Compress @($claude.args))
-    Write-Utf8 "$Out\codex-command.txt" (Get-Content -Raw "$env:USERPROFILE\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command
-    $probe = "const {spawnSync}=require('child_process'),fs=require('fs');const [kind,a,b,payload,cwd]=process.argv.slice(1);const input=fs.readFileSync(payload);" +
-      "const r=kind==='exec'?spawnSync(a,JSON.parse(fs.readFileSync(b,'utf8')),{input,encoding:'utf8',cwd}):spawnSync('powershell.exe',['-NoProfile','-Command',fs.readFileSync(a,'utf8')],{input,encoding:'utf8',cwd});" +
-      "process.stdout.write('exit='+r.status+' '+(r.stdout+r.stderr).trim().slice(0,300));process.exitCode=r.status"
-    "claude: " + (Exec node @("-e", $probe, "exec", $claude.command, "$Out\claude-args.json", $payloads.claude, $Project))
-    "codex: " + (Exec node @("-e", $probe, "powershell", "$Out\codex-command.txt", "-", $payloads.codex, $Project))
+    Invoke-RerailSessionStartHooks -UserHome $env:USERPROFILE -Project $Project -WorkDir $Out -Prefix "env"
     if ((Get-Content -Raw "$env:USERPROFILE\.cursor\hooks.json") -notmatch "rerail") { throw "Cursor hooks were not registered" }
-    $recorded = @((Invoke-RestMethod -UseBasicParsing "http://127.0.0.1:$($State.DaemonPort)/api/sessions").sessions | ForEach-Object { $_.sessionId })
-    "daemon recorded: $($recorded -join ', ')"
-    foreach ($agent in @("claude", "codex")) {
-      if ($recorded -notcontains "env-$agent") { throw "the $agent hook did not record its session" }
-    }
+    Assert-RerailSessionsRecorded -Port $State.DaemonPort -SessionIds @("env-claude", "env-codex")
   }
 
   Step "daemon-restart" {
@@ -291,21 +230,22 @@ if ($State.SetupOk) {
 
   Step "uninstall" {
     Exec $Launcher @("install", "--remove")
-    if ((Get-Content -Raw "$env:USERPROFILE\.claude\settings.json") -match "claude-hook") { throw "Claude Code hooks left behind" }
+    $leftovers = @(Get-RerailHookLeftovers -UserHome $env:USERPROFILE)
+    if ($leftovers.Count -gt 0) { throw "Rerail hooks left in $($leftovers -join ', ')" }
     if ([Environment]::GetEnvironmentVariable("Path", "User") -match [regex]::Escape(".rerail\bin")) { throw "the user Path still holds .rerail\bin" }
-    "agents unhooked and the user Path entry removed"
+    "Claude Code, Codex and Cursor unhooked, and the user Path entry removed"
   }
 } else {
   foreach ($name in @("status", "path-new-terminal", "hooks", "daemon-restart", "uninstall")) { Skip $name }
 }
 
 if (Test-Path $Launcher) { & $Launcher daemon stop *> $null }
-if ($null -ne $State.Verdaccio) { & taskkill.exe /T /F /PID $State.Verdaccio.Id *> $null }
+Stop-RerailRegistry $State.Registry
 
 # The log first: the driver collects both once results.json appears.
 $provisionLog = Join-Path $Work "provision.log"
-Write-Utf8 "$Out\all.log" ($(if (Test-Path $provisionLog) { Get-Content -Raw $provisionLog } else { "" }) + "`n" + (Get-Content -Raw $Log))
+Write-RerailUtf8 "$Out\all.log" ($(if (Test-Path $provisionLog) { Get-Content -Raw $provisionLog } else { "" }) + "`n" + (Get-Content -Raw $Log))
 Send-Blob "$Out\all.log" $RerailEnv.LogUrl
 $results = [ordered]@{ env = $RerailEnv.Id; provisioned = $true; facts = $facts; steps = @($Steps) }
-Write-Utf8 "$Out\results.json" ($results | ConvertTo-Json -Depth 6)
+Write-RerailUtf8 "$Out\results.json" ($results | ConvertTo-Json -Depth 6)
 Send-Blob "$Out\results.json" $RerailEnv.ResultUrl
