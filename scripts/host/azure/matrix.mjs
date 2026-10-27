@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
-import { coreChanges } from "../../release/core-paths.mjs";
+import { matrixChanges } from "../../release/core-paths.mjs";
 
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -83,6 +83,12 @@ async function storage() {
     },
     containers(prefix) {
       return az(["storage", "container", "list", ...auth, "--prefix", prefix, "--query", "[].{name: name, modified: properties.lastModified}"]);
+    },
+    // When anything was last written to the container: its newest blob, or the container itself when it has none.
+    // Writing a blob leaves the container's own lastModified as it was.
+    async lastWritten({ name, modified }) {
+      const blobs = await az(["storage", "blob", "list", ...auth, "-c", name, "--num-results", "*", "--query", "[].properties.lastModified"]);
+      return Math.max(Date.parse(modified), ...blobs.map((time) => Date.parse(time)));
     },
     async deleteContainer(container) {
       await az(["storage", "container", "delete", ...auth, "-n", container], { json: false });
@@ -354,7 +360,9 @@ async function commandRun(options) {
   let packageLabel = `@neralabs/rerail@${options.npm} from npmjs`;
   if (options.staged) {
     const label = join(outDir, "package.txt");
-    if (!(await store.download(container, "package.txt", label))) throw new Error(`Nothing is staged in ${container}; run stage first`);
+    if (!(await store.download(container, "package.txt", label))) {
+      throw new Error(`Nothing is staged in ${container}: run stage first. In CI, a re-run that starts over three hours after the run last wrote anything finds its bundle swept; re-run all jobs`);
+    }
     packageLabel = readFileSync(label, "utf8").trim();
     bundleSas = await store.sas(container, "bundle.tar", "r");
   } else {
@@ -377,18 +385,8 @@ async function commandRun(options) {
   if (!outcomes.every(({ verdict }) => OK_OUTCOMES.has(verdict.outcome))) process.exitCode = 1;
 }
 
-// What the matrix itself runs on: a change to one of these is tested even though core does not ship it.
-const MATRIX_INPUTS = [
-  ".github/workflows/env-matrix.yml",
-  ".github/workflows/package.yml",
-  "scripts/host/azure/",
-  "scripts/host/windows-host.ps1",
-  "scripts/release/core-paths.mjs",
-];
-
-// Whether a push from `base` to `head` should run the matrix: when it changes what core ships, by the rule the Release
-// pull request uses (core-paths.mjs), or the matrix itself. Pack, test, docs and other CI changes leave the package as
-// the previous run tested it. Prints the reason to stderr and `true` or `false` to stdout.
+// Whether a push from `base` to `head` should run the matrix (core-paths.mjs `matrixChanges`). Prints the reason to
+// stderr and `true` or `false` to stdout.
 async function commandAffected(options) {
   if (!options.base || !options.head) throw new Error("affected needs --base <commit> and --head <commit>");
   if (/^0+$/.test(options.base)) {
@@ -400,8 +398,7 @@ async function commandAffected(options) {
   const changed = (await git(["diff", "--name-only", "--no-renames", options.base, options.head])).split("\n").filter(Boolean);
   const lock = {};
   for (const ref of ["release", "head"]) lock[ref] = changed.includes("package-lock.json") ? await git(["show", `${ref === "release" ? options.base : options.head}:package-lock.json`]) : "";
-  const core = coreChanges(changed, (ref) => lock[ref]);
-  const matrix = changed.filter((path) => MATRIX_INPUTS.some((input) => (input.endsWith("/") ? path.startsWith(input) : path === input)));
+  const { core, matrix } = matrixChanges(changed, (ref) => lock[ref]);
   const reasons = [...core.slice(0, 5), ...matrix.slice(0, 5)];
   console.error(reasons.length === 0
     ? `nothing core ships or the matrix runs changed (${changed.length} file(s) changed)`
@@ -410,8 +407,9 @@ async function commandAffected(options) {
 }
 
 // Deletes what runs left: with --run-id, everything of that one run, whatever its age (a --keep run, say); otherwise
-// every run's resources and storage container older than --older-than-hours (default 3, longer than a run takes, so
-// a run still going keeps its VMs and bundle).
+// every run's resources older than --older-than-hours (default 3, longer than a run takes, so a run still going keeps
+// its VMs), and every storage container nothing was written to for that long (each attempt writes its results there,
+// so a run's bundle lasts three hours past its last attempt, for re-running failed jobs).
 async function commandSweep(options) {
   const store = await storage();
   if (options["run-id"]) {
@@ -429,11 +427,15 @@ async function commandSweep(options) {
     console.log(`deleting what run ${runId} left`);
     await deleteRun(runId);
   }
-  // A run's container holds its bundle and results; its environments share it, so it goes here, once it is old,
-  // rather than when one environment finishes. The storage account's lifecycle rule expires blobs, not containers.
-  const containers = (await store.containers("run-")).filter((c) => Date.parse(c.modified) < cutoff);
+  // A run's container holds its bundle and results; its environments share it, so it goes here, once nothing has
+  // written to it for the cutoff, rather than when one environment finishes. The storage account's lifecycle rule
+  // expires blobs, not containers.
+  const containers = [];
+  for (const container of await store.containers("run-")) {
+    if ((await store.lastWritten(container)) < cutoff) containers.push(container);
+  }
   for (const { name } of containers) await store.deleteContainer(name);
-  console.log(`swept ${stale.length} run(s) and ${containers.length} storage container(s) older than ${hours} h`);
+  console.log(`swept ${stale.length} run(s) and ${containers.length} storage container(s) idle for ${hours} h`);
 }
 
 const { values: options, positionals } = parseArgs({

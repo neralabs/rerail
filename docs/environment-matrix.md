@@ -82,10 +82,12 @@ token meanwhile. Environments run in parallel; a run of all of them takes about 
 No VM accepts inbound connections. Scripts reach a VM through Azure Run Command, the package and the results move
 through blob URLs signed for three hours, and each VM's public IP carries only its outbound traffic. Each environment
 deletes its VM, disk, network interface and public IP when it finishes; `sweep` deletes what a cancelled run left and
-each run's storage container once it is three hours old (CI sweeps after every run).
+each run's storage container once nothing has been written to it for three hours (CI sweeps after every run).
 
 In CI the package is staged once per run (`stage` bundles it with the rule packs into the run's container) and each
-environment's job runs `run --staged` against it; re-running failed environments reuses that bundle.
+environment's job runs `run --staged` against it; re-running failed environments reuses that bundle. Every attempt
+writes its results into the container, so the bundle lasts three hours past the run's last attempt. A re-run started
+later than that fails with `Nothing is staged in run-gh<id>`: re-run all jobs, which stages the package again.
 
 A Windows VM's administrator password is generated for the run and is readable in clear while the VM exists: in the
 Run Command resource (`az vm run-command show`, by anyone with Reader on the resource group), in

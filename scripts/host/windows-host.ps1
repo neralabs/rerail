@@ -82,12 +82,19 @@ log: { type: stdout, level: warn }
     & taskkill.exe /T /F /PID $process.Id *> $null
     throw "the local registry did not answer $url/-/ping within 180 s"
   }
-  $body = @{ name = "publisher"; password = [guid]::NewGuid().ToString("N") } | ConvertTo-Json -Compress
-  $token = (Invoke-RestMethod -UseBasicParsing -ErrorAction Stop -Method Put -ContentType "application/json" -Body $body "$url/-/user/org.couchdb.user:publisher").token
-  Write-RerailUtf8 "$Root\publisher.npmrc" "//127.0.0.1:${port}/:_authToken=$token`n"
-  foreach ($tarball in $Tarballs) {
-    $published = (& $node $npmCli publish $tarball --tag latest --registry $url --userconfig "$Root\publisher.npmrc" --loglevel=warn 2>&1) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw "publishing $tarball to $url failed:`n$published" }
+  # A failed registration or publish stops the registry before it throws: the caller has no process to stop yet, and
+  # a Verdaccio left running keeps the runner's work directory locked.
+  try {
+    $body = @{ name = "publisher"; password = [guid]::NewGuid().ToString("N") } | ConvertTo-Json -Compress
+    $token = (Invoke-RestMethod -UseBasicParsing -ErrorAction Stop -Method Put -ContentType "application/json" -Body $body "$url/-/user/org.couchdb.user:publisher").token
+    Write-RerailUtf8 "$Root\publisher.npmrc" "//127.0.0.1:${port}/:_authToken=$token`n"
+    foreach ($tarball in $Tarballs) {
+      $published = (& $node $npmCli publish $tarball --tag latest --registry $url --userconfig "$Root\publisher.npmrc" --loglevel=warn 2>&1) -join "`n"
+      if ($LASTEXITCODE -ne 0) { throw "publishing $tarball to $url failed:`n$published" }
+    }
+  } catch {
+    & taskkill.exe /T /F /PID $process.Id *> $null
+    throw
   }
   return @{ Url = $url; Process = $process }
 }
@@ -101,7 +108,8 @@ function Stop-RerailRegistry($Registry) {
 # this repository, start with the packs shown): `npx @neralabs/rerail@<Spec> setup --json`, which installs, then for
 # each answer the launcher command set-up printed for it. `Options` go on the first command (`--port 4799`); set-up
 # carries them into the commands it prints. Writes `step <name>: <screen>` for each step, and each step's JSON to
-# `LogDir` when given; throws unless set-up ends with Rerail on.
+# `LogDir` when given; throws unless set-up ends with Rerail on and every command it ran exited 0 (the lane exits 1
+# only on its `error` step, 0 on a question).
 function Invoke-RerailSetup([string]$Spec, [string]$Project, [string]$Launcher, [string[]]$Options = @(), [string]$LogDir = "") {
   $ErrorActionPreference = "Continue"
   $node = Get-RerailNode
@@ -114,6 +122,7 @@ function Invoke-RerailSetup([string]$Spec, [string]$Project, [string]$Launcher, 
     try { $step = $run.Out | ConvertFrom-Json } catch { $step = $null }
     if ($null -eq $step) { throw "set-up printed no JSON step (exit $($run.Exit)):`n$($run.Out)`n$($run.Err)" }
     "step $($step.step): $($step.screen)"
+    if ($run.Exit -ne 0) { throw "set-up exited $($run.Exit) at step $($step.step):`n$($run.Err)" }
     if ($step.step -eq "done") {
       if ($step.screen -notmatch "Rerail is on") { throw "set-up finished without turning Rerail on" }
       return

@@ -3,7 +3,7 @@
 // the check of a release's dist-tags.
 
 import { describe, expect, it } from "vitest";
-import { coreChanges, lockChangesCore, shipsWithCore } from "../../scripts/release/core-paths.mjs";
+import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
 import { distTagReport, parseDistTagList, parseExpectation } from "../../scripts/release/dist-tags.mjs";
 
@@ -33,6 +33,22 @@ describe("lockChangesCore and coreChanges", () => {
     expect(reads).toEqual([]);
     expect(coreChanges(["package-lock.json", "src/a.ts", "packs/python/package.json"], readLock)).toEqual(["src/a.ts"]);
     expect(reads).toEqual(["release", "head"]);
+  });
+});
+
+describe("matrixChanges", () => {
+  const lock = (packs, root = "1.0.0") => JSON.stringify({ version: "0.1.0", packages: { "": { version: "0.1.0" }, "node_modules/semver": { version: root }, "packs/python": { version: packs } } });
+  const readLock = (ref) => (ref === "release" ? lock("0.1.3") : lock("0.1.4"));
+
+  it("skips a push that changes only packs, docs, tests or other CI, or the lockfile's pack entries", () => {
+    expect(matrixChanges(["packs/react/pack.json", "docs/environment-matrix.md", "test/a.test.ts", ".github/workflows/ci.yml", "package-lock.json"], readLock))
+      .toEqual({ core: [], matrix: [] });
+  });
+
+  it("runs for what core ships and for the matrix's own files, a directory by its prefix and a file only by its exact path", () => {
+    expect(matrixChanges(["src/cli/cli.ts", "scripts/host/azure/guest.sh", "scripts/host/windows-host.ps1", ".github/workflows/env-matrix.yml"], readLock))
+      .toEqual({ core: ["src/cli/cli.ts"], matrix: ["scripts/host/azure/guest.sh", "scripts/host/windows-host.ps1", ".github/workflows/env-matrix.yml"] });
+    expect(matrixChanges(["scripts/host/windows-host.ps1.bak", "scripts/host/azure-notes.md", ".github/workflows/env-matrix.yml.orig"], readLock).matrix).toEqual([]);
   });
 });
 

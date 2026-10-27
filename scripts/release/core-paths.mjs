@@ -1,6 +1,6 @@
 // Which repository paths change what core (@neralabs/rerail) ships. With no dependencies, so a workflow can ask before
 // `npm ci`: the Release pull request asks it of the changes since core's last release (release-version.mjs), the
-// environment matrix of the changes a push to main made (scripts/host/azure/matrix.mjs `affected`).
+// environment matrix of the changes a push to main made (scripts/host/azure/matrix.mjs `affected`, `matrixChanges`).
 
 /**
  * Paths whose change never changes what core ships, so they alone never release it: the packs (released on their
@@ -58,4 +58,25 @@ export const lockChangesCore = (before, after) => JSON.stringify(withoutPacks(JS
  */
 export function coreChanges(changed, readLock) {
   return changed.filter((path) => shipsWithCore(path) && (path !== "package-lock.json" || lockChangesCore(readLock("release"), readLock("head"))));
+}
+
+/** What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it. */
+export const MATRIX_INPUTS = [
+  ".github/workflows/env-matrix.yml",
+  ".github/workflows/package.yml",
+  "scripts/host/azure/",
+  "scripts/host/windows-host.ps1",
+  "scripts/release/core-paths.mjs",
+];
+
+/**
+ * Why a push should run the environment matrix: the paths among `changed` that change what core ships (`coreChanges`)
+ * and those that change the matrix itself. Both empty: packs, tests, docs and other CI changes leave the package as the
+ * previous run tested it.
+ */
+export function matrixChanges(changed, readLock) {
+  return {
+    core: coreChanges(changed, readLock),
+    matrix: changed.filter((path) => MATRIX_INPUTS.some((input) => (input.endsWith("/") ? path.startsWith(input) : path === input))),
+  };
 }

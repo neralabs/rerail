@@ -52,11 +52,11 @@ provision() {
     aarch64) arch=arm64 ;;
     *) echo "unsupported machine $(uname -m)" >&2; exit 1 ;;
   esac
-  # The newest release of the requested major, as a user downloading Node from nodejs.org gets it.
-  version="$(fetch "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" \
-    | sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p")"
+  # The newest release of the requested major, as a user downloading Node from nodejs.org gets it. Every download goes
+  # to a file first: a retried download piped onwards would hand the reader the failed attempt's bytes too.
+  fetch "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" -o "$WORK/SHASUMS256.txt"
+  version="$(sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p" "$WORK/SHASUMS256.txt")"
   [ -n "$version" ] || { echo "no Node ${RERAIL_ENV_NODE}.x for linux-${arch}" >&2; exit 1; }
-  # To a file first: a retried download piped into tar would hand it the failed attempt's bytes too.
   fetch "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" -o "$WORK/node.tar.xz"
   tar -xJf "$WORK/node.tar.xz" -C /usr/local --strip-components=1
   if [ -n "${RERAIL_ENV_BUNDLE_URL:-}" ]; then
