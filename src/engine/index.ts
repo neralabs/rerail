@@ -15,6 +15,7 @@ export {
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
+  STEER_LINE_MESSAGE_TYPE,
   STEER_STRATEGIES,
   type SteerRule,
   type SteerStrategy,

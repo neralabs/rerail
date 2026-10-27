@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
@@ -15,6 +16,7 @@ import {
   assistantMessageEvent,
   sendNativeDeliveries,
   resultWithSteers,
+  STEER_LINE_MESSAGE_TYPE,
   callEvent,
   resultEvent,
   turnEndEvent,
@@ -213,6 +215,27 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         placed?.push(delivery);
         return placed !== undefined;
       });
+
+    /**
+     * Shows the person the line for each rule a tool result's steers name, which OMP never draws for a tool result:
+     * a `rerail.steer-line` message, sent as an aside so it never interrupts the call's batch and lands after its results,
+     * before the next model call. It reaches neither the model (`context` below) nor a summary (`guardCompaction`), and
+     * records no receipt: each steer was counted when it was placed. OMP queues an aside a few awaits after `sendMessage`
+     * returns, all of them microtasks for text; waiting for the next macrotask has it queued before the result goes back,
+     * so the batch's own boundary takes it, never a later one, where an aside would call the model once more.
+     */
+    const showSteerLines = async (placed: readonly AdapterDelivery[]): Promise<void> => {
+      const rules = placed.flatMap(delivery => delivery.rules);
+      if (rules.length === 0) return;
+      pi.sendMessage({
+        customType: STEER_LINE_MESSAGE_TYPE,
+        // What the coding agent read in the result, under the lines once Ctrl+O expands them.
+        content: placed.map(delivery => delivery.content).join("\n\n"),
+        display: true,
+        details: { rules },
+      }, { deliverAs: "aside" });
+      await nextMacrotask();
+    };
 
     /**
      * Hands the event to the live runtime. `outcome` learns whether the event reached the daemon through the runtime that is
@@ -563,6 +586,9 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
         }
       }
       await settleCodeRuleBoundary();
+      // The person's steer lines stay out of the model's context: the steers they show are in their tool results.
+      const messages = event.messages.filter(message => !(message.role === "custom" && message.customType === STEER_LINE_MESSAGE_TYPE));
+      return messages.length === event.messages.length ? undefined : { messages };
     });
 
     pi.on("message_update", async (event) => {
@@ -638,7 +664,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       }));
       if (openResults.get(event.toolCallId) === placed) openResults.delete(event.toolCallId);
       // The call's steers ride its result: after what it says, or in its place when its edit was rolled back; a later
-      // one goes out as a message.
+      // one goes out as a message. The person sees their lines under the call.
+      if (placed.length > 0) await contained("tool_result", showSteerLines(placed));
       return resultWithSteers(event.content, placed);
     });
 
