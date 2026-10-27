@@ -73,7 +73,8 @@ code-rule documents, `packs/<id>/rules/**`.
 
 No tracked file is pack test data in the pulled layout either: a path `PACK_FIXTURE_PATTERNS` in
 `scripts/s3/pack-fixtures.mjs` matches (`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`,
-`cases.json`, `*.cases.json`, `fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`; CONTRIBUTING.md, "Pack
+`cases.json`, `*.cases.json`, `fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`, `provenance.json`,
+`LICENSES.md`; CONTRIBUTING.md, "Pack
 test data"). Each tool-pack's test data, derived and authored alike, is one archive in S3 that the tool directory's
 `test-data.lock` pins by sha256. A pull request that adds or changes the data stages it under the tool-pack's tracked
 `publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`), and this metric fails once per tool-pack while

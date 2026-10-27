@@ -139,7 +139,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names or literals rather
   than the construct fails. A family without variants takes its overfit evidence from its samples alone.
 - Pack test data: the tool's test cases (`fixtures/`, `tests/`, case lists such as `cases.json` and `*.cases.json`,
-  `fixtures.upstream-check.json`, `lizard-*.tsv`), its expected findings (`*.expected.json`) and `authored/` are not in
+  `fixtures.upstream-check.json`, `lizard-*.tsv`), its expected findings (`*.expected.json`), `authored/`, and the
+  per-file provenance record (`provenance.json`, with `LICENSES.md`) are not in
   git; the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to
   score (the files the tool's `UPSTREAM.md` lists as Rerail's, and `authored/`) is authored; everything else is
   derived, which a maintainer regenerates from the pins with `npm run fixtures:derive`. Both are one archive per

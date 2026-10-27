@@ -325,7 +325,8 @@ For a change that spans components, changes the rule-file format or the API, or 
 
 A rule pack's test data is not in git. Under each `packs/<id>/upstream/<tool>/` it is the tool's test cases
 (`fixtures/`, `tests/`, the case lists `cases.json` and `*.cases.json`, `fixtures.upstream-check.json`, the
-complexity pack's `lizard-*.tsv`), the expected findings on them (`*.expected.json`), and `authored/`. The
+complexity pack's `lizard-*.tsv`), the expected findings on them (`*.expected.json`), `authored/`, and the
+per-file provenance record `provenance.json` with the licence texts `LICENSES.md`. The
 patterns are `PACK_FIXTURE_PATTERNS` in [scripts/s3/pack-fixtures.mjs](scripts/s3/pack-fixtures.mjs); everything
 else under `upstream/<tool>/` (`gates.yaml`, the generators, `UPSTREAM.md`, `samples.lock`, `SAMPLES.md`,
 `test-data.lock`) stays in git. The data is of two kinds:
