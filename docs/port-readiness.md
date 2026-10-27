@@ -200,7 +200,8 @@ hand itself verdicts its own code computed, which it could already do by editing
 
 On a pull request, CI posts the results as a comment: each tool-pack's shipped and candidate counts, every shipped
 rule that blocks and why, the candidates **ready to promote** (they pass every gate: the signal to move them into
-`rules/`, with the `on` that upstream-status sets), and the other candidates grouped by the gate they stop at, collapsed. A new run collapses
+`rules/`, with the `on` that upstream-status sets, and their rule details from `candidates/README.md` into the pack's
+README), and the other candidates grouped by the gate they stop at, collapsed. A new run collapses
 the earlier comments as outdated, so the pull request keeps its history. The comment stays under GitHub's size limit by
 shortening long lists; the job summary and the uploaded reports have everything. When the pull request judged only some
 tool-packs, the comment and the job summary say how many of them the counts cover, and a line names the rest: "Not
@@ -219,7 +220,7 @@ bottom:
 7. Per tool-pack details: each gate on its own, run integrity notes.
 
 A rule that fails: fix the rule (the check's detail names the first difference), or move it to `candidates/` (out of
-`pack.json`, its `conformance.json` path updated).
+`pack.json`, its `conformance.json` path updated, its rule details moved to `candidates/README.md`).
 
 ## What the gates read
 

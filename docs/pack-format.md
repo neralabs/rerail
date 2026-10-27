@@ -28,7 +28,7 @@ against, is `native/src/code_rule_dsl/capabilities.json`.
 packs/<id>/
 ├── package.json        npm package @neralabs/rerail-pack-<id>: licence, files, core range
 ├── pack.json           the pack: rerail.rule-pack/v1, as today
-├── README.md           what the pack covers, for people
+├── README.md           what the pack covers, for people: the rules it ships, never a candidate's details
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
 │   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
@@ -42,7 +42,8 @@ packs/<id>/
 │   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder, and
 │                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus); the copied
 │                       tests and recordings are pack test data, derived from the pins, not in git (below)
-└── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
+└── candidates/         ports still being evaluated: scored and reported, never gated, never shipped; README.md
+                        says what each is waiting on and holds their rule details
 ```
 
 `<id>` is lowercase letters, digits and dashes. It is the directory name, the `id` in `pack.json`, and the npm name
@@ -185,6 +186,8 @@ description, messages and the block for each of its cases).
 
 Detail a description leaves out (exact counting rules, edge cases, deviations from upstream, scope detail) goes in the
 pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; they leak debug output to users.`
+The README is published, so it holds only the rules `pack.json` lists: a candidate's details go under "Rule details" in
+`candidates/README.md`, which is not, and move to the README when the rule ships (check 5).
 
 ### Message
 
@@ -238,7 +241,7 @@ negative of one ported rule: `node --import tsx conformance/languages/cli.ts --p
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
-| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
+| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records; the README's rule details describe a rule `pack.json` does not list, or `candidates/README.md`'s describe one it does |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`, or is copied from an upstream path its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 
@@ -299,7 +302,10 @@ Precisely:
    repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,
    `divergences.json`, `upstream` or `candidates`. The SPDX ids `license` names must be exactly Apache-2.0 plus the
-   licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line.
+   licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line. Under `## Rule details`
+   in `README.md`, every `### ` heading names at least one rule in backticks, and every name in backticks there is a
+   rule `pack.json` lists; under `## Rule details` in `candidates/README.md`, none is. A heading inside a fenced code
+   block is not one.
 6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` whose table rows start with a
    pack-relative path in backticks. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
    `fixtures/`, `tests/`) must be listed; files directly in `upstream/` or `upstream/<tool>/` (recordings, recorders)

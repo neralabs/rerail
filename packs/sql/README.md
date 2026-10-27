@@ -3,7 +3,7 @@
 22 code rules for SQL, ported from SQLFluff 4.4.0. 19 pass every blocking [port readiness](../../docs/port-readiness.md)
 gate and ship: they live in `rules/` and `pack.json` lists them, 17 on and PG01 and PG02 off. The other 3 (AL05, AM02
 and RF01) are candidates: they live in `candidates/rules/` and move to `rules/` and `pack.json` once they pass every
-blocking gate (see "Port readiness" below). Each port is scored against SQLFluff's own findings on SQLFluff's tests and
+blocking gate ([candidates/README.md](candidates/README.md) says where each stops). Each port is scored against SQLFluff's own findings on SQLFluff's tests and
 on pinned public corpora (postgres, mattermost, anki, application-services), with every disagreement declared in
 `divergences.json`. The conformance check (`--check`, run in CI) gates the shipped rules and reports the candidates.
 
@@ -17,6 +17,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `pack.json` | The pack (`rerail.rule-pack/v1`): the 19 shipped rules, with PG01 and PG02 `"on": false` |
 | `rules/` | The 19 shipped code-rule documents (`rerail.policy/v1`), one per port, named for its id |
 | `candidates/rules/` | The 3 candidate code-rule documents: AL05, AM02 and RF01 |
+| `candidates/README.md` | The candidates' scores, where each stops in port readiness, and their rule details; not published |
 | `conformance.json` | Every port (shipped and candidate): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool and the pinned corpora |
 | `divergences.json` | Declared disagreements with SQLFluff |
 | `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its recordings (`fixtures.expected.json`, `fixtures.cases.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `fixtures/sql/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv`. The tests, Rerail's cases and the recordings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches |
@@ -27,9 +28,8 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 PG01 and PG02 ship off (`"on": false` in `pack.json`), to be turned on per repository or checkout: SQLFluff's default
 configuration leaves them off (`force_enable = False`, the port readiness `upstream-status`), and they are
 PostgreSQL-only, while Rerail reads every `.sql` file in one dialect: on a MySQL or SQLite file they would advise
-`CONCURRENTLY` or `NOT VALID`, which those databases lack. AM02, a candidate, is the reverse: SQLFluff skips it for
-PostgreSQL, so on a PostgreSQL file a bare `UNION` would be a false positive; it should start off if it ever ships, to
-be turned on for MySQL or ANSI SQL. The other 17 shipped rules start on. The scores below cover all 22.
+`CONCURRENTLY` or `NOT VALID`, which those databases lack. The other 17 shipped rules start on. The scores below cover
+the 19 shipped rules; the candidates' are in [candidates/README.md](candidates/README.md).
 
 ## How the rules read SQL
 
@@ -46,18 +46,16 @@ dialect gates for PG01 and AM02) and 1 is `rerail-unknown` (a grammar gap in RF0
 
 TP/FP/FN of each port against SQLFluff 4.4.0, from `node --import tsx conformance/languages/cli.ts --pack sql`; `div.` counts the
 findings a declared divergence explains. Every port has no false positive and no false negative on the fixtures outside
-its declared divergences, and no shipped rule has a false positive on the four pinned corpora (AM02, a candidate, has
-one on postgres); that says nothing about other SQL, and a port's reading is PostgreSQL's wherever the dialects differ.
+its declared divergences, and no shipped rule has a false positive on the four pinned corpora; that says nothing
+about other SQL, and a port's reading is PostgreSQL's wherever the dialects differ.
 Corpus false negatives do not fail the gate.
 
 | Port | SQLFluff rule | Status | Fixtures | postgres | mattermost | anki | application-services | Skips files with syntax errors |
 |---|---|---|---|---|---|---|---|---|
 | `sqlfluff-al04-aliasing-unique-table` | AL04 | shipped | 9/0/0 | 3/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-al05-aliasing-unused` | AL05 | candidate | 9/0/0 (7 div.) | 61/0/0 | 0/0/0 | 1/0/0 | 0/0/0 | yes |
 | `sqlfluff-al08-aliasing-unique-column` | AL08 | shipped | 14/0/0 (1 div.) | 53/0/0 | 0/0/0 | 0/0/0 | 0/0/1 | yes |
 | `sqlfluff-al09-aliasing-self-alias-column` | AL09 | shipped | 18/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
 | `sqlfluff-am01-ambiguous-distinct` | AM01 | shipped | 1/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
-| `sqlfluff-am02-ambiguous-union` | AM02 | candidate | 5/0/0 (1 div.) | 0/1/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
 | `sqlfluff-am05-ambiguous-join` | AM05 | shipped | 14/0/0 | 34/0/0 | 5/0/0 | 2/0/0 | 0/0/2 | no |
 | `sqlfluff-am09-ambiguous-order-by-limit` | AM09 | shipped | 3/0/0 | 3/0/0 | 0/0/0 | 2/0/0 | 0/0/0 | yes |
 | `sqlfluff-cv02-convention-coalesce` | CV02 | shipped | 2/0/0 | 0/0/0 | 3/0/0 | 0/0/0 | 0/0/1 | no |
@@ -66,7 +64,6 @@ Corpus false negatives do not fail the gate.
 | `sqlfluff-cv08-convention-left-join` | CV08 | shipped | 9/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | no |
 | `sqlfluff-pg01-postgres-excessive-locks` | PG01 | shipped, off | 10/0/0 (1 div.) | 111/0/0 | 266/0/0 | 0/0/0 (3 div.) | 0/0/0 | yes |
 | `sqlfluff-pg02-postgres-not-valid-foreign-key` | PG02 | shipped, off | 1/0/0 | 1/0/0 | 0/0/0 | 0/0/0 | 0/0/0 | yes |
-| `sqlfluff-rf01-references-from` | RF01 | candidate | 27/0/0 (5 div.) | 0/0/0 | 0/0/0 | 0/0/0 | 0/0/7 | yes |
 | `sqlfluff-rf04-references-keywords` | RF04 | shipped | 4/0/0 (3 div.) | 106/0/0 | 79/0/63 | 0/0/1 (1 div.) | 0/0/0 | yes |
 | `sqlfluff-rf05-references-special-chars` | RF05 | shipped | 10/0/0 (4 div.) | 9/0/0 | 0/0/0 | 10/0/0 | 0/0/0 | yes |
 | `sqlfluff-rf06-references-quoting` | RF06 | shipped | 19/0/0 (47 div.) | 36/0/0 | 4/0/1 | 0/0/0 | 0/0/0 | yes |
@@ -102,13 +99,8 @@ path:line:column`).
 the port's rule configuration on every SQLFluff YAML case and corpus file, because the engine reads every `.sql` file
 as PostgreSQL; a case SQLFluff's postgres dialect cannot read whole, a Jinja case and a case configured otherwise are
 skipped. From `npm run port-readiness -- --pack sql --tool sqlfluff`, 19 ports pass every blocking gate and ship, each
-agreeing with SQLFluff on every golden (`goldens.tsv`), and 3 stay candidates:
-
-| Port | Stops at | Why |
-|---|---|---|
-| `sqlfluff-al05-aliasing-unused` | matches-upstream-tests | 6 of its cases differ, each a file the engine cannot read whole and libpg_query rejects (BigQuery, Snowflake and T-SQL syntax); its 27 findings on the rest are all reproduced |
-| `sqlfluff-am02-ambiguous-union` | matches-upstream-tests | SQLFluff skips AM02 for PostgreSQL, so it reports nothing on its tests: the port's 7 findings are extra, it reproduces no upstream finding (`fires`), and 1 golden differs (`functional_deps.sql`, 181:1 extra) |
-| `sqlfluff-rf01-references-from` | matches-upstream-tests | 9 of its cases differ (55 of 70 findings reproduced): 8 the engine cannot read whole (DuckDB, BigQuery `UNNEST ... WITH OFFSET`, Snowflake `SEMANTIC_VIEW`, and the redundantly bracketed join `JOIN ((b JOIN c ON ...))`, which PostgreSQL accepts), and a Trino row reference, missed at 5:47 |
+agreeing with SQLFluff on every golden (`goldens.tsv`), and 3 stay candidates
+([candidates/README.md](candidates/README.md)).
 
 The `CREATE POLICY` and `ALTER POLICY` known gaps are gone: the grammar reads both statements, and the scope binds the
 policy's table for the queries in its `USING` and `WITH CHECK`, as SQLFluff's RF01 does on PostgreSQL. PG01 and PG02
@@ -148,10 +140,6 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 Port of SQLFluff 4.4.0 AL04, which reads SELECT statements: report a table relation whose alias (its explicit alias, else its table name) repeats the alias of an earlier relation in the same FROM clause, or of a relation in a subquery of the same SELECT, other than the subquery the relation aliases; a relation that calls one of the postgres dialect's value table functions (unnest, generate_series) has no table alias; names compare as SQLFluff's raw_normalized does, with quotes removed and case kept.
 
-### `sqlfluff-al05-aliasing-unused`
-
-Port of SQLFluff 4.4.0 AL05 (aliasing.unused) with default settings. Not reported where the alias is required (a derived table or VALUES list) or where the same table is referenced more than once.
-
 ### `sqlfluff-al08-aliasing-unique-column`
 
 Port of SQLFluff 4.4.0 AL08. In each SELECT list, reports each later reused explicit alias or column-reference name, case-insensitively, with identifier quote delimiters ignored.
@@ -163,10 +151,6 @@ Port of SQLFluff 4.4.0 AL09 (aliasing.self_alias.column). Reports a column refer
 ### `sqlfluff-am01-ambiguous-distinct`
 
 Port of SQLFluff 4.4.0 AM01 (ambiguous.distinct). Implementation note: the grammar puts GROUP BY in the FROM node after the SELECT node.
-
-### `sqlfluff-am02-ambiguous-union`
-
-Port of SQLFluff 4.4.0 AM02 (ambiguous.union). Flags a UNION not immediately followed by DISTINCT or ALL. SQLFluff skips AM02 in its postgres dialect (it runs in ANSI, MySQL and other dialects with UNION DISTINCT; not SQLite), so the rule would start off and be turned on for MySQL/ANSI repositories (README already covers the start-off part).
 
 ### `sqlfluff-am05-ambiguous-join`
 
@@ -199,10 +183,6 @@ Port of SQLFluff 4.4.0 PG01 (postgres.excessive_locks), force_enable=true. CREAT
 ### `sqlfluff-pg02-postgres-not-valid-foreign-key`
 
 Port of SQLFluff 4.4.0 PG02 (postgres.not_valid_foreign_key), force_enable=true. ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY must include NOT VALID; anchored at the ALTER TABLE start. Statements inside a dollar-quoted routine or DO body or an error region are not read.
-
-### `sqlfluff-rf01-references-from`
-
-Port of SQLFluff 4.4.0 RF01 (references.from), default settings. Flags the table qualifier of a column reference that names no table or alias in the FROM clause of its query or of an enclosing query.
 
 ### `sqlfluff-rf04-references-keywords`
 

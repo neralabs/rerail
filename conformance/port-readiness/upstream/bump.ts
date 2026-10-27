@@ -463,6 +463,7 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     ...scripts.shared,
     conformancePath,
     `packs/${pack}/README.md`,
+    `packs/${pack}/candidates/README.md`,
     `packs/${pack}/licenses/${project}/UPSTREAM.md`,
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], from.version, renames);
@@ -602,6 +603,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
     ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith("/recording.lock") && !path.endsWith(".expected.json")),
     conformancePath,
     "packs/rust/README.md",
+    "packs/rust/candidates/README.md",
     ...(existsSync(join(root, "packs/rust/licenses")) ? readdirSync(join(root, "packs/rust/licenses")).map((project) => `packs/rust/licenses/${project}/UPSTREAM.md`) : []),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], pinned.toolchain, renames);

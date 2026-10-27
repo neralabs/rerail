@@ -39,7 +39,7 @@ Each pack lives in `packs/<id>/`:
 | `rules/<id>.json` | Code-rule documents (`rerail.policy/v1`), each named for its rule id ([rule ids](../docs/pack-format.md#packjson)) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md` listing every copied or adapted file | yes |
-| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated). The recorded findings and copied tests under `upstream/<tool>/` are pack test data, not in git: one archive per tool in S3, which `upstream/<tool>/test-data.lock` names and `npm run fixtures:pull` fetches ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)) | no |
+| `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the tools' recorded findings, their copied tests, declared divergences, ports under evaluation (scored and reported, never gated), and `candidates/README.md`, what each candidate is waiting on and its rule details, which `README.md` leaves out. The recorded findings and copied tests under `upstream/<tool>/` are pack test data, not in git: one archive per tool in S3, which `upstream/<tool>/test-data.lock` names and `npm run fixtures:pull` fetches ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)) | no |
 
 A pack is data only: it never imports the core engine. Core runs its rules, and the repository's tests validate
 every pack against the contract. A pack may hold rules for a language core lists as `planned`: they are stored

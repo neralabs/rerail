@@ -354,6 +354,24 @@ export function packedFileFailures(files: readonly string[], entries: readonly s
   return failures;
 }
 
+/**
+ * The `### ` headings of a markdown file's `## Rule details` section, each with the backticked names it holds; none
+ * when the file or the section is missing. A line in a fenced code block is not a heading.
+ */
+function ruleDetailHeadings(path: string): { heading: string; names: string[] }[] {
+  if (!existsSync(path)) return [];
+  const headings: { heading: string; names: string[] }[] = [];
+  let section = false;
+  let fenced = false;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (line.startsWith("```")) fenced = !fenced;
+    if (fenced) continue;
+    if (line.startsWith("## ")) section = line === "## Rule details";
+    else if (section && line.startsWith("### ")) headings.push({ heading: line.slice(4), names: [...line.matchAll(/`([^`]+)`/gu)].map(match => match[1]!) });
+  }
+  return headings;
+}
+
 /** The repository every pack is published from, as the root package.json names it: npm's trusted publishing checks it. */
 const repositoryUrl = (): string =>
   z.object({ repository: z.object({ url: z.string() }) }).parse(JSON.parse(readFileSync(join(RERAIL_ROOT, "package.json"), "utf8"))).repository.url;
@@ -689,7 +707,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   }
 
   // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and restricted, no
-  // dependencies, no validation material published, licence agreeing with what licenses/ records.
+  // dependencies, no validation material published, licence agreeing with what licenses/ records, and a README whose
+  // rule details describe only the rules pack.json lists.
   const licences = readLicences(directory);
   const packagePath = join(directory, "package.json");
   if (!existsSync(packagePath)) fail("package", "package.json is missing");
@@ -725,6 +744,20 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const carried = [...new Set([RERAIL_LICENSE, ...licences.recorded.values()])].sort(compareDeterministicStrings);
       if (named.join(",") !== carried.join(","))
         fail("package", `package.json: license ${JSON.stringify(manifest.license)} names ${named.join(", ")}; the pack carries ${carried.join(", ")} (${RERAIL_LICENSE} and what licenses/*/UPSTREAM.md records)`);
+    }
+  }
+  // README.md is published; candidates/README.md, which holds the candidates' rule details, is not. A rule's details
+  // move to README.md when it ships.
+  if (pack !== undefined) {
+    const listed = new Set(pack.rules.map(rule => rule.id));
+    for (const { heading, names } of ruleDetailHeadings(join(directory, "README.md"))) {
+      if (names.length === 0) fail("package", `README.md: the Rule details heading "${heading}" names no rule`);
+      for (const name of names.filter(name => !listed.has(name)))
+        fail("package", `README.md: Rule details describes ${name}, which pack.json does not list; a candidate's details go in candidates/README.md`);
+    }
+    for (const { names } of ruleDetailHeadings(join(directory, "candidates", "README.md"))) {
+      for (const name of names.filter(name => listed.has(name)))
+        fail("package", `candidates/README.md: Rule details describes ${name}, which pack.json lists; a shipped rule's details go in README.md`, name);
     }
   }
 

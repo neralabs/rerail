@@ -1,6 +1,6 @@
 // Builds the Next pack's policies: packs/next/rules/next-<rule>.json (ported rules) and the `rules` lists of
 // packs/next/conformance.json and packs/next/pack.json; packs/next/candidates/rules/next-<rule>.json (rules that cannot
-// pass their fixtures today, or that fail the V1 rule validation gates), which conformance.json lists after the ported
+// pass their fixtures today, or that fail the port readiness gates), which conformance.json lists after the ported
 // rules, so they are scored and reported but gate nothing. The JSON files are the committed artifacts; this script is
 // their source: it spells the shared JSX/import/path pieces once (notably the plugin's `split('pages')` filename tests as
 // regexes) and keeps the documents consistent. Run offline by a maintainer, never in CI; the output is deterministic.

@@ -105,7 +105,7 @@ Suppression is `clippy` (`suppress/clippy.rs`): rustc's and Clippy's lint-level 
 and tokio corpora (`fixtures/rust/suppress`). The attributes are read per file: a level set in another file (a crate
 root's `#![allow(..)]` over its modules) or on the command line is not seen, and a `cfg` predicate other than
 `all`, `any` and `not` over `clippy` is false. Rust refuses `languageOptions`, `resolves.imported` and every other
-family's grammar and format style; the Clippy pack (`packs/rust/`) scores the syntax ports as candidates, which ship no rules until they pass the V1 rule validation gates.
+family's grammar and format style; the Clippy pack (`packs/rust/`) ships the syntax ports that pass the port readiness gates and keeps the rest as candidates.
 
 ### The SQL adapter
 
@@ -280,8 +280,8 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
 The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/` or `packs/next/`
-(framework packs over a supported language), `packs/rust/` or `packs/sql/` (language packs that ship no rules yet,
-their ports kept in `candidates/rules/` until they pass the V1 rule validation gates), `fixtures/packs/valid/` (the
+(framework packs over a supported language), `packs/rust/` or `packs/sql/` (language packs whose ports
+stay in `candidates/rules/` until they pass the port readiness gates), `fixtures/packs/valid/` (the
 smallest pack, with an example-proven rule and a ported one) and `fixtures/packs/exemplar/` (a pack for a planned
 language).
 
