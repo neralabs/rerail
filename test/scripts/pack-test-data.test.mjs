@@ -183,6 +183,8 @@ describe("isPackFixture", () => {
       "packs/sql/upstream/sqlfluff/fixtures.cases.json",
       "packs/rust/upstream/clippy/fixtures.upstream-check.json",
       "packs/complexity/upstream/lizard/lizard-1.24.0.tsv",
+      "packs/javascript/upstream/eslint/provenance.json",
+      "packs/javascript/upstream/eslint/LICENSES.md",
       "packs/next/upstream/eslint-plugin-next/fixtures/pages/[id].tsx",
       "packs/node/upstream/eslint-plugin-n/authored/corpus/src/a.js",
     ];
@@ -194,6 +196,8 @@ describe("isPackFixture", () => {
       "packs/php/upstream/phpcs/ruleset.xml",
       "packs/blade/upstream/bladestan/composer-laravel.lock",
       "packs/python/upstream/common.py",
+      "packs/python/upstream/provenance.json",
+      "packs/python/licenses/ruff/LICENSES.md",
       "packs/python/upstream/fixtures.expected.json",
       "packs/python/rules/a.json",
       "fixtures/packs/valid/upstream/tool/fixtures.expected.json",

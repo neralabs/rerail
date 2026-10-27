@@ -109,6 +109,8 @@ export const PACK_FIXTURE_PATTERNS = Object.freeze([
   "packs/*/upstream/*/*.cases.json",
   "packs/*/upstream/*/fixtures.upstream-check.json",
   "packs/*/upstream/*/lizard-*.tsv",
+  "packs/*/upstream/*/provenance.json",
+  "packs/*/upstream/*/LICENSES.md",
   AUTHORED_CORPUS_PATTERN,
 ]);
 

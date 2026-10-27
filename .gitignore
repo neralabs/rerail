@@ -34,6 +34,8 @@ packs/*/upstream/*/cases.json
 packs/*/upstream/*/*.cases.json
 packs/*/upstream/*/fixtures.upstream-check.json
 packs/*/upstream/*/lizard-*.tsv
+packs/*/upstream/*/provenance.json
+packs/*/upstream/*/LICENSES.md
 packs/*/upstream/*/authored/
 
 # A tool-pack's publish/ is tracked whole: anything in it is a publish request (CONTRIBUTING.md, "Pack test data").
