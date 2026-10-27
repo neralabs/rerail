@@ -6,6 +6,9 @@ mod demand;
 mod embed;
 mod eval;
 mod facts;
+// Wired to the findings layer in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod findings;
 mod identifier;
 mod json;
 mod language;
