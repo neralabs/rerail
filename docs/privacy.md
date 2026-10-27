@@ -8,7 +8,8 @@ your disk. It describes the code in this repository; the file named after each s
 - **No telemetry.** Rerail has no telemetry, analytics, crash reporting or usage metrics, and depends on no library
   that provides them (`package.json`).
 - **Never sends your work anywhere.** Rerail itself never transmits your source code, prompts, coding-agent
-  transcripts, rules or findings. Its only network traffic is listed below, and none of it carries them.
+  transcripts, rules or findings. Its only network traffic is listed below, and none of it carries them. The one
+  thing it sends about your work is a steer feedback note you said yes to ([below](#steer-feedback)).
 - **No hosted model.** Semantic matching uses an embedding model that ships inside the package
   (`model/`, `minishlab/potion-base-8M`), runs in-process, and is verified against its SHA-256 manifest before it
   loads. The engine is built with no HTTP or socket code (`native/Cargo.toml`, `native/src/model.rs`). Rerail calls no
@@ -22,8 +23,8 @@ your disk. It describes the code in this repository; the file named after each s
 
 ## What goes over the network
 
-All of it goes through `npm`, to the registry your own npm configuration names, and carries package names and versions
-only (`src/runtime/npm.ts`):
+Apart from the steer feedback notes you approve ([below](#steer-feedback)), all of it goes through `npm`, to the
+registry your own npm configuration names, and carries package names and versions only (`src/runtime/npm.ts`):
 
 | When | What npm fetches |
 | --- | --- |
@@ -39,6 +40,21 @@ Signed customer profiles, which are in internal testing, add one more request: `
 activation code, a device public key, your platform and architecture, and the Rerail version to the activation URL
 **you** supply. `rerail activate --file` is the offline alternative (`src/activation/customer-profile.ts`).
 
+## Steer feedback
+
+When a coding agent decides not to follow a steer, it records its one-line reason with `rerail feedback`
+(`src/cli/feedback-cli.ts`). The note is kept in the database. With no standing answer, the agent is told to ask you
+whether Rerail may send it, and not to answer for you: **yes** sends that note, **always** sends it and every later
+one, **no** keeps every note on your computer and stops the question. `rerail feedback sharing ask|always|never`
+changes the answer later.
+
+A note you approved is sent over HTTPS to Nera's feedback API, `https://nera-rerail-feedback.azurewebsites.net/api/feedback`
+(an Azure Function in Canada Central), by a background `rerail feedback flush`. It carries the rule id, the rule's pack
+and pack version, the coding agent's name (such as `claude-code`), the reason, the Rerail version, when the note was
+made and a random note id. It never carries the session, the repository, file paths, code or anything else Rerail
+records. The reason is the agent's own sentence, so it can name what it was doing: that is what you are asked to
+approve.
+
 ## Your coding agent's provider
 
 Rerail steers your coding agent by adding messages to its session. Your agent sends its whole session, Rerail's
@@ -52,7 +68,7 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answer, installed rule packs and managed installs |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, steer feedback notes, and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answers (`consent.json`: reading sessions, sharing feedback), installed rule packs and managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
 
@@ -70,9 +86,9 @@ The API has no login: any program running on your machine can call it, as it can
 
 ## Deleting your data
 
-- `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, audits) from
-  the database. It keeps rules and settings, and does not touch `.rerail/sessions/`, the content cache or the daemon
-  log.
+- `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, steer
+  feedback notes, audits) from the database. It keeps rules and settings, and does not touch `.rerail/sessions/`, the
+  content cache or the daemon log. A note already sent to Nera is not recalled.
 - `rerail install --remove` disconnects every coding agent, stops the daemon and takes Rerail off your `PATH`. It
   **moves** the database to a backup folder, `~/.rerail-clean-YYYYMMDD`, rather than deleting it.
 - To remove everything: run `rerail install --remove`, then delete `~/.rerail`, `~/.rerail-clean-*`,

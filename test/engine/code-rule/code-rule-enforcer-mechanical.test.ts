@@ -1035,7 +1035,7 @@ describe("mechanical code rule regressions", () => {
         "Rerail found 1 problem in your last edit:",
         "- web/App.tsx:2:15 — Log user through the logger [test:logger]",
         "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
-        "Fix it, or tell the user in one line why you won't.",
+        "Fix it, or tell the user in one line why you won't and run `rerail feedback test:logger \"<that line>\"`.",
       ].join("\n"));
       // Where the rule comes from is for the person's line, never the agent's text.
       expect(requestSteer.mock.calls[0]![3]).toMatchObject({

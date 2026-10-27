@@ -408,10 +408,10 @@ export function resetRepositoryHistory(path: string, repositoryId: string): Hist
 
 /**
  * Delete the execution history recorded under `repositoryIds` (one repository's key, aliases and clone ids) in ONE
- * write transaction. Events, work links, audits, audit requests, and repository audits of those sessions go; ended
- * sessions go with them. Still-running sessions keep their row and runtime ownership claim so live processes carry on
- * recording. Rules, other repositories' history, audit settings, and presentation preferences are untouched. The file
- * is never unlinked or rebuilt, so every connection holding it open keeps working.
+ * write transaction. Events, work links, steer feedback notes, audits, audit requests, and repository audits of those
+ * sessions go; ended sessions go with them. Still-running sessions keep their row and runtime ownership claim so live
+ * processes carry on recording. Rules, other repositories' history, audit settings, and presentation preferences are
+ * untouched. The file is never unlinked or rebuilt, so every connection holding it open keeps working.
  */
 export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds: readonly string[]): HistoryResetReport {
   return database.transaction(() => {

@@ -136,6 +136,7 @@ export {
   rules,
   ruleSettings,
   sessions,
+  steerFeedback,
   workLinks,
 } from "./storage/schema.js";
 export { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
