@@ -10,16 +10,10 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::ops::Range;
 
-// Benchmark-only backends are deliberately excluded from the production addon.
-#[cfg(all(
-    test,
-    feature = "bench-backends",
-    target_os = "macos",
-    target_arch = "aarch64"
-))]
-mod jit;
-#[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
-mod metal_backend;
+// The packed runtime (05 Phase 4, from ner-1562-scale-test-the-re-railer): every backend over one
+// program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
+#[allow(dead_code)]
+mod packed;
 
 #[cfg(test)]
 const STOP: u8 = 0x00;
@@ -113,10 +107,6 @@ pub(super) enum Error {
     WorkLimit,
     UnsupportedPattern,
     InvalidAnchor,
-    #[cfg(all(feature = "bench-backends", target_os = "macos"))]
-    UnsupportedBackend,
-    #[cfg(all(feature = "bench-backends", target_os = "macos"))]
-    BackendFailure,
 }
 
 #[cfg(test)]
@@ -506,24 +496,6 @@ pub(super) fn execute_batch(
 /// `ftsk` spelled them, so dialects never share a token.
 pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 3;
 
-#[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
-fn exact_anchor_key(program: &Program) -> Option<(u16, &[u8])> {
-    if program.words.len() != 4
-        || !matches!(split(program.words[0]), (KIND, 0, _))
-        || !matches!(split(program.words[1]), (TEXT, 0, _))
-        || !matches!(split(program.words[2]), (CAPTURE, 0, _))
-        || !matches!(split(program.words[3]), (EMIT, 0, _))
-    {
-        return None;
-    }
-    let kind = split(program.words[0]).2;
-    let predicate = split(program.words[1]).2;
-    let TextPredicate::Equal(string) = program.predicates[usize::from(predicate)] else {
-        return None;
-    };
-    Some((kind, &program.strings[usize::from(string)]))
-}
-
 /// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +
 /// kind code`) in the prefilter's spelling. `None` for a dialect without a tape tag.
 pub(crate) fn kind_index_token(lang: crate::code_rule_dsl::language::GrammarDialect, kind: u16) -> Option<String> {
@@ -578,54 +550,6 @@ pub(crate) fn persist_search_index_batch(
         store.put_search_indexes_bulk(&indexes)?;
     }
     Ok(())
-}
-
-/// Convert complete exact-literal anchors directly into terminal outputs. The selector already
-/// proved the full predicate, so a second matcher or GPU dispatch would duplicate work.
-#[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
-pub(super) fn materialize_literal_anchors(
-    programs: &[Program],
-    files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
-) -> Result<Vec<Vec<Vec<Output>>>, Error> {
-    if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
-        return Err(Error::InvalidAnchor);
-    }
-    files
-        .iter()
-        .enumerate()
-        .map(|(file_index, tape)| {
-            programs
-                .iter()
-                .enumerate()
-                .map(|(program_index, program)| {
-                    exact_anchor_key(program).ok_or(Error::UnsupportedBackend)?;
-                    let capture = split(program.words[2]).2;
-                    let label = split(program.words[3]).2;
-                    let roots = &anchors[file_index][program_index];
-                    if roots
-                        .iter()
-                        .any(|&root| root as usize >= tape.transducer_len())
-                        || roots.windows(2).any(|pair| pair[0] >= pair[1])
-                    {
-                        return Err(Error::InvalidAnchor);
-                    }
-                    Ok(roots
-                        .iter()
-                        .map(|&node| Output {
-                            start: node,
-                            label,
-                            captures: vec![Capture {
-                                label: capture,
-                                node,
-                                span: tape.transducer_span(node),
-                            }],
-                        })
-                        .collect())
-                })
-                .collect()
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -1531,174 +1455,4 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    #[test]
-    #[cfg(feature = "bench-backends")]
-    #[ignore = "Apple Silicon backend benchmark"]
-    fn benchmark_anchored_cpu_and_gpu_backends() {
-        let Some(root) = transducer_corpus() else {
-            return;
-        };
-        let limit = std::env::var("RERAIL_TRANSDUCER_FILES")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(usize::MAX);
-        let iterations = std::env::var("RERAIL_TRANSDUCER_ITERATIONS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(7usize);
-        let names = [
-            "execute", "commit", "rollback", "flush", "select", "where", "join", "delete",
-        ];
-        let programs = names
-            .iter()
-            .map(|name| identifier_program(name))
-            .collect::<Vec<_>>();
-        let mut paths = Vec::new();
-        collect_python(&root, &mut paths);
-        paths.sort();
-        paths.truncate(limit);
-        assert!(!paths.is_empty());
-        let grammar = Grammar::new(GrammarDialect::Python).unwrap();
-        let mut tapes = Vec::with_capacity(paths.len());
-        let mut source_bytes = 0;
-        for path in &paths {
-            let source = fs::read_to_string(path).unwrap();
-            source_bytes += source.len();
-            let native = StrDoc::new(&source, GrammarDialect::Python);
-            let image =
-                TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-            tapes.push(
-                TapeDoc::restore(Arc::new(source), Arc::clone(&grammar), &image, &|| false)
-                    .unwrap(),
-            );
-        }
-        let anchor_started = Instant::now();
-        let anchors = tapes
-            .iter()
-            .map(|tape| {
-                programs
-                    .iter()
-                    .map(|program| {
-                        let kind = split(program.words[0]).2;
-                        let predicate = split(program.words[1]).2;
-                        let TextPredicate::Equal(string) =
-                            program.predicates[usize::from(predicate)]
-                        else {
-                            unreachable!()
-                        };
-                        let expected = &program.strings[usize::from(string)];
-                        (0..tape.transducer_len() as u32)
-                            .filter(|&node| {
-                                tape.transducer_kind(node) == kind
-                                    && tape.transducer_text_str(node).as_bytes() == expected
-                            })
-                            .collect()
-                    })
-                    .collect()
-            })
-            .collect::<Vec<Vec<Vec<u32>>>>();
-        let anchor_time = anchor_started.elapsed();
-        let started = Instant::now();
-        let cpu_jit = jit::compile(&programs).unwrap();
-        let cpu_compile = started.elapsed();
-        let started = Instant::now();
-        let gpu_interpreter = metal_backend::compile_interpreted(&programs).unwrap();
-        let gpu_interpreter_compile = started.elapsed();
-        let started = Instant::now();
-        let gpu_jit = metal_backend::compile_jit(&programs).unwrap();
-        let gpu_jit_compile = started.elapsed();
-        let started = Instant::now();
-        let gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
-        let gpu_anchor_prepare = started.elapsed();
-        let gpu_anchors = gpu_anchor_scan.run().unwrap();
-        assert_eq!(
-            gpu_anchors, anchors,
-            "GPU anchor scan changed preorder postings"
-        );
-        let started = Instant::now();
-        let gpu_interpreted_batch =
-            metal_backend::prepare(&gpu_interpreter, &programs, &tapes, &gpu_anchors).unwrap();
-        let gpu_interpreted_prepare = started.elapsed();
-        let started = Instant::now();
-        let gpu_jit_batch =
-            metal_backend::prepare(&gpu_jit, &programs, &tapes, &gpu_anchors).unwrap();
-        let gpu_jit_prepare = started.elapsed();
-        let unanchored_run = || execute_batch(&programs, &tapes, None).unwrap();
-        let interpreted_run = || execute_batch(&programs, &tapes, Some(&anchors)).unwrap();
-        let cpu_jit_run = || jit::execute(&cpu_jit, &tapes, &anchors).unwrap();
-        let gpu_interpreted_cold =
-            || metal_backend::execute(&gpu_interpreter, &programs, &tapes, &anchors).unwrap();
-        let gpu_jit_cold =
-            || metal_backend::execute(&gpu_jit, &programs, &tapes, &anchors).unwrap();
-        let gpu_interpreted_warm = || gpu_interpreted_batch.run().unwrap();
-        let gpu_jit_warm = || gpu_jit_batch.run().unwrap();
-        let ranges = |result: Vec<Vec<Vec<Output>>>| {
-            result
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|m| m.captures[0].span.clone())
-                .collect::<Vec<_>>()
-        };
-        let expected = ranges(interpreted_run());
-        assert_eq!(ranges(unanchored_run()), expected);
-        assert_eq!(ranges(cpu_jit_run()), expected);
-        assert_eq!(ranges(gpu_interpreted_cold()), expected);
-        assert_eq!(ranges(gpu_jit_cold()), expected);
-        assert_eq!(ranges(gpu_interpreted_warm()), expected);
-        assert_eq!(ranges(gpu_jit_warm()), expected);
-        let mut times: [Vec<Duration>; 8] = std::array::from_fn(|_| Vec::new());
-        for iteration in 0..=iterations {
-            for offset in 0..8 {
-                let engine = (iteration + offset) % 8;
-                let started = Instant::now();
-                let count = match engine {
-                    0 => ranges(unanchored_run()).len(),
-                    1 => ranges(interpreted_run()).len(),
-                    2 => ranges(cpu_jit_run()).len(),
-                    3 => ranges(gpu_interpreted_cold()).len(),
-                    4 => ranges(gpu_jit_cold()).len(),
-                    5 => ranges(gpu_interpreted_warm()).len(),
-                    6 => ranges(gpu_jit_warm()).len(),
-                    _ => gpu_anchor_scan
-                        .run()
-                        .unwrap()
-                        .iter()
-                        .flatten()
-                        .map(Vec::len)
-                        .sum(),
-                };
-                black_box(count);
-                if iteration > 0 {
-                    times[engine].push(started.elapsed());
-                }
-            }
-        }
-        let medians = times.map(median);
-        let mut gpu_anchor_dispatch = Vec::new();
-        let mut gpu_anchor_reconstruction = Vec::new();
-        let mut gpu_anchor_hits = 0;
-        for _ in 0..iterations {
-            let (profiled, profile) = gpu_anchor_scan.run_profiled().unwrap();
-            assert_eq!(profiled, anchors);
-            gpu_anchor_dispatch.push(profile.dispatch_and_wait);
-            gpu_anchor_reconstruction.push(profile.reconstruction);
-            gpu_anchor_hits = profile.hit_count;
-        }
-        let gpu_anchor_dispatch = median(gpu_anchor_dispatch);
-        let gpu_anchor_reconstruction = median(gpu_anchor_reconstruction);
-        let mut gpu_fused_terminal = Vec::new();
-        for _ in 0..iterations {
-            let started = Instant::now();
-            let selected = gpu_anchor_scan.run().unwrap();
-            let output = materialize_literal_anchors(&programs, &tapes, &selected).unwrap();
-            assert_eq!(ranges(output), expected);
-            gpu_fused_terminal.push(started.elapsed());
-        }
-        let gpu_fused_terminal = median(gpu_fused_terminal);
-        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        let report = json!({"benchmark":"rerail-anchored-transducer-backends-v3","corpus":fs::canonicalize(&root).unwrap(),"files":paths.len(),"sourceBytes":source_bytes,"patterns":names,"matches":expected.len(),"orderedRangeSha256":digest_ranges(&expected),"iterations":iterations,"cpuAnchorBuildMs":ms(anchor_time),"prepareMs":{"gpuAnchorScan":ms(gpu_anchor_prepare),"gpuInterpreterBatch":ms(gpu_interpreted_prepare),"gpuJitBatch":ms(gpu_jit_prepare)},"compileMs":{"cpuJit":ms(cpu_compile),"gpuInterpreter":ms(gpu_interpreter_compile),"gpuJit":ms(gpu_jit_compile)},"medianMs":{"cpuUnanchored":ms(medians[0]),"cpuInterpreted":ms(medians[1]),"cpuJit":ms(medians[2]),"gpuInterpretedCold":ms(medians[3]),"gpuJitCold":ms(medians[4]),"gpuInterpretedWarm":ms(medians[5]),"gpuJitWarm":ms(medians[6]),"gpuAnchorScanWarm":ms(medians[7])},"gpuAnchorProfile":{"dispatchAndWaitMs":ms(gpu_anchor_dispatch),"reconstructionMs":ms(gpu_anchor_reconstruction),"fusedTerminalMs":ms(gpu_fused_terminal),"sparseHitCount":gpu_anchor_hits},"anchorSpeedup":ms(medians[0])/ms(medians[1]),"speedupVsCpuInterpreted":{"cpuJit":ms(medians[1])/ms(medians[2]),"gpuInterpretedWarm":ms(medians[1])/ms(medians[5]),"gpuJitWarm":ms(medians[1])/ms(medians[6])}});
-        println!("TRANSDUCER_BACKEND_BENCHMARK={report}");
-    }
 }

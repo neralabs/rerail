@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use super::tape::TapeDoc;
+use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Pattern, PatternNode};
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};

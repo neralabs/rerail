@@ -2119,7 +2119,7 @@ impl TapeDoc {
         node + 1..node + rec.size
     }
 
-    #[cfg(test)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
         let mut next = self.data[node as usize].next;
         while next != NONE {
@@ -2132,7 +2132,7 @@ impl TapeDoc {
     }
 
     /// The whole source, for the Metal backend's concatenated buffer.
-    #[cfg(all(test, feature = "bench-backends", target_os = "macos"))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_source(&self) -> &[u8] {
         self.source.as_bytes()
     }
