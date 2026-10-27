@@ -21,14 +21,14 @@ use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::{Arc, Weak};
-use tree_sitter::{Language, Node as TsNode};
+use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 const WIDTH: usize = 6;
-pub(super) const TAPE_FORMAT_VERSION: u32 = 7;
-const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE7";
+pub(super) const TAPE_FORMAT_VERSION: u32 = 8;
+const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE8";
 /// The image header: magic, language, reserved bytes, version, source length and digest, and
-/// eleven table lengths.
-const HEADER_BYTES: usize = 56 + 11 * 8;
+/// twelve table lengths.
+const HEADER_BYTES: usize = 56 + 12 * 8;
 const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
@@ -39,6 +39,55 @@ const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
 const ERROR_CODE: u16 = 0;
 const ERROR_SYMBOL: u16 = u16::MAX;
+// QueryCursor uses the same fixed capacity in the pinned Tree-sitter query runtime.
+const MAX_NODE_SUPERTYPES: usize = 8;
+
+const _: () = {
+    assert!(
+        std::mem::size_of::<TreeCursor<'static>>()
+            == std::mem::size_of::<tree_sitter::ffi::TSTreeCursor>()
+    );
+    assert!(
+        std::mem::align_of::<TreeCursor<'static>>()
+            == std::mem::align_of::<tree_sitter::ffi::TSTreeCursor>()
+    );
+};
+
+unsafe extern "C" {
+    fn ts_tree_cursor_current_status(
+        cursor: *const tree_sitter::ffi::TSTreeCursor,
+        field_id: *mut tree_sitter::ffi::TSFieldId,
+        has_later_siblings: *mut bool,
+        has_later_named_siblings: *mut bool,
+        can_have_later_siblings_with_this_field: *mut bool,
+        supertypes: *mut tree_sitter::ffi::TSSymbol,
+        supertype_count: *mut std::ffi::c_uint,
+    );
+}
+
+/// Reads the abstract symbols on the current cursor path from the pinned Tree-sitter runtime.
+fn cursor_supertypes(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], usize) {
+    let mut field = 0;
+    let mut later = false;
+    let mut later_named = false;
+    let mut later_field = false;
+    let mut supertypes = [0; MAX_NODE_SUPERTYPES];
+    let mut count = MAX_NODE_SUPERTYPES as std::ffi::c_uint;
+    // SAFETY: the pinned wrapper layout is asserted above. All output storage remains live, and
+    // Tree-sitter writes no more than `count` symbols.
+    unsafe {
+        ts_tree_cursor_current_status(
+            std::ptr::from_ref(cursor).cast(),
+            &mut field,
+            &mut later,
+            &mut later_named,
+            &mut later_field,
+            supertypes.as_mut_ptr(),
+            &mut count,
+        );
+    }
+    (supertypes, count as usize)
+}
 
 #[cfg(test)]
 thread_local! {
@@ -146,6 +195,8 @@ pub(super) struct TapeImage {
     /// language catalog. The numeric kind remains the native `kind_id` for matcher parity.
     kind_aliases: Vec<(String, bool)>,
     kind_overrides: Vec<(u32, u16)>,
+    /// Query-independent `(node preorder, abstract grammar symbol)` memberships.
+    supertypes: Vec<(u32, u16)>,
     language: GrammarDialect,
     source_len: usize,
     source_digest: [u8; 32],
@@ -713,6 +764,7 @@ fn overflow_value(entries: &[(u32, u32)], index: u32, sentinel: u16) -> Result<u
 /// placeholders its segments mark (`omitted`) are left out, with their subtrees.
 fn encode_tree(
     nodes: &mut Vec<Pending>,
+    supertypes: &mut Vec<(u32, u16)>,
     root: TsNode<'_>,
     language: &Language,
     omitted: Option<&SegmentMap>,
@@ -739,14 +791,15 @@ fn encode_tree(
         } else {
             // The cursor's root is `root` itself, which has no field.
             let field = cursor.field_id().map_or(0, |id| id.get());
-            Some(encode_node(
-                nodes,
-                node,
-                parent,
-                field,
-                language,
-                &mut catalog,
-            )?)
+            let index = encode_node(nodes, node, parent, field, language, &mut catalog)?;
+            let (classes, count) = cursor_supertypes(&cursor);
+            for class in classes.into_iter().take(count) {
+                if usize::from(class) >= KIND_LIMIT {
+                    return Err("supertype symbol exceeds tape limit".into());
+                }
+                supertypes.push((index, class));
+            }
+            Some(index)
         };
         if let Some(index) = index
             && cursor.goto_first_child()
@@ -983,6 +1036,7 @@ impl TapeImage {
             u64::try_from(self.kind_aliases.len()).map_err(|_| "kind alias count overflow")?,
             u64::try_from(alias_bytes).map_err(|_| "kind alias length overflow")?,
             u64::try_from(self.kind_overrides.len()).map_err(|_| "kind override count overflow")?,
+            u64::try_from(self.supertypes.len()).map_err(|_| "supertype count overflow")?,
         ];
         let payload = self
             .rec
@@ -996,6 +1050,7 @@ impl TapeImage {
             .and_then(|value| value.checked_add(self.missing.len().checked_mul(4)?))
             .and_then(|value| value.checked_add(alias_bytes))
             .and_then(|value| value.checked_add(self.kind_overrides.len().checked_mul(6)?))
+            .and_then(|value| value.checked_add(self.supertypes.len().checked_mul(6)?))
             .ok_or("tape image length overflow")?;
         let mut bytes = Vec::with_capacity(
             HEADER_BYTES
@@ -1040,6 +1095,10 @@ impl TapeImage {
             bytes.extend_from_slice(&index.to_le_bytes());
             bytes.extend_from_slice(&alias.to_le_bytes());
         }
+        for &(index, supertype) in &self.supertypes {
+            bytes.extend_from_slice(&index.to_le_bytes());
+            bytes.extend_from_slice(&supertype.to_le_bytes());
+        }
         Ok(bytes)
     }
 
@@ -1072,6 +1131,7 @@ impl TapeImage {
         let alias_count = reader.length()?;
         let alias_bytes = reader.length()?;
         let override_count = reader.length()?;
+        let supertype_count = reader.length()?;
         let rec = reader.take(rec_len)?.to_vec();
         let spans = reader.take(spans_len)?.to_vec();
         let checkpoints = reader.take(checkpoints_len)?.to_vec();
@@ -1095,11 +1155,11 @@ impl TapeImage {
         {
             return Err("invalid contextual grammar alias count".into());
         }
-        if override_count
-            .checked_mul(6)
-            .is_none_or(|length| length > bytes.len() - aliases_end)
-        {
-            return Err("invalid contextual grammar override count".into());
+        let fixed_table_bytes = override_count
+            .checked_add(supertype_count)
+            .and_then(|count| count.checked_mul(6));
+        if fixed_table_bytes.is_none_or(|length| length > bytes.len() - aliases_end) {
+            return Err("invalid contextual grammar override or supertype count".into());
         }
         #[cfg(test)]
         note_table_reservation(alias_count);
@@ -1129,6 +1189,22 @@ impl TapeImage {
                 u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width")),
             ));
         }
+        #[cfg(test)]
+        note_table_reservation(supertype_count);
+        let mut supertypes = Vec::with_capacity(supertype_count);
+        for _ in 0..supertype_count {
+            let entry = (
+                reader.u32()?,
+                u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width")),
+            );
+            if entry.0 as usize >= rec.len() / WIDTH
+                || usize::from(entry.1) >= grammar.kinds.kind_count()
+                || supertypes.last().is_some_and(|previous| *previous >= entry)
+            {
+                return Err("noncanonical supertype membership".into());
+            }
+            supertypes.push(entry);
+        }
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
@@ -1152,6 +1228,7 @@ impl TapeImage {
             missing,
             kind_aliases,
             kind_overrides,
+            supertypes,
             language,
             source_len,
             source_digest,
@@ -1250,8 +1327,9 @@ impl TapeImage {
             return Err("source exceeds tape range or does not match parsed root".into());
         }
         let mut nodes = Vec::<Pending>::new();
-        encode_tree(&mut nodes, root, language, omitted, budget)?;
-        Self::finish(nodes, grammar, source, budget)
+        let mut supertypes = Vec::new();
+        encode_tree(&mut nodes, &mut supertypes, root, language, omitted, budget)?;
+        Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
     /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
@@ -1290,7 +1368,7 @@ impl TapeImage {
         })?;
         let mut nodes = Vec::<Pending>::new();
         encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-        let mut image = FileImage::single(Self::finish(nodes, grammar, source, budget)?);
+        let mut image = FileImage::single(Self::finish(nodes, Vec::new(), grammar, source, budget)?);
         if let Some(view) = read.view {
             image.derived.push(DerivedImage::encode(
                 Via::CompiledView,
@@ -1307,6 +1385,7 @@ impl TapeImage {
     /// The image of `nodes`, in preorder with their parents set.
     fn finish(
         mut nodes: Vec<Pending>,
+        mut supertypes: Vec<(u32, u16)>,
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
@@ -1399,6 +1478,8 @@ impl TapeImage {
             varint(node.length, &mut spans);
             previous = i64::from(node.start);
         }
+        supertypes.sort_unstable();
+        supertypes.dedup();
         checked(budget)?;
         Ok(Self {
             rec,
@@ -1411,6 +1492,7 @@ impl TapeImage {
             missing,
             kind_aliases,
             kind_overrides,
+            supertypes,
             language: grammar.lang,
             source_len: source.len(),
             source_digest: source_digest(source, budget)?,
@@ -1435,7 +1517,8 @@ impl TapeImage {
                 .iter()
                 .map(|(name, _)| name.capacity())
                 .sum::<usize>()
-            + self.kind_overrides.capacity() * std::mem::size_of::<(u32, u16)>()
+            + (self.kind_overrides.capacity() + self.supertypes.capacity())
+                * std::mem::size_of::<(u32, u16)>()
             + std::mem::size_of::<Self>()
     }
 }
@@ -1466,6 +1549,7 @@ pub(super) struct TapeDoc {
     points: Arc<Points>,
     kind_aliases: Arc<Vec<(String, bool)>>,
     kind_overrides: Arc<Vec<(u32, u16)>>,
+    supertypes: Arc<Vec<(u32, u16)>>,
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
@@ -1689,6 +1773,17 @@ impl TapeDoc {
             }
             previous = Some(index);
         }
+        let mut previous = None;
+        for &(node, kind) in &image.supertypes {
+            if previous.is_some_and(|last| last >= (node, kind))
+                || node as usize >= count
+                || usize::from(kind) >= grammar.kinds.kind_count()
+                || !grammar.kinds.kind_is_supertype(kind)
+            {
+                return Err("invalid abstract node class entry".into());
+            }
+            previous = Some((node, kind));
+        }
         let mut nodes: Vec<Rec> = Vec::with_capacity(count);
         let mut at = 0usize;
         let mut previous = 0i64;
@@ -1851,6 +1946,7 @@ impl TapeDoc {
             lines,
             kind_aliases: Arc::new(image.kind_aliases.clone()),
             kind_overrides: Arc::new(image.kind_overrides.clone()),
+            supertypes: Arc::new(image.supertypes.clone()),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
         })
@@ -2046,6 +2142,15 @@ impl TapeDoc {
         &self.source[self.transducer_span(node)]
     }
 
+    /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
+    pub(super) fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
+        self.supertypes.iter().copied()
+    }
+
+    pub(super) fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
+        self.supertypes.binary_search(&(node, kind)).is_ok()
+    }
+
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
     /// matches on.
     pub(super) fn node(&self, ordinal: u32) -> TapeNode<'_> {
@@ -2062,7 +2167,8 @@ impl TapeDoc {
                 .iter()
                 .map(|(name, _)| name.capacity())
                 .sum::<usize>()
-            + self.kind_overrides.capacity() * std::mem::size_of::<(u32, u16)>()
+            + (self.kind_overrides.capacity() + self.supertypes.capacity())
+                * std::mem::size_of::<(u32, u16)>()
     }
 }
 

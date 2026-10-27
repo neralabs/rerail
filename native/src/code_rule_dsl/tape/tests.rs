@@ -5,6 +5,29 @@ use ast_grep_core::matcher::Pattern;
 use ast_grep_core::tree_sitter::StrDoc;
 
 #[test]
+fn tape_v8_persists_abstract_tree_sitter_supertypes() {
+    let source = "value = left + right\n";
+    let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
+    let bytes = image.to_bytes().unwrap();
+    assert_eq!(&bytes[..8], b"TMPTAPE8");
+    assert_eq!(TAPE_FORMAT_VERSION, 8);
+
+    let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
+    assert!(!memberships.is_empty());
+    assert!(memberships.iter().any(|&(node, kind)| {
+        tape.transducer_has_supertype(node, kind) && grammar.kind_name(kind) == Some("expression")
+    }));
+
+    let persisted = TapeImage::from_bytes(&bytes, &grammar).unwrap();
+    let restored =
+        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &persisted, &|| false).unwrap();
+    assert_eq!(
+        restored.transducer_supertypes().collect::<Vec<_>>(),
+        memberships
+    );
+}
+
+#[test]
 fn scala_contextual_aliases_preserve_native_node_identity() {
     let source = "object A { def f(x: Int) = g(x) }";
     let (native, _, image, grammar) = fixture(source, GrammarDialect::Scala);
@@ -122,7 +145,7 @@ fn persisted_image_round_trips_without_parsing() {
     // document per tape) changes the header.
     assert_eq!(
         digest,
-        "fb9639fc397bf7526c1bc4cbf11fa2e339b00a907de32aeec1ac286884c17158"
+        "40b55ef117abbeb488832e671a0d9bb07490d9b7bf722643d453e789067aef3f"
     );
 }
 
