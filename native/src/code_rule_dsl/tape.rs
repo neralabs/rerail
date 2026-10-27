@@ -2101,7 +2101,7 @@ impl TapeDoc {
         (parent != NONE).then_some(parent)
     }
 
-    #[cfg(test)]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {
