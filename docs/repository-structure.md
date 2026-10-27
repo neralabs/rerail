@@ -60,7 +60,7 @@ Exemption `engine-test-inputs`: a rule document may be an engine or host test in
 belong in a pack. A benchmark or test that needs a pack's rule references the pack's document.
 Exemption `validator-inputs`: `fixtures/packs/**`, whose pack format puts rule documents in `rules/`.
 
-### 3. Fixture data outside `fixtures/` and `packs/*/upstream`, or pack test data in git or unpinned — target 0
+### 3. Fixture data outside `fixtures/` and `packs/*/upstream`, pack test data in git or unpinned, or pack data waiting to publish — target 0
 
 A file is fixture data when a directory in its path is `fixtures`/`__fixtures__`; it is a
 `*.expected.json` expected findings or `*.cases.json` case list; it is a code-rule document; it sits in a test
@@ -71,19 +71,24 @@ Exemptions: `packs/<id>/candidates/**` (pack data), `gate-pins` (the conformance
 `scripts/pack-data/runtimes/**`, the manifests that pin each runtime the derivation runs upstream on) and, for
 code-rule documents, `packs/<id>/rules/**`.
 
-No tracked file is pack test data either: a path `PACK_FIXTURE_PATTERNS` in `scripts/s3/pack-fixtures.mjs` matches
-(`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`, `cases.json`, `*.cases.json`,
-`fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`; CONTRIBUTING.md, "Pack test data"). Each tool-pack's
-test data, derived and authored alike, is one archive in S3 that the tool directory's `test-data.lock` pins by
-sha256. A pull request that adds or changes the data tracks it with `git add -f` for review, and fails this metric
-until a maintainer runs `npm run fixtures:push -- --from <ref>` in a trusted worktree of main, which archives and
-uploads it and prints the new lock, and the pull request commits the lock and untracks the data with `git rm --cached`.
+No tracked file is pack test data in the pulled layout either: a path `PACK_FIXTURE_PATTERNS` in
+`scripts/s3/pack-fixtures.mjs` matches (`packs/*/upstream/*/` `fixtures/**`, `tests/**`, `*.expected.json`,
+`cases.json`, `*.cases.json`, `fixtures.upstream-check.json`, `lizard-*.tsv`, `authored/**`; CONTRIBUTING.md, "Pack
+test data"). Each tool-pack's test data, derived and authored alike, is one archive in S3 that the tool directory's
+`test-data.lock` pins by sha256. A pull request that adds or changes the data stages it under the tool-pack's tracked
+`publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`), and this metric fails once per tool-pack while
+any `publish/` is tracked ("Pack data waiting to publish"), naming the workflow to run. **Publish pack data**
+(`.github/workflows/pack-data-publish.yml`) uploads it after a code owner approves, then commits the new locks and
+deletes `publish/` on the pull request's branch, so the pull request cannot merge before its data is in S3 and its
+locks name it.
 
-Every tool directory (a `packs/<id>/upstream/<tool>/` that holds a tracked file; files directly under
-`packs/<id>/upstream/`, such as `common.py`, are not in one) has a tracked `test-data.lock`, and `parseLock` in
-`scripts/s3/test-data-archive.mjs` accepts it: `{ "format": 1, "sha256", "files", "bytes" }` with a 64-digit
-lowercase hex sha256 and non-negative integer counts. A missing lock is a finding at the path it would have; a
-malformed one carries `parseLock`'s message. These checks have no exemptions.
+Every tool directory (a `packs/<id>/upstream/<tool>/` that holds a tracked file outside `publish/`; files directly
+under `packs/<id>/upstream/`, such as `common.py`, are not in one) has a tracked `test-data.lock`, unless the
+tool-pack's `publish/` is tracked (the publish writes the lock), and `parseLock` in `scripts/s3/test-data-archive.mjs`
+accepts it: `{ "format": 1, "sha256", "files", "bytes" }` with a 64-digit lowercase hex sha256 and non-negative
+integer counts. A `samples.lock`, which pins the tool-pack's real-code samples archive the same way, is optional, and
+`parseLock` must accept it too. A missing lock is a finding at the path it would have; a malformed one carries
+`parseLock`'s message. These checks have no exemptions.
 
 ### 4. Engine source roots — target 1 (`native/`)
 
