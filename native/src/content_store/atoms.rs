@@ -72,7 +72,7 @@ impl Interner {
     }
 
     /// Drops every string from `len` on (strings whose rows did not commit).
-    fn truncate(&mut self, len: usize) {
+    pub(crate) fn truncate(&mut self, len: usize) {
         if len >= self.len() {
             return;
         }
@@ -91,7 +91,7 @@ impl Interner {
 
 impl Interner {
     /// Appends the table's atoms from the mirror's length on.
-    fn catch_up(&mut self, connection: &Connection) -> StoreResult<()> {
+    pub(crate) fn catch_up(&mut self, connection: &Connection) -> StoreResult<()> {
         let mut tail = connection.prepare_cached("SELECT atom,value FROM atoms WHERE atom>=?1 ORDER BY atom")?;
         let rows = tail.query_map([self.len() as i64], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?;
         for row in rows {

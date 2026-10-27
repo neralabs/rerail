@@ -1,8 +1,11 @@
 use super::{TOP, register};
 use rusqlite::Connection;
 
+/// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
-    let db = Connection::open_in_memory().unwrap();
+    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+    let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
 }
@@ -107,4 +110,31 @@ fn a_declared_lattice_replaces_the_join() {
     .unwrap();
     db.query_row("SELECT lattice_fixpoint('b', NULL, 'bits')", [], |r| r.get::<_, String>(0)).unwrap();
     assert_eq!(pairs(&db, "SELECT c0, c1 FROM b_out ORDER BY c0"), [(0, 3), (1, 2), (2, 3)]);
+}
+
+/// Symbol columns hold the store's atoms: text read from a table is interned, a rule's `cat` creates new atoms,
+/// and the rows written back are atom ids that join with the `atoms` table.
+#[test]
+fn symbols_are_the_stores_atoms() {
+    let db = connection();
+    db.execute_batch(
+        "CREATE TEMP TABLE member(c0, c1); INSERT INTO member VALUES ('pkg', 'mod'), ('mod', 'f');
+         CREATE TEMP TABLE qual(c0, c1); INSERT INTO qual VALUES ('pkg', 'pkg');",
+    )
+    .unwrap();
+    // qual(child, parent_qual "." child) :- qual(parent, parent_qual), member(parent, child)
+    let spec = "name q\nrel qual ss\nrule 0 0 member ss key v0 ; ecols v2 ; pat v0 v1 ; head v2 cat:v1:v2";
+    db.query_row("SELECT set_fixpoint_open(?1)", [spec], |r| r.get::<_, String>(0)).unwrap();
+    db.query_row("SELECT set_fixpoint_run('q')", [], |r| r.get::<_, String>(0)).unwrap();
+    db.query_row("SELECT set_fixpoint_close('q')", [], |r| r.get::<_, i64>(0)).unwrap();
+    let names: Vec<(String, String)> = db
+        .prepare("SELECT a.value, b.value FROM qual JOIN atoms a ON a.atom = qual.c0 JOIN atoms b ON b.atom = qual.c1 WHERE typeof(qual.c1) = 'integer' ORDER BY 2")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(names, [("mod".to_owned(), "pkg.mod".to_owned()), ("f".to_owned(), "pkg.mod.f".to_owned())]);
+    let atoms: i64 = db.query_row("SELECT count(*) FROM atoms WHERE value IN ('pkg', 'mod', 'f', 'pkg.mod', 'pkg.mod.f')", [], |r| r.get(0)).unwrap();
+    assert_eq!(atoms, 5);
 }

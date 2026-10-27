@@ -48,19 +48,42 @@ use std::time::Instant;
 
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
 
-/// Symbols as integers, one numbering for every component and input relation, so their columns join directly.
-/// `buf`: scratch for `cat`, so joining two symbols allocates only when the result is new.
+/// Symbols are the store's atoms (`content_store::atoms`, C12), so a symbol column holds atom ids and joins
+/// directly with fact families' atom columns. T numbered symbols per process and stored them as text.
+/// Each database has one mirror of its `atoms` table here (`symbols`): an entry point catches it up with the table
+/// (`sync`), a run interns the symbols it creates (`cat`) after the table's tail, and `flush` appends those to the
+/// table before any of them is written, in the caller's (write) transaction. `buf`: scratch for `cat`, so joining
+/// two symbols allocates only when the result is new.
 #[derive(Default)]
-pub struct Interner { ids: HashMap<String, i64>, names: Vec<String>, buf: String }
-pub static SYMS: LazyLock<RwLock<Interner>> = LazyLock::new(Default::default);
+pub struct Interner { atoms: crate::content_store::atoms::Interner, stored: usize, buf: String }
 impl Interner {
-    fn id(&mut self, s: &str) -> i64 {
-        if let Some(&i) = self.ids.get(s) { return i; }
-        let i = self.names.len() as i64;
-        self.names.push(s.to_string());
-        self.ids.insert(s.to_string(), i);
-        i
+    fn id(&mut self, s: &str) -> i64 { i64::from(self.atoms.intern(s)) }
+    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from) }
+    fn name(&self, v: i64) -> &str { self.atoms.str(v as crate::content_store::atoms::Sym) }
+    /// Drops symbols never flushed (a failed run's) and reads the table's new tail.
+    fn sync(&mut self, conn: &Connection) -> Result<()> {
+        self.atoms.truncate(self.stored);
+        self.atoms.catch_up(conn).map_err(|e| err(e.to_string()))?;
+        self.stored = self.atoms.len();
+        Ok(())
     }
+    /// Appends the symbols interned since `sync` to the table.
+    fn flush(&mut self, conn: &Connection) -> Result<()> {
+        let mut insert = conn.prepare_cached("INSERT INTO atoms(atom, value) VALUES (?1, ?2)")?;
+        for atom in self.stored..self.atoms.len() {
+            insert.execute(rusqlite::params![atom as i64, self.atoms.str(atom as crate::content_store::atoms::Sym)])?;
+        }
+        self.stored = self.atoms.len();
+        Ok(())
+    }
+}
+static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
+/// The symbols of `conn`'s database, caught up with its `atoms` table.
+fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
+    let key = conn.path().unwrap_or_default().to_owned();
+    let syms = Arc::clone(SYMS.lock().unwrap().entry(key).or_default());
+    syms.write().unwrap().sync(conn)?;
+    Ok(syms)
 }
 
 enum Pat { Any, Slot(usize), Int(i64), Sym(i64) }
@@ -195,7 +218,7 @@ enum Body { Sql(String), Join(JoinRule) }
 /// any literal order, reading that relation in full.
 struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule> }
 
-pub struct Store { rels: Vec<Rel> }
+pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool }
@@ -216,7 +239,7 @@ fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
     match (v, ty) {
         (ValueRef::Integer(i), b'i') => Ok(i),
         (ValueRef::Text(t), b's') => Ok(syms.id(std::str::from_utf8(t).map_err(|e| err(e.to_string()))?)),
-        (ValueRef::Integer(i), b's') => Ok(syms.id(&i.to_string())),
+        (ValueRef::Integer(i), b's') => { let _ = syms; Ok(i) }
         (other, _) => Err(err(format!("unexpected value {other:?} for a column of type {}", ty as char))),
     }
 }
@@ -238,7 +261,8 @@ fn slot(t: &str) -> Result<usize> { t.strip_prefix('v').and_then(|s| s.parse().o
 fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(format!("bad number {t}"))) }
 
 pub fn open(conn: &Connection, spec: &str) -> Result<String> {
-    let mut syms = SYMS.write().unwrap();
+    let symbols = symbols(conn)?;
+    let mut syms = symbols.write().unwrap();
     let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut write = true;
     for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -306,8 +330,9 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
         if let Some(j) = &p.whole { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
     }
+    syms.flush(conn)?;
     drop(syms);
-    let store = Arc::new(RwLock::new(Store { rels }));
+    let store = Arc::new(RwLock::new(Store { rels, syms: symbols }));
     let mut reg = COMPONENTS.lock().unwrap();
     reg.retain(|(n, _)| *n != name);
     reg.push((name.clone(), Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write }))));
@@ -326,7 +351,8 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let t0 = Instant::now();
     let comp = component(name)?;
     let mut comp = comp.lock().unwrap();
-    let nrels = comp.store.read().unwrap().rels.len();
+    let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
+    symbols.write().unwrap().sync(conn)?;
     let mut stmts = Vec::new();
     for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.prepare(sql)?), Body::Join(_) => None }); }
     let (mut waves, mut visits, mut runs, mut skips) = (0u32, 0u64, 0u64, 0u64);
@@ -358,7 +384,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         }
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
-        let mut syms = SYMS.write().unwrap();
+        let mut syms = symbols.write().unwrap();
         for (head, got) in raw {
             let types = store.rels[head].types.clone();
             for vals in got {
@@ -463,13 +489,14 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     }
     comp.seeded = seeded;
     comp.gates = gates;
+    // The component keeps the symbols its waves created, so they reach the table now, done or not.
+    symbols.write().unwrap().flush(conn)?;
     let solve = t0.elapsed();
     let per: Vec<String> = per.iter().map(|(t, n)| format!("{:.1}:{n}", t * 1e3)).collect();
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
     let store = comp.store.read().unwrap();
-    let syms = SYMS.read().unwrap();
     let mut new_rows = 0usize;
     // Every relation of the component, whole, is an input of later strata (`r:` sources).
     for rel in &store.rels {
@@ -480,10 +507,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         let marks: Vec<String> = (1..=rel.types.len()).map(|i| format!("?{i}")).collect();
         let mut ins = conn.prepare(&format!("INSERT INTO {} VALUES ({})", rel.table, marks.join(", ")))?;
         for id in rel.stored..rel.n {
-            let vals: Vec<Value> = rel.row(id).iter().zip(&rel.types).map(|(&v, &t)| {
-                if t == b's' { Value::Text(syms.names[v as usize].clone()) } else { Value::Integer(v) }
-            }).collect();
-            ins.execute(rusqlite::params_from_iter(vals))?;
+            ins.execute(rusqlite::params_from_iter(rel.row(id)))?;
             new_rows += 1;
         }
     }
@@ -497,7 +521,7 @@ pub fn stats(name: &str) -> Result<String> {
     let comp = component(name)?;
     let comp = comp.lock().unwrap();
     let store = comp.store.read().unwrap();
-    let syms = SYMS.read().unwrap();
+    let syms = store.syms.read().unwrap();
     Ok(store.rels.iter().map(|r| {
         let cols = &r.idx[..r.k];
         let mut line = std::iter::once(r.n).chain(cols.iter().map(|ix| ix.table.len()))
@@ -509,7 +533,7 @@ pub fn stats(name: &str) -> Result<String> {
             if ix.table.len() > FREQ_NDV { continue; }
             let vals: Vec<String> = ix.table.iter().map(|p| {
                 let v = r.row(p.head as usize)[c];
-                let text = if r.types[c] == b's' { syms.names[v as usize].clone() } else { v.to_string() };
+                let text = if r.types[c] == b's' { syms.name(v).to_owned() } else { v.to_string() };
                 format!("{}={}", text.bytes().map(|b| format!("{b:02x}")).collect::<String>(), p.len)
             }).collect();
             line.push_str(&format!(" |{c}:{}", vals.join(",")));
@@ -538,7 +562,11 @@ pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) 
     let body = match kind {
         "sql" => Body::Sql(unhex(body)?),
         "join" => {
-            let j = parse_join(conn, &unhex(body)?, &mut SYMS.write().unwrap())?;
+            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+            let mut syms = symbols.write().unwrap();
+            syms.sync(conn)?;
+            let j = parse_join(conn, &unhex(body)?, &mut syms)?;
+            syms.flush(conn)?;
             let mut store = comp.store.write().unwrap();
             for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
             Body::Join(j)
@@ -622,8 +650,8 @@ unsafe impl VTabCursor for RelCursor {
             let key = match (args.get::<Value>(arg)?, r.types[col]) {
                 (Value::Integer(i), b'i') => Some(i),
                 (Value::Text(t), b'i') => t.parse().ok(),
-                (Value::Text(t), b's') => SYMS.read().unwrap().ids.get(&t).copied(),
-                (Value::Integer(i), b's') => SYMS.read().unwrap().ids.get(&i.to_string()).copied(),
+                (Value::Text(t), b's') => s.syms.read().unwrap().get(&t),
+                (Value::Integer(i), b's') => Some(i),
                 _ => None,
             };
             arg += 1;
@@ -640,7 +668,7 @@ unsafe impl VTabCursor for RelCursor {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
         let v = r.row(self.ids[self.pos] as usize)[i as usize];
-        if r.types[i as usize] == b's' { ctx.set_result(&SYMS.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(&v) }
+        ctx.set_result(&v)
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
 }
@@ -666,9 +694,9 @@ unsafe impl VTabCursor for RelCursor {
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     let mut s = std::mem::take(&mut syms.buf);
     s.clear();
-    s.push_str(&syms.names[a as usize]);
+    s.push_str(syms.name(a));
     s.push('.');
-    s.push_str(&syms.names[b as usize]);
+    s.push_str(syms.name(b));
     let id = syms.id(&s);
     syms.buf = s;
     id
@@ -735,14 +763,10 @@ const FREQ_NDV: usize = 64;
 /// table, for SQL that reads it. Returns the rows written.
 pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
     let Some(rel) = DERIVED.lock().unwrap().get(table).cloned() else { return Err(err(format!("no native relation {table}"))) };
-    let syms = SYMS.read().unwrap();
     let marks: Vec<String> = (1..=rel.k).map(|i| format!("?{i}")).collect();
     let mut ins = conn.prepare(&format!("INSERT INTO {table} VALUES ({})", marks.join(", ")))?;
     for id in rel.stored..rel.len() {
-        let vals: Vec<Value> = rel.row(id).iter().zip(&rel.types).map(|(&v, &t)| {
-            if t == b's' { Value::Text(syms.names[v as usize].clone()) } else { Value::Integer(v) }
-        }).collect();
-        ins.execute(rusqlite::params_from_iter(vals))?;
+        ins.execute(rusqlite::params_from_iter(rel.row(id)))?;
     }
     Ok((rel.len() - rel.stored) as i64)
 }
@@ -1015,11 +1039,11 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 go(cx, i + 1, slots);
             }
             Step::Split { whole, a, b, ka, kb } => {
-                let w = cx.syms.names[val(slots, *whole) as usize].clone();
+                let w = cx.syms.name(val(slots, *whole)).to_owned();
                 for (p, _) in w.match_indices('.') {
                     let (x, y) = (&w[..p], &w[p + 1..]);
-                    match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.names[val(slots, *ka) as usize] != x { continue } }
-                    match b { Some(s) => slots[*s] = cx.syms.id(y), None => if cx.syms.names[val(slots, *kb) as usize] != y { continue } }
+                    match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.name(val(slots, *ka)) != x { continue } }
+                    match b { Some(s) => slots[*s] = cx.syms.id(y), None => if cx.syms.name(val(slots, *kb)) != y { continue } }
                     go(cx, i + 1, slots);
                 }
             }

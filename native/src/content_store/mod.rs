@@ -3,7 +3,7 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The code-rule runtime will call this module through coarse Rust operations.
 
-mod atoms;
+pub(crate) mod atoms;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod bounded_insert;
