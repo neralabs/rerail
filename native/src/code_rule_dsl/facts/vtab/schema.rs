@@ -1,4 +1,4 @@
-//! Opaque, prepare-only schemas. SQLite parses declarations and validates queries;
+//! Opaque, prepare-only schemas (D's `relational/schema.rs`; decision 0010). SQLite parses declarations and validates queries;
 //! registration executes no DDL and never expands a dependency into a SQL view.
 use rusqlite::{
     Connection, Result,
@@ -8,10 +8,7 @@ use std::{
     borrow::Cow,
     ffi::{CStr, CString, c_int},
 };
-#[path = "schema/cache.rs"]
 pub(crate) mod cache;
-#[path = "schema/inference.rs"]
-pub(crate) mod inference;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Column {

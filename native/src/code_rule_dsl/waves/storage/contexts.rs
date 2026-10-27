@@ -1,4 +1,5 @@
-//! Stable SQLite backing with exact data bindings. Scope changes are data writes, never DDL.
+//! Stable SQLite backing with exact data bindings (D's `storage/contexts.rs`). Scope changes are
+//! data writes, never DDL.
 use super::{Connection, Result, quote};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 const BINDINGS: &str = "__execution_bindings";
@@ -42,7 +43,6 @@ struct Layout {
 }
 #[derive(Default)]
 struct Data {
-    #[cfg(feature = "code-rule-profile")]
     rows: usize,
     dirty: bool,
     ready: bool,
@@ -129,7 +129,7 @@ impl Contexts {
             .1;
         let mut key_column = KEY.to_owned();
         if body.to_ascii_lowercase().contains(KEY) {
-            let fields = super::super::schema::register(
+            let fields = crate::code_rule_dsl::facts::vtab::schema::register(
                 db,
                 "__scope_key_schema",
                 definition.replacen("CREATE TEMP TABLE", "CREATE TABLE", 1),
@@ -240,38 +240,47 @@ impl Contexts {
         layout.indexes.insert(name.into(), sql.into());
         Ok(())
     }
-    pub fn analyze(&mut self, _db: &Connection, name: &str, rows: usize) -> Result<()> {
-        let layout = self
-            .layouts
-            .get_mut(name)
-            .ok_or(rusqlite::Error::InvalidQuery)?;
+    /// Records that the active binding of `name` holds `rows` rows.
+    pub fn analyze(&mut self, name: &str, rows: usize) {
         self.lifecycle.analysis_requests += 1;
-        layout.statistics_dirty |= rows > 0;
-        Ok(())
-    }
-    pub fn statistics_boundary(&mut self, db: &Connection) -> Result<()> {
-        let mut refreshed = false;
-        for (slot, layout) in &mut self.layouts {
-            if !layout.statistics_dirty {
-                continue;
+        if let Some(key) = self.key(name) {
+            let data = self.data.entry(key).or_default();
+            let changed = data.rows != rows;
+            data.rows = rows;
+            if let Some(layout) = self.layouts.get_mut(name) {
+                layout.statistics_dirty |= changed;
             }
-            // Stable contexts make the schema small. Refresh only the cuts
-            // changed by this publication; ANALYZE temp rescans every retained
-            // input and completed cut again at every dependent frontier.
-            db.execute_batch(&format!("ANALYZE temp.{}", quote(&backing(slot))))?;
-            self.lifecycle.analyzed_relations += 1;
-            layout.statistics_dirty = false;
-            refreshed = true;
+        }
+    }
+    pub fn grew(&mut self, name: &str, added: usize) {
+        self.written(name, added != 0);
+        let rows = self.rows(name) as usize + added;
+        self.analyze(name, rows);
+    }
+    /// The rows of the active binding of `name`.
+    pub fn rows(&self, name: &str) -> u64 {
+        self.key(name).and_then(|key| self.data.get(&key)).map_or(0, |d| d.rows as u64)
+    }
+    /// Each slot's rows over its live bindings, and whether they changed since the last boundary.
+    /// Stable contexts make the schema small; only changed cuts are written again.
+    pub fn statistics_boundary(&mut self) -> Vec<(String, u64, bool)> {
+        let mut refreshed = false;
+        let mut out = Vec::new();
+        for (slot, layout) in &mut self.layouts {
+            let rows = self.data.iter().filter(|((s, _), _)| s == slot).map(|(_, d)| d.rows as u64).sum();
+            out.push((slot.clone(), rows, layout.statistics_dirty));
+            if layout.statistics_dirty {
+                self.lifecycle.analyzed_relations += 1;
+                layout.statistics_dirty = false;
+                refreshed = true;
+            }
         }
         self.lifecycle.analysis_batches += usize::from(refreshed);
-        Ok(())
+        out
     }
     pub fn populated(&mut self, name: &str, rows: usize) {
         self.written(name, rows != 0);
-        #[cfg(feature = "code-rule-profile")]
-        if let Some(key) = self.key(name) {
-            self.data.entry(key).or_default().rows = rows;
-        }
+        self.analyze(name, rows);
     }
     pub fn written(&mut self, name: &str, rows: bool) {
         if let Some(key) = self.key(name) {
@@ -311,7 +320,7 @@ impl Contexts {
             )?;
         }
         if let Some(layout) = self.layouts.get_mut(&key.0) {
-            layout.statistics_dirty |= !layout.indexes.is_empty();
+            layout.statistics_dirty |= self.data.get(key).is_some_and(|d| d.rows != 0);
         }
         self.data.remove(key);
         Ok(())
@@ -461,3 +470,6 @@ impl Contexts {
             + self.active.keys().map(|n| n.len() + 48).sum::<usize>()
     }
 }
+
+#[cfg(test)]
+mod tests;

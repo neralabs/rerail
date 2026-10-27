@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[test]
 fn imported_span_lookup_does_not_scan_every_row_in_the_scope() -> Result<()> {
@@ -22,8 +22,10 @@ fn imported_span_lookup_does_not_scan_every_row_in_the_scope() -> Result<()> {
     Ok(())
 }
 
+/// Only the relations whose counts changed are written again, and nothing is scanned: a sentinel
+/// count left in `wave_stats` survives a boundary that did not touch its relation.
 #[test]
-fn statistics_boundary_does_not_rescan_unchanged_relations() -> Result<()> {
+fn statistics_boundary_writes_only_changed_counts() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let mut s = Storage::default();
     for (id, slot) in [(1, "__context_unchanged"), (2, "__context_changed")] {
@@ -31,24 +33,18 @@ fn statistics_boundary_does_not_rescan_unchanged_relations() -> Result<()> {
         s.declare(&db, slot, format!("CREATE TABLE {slot}(v INTEGER)"), true)?;
         let (table, _) = s.write_target(slot);
         db.execute(&format!("INSERT INTO {table} VALUES(?1,1)"), [id as i64])?;
-        s.analyze(&db, slot, 1)?;
+        s.populated(slot, 1);
     }
-    s.statistics_boundary(&db)?;
-    // A sentinel makes an unnecessary statistics refresh observable without timing.
-    db.execute(
-        "UPDATE temp.sqlite_stat1 SET stat='12345 12345' WHERE tbl='__rows___context_unchanged'",
-        [],
-    )?;
-    s.analyze(&db, "__context_changed", 1)?;
-    s.statistics_boundary(&db)?;
-    assert_eq!(
-        db.query_row(
-            "SELECT stat FROM temp.sqlite_stat1 WHERE tbl='__rows___context_unchanged'",
-            [],
-            |r| r.get::<_, String>(0)
-        )?,
-        "12345 12345"
-    );
+    let first = s.statistics_boundary(&db)?;
+    assert_eq!(first["rows.__context_changed"], 1);
+    db.execute("UPDATE temp.wave_stats SET rows = 12345 WHERE tbl = '__context_unchanged'", [])?;
+    s.grew("__context_changed", 2);
+    let second = s.statistics_boundary(&db)?;
+    assert_eq!(second["rows.__context_changed"], 3);
+    let stored = |tbl: &str| db.query_row("SELECT rows FROM temp.wave_stats WHERE tbl = ?1", [tbl], |r| r.get::<_, i64>(0));
+    assert_eq!(stored("__context_unchanged")?, 12345);
+    assert_eq!(stored("__context_changed")?, 3);
+    assert!(db.query_row("SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE 'sqlite_stat%'", [], |r| r.get::<_, i64>(0))? == 0);
     Ok(())
 }
 
@@ -218,8 +214,10 @@ fn eviction_cannot_remove_pinned_complete_or_empty_bindings() -> Result<()> {
     Ok(())
 }
 
+/// A new binding's rows replace the old binding's in the counts, and a boundary after the first
+/// writes no schema.
 #[test]
-fn publication_boundary_refreshes_statistics_after_equal_size_distribution_changes() -> Result<()> {
+fn publication_boundary_counts_the_bound_rows_without_ddl() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let mut storage = Storage::default();
     let slot = "__context_stats";
@@ -228,42 +226,17 @@ fn publication_boundary_refreshes_statistics_after_equal_size_distribution_chang
     storage.declare(&db, slot, definition.clone(), true)?;
     let (table, _) = storage.write_target(slot);
     db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO {table} SELECT 1,'same' FROM n"))?;
-    storage.written(slot, true);
-    storage.index(
-        &db,
-        slot,
-        "__context_stats_v",
-        format!("CREATE INDEX __context_stats_v ON {slot}(v)"),
-    )?;
-    storage.analyze(&db, slot, 100)?;
-    storage.statistics_boundary(&db)?;
-    let first: String = db.query_row(
-        "SELECT stat FROM temp.sqlite_stat1 WHERE idx='__context_stats_v'",
-        [],
-        |r| r.get(0),
-    )?;
+    storage.populated(slot, 100);
+    assert_eq!(storage.statistics_boundary(&db)?["rows.__context_stats"], 100);
     storage.clear_owner(&db, 1)?;
     storage.bind_scope(&db, 2, BTreeMap::from([(slot.into(), 2)]))?;
     storage.declare(&db, slot, definition, true)?;
-    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) INSERT INTO {table} SELECT 2,printf('v%d',x) FROM n"))?;
-    storage.written(slot, true);
-    storage.analyze(&db, slot, 100)?;
-    storage.statistics_boundary(&db)?;
-    let second: String = db.query_row(
-        "SELECT stat FROM temp.sqlite_stat1 WHERE idx='__context_stats_v'",
-        [],
-        |r| r.get(0),
-    )?;
-    assert_ne!(
-        first, second,
-        "unchanged cardinality hid a changed value distribution"
-    );
+    db.execute_batch(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<40) INSERT INTO {table} SELECT 2,printf('v%d',x) FROM n"))?;
+    storage.populated(slot, 40);
+    assert_eq!(storage.statistics_boundary(&db)?["rows.__context_stats"], 40);
     let schema: i64 = db.query_row("PRAGMA temp.schema_version", [], |r| r.get(0))?;
     storage.statistics_boundary(&db)?;
-    assert_eq!(
-        db.query_row("PRAGMA temp.schema_version", [], |r| r.get::<_, i64>(0))?,
-        schema
-    );
+    assert_eq!(db.query_row("PRAGMA temp.schema_version", [], |r| r.get::<_, i64>(0))?, schema);
     Ok(())
 }
 

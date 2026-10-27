@@ -25,6 +25,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+pub(in crate::code_rule_dsl) mod schema;
 pub(in crate::code_rule_dsl) mod syntax;
 
 fn failure(message: &str) -> rusqlite::Error {

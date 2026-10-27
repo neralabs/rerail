@@ -41,6 +41,9 @@ mod transducer;
 mod value;
 mod violations;
 mod vue;
+// Wired to the logic planner and the push path in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod waves;
 mod workspace;
 
 /// The conformance fixtures directory `native/build.rs` found: `RERAIL_ORACLES_DIR`, or the

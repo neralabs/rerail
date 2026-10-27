@@ -351,6 +351,17 @@ impl Drop for NoBusyWait {
 }
 
 impl ContentStore {
+    /// A new connection to this store's file, configured as the store's own: for an owner that
+    /// keeps its own temp schema and modules (the waves' SQL owner).
+    pub(crate) fn open_connection(&self) -> StoreResult<Connection> {
+        open_runtime_connection(&self.database_path)
+    }
+
+    /// The store's file.
+    pub(crate) fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
     /// Runs `operation` in one immediate (write-locking) transaction, retried under `retry_busy`.
     pub(super) fn immediate_transaction<T>(
         &self,

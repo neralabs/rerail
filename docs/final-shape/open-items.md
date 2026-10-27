@@ -18,6 +18,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O10 | Phase 2 | Core facts of a non-UTF-8 blob, an unknown language or a parse stopped at a limit are `ABSENT` | open |
 | O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | open, **decision needed** |
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
+| O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
+| O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -247,3 +249,14 @@ Status (2026-10-27): the SQL side is done (decision 0009): `logic::plan::lower` 
 base-relation vtabs (decision 0008) with T's statistics atomized, give T's plans and outputs on the fixture
 (`t_programs_over_atoms_plan_and_run_like_t`). Open: the native strata over the lowered program, and the planner's
 statistics from `stats::ingest` instead of T's tables.
+
+## O14. The planner's stratum loop and the frontier loop
+
+`waves::schedule` (decision 0010) runs wave programs: steps that insert into `new_<relation>`,
+read `delta_` relations of their own stratum, and are selected by SQL wave by wave. `logic::plan`
+(`run`) still runs its own loop: semi-naive rounds per strongly connected component, with
+`CREATE TEMP TABLE … AS` per round, and `count(*)`/`count(DISTINCT)` refreshes between strata (DLRE
+trap T18). Lattice relations (`merge_lattice`) have no step form yet. Closure: the planner emits
+a `schedule::Program` (one step per rule and delta variant, its stratum from `strata`), with
+lattice merges as a fold kind, and T's programs give the same outputs through `schedule::run` as
+through `run_atoms`; the planner's counts then come from `rows.<relation>` at the boundary.

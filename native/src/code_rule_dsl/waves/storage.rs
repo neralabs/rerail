@@ -1,11 +1,13 @@
-//! Reusable SQL schemas. A connection lease owns all rows; only empty backing is reusable.
+//! Reusable SQL schemas (decision 0010), from Data-layer-rule-expressivity's
+//! `relational/storage.rs`. A connection lease owns all rows; only empty backing is reusable.
+//!
+//! D refreshed the planner's statistics with `ANALYZE temp.<table>` at each publication. That is
+//! the temp-table-plus-ANALYZE model the lessons ledger (5) measured 57–115x slower than a fused
+//! plan, and it rescans what was just written. Here a relation's statistics are the row counts
+//! its writers report (`analyze`, `populated`), written to `temp.wave_stats` at the boundary.
 use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
-#[path = "storage/contexts.rs"]
 mod contexts;
-#[cfg(test)]
-#[path = "storage/contexts_tests.rs"]
-mod contexts_tests;
 #[derive(Default)]
 pub(super) struct Storage {
     contexts: contexts::Contexts,
@@ -18,9 +20,18 @@ struct Object {
     table: bool,
     dirty: bool,
     indexes: BTreeMap<String, String>,
-    analyzed: Option<usize>,
+    /// Rows as last reported, and whether `temp.wave_stats` has yet to see them.
+    rows: u64,
+    stats_dirty: bool,
     owner: Option<usize>,
     ready: bool,
+}
+const STATS: &str = "CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY, rows INTEGER NOT NULL) WITHOUT ROWID";
+impl Object {
+    fn counted(&mut self, rows: u64) {
+        self.stats_dirty |= self.rows != rows;
+        self.rows = rows;
+    }
 }
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -30,8 +41,30 @@ impl Storage {
     pub fn inventory(&self) -> serde_json::Value {
         self.contexts.inventory()
     }
-    pub fn statistics_boundary(&mut self, db: &Connection) -> Result<()> {
-        self.contexts.statistics_boundary(db)
+    /// Writes `temp.wave_stats(tbl, rows)` for the relations whose counts changed since the last
+    /// boundary and returns every relation's `rows.<name>`, the statistics a compiled plan's
+    /// validity is checked against (`stats::plans::Plans::valid`). Nothing is scanned.
+    pub fn statistics_boundary(&mut self, db: &Connection) -> Result<BTreeMap<String, u64>> {
+        db.execute_batch(STATS)?;
+        let mut write = db.prepare_cached("INSERT OR REPLACE INTO temp.wave_stats(tbl, rows) VALUES (?1, ?2)")?;
+        let mut current = BTreeMap::new();
+        for (name, rows, dirty) in self.contexts.statistics_boundary() {
+            if dirty {
+                write.execute(rusqlite::params![name, rows as i64])?;
+            }
+            current.insert(format!("rows.{name}"), rows);
+        }
+        for (name, o) in &mut self.objects {
+            if !o.table {
+                continue;
+            }
+            if o.stats_dirty {
+                write.execute(rusqlite::params![name, o.rows as i64])?;
+                o.stats_dirty = false;
+            }
+            current.insert(format!("rows.{name}"), o.rows);
+        }
+        Ok(current)
     }
     pub fn bind_scope(
         &mut self,
@@ -70,6 +103,7 @@ impl Storage {
                 if o.table && o.dirty {
                     db.execute(&format!("DELETE FROM {}", quote(name)), [])?;
                     o.dirty = false;
+                    o.counted(0);
                 }
             }
             return Ok(());
@@ -83,7 +117,8 @@ impl Storage {
                 table,
                 dirty: false,
                 indexes: BTreeMap::new(),
-                analyzed: None,
+                rows: 0,
+                stats_dirty: table,
                 owner: self.owner,
                 ready: false,
             },
@@ -115,24 +150,38 @@ impl Storage {
         o.indexes.insert(name.into(), sql);
         Ok(())
     }
-    pub fn analyze(&mut self, db: &Connection, name: &str, rows: usize) -> Result<()> {
+    /// Records that `name` now holds `rows` rows, as its writer counted them.
+    pub fn analyze(&mut self, name: &str, rows: usize) {
         if contexts::managed(name) {
-            return self.contexts.analyze(db, name, rows);
+            return self.contexts.analyze(name, rows);
         }
         let name = &name.to_ascii_lowercase();
-        let o = self.objects.get_mut(name).expect("declared table");
-        if rows > 0 || o.analyzed.is_some_and(|old| old > 0) {
-            db.execute_batch(&format!("ANALYZE temp.{}", quote(name)))?;
-            o.analyzed = Some(rows);
-        }
-        Ok(())
+        self.objects.get_mut(name).expect("declared table").counted(rows as u64);
     }
     pub fn populated(&mut self, name: &str, rows: usize) {
         if contexts::managed(name) {
             self.contexts.populated(name, rows);
         } else {
             self.written(name, rows != 0);
+            self.analyze(name, rows);
         }
+    }
+    /// Rows written to `name` by a statement that added `added` rows to it.
+    pub fn grew(&mut self, name: &str, added: usize) {
+        if contexts::managed(name) {
+            return self.contexts.grew(name, added);
+        }
+        if let Some(o) = self.objects.get_mut(&name.to_ascii_lowercase()) {
+            o.dirty |= added != 0;
+            o.counted(o.rows + added as u64);
+        }
+    }
+    /// The rows `name` holds, as its writers counted them.
+    pub fn rows(&self, name: &str) -> u64 {
+        if contexts::managed(name) {
+            return self.contexts.rows(name);
+        }
+        self.objects.get(&name.to_ascii_lowercase()).map_or(0, |o| o.rows)
     }
     pub fn written(&mut self, name: &str, rows: bool) {
         if contexts::managed(name) {
@@ -156,6 +205,7 @@ impl Storage {
         if o.table && o.dirty {
             db.execute(&format!("DELETE FROM {}", quote(name)), [])?;
             o.dirty = false;
+            o.counted(0);
         }
         Ok(true)
     }
@@ -169,6 +219,10 @@ impl Storage {
                 if o.table { "TABLE" } else { "VIEW" },
                 quote(name)
             ))?;
+            if o.table {
+                db.execute_batch(STATS)?;
+                db.execute("DELETE FROM temp.wave_stats WHERE tbl = ?1", [name.to_ascii_lowercase()])?;
+            }
         }
         Ok(())
     }
@@ -178,6 +232,7 @@ impl Storage {
             if o.table && o.dirty && !o.ready {
                 db.execute(&format!("DELETE FROM {}", quote(name)), [])?;
                 o.dirty = false;
+                o.counted(0);
             }
         }
         Ok(())

@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// One document of a batch.
+#[derive(Clone)]
 pub(crate) struct Document {
     /// `d`: the document's key, its path atom in the push path.
     pub key: u32,
@@ -518,14 +519,20 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
     Ok(out)
 }
 
-/// Binds T's base relations over `documents` on `db`, after checking that each document's facts are
-/// those its `#core:` name binds now (§4): a stale document fails the binding.
-pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Sized), documents: Vec<Document>) -> StoreResult<()> {
-    for d in &documents {
+/// Fails if a document's facts are not those its `#core:` name binds now (§4).
+pub(crate) fn fresh(graph: &(impl Graph + ?Sized), documents: &[Document]) -> StoreResult<()> {
+    for d in documents {
         if graph.binding(&d.core)? != Some(d.digest) {
             return Err(StoreError::Invalid(format!("stale core facts for {}", d.core)));
         }
     }
+    Ok(())
+}
+
+/// Binds T's base relations over `documents` on `db`, after checking that each document's facts are
+/// those its `#core:` name binds now (§4): a stale document fails the binding.
+pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Sized), documents: Vec<Document>) -> StoreResult<()> {
+    fresh(graph, &documents)?;
     for (name, source) in sources(graph.store(), documents)? {
         modules.bind(db, name, source).map_err(StoreError::Database)?;
     }
