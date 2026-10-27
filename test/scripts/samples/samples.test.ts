@@ -4,12 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { decompressArchive, readArchive } from "../../../scripts/s3/test-data-archive.mjs";
+import { buildArchive, readArchive } from "../../../scripts/s3/test-data-archive.mjs";
 import { eslintTestSetSamples, fixedCopyPath } from "../../../scripts/samples/convert-eslint-test-set.js";
 import { packRuleIds, type PackConformance } from "../../../scripts/samples/conformance.js";
 import { LABELS_SUFFIX, sampleLabelsSchema } from "../../../scripts/samples/format.js";
 import { copyleftReason, licenceTexts } from "../../../scripts/samples/licences.js";
-import { packSamples } from "../../../scripts/samples/pack.js";
 import { archiveEntries, dedupe, labelsText, sampleId, sha256, type Sample } from "../../../scripts/samples/samples.js";
 
 const COMMIT = "0".repeat(40);
@@ -130,10 +129,10 @@ describe("archives", () => {
       sample({ expected: new Map([["r1", [{ line: 1 }]]]), context: [{ path: "pkg/__init__.py", bytes: Buffer.from("") }] }),
       sample({ path: "pkg/b.py", text: "b = 1\n", expected: new Map([["r1", []]]) }),
     ];
-    const first = packSamples(archiveEntries(samples, "# Sources\n"));
-    const second = packSamples(archiveEntries([...samples].reverse(), "# Sources\n"));
+    const first = buildArchive(archiveEntries(samples, "# Sources\n"));
+    const second = buildArchive(archiveEntries([...samples].reverse(), "# Sources\n"));
     expect(second.sha256).toBe(first.sha256);
-    const paths = readArchive(decompressArchive(first.compressed)).map((entry: { path: string }) => entry.path);
+    const paths = readArchive(first.tar).map((entry: { path: string }) => entry.path);
     const id = sampleId("demo", "pkg/a.py", samples[0]!.source.sha256);
     expect(paths).toEqual(expect.arrayContaining(["LICENSES.md", `${id}/pkg/a.py`, `${id}/pkg/a.py${LABELS_SUFFIX}`, `${id}/pkg/__init__.py`]));
     expect(paths).toHaveLength(1 + 2 + 1 + 2);

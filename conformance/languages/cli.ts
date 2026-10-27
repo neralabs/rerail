@@ -13,7 +13,8 @@ const USAGE = `Language-pack rule conformance (T4).
   --pack <name>         pack under packs/<name>/ (or --pack-dir <dir>)
   --fixtures            score the upstream rule fixtures
   --samples             score the real-code samples of every tool-pack with a samples.lock (fetched from S3 once,
-                        verified); with no source chosen, both
+                        verified), with any samples staged under its publish/samples/ laid over them; with no source
+                        chosen, both
   --rule <id>           score one rule (repeatable); prints every FP, FN and reviewed finding
   --write               write .rerail/reports/<pack>-t4-rules-<date>.json (gitignored)
   --date <YYYY-MM-DD>   report date (default today, UTC)

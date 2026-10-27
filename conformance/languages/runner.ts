@@ -599,9 +599,9 @@ export interface RunOptions {
   /** Pack rule ids to score; all when omitted. */
   rules?: readonly string[];
   fixtures: boolean;
-  /** Score the pack's real-code samples (every tool with a samples.lock). */
+  /** Score the pack's real-code samples (every tool with a samples.lock or samples staged under `publish/samples/`). */
   samples: boolean;
-  /** Test seam: a tool's extracted samples tree; default samplesTree() from pack-fixtures.mjs. */
+  /** Test seam: a tool's samples tree; default samplesTree() from pack-fixtures.mjs, the locked set overlaid with the staged one. */
   samplesDirectory?: (tool: string) => string | undefined;
   date: string;
 }

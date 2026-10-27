@@ -1,45 +1,53 @@
 /**
- * A sample set as its canonical archive (test-data-archive.mjs: the same files always make the same tar) and the
- * files committed for it: `samples.lock` naming the tar by sha256, file count and bytes, and `SAMPLES.md` beside it.
- * The compressed archive goes to the cache path pack-fixtures.mjs fetches samples into and pushes them from.
+ * Stages a sample set for publishing: its archive entries (`archiveEntries`, scripts/samples/samples.ts) go into the
+ * tool-pack's tracked `publish/samples/`, with a `REUSE.toml` licensing each sample under its source's licence. The
+ * publish workflow packs them (`publishedSamples`, scripts/samples/publish.ts) and writes `samples.lock`; the
+ * contributor edits `SAMPLES.md` in the same pull request.
  */
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { buildArchive, compressArchive, lockText } from "../s3/test-data-archive.mjs";
-import type { ToolPack } from "./samples.js";
+import { LABELS_SUFFIX, LICENSES_FILE, sampleLabelsSchema } from "./format.js";
+import { PUBLISH_REUSE, publishedSamples } from "./publish.js";
+import { byText, type ToolPack } from "./samples.js";
 
-export const SAMPLES_LOCK = "samples.lock";
-export const SAMPLES_NOTE = "SAMPLES.md";
+/** A tool-pack's staged samples, relative to the checkout. */
+export const publishSamplesDirectory = ({ pack, tool }: ToolPack): string => join("packs", pack, "upstream", tool, "publish", "samples");
 
-export interface PackedSamples {
-  sha256: string;
-  files: number;
-  bytes: number;
-  compressed: Buffer;
+interface Entry {
+  path: string;
+  bytes: Buffer;
 }
 
-export function packSamples(entries: readonly { path: string; bytes: Buffer }[]): PackedSamples {
-  const archive = buildArchive(entries);
-  return { sha256: archive.sha256, files: archive.files, bytes: archive.bytes, compressed: compressArchive(archive.tar) };
+/**
+ * The staged copy's REUSE.toml: each sample (`<sample-id>/**`) under its labels' `source.license`, copyright its
+ * repository's contributors; LICENSES.md, the set's own compilation, as the repository's other files are.
+ */
+export function samplesReuseToml(entries: readonly Entry[]): string {
+  const annotation = (path: string, copyright: string, licence: string): string[] =>
+    ["", "[[annotations]]", `path = ${JSON.stringify(path)}`, `SPDX-FileCopyrightText = ${JSON.stringify(copyright)}`, `SPDX-License-Identifier = ${JSON.stringify(licence)}`];
+  const lines = ["# Licensing of the staged samples only; never archived (scripts/samples/pack.ts).", "version = 1"];
+  if (entries.some(entry => entry.path === LICENSES_FILE)) lines.push(...annotation(LICENSES_FILE, "2026 Nera Software Inc.", "Apache-2.0"));
+  const labels = entries
+    .filter(entry => entry.path.endsWith(LABELS_SUFFIX) && entry.path.includes("/"))
+    .map(entry => ({ id: entry.path.slice(0, entry.path.indexOf("/")), source: sampleLabelsSchema.parse(JSON.parse(entry.bytes.toString("utf8"))).source }))
+    .sort((a, b) => byText(a.id, b.id));
+  for (const { id, source } of labels) lines.push(...annotation(`${id}/**`, `${source.repo} contributors`, source.license));
+  return `${lines.join("\n")}\n`;
 }
 
-/** `.rerail/pack-data/archives/samples/<pack>/<tool>/<sha256>.tar.zst`: where pack-fixtures.mjs caches a samples archive. */
-export function samplesArchivePath(root: string, { pack, tool }: ToolPack, digest: string): string {
-  return join(root, ".rerail", "pack-data", "archives", "samples", pack, tool, `${digest}.tar.zst`);
-}
-
-const writeAtomically = (path: string, bytes: Buffer | string): void => {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, bytes);
-  renameSync(temporary, path);
-};
-
-/** Writes the cached archive, then the tool-pack's samples.lock and SAMPLES.md. */
-export function writeSampleSet(root: string, toolPack: ToolPack, packed: PackedSamples, note: string): void {
-  writeAtomically(samplesArchivePath(root, toolPack, packed.sha256), packed.compressed);
-  const directory = join(root, "packs", toolPack.pack, "upstream", toolPack.tool);
-  writeAtomically(join(directory, SAMPLES_LOCK), lockText({ sha256: packed.sha256, files: packed.files, bytes: packed.bytes }));
-  writeAtomically(join(directory, SAMPLES_NOTE), note);
+/**
+ * Replaces the tool-pack's `publish/samples/` in the checkout at `root` with `entries` and their REUSE.toml: the
+ * samples to add or replace in the published set (all of it for a `replace` publish). Checked as prep checks them first.
+ */
+export function writeSampleSet(root: string, toolPack: ToolPack, entries: readonly Entry[]): void {
+  publishedSamples(entries);
+  const directory = join(root, publishSamplesDirectory(toolPack));
+  rmSync(directory, { recursive: true, force: true });
+  for (const { path, bytes } of entries) {
+    mkdirSync(dirname(join(directory, path)), { recursive: true });
+    writeFileSync(join(directory, path), bytes);
+  }
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, PUBLISH_REUSE), samplesReuseToml(entries));
 }

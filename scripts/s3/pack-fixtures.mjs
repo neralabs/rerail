@@ -864,21 +864,68 @@ function extractSamples(root, fetched, { dryRun, log }) {
   return extracted.sort(byBytes);
 }
 
+/** A tool-pack's staged samples directory: `publish/samples/` in its tool directory (scripts/samples/pack.ts writes it). */
+export const PUBLISH_SAMPLES = "publish/samples";
+/** The licensing file of the staged copy only; it is never part of a samples archive. */
+const PUBLISH_SAMPLES_REUSE = "REUSE.toml";
+
+/** The files staged under the tool-pack's `publish/samples/`, as archive entries (REUSE.toml left out); [] when none. */
+function stagedSamples(root, toolPack) {
+  const directory = join(root, toolPack.directory, PUBLISH_SAMPLES);
+  if (!existsSync(directory)) return [];
+  const entries = [];
+  for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    if (entry.isDirectory()) continue;
+    const absolute = join(entry.parentPath, entry.name);
+    const path = relative(directory, absolute).split(sep).join("/");
+    if (!entry.isFile()) throw new Error(`${toolPack.directory}/${PUBLISH_SAMPLES}/${path} is not a regular file`);
+    if (path !== PUBLISH_SAMPLES_REUSE) entries.push({ path, bytes: readFileSync(absolute) });
+  }
+  return entries;
+}
+
 /**
- * The extracted samples tree of the tool-pack `pack`/`tool` (samplesTreeDirectory), or undefined when it has no
- * samples.lock. A tree whose files are still the locked archive's (recordingTreeReady) is used as it is; otherwise the
- * archive is taken from ARCHIVE_CACHE, or fetched from S3, verified, and only then extracted.
+ * The samples tree of the tool-pack `pack`/`tool` the conformance runner reads, or undefined when it has neither a
+ * samples.lock nor staged samples. The locked set is extracted into its tree (samplesTreeDirectory): a tree whose files
+ * are still the locked archive's (recordingTreeReady) is used as it is; otherwise the archive is taken from
+ * ARCHIVE_CACHE, or fetched from S3, verified, and only then extracted. Samples staged under `publish/samples/` are laid
+ * over the locked set, file by file, in a merged tree `publish-<sha256 of its canonical tar>/` beside it.
  */
 export function samplesTree({ root = ROOT, pack, tool, aws = runAws } = {}) {
   const toolPack = namedToolPack(pack, tool);
   const lock = readSamplesLock(root, toolPack);
-  if (lock === undefined) return undefined;
+  const staged = stagedSamples(root, toolPack);
+  if (lock === undefined && staged.length === 0) return undefined;
+  const tree = lock === undefined ? undefined : lockedSamplesTree(root, toolPack, lock, aws);
+  if (staged.length === 0) return tree;
+  const merged = new Map((tree === undefined ? [] : extractedEntries(tree)).map((entry) => [entry.path, entry]));
+  for (const entry of staged) merged.set(entry.path, entry);
+  const entries = [...merged.values()];
+  const archive = buildArchive(entries);
+  const view = { sha256: archive.sha256, files: archive.files, bytes: archive.bytes };
+  const mergedTree = join(root, SAMPLES_TREES, pack, tool, `publish-${archive.sha256}`);
+  if (!recordingTreeReady(mergedTree, view)) extractRecordingTree(mergedTree, entries, view);
+  return mergedTree;
+}
+
+/** The locked samples set's extracted tree, extracted from a verified archive unless it is already there whole. */
+function lockedSamplesTree(root, toolPack, lock, aws) {
   const tree = samplesTreeDirectory(root, toolPack, lock.sha256);
   if (recordingTreeReady(tree, lock)) return tree;
   const discarded = [];
   const { entries } = samplesArchive(root, toolPack, lock, { dryRun: false, aws, signIn: signer(aws, discarded, "samples archive"), discarded, log: () => {} });
   extractRecordingTree(tree, entries, lock);
   return tree;
+}
+
+/** An extracted tree's files besides its marker, as archive entries. */
+function extractedEntries(tree) {
+  return readdirSync(tree, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && !(entry.parentPath === tree && entry.name === RECORDING_TREE_MARKER))
+    .map((entry) => {
+      const absolute = join(entry.parentPath, entry.name);
+      return { path: relative(tree, absolute).split(sep).join("/"), bytes: readFileSync(absolute) };
+    });
 }
 
 /**
