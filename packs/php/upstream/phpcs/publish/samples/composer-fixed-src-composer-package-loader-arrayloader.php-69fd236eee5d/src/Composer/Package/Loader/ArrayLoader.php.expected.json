@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "4bddcad1c73e37c618d7f41ecfc1db7ecce2c0aa",
+    "path": "src/Composer/Package/Loader/ArrayLoader.php",
+    "license": "MIT",
+    "sha256": "69fd236eee5d99501d2cadbc56c021ed4f9b98d9b1d95e648af504892fb68ef5"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

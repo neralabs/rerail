@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "c6b3899c2da7161a69ae943d86229f78f236ad3c",
+    "path": "tests/Doctrine/Tests/ORM/Query/QueryExpressionVisitorTest.php",
+    "license": "MIT",
+    "sha256": "84795cbbc414e454d8d8923a170dfe930bf5fa85a9201c1b140de31148a1e2d4"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 53,
+        "column": 41
+      }
+    ]
+  }
+}

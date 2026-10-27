@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "517a5ad93c63803d0d07788e6e203fd79d0ab0d6",
+    "path": "tests/framework/filters/auth/CompositeAuthTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "b45e4597ca00ebeeb589bce38d0574ad610a7a8c2b2a12ee5023b39c777d6016"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": [
+      {
+        "line": 141,
+        "column": 11
+      }
+    ]
+  }
+}

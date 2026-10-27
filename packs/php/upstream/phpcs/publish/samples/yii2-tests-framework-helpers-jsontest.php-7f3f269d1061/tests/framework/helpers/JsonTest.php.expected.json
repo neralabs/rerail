@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "1260d4011be37999dbd0713f3c83fc0bbab1fa24",
+    "path": "tests/framework/helpers/JsonTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "7f3f269d1061421c7996ee16c9da1a5d500ccb51dd13b156f75118af8f33c0c5"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 101,
+        "column": 21
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "56805ecafe8597a07b4576b45e5532b9862fd65a",
+    "path": "src/Composer/Util/HttpDownloader.php",
+    "license": "MIT",
+    "sha256": "f07ca02d151478f0c4d46e4a8ac4d389cd4bcb36d4838acadf8241e371b8112c"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 169,
+        "column": 13
+      },
+      {
+        "line": 170,
+        "column": 13
+      },
+      {
+        "line": 171,
+        "column": 13
+      }
+    ]
+  }
+}

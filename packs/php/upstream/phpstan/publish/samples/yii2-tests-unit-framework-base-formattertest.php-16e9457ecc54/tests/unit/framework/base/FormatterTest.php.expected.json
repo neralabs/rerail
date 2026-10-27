@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "d7b4ea859b8e41d50b69b7faa8455c40cf6a57ba",
+    "path": "tests/unit/framework/base/FormatterTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "16e9457ecc54fcef071827a539c867007a136de9a16cd3b4d5b16dc225eab6c1"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 13
+      }
+    ]
+  }
+}

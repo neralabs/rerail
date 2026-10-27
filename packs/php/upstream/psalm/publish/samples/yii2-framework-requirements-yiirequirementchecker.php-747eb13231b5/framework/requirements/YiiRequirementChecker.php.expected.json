@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "b5f8a4dc22d5f8188405a2099d85fc154226c9b2",
+    "path": "framework/requirements/YiiRequirementChecker.php",
+    "license": "BSD-3-Clause",
+    "sha256": "747eb13231b5da996299f0877374aba2dd8e651bb2cc09fa8997f0b2568a1e2d"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 290,
+        "column": 13
+      }
+    ]
+  }
+}

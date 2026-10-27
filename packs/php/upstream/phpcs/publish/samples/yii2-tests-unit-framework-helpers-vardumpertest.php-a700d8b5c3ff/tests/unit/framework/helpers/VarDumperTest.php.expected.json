@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "8d0fb916c017de5c969da446dd2d6a56a9d99f9d",
+    "path": "tests/unit/framework/helpers/VarDumperTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "a700d8b5c3ff8118b9e1bae3badbba7b3d935336dd67026c902f46994359b432"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 107,
+        "column": 35
+      }
+    ]
+  }
+}

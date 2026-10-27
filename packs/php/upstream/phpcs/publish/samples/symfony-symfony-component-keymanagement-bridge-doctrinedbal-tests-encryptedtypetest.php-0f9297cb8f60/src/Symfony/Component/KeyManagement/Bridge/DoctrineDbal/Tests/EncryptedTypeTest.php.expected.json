@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "05daf5360a033b01d4bf3665f0a8042bcf42efef",
+    "path": "src/Symfony/Component/KeyManagement/Bridge/DoctrineDbal/Tests/EncryptedTypeTest.php",
+    "license": "MIT",
+    "sha256": "0f9297cb8f608e18dc3f9807072c39eaf64b9edf961cf80a9eda45e646744e8f"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 256,
+        "column": 64
+      }
+    ]
+  }
+}

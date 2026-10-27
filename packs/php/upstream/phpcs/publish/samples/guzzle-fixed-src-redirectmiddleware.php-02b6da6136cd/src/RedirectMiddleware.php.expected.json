@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "guzzle/guzzle",
+    "commit": "991ec647f1c4a090094afe316c37f6871ce73e3a",
+    "path": "src/RedirectMiddleware.php",
+    "license": "MIT",
+    "sha256": "02b6da6136cd295e52d81d61a65475c5251896b138444dc53773a928b8962d92"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

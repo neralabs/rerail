@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "1adc68b20f647bd470f9e67b801c0e84268ad114",
+    "path": "tests/Integration/Console/Scheduling/CallbackEventTest.php",
+    "license": "MIT",
+    "sha256": "702708be5499cb6d0460e4fde6acb3f7c703244abafa40846661b473b91242c8"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "filamentphp/filament",
+    "commit": "ec7f76342e2670d29e8d8182f24ab90495ec802e",
+    "path": "tests/src/Notifications/NotificationTest.php",
+    "license": "MIT",
+    "sha256": "019c9173639c0aa85ea53b627916b26d9fff56507073cb7b31f2ba1a509fada0"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": []
+  }
+}

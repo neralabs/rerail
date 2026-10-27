@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "bagisto/bagisto",
+    "commit": "299a638281bf53bd349506625f0f9bd3364c91ad",
+    "path": "packages/Webkul/Shop/src/Http/Controllers/Customer/RegistrationController.php",
+    "license": "MIT",
+    "sha256": "86256e07971ce85dd300911b38020ca651ec5de6d61783acc3587a6e0e6385b1"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "bagisto/bagisto",
+    "commit": "d62a93d7677f937a0b0bd117d4599d57bbedc7b3",
+    "path": "packages/Webkul/Installer/src/Listeners/Installer.php",
+    "license": "MIT",
+    "sha256": "c1f800d1484b5cf5ca67f33ec72dad15c7aaa7ccd851df911f6f4add8f18d906"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 40,
+        "column": 39
+      },
+      {
+        "line": 75,
+        "column": 39
+      }
+    ]
+  }
+}

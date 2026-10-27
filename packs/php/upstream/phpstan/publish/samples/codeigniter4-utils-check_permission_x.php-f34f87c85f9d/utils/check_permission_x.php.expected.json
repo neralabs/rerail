@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "codeigniter4/CodeIgniter4",
+    "commit": "e0d2cff888575d70a2a5d4e4633df250f6be6a86",
+    "path": "utils/check_permission_x.php",
+    "license": "MIT",
+    "sha256": "f34f87c85f9d03245458722f46dfc47cff28763289fee1633082609b7616dbe7"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 23
+      }
+    ]
+  }
+}

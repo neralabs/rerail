@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "3ee89ac42ca103544f9ef65a9532c6e667c768ca",
+    "path": "framework/grid/CheckboxColumn.php",
+    "license": "BSD-3-Clause",
+    "sha256": "b2978688e6989450d0c2b3cda8064d63bd045946bda9df52b82e140920c4f831"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

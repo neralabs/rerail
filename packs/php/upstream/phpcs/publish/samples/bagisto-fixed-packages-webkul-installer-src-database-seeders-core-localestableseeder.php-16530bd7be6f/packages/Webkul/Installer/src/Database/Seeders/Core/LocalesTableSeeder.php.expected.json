@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "bagisto/bagisto",
+    "commit": "8c5568e0f67a949a775d2ed17b90fc18b550ec40",
+    "path": "packages/Webkul/Installer/src/Database/Seeders/Core/LocalesTableSeeder.php",
+    "license": "MIT",
+    "sha256": "16530bd7be6fdfc5cf6793e206d65227a148a8bef2fdebce2e902c191d5e5d3f"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

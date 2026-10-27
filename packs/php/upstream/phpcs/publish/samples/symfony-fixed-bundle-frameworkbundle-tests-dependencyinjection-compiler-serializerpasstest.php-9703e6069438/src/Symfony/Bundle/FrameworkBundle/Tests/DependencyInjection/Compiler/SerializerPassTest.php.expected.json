@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "b4e4844235563eb078212b8ecc4981cde30141ec",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Tests/DependencyInjection/Compiler/SerializerPassTest.php",
+    "license": "MIT",
+    "sha256": "9703e6069438f3b4e11a9015d98ccf4897a7481099ce1b092f5d844b0563bf05"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

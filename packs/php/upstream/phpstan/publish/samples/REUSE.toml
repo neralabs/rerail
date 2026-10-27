@@ -1,0 +1,292 @@
+# Licensing of the staged samples only; never archived (scripts/samples/pack.ts).
+version = 1
+
+[[annotations]]
+path = "bagisto-fixed-packages-webkul-paypal-tests-feature-paypalsmartbuttontest.php-05d28d296cc2/**"
+SPDX-FileCopyrightText = "bagisto/bagisto contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bagisto-fixed-packages-webkul-shop-tests-feature-checkout-cartshippingtaxtest.php-833e798e132c/**"
+SPDX-FileCopyrightText = "bagisto/bagisto contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bagisto-fixed-packages-webkul-shop-tests-feature-checkout-staleshippingratetest.php-c067d71c0d59/**"
+SPDX-FileCopyrightText = "bagisto/bagisto contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bagisto-packages-webkul-paypal-tests-feature-paypalsmartbuttontest.php-d2f79e92e42f/**"
+SPDX-FileCopyrightText = "bagisto/bagisto contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bagisto-packages-webkul-shop-tests-feature-checkout-cartshippingtaxtest.php-36afd707371c/**"
+SPDX-FileCopyrightText = "bagisto/bagisto contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "bagisto-packages-webkul-shop-tests-feature-checkout-staleshippingratetest.php-c33fb4036f4a/**"
+SPDX-FileCopyrightText = "bagisto/bagisto contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cakephp-fixed-tests-testcase-http-server_mocks.php-dd1600110bf6/**"
+SPDX-FileCopyrightText = "cakephp/cakephp contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cakephp-tests-testcase-http-server_mocks.php-978001910bed/**"
+SPDX-FileCopyrightText = "cakephp/cakephp contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "codeigniter4-fixed-tests-system-http-files-filemovingtest.php-a04172282011/**"
+SPDX-FileCopyrightText = "codeigniter4/CodeIgniter4 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "codeigniter4-fixed-utils-check_permission_x.php-e03af23b59ec/**"
+SPDX-FileCopyrightText = "codeigniter4/CodeIgniter4 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "codeigniter4-tests-system-http-files-filemovingtest.php-7ad979c0b92e/**"
+SPDX-FileCopyrightText = "codeigniter4/CodeIgniter4 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "codeigniter4-utils-check_permission_x.php-f34f87c85f9d/**"
+SPDX-FileCopyrightText = "codeigniter4/CodeIgniter4 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "composer-fixed-src-composer-autoload-classloader.php-4c6624165af9/**"
+SPDX-FileCopyrightText = "composer/composer contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "composer-fixed-tests-bootstrap.php-9df29fb5ef64/**"
+SPDX-FileCopyrightText = "composer/composer contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "composer-src-composer-autoload-classloader.php-b2f60fa7ce34/**"
+SPDX-FileCopyrightText = "composer/composer contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "composer-tests-bootstrap.php-a2f46366cbf8/**"
+SPDX-FileCopyrightText = "composer/composer contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "filament-fixed-packages-admin-src-helpers.php-9ae1d5afd2b9/**"
+SPDX-FileCopyrightText = "filamentphp/filament contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "filament-fixed-tests-src-notifications-notificationtest.php-019c9173639c/**"
+SPDX-FileCopyrightText = "filamentphp/filament contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "filament-packages-admin-src-helpers.php-7199d5a84aac/**"
+SPDX-FileCopyrightText = "filamentphp/filament contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "filament-tests-src-notifications-notificationtest.php-84d5810ff48a/**"
+SPDX-FileCopyrightText = "filamentphp/filament contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "framework-fixed-tests-integration-database-eloquentpivotwithouttimestamptest.fixtures.php-91b8d3912089/**"
+SPDX-FileCopyrightText = "laravel/framework contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "framework-fixed-tests-integration-database-eloquentpivotwithouttimestamptest.php-4382cb6a20de/**"
+SPDX-FileCopyrightText = "laravel/framework contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "framework-fixed-tests-support-oncetest.php-59f7b34383d6/**"
+SPDX-FileCopyrightText = "laravel/framework contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "framework-tests-integration-database-eloquentpivotwithouttimestamptest.fixtures.php-8c7b1732011c/**"
+SPDX-FileCopyrightText = "laravel/framework contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "framework-tests-integration-database-eloquentpivotwithouttimestamptest.php-ca7b29c202a7/**"
+SPDX-FileCopyrightText = "laravel/framework contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "framework-tests-support-oncetest.php-db4b6df26724/**"
+SPDX-FileCopyrightText = "laravel/framework contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "guzzle-fixed-tests-adapter-curl-curlfactorytest.php-b33ed88c764f/**"
+SPDX-FileCopyrightText = "guzzle/guzzle contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "guzzle-tests-adapter-curl-curlfactorytest.php-9eaccc96539a/**"
+SPDX-FileCopyrightText = "guzzle/guzzle contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "monolog-fixed-tests-monolog-handler-errorloghandlertest.php-9503cf05d2ac/**"
+SPDX-FileCopyrightText = "Seldaek/monolog contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "monolog-fixed-tests-monolog-handler-nativemailerhandlertest.php-669584e263e9/**"
+SPDX-FileCopyrightText = "Seldaek/monolog contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "monolog-fixed-tests-monolog-processor-introspectionprocessortest.php-0857602b4815/**"
+SPDX-FileCopyrightText = "Seldaek/monolog contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "monolog-tests-monolog-handler-errorloghandlertest.php-1e6826043c97/**"
+SPDX-FileCopyrightText = "Seldaek/monolog contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "monolog-tests-monolog-handler-nativemailerhandlertest.php-d943d703c7d3/**"
+SPDX-FileCopyrightText = "Seldaek/monolog contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "monolog-tests-monolog-processor-introspectionprocessortest.php-b565559257cd/**"
+SPDX-FileCopyrightText = "Seldaek/monolog contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slim-fixed-tests-assets-headerfunctions.php-23227d6c9bd3/**"
+SPDX-FileCopyrightText = "slimphp/Slim contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slim-fixed-tests-assets-phpfunctionoverrides.php-0dc08be2ea71/**"
+SPDX-FileCopyrightText = "slimphp/Slim contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slim-fixed-tests-getallheaders.php-27ac392e5478/**"
+SPDX-FileCopyrightText = "slimphp/Slim contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slim-tests-assets-headerfunctions.php-fc85ffeb3f2e/**"
+SPDX-FileCopyrightText = "slimphp/Slim contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slim-tests-assets-phpfunctionoverrides.php-bbde092182c5/**"
+SPDX-FileCopyrightText = "slimphp/Slim contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slim-tests-getallheaders.php-108dbd6d468b/**"
+SPDX-FileCopyrightText = "slimphp/Slim contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "symfony-fixed-github-sync-translations.php-3a3c421c7081/**"
+SPDX-FileCopyrightText = "symfony/symfony contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "symfony-fixed-src-symfony-component-httpkernel-tests-controller-controllerresolvertest.php-2fc852708a69/**"
+SPDX-FileCopyrightText = "symfony/symfony contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "symfony-fixed-src-symfony-contracts-deprecation-deprecated.php-0518c2067054/**"
+SPDX-FileCopyrightText = "symfony/symfony contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "symfony-github-sync-translations.php-90c99aa3373b/**"
+SPDX-FileCopyrightText = "symfony/symfony contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "symfony-src-symfony-component-httpkernel-tests-controller-controllerresolvertest.php-8a60fb2636e8/**"
+SPDX-FileCopyrightText = "symfony/symfony contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "symfony-src-symfony-contracts-deprecation-deprecated.php-9080d9491578/**"
+SPDX-FileCopyrightText = "symfony/symfony contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "twig-bin-generate_operators_precedence.php-a38aaa3072fc/**"
+SPDX-FileCopyrightText = "twigphp/Twig contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "twig-fixed-bin-generate_operators_precedence.php-a4684173de93/**"
+SPDX-FileCopyrightText = "twigphp/Twig contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "twig-fixed-tests-node-deprecatedtest.php-c6dbcbb9d5d1/**"
+SPDX-FileCopyrightText = "twigphp/Twig contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "twig-fixed-tests-util-callableargumentsextractortest.php-ecb2da36ceea/**"
+SPDX-FileCopyrightText = "twigphp/Twig contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "twig-tests-node-deprecatedtest.php-7b8e1223b73b/**"
+SPDX-FileCopyrightText = "twigphp/Twig contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "twig-tests-util-callableargumentsextractortest.php-e1782bb22d4b/**"
+SPDX-FileCopyrightText = "twigphp/Twig contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "yii2-fixed-tests-framework-log-dispatchertest.php-f49f32452929/**"
+SPDX-FileCopyrightText = "yiisoft/yii2 contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "yii2-fixed-tests-framework-log-syslogtargettest.php-3c13a7c14389/**"
+SPDX-FileCopyrightText = "yiisoft/yii2 contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "yii2-fixed-tests-unit-framework-base-formattertest.php-8e4bac3b85f9/**"
+SPDX-FileCopyrightText = "yiisoft/yii2 contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "yii2-tests-framework-log-dispatchertest.php-0e4ecd16d506/**"
+SPDX-FileCopyrightText = "yiisoft/yii2 contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "yii2-tests-framework-log-syslogtargettest.php-25b9c29557f5/**"
+SPDX-FileCopyrightText = "yiisoft/yii2 contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "yii2-tests-unit-framework-base-formattertest.php-16e9457ecc54/**"
+SPDX-FileCopyrightText = "yiisoft/yii2 contributors"
+SPDX-License-Identifier = "BSD-3-Clause"

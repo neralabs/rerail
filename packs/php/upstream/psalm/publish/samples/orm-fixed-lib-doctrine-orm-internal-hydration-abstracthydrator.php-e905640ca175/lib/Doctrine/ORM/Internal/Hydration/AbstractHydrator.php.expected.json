@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "6d40859228d64ef6f2c5477042182bfd8bfd110d",
+    "path": "lib/Doctrine/ORM/Internal/Hydration/AbstractHydrator.php",
+    "license": "MIT",
+    "sha256": "e905640ca1754eecb5d40f7e9f5e16e8cc3fcadd3a8c39e80ccfce522b9d3b5d"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "8784331022e17b7b06a54ce669c098501c762059",
+    "path": "tests/framework/db/oci/SchemaTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "6f5721104dbbba7558fc0623a02211381d52704a708f61525ed7718c9c97233e"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": [
+      {
+        "line": 189,
+        "column": 11
+      }
+    ]
+  }
+}

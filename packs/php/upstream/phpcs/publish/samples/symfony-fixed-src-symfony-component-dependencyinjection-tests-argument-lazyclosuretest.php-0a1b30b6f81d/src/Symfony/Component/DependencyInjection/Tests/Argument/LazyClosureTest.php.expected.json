@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "c78173d11a883c796d61227b18c05f735a93138b",
+    "path": "src/Symfony/Component/DependencyInjection/Tests/Argument/LazyClosureTest.php",
+    "license": "MIT",
+    "sha256": "0a1b30b6f81d1b176117cf292a3b9421c0a74bbaa1cd0e4287afdbcf69058a4c"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": []
+  }
+}

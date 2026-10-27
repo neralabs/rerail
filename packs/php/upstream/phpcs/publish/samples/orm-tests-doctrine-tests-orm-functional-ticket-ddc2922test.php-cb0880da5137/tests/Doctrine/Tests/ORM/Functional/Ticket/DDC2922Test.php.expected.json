@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "997000352af4587fd8f98a901db6563322f1a5bd",
+    "path": "tests/Doctrine/Tests/ORM/Functional/Ticket/DDC2922Test.php",
+    "license": "MIT",
+    "sha256": "cb0880da5137aa8c78a70b85d34c057a0f64b3e54f21912e92b8eb915f523660"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 99,
+        "column": 94
+      }
+    ]
+  }
+}

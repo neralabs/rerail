@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "22e94ac594ae5b9b851140eae4b3ee553efb814d",
+    "path": "lib/Doctrine/ORM/Query/Parser.php",
+    "license": "MIT",
+    "sha256": "95f9ae0d4f76648f2edddd6c829f770c780673d979b6908175d1deeb3b5b1dc7"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 188,
+        "column": 13
+      },
+      {
+        "line": 1249,
+        "column": 13
+      }
+    ]
+  }
+}

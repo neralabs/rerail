@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "ecfb5429a725132aac4af19adbf2b784bfdc4ee9",
+    "path": ".github/sync-translations.php",
+    "license": "MIT",
+    "sha256": "90c99aa3373be42494881c3fd12b567afe856c0c1737af352bb576d4ee2d70ad"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 15
+      },
+      {
+        "line": 69
+      }
+    ]
+  }
+}

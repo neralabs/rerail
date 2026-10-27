@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "55d70248a9dd3a1f293f23451de97e6509ac4f1b",
+    "path": "lib/Doctrine/DBAL/Connection.php",
+    "license": "MIT",
+    "sha256": "3516ebb6d6e03ae10830afe3c6eaff3e594d3a42f095db619f80a73c2f926c8d"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 547,
+        "column": 17
+      }
+    ]
+  }
+}

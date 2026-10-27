@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "0ab4dfba7cd15bf37edce6162f677bb598618655",
+    "path": "src/Composer/Advisory/IgnoredSecurityAdvisory.php",
+    "license": "MIT",
+    "sha256": "61dcd69f532501c568b746fd741d7e4f05c6ea2096f1f3c1eccbc0e03227b8eb"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

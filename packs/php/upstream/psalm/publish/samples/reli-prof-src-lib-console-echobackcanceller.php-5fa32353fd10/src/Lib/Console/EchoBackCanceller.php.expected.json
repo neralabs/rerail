@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reliforp/reli-prof",
+    "commit": "9efd93ba38d4c211a00c05bd3c642a1dcabf40eb",
+    "path": "src/Lib/Console/EchoBackCanceller.php",
+    "license": "MIT",
+    "sha256": "5fa32353fd107cf95e64d4321d7ccaa35cfd3ae4f9ce6ae54af5dad2b76ba99d"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

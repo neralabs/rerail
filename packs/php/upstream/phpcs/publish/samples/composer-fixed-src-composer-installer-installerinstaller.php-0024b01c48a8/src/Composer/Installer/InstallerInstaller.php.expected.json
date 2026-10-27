@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "e0a1d9ef58c8b7743f5e4c058c436214855555ac",
+    "path": "src/Composer/Installer/InstallerInstaller.php",
+    "license": "MIT",
+    "sha256": "0024b01c48a8e0bc853aea0626b3d331d4063fd42ecc90fb91c09c9b674e6fee"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": []
+  }
+}

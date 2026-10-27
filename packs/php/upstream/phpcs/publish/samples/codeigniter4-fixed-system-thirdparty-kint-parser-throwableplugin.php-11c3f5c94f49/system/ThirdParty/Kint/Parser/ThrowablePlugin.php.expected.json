@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "codeigniter4/CodeIgniter4",
+    "commit": "c46cea4ee042768ca19a816f02f7113e1d079a8d",
+    "path": "system/ThirdParty/Kint/Parser/ThrowablePlugin.php",
+    "license": "MIT",
+    "sha256": "11c3f5c94f49cb0a3b34a20814ad107cc2b018012dae2c64fdb10e491edf2740"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

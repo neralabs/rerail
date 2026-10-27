@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "cakephp/cakephp",
+    "commit": "b752bad5cae88958e475a45b705444ee15008cb1",
+    "path": "tests/test_app/config/dump_test.php",
+    "license": "MIT",
+    "sha256": "9b889e377494f22ac8d0de6aff96965074f2ff251521e9634a22cb7984dadb33"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 10,
+        "column": 18
+      }
+    ]
+  }
+}

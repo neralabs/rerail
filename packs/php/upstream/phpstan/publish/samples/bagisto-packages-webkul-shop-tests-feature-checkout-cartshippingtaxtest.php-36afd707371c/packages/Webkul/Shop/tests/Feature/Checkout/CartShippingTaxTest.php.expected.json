@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "bagisto/bagisto",
+    "commit": "1ea2d06079d660a7bb6a8963e597954463d6c490",
+    "path": "packages/Webkul/Shop/tests/Feature/Checkout/CartShippingTaxTest.php",
+    "license": "MIT",
+    "sha256": "36afd707371cc6210530d516433c9c08246d8cfbe9b527162fafd40f4c6b8680"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 38
+      }
+    ]
+  }
+}

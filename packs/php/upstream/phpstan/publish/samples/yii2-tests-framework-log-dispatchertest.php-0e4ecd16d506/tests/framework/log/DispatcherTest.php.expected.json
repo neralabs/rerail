@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "ba0ab403b52124c941dbeb46fbd9efdc12252a5d",
+    "path": "tests/framework/log/DispatcherTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "0e4ecd16d50677f8f1d25d1b883ef9f794b543759fb12363c95f828d7f2c6c04"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 9
+      }
+    ]
+  }
+}

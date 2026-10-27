@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "amphp/cluster",
+    "commit": "553393b14868762c4c4c7f8915eb963dd456bf36",
+    "path": "src/functions.php",
+    "license": "MIT",
+    "sha256": "6442756a090684dd0891a1532b6ab6963071aa182b6899275d93f24843058bdd"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

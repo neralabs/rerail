@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "32ed32cf5652774e21138e4054de7899c3b4c464",
+    "path": "tests/Doctrine/Tests/ORM/Mapping/php/Doctrine.Tests.ORM.Mapping.Comment.php",
+    "license": "MIT",
+    "sha256": "b2c5b7b4dbf30a4261ff58a7d4950efb0b800c78cf60e1efd750cea62691b91b"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 17,
+        "column": 17
+      }
+    ]
+  }
+}

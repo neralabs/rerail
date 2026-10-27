@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "60cd5244433f6b529611db752fd15acd3bc2f0e0",
+    "path": "tests/Doctrine/Tests/ORM/Query/QueryTest.php",
+    "license": "MIT",
+    "sha256": "b6b6a2c489567c0af7540935d6275965dbb2f1ed7a903deb06f780d06240f3a3"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

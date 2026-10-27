@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "cakephp/cakephp",
+    "commit": "26bad8fda726b5813fb31f0dc6e63c0558c87691",
+    "path": "tests/TestCase/Http/RunnerTest.php",
+    "license": "MIT",
+    "sha256": "53fabaa5fcd3da3065e5e014668990bda8ba90afb81df11b91220a912a2ede88"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "twigphp/Twig",
+    "commit": "0823d23488954c8a564ff868e6f292fd588a16f1",
+    "path": "tests/Node/DeprecatedTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "7b8e1223b73bf9d155f71ab74a9dbdf850d1f3002c9bc3292470b63653f47f15"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 92
+      }
+    ]
+  }
+}

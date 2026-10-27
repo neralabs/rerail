@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Seldaek/monolog",
+    "commit": "f200e7987970af023b6a0c84d4c3a0ae58934208",
+    "path": "tests/Monolog/ErrorHandlerTest.php",
+    "license": "MIT",
+    "sha256": "808acaade56b2c1437e3228e68db203328afd896b74028986de9a85c601673a9"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

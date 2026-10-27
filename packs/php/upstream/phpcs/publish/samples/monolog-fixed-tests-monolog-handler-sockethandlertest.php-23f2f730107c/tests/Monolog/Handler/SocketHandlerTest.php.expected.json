@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Seldaek/monolog",
+    "commit": "d752f435b502f0a09e4db71d7b99fff2b73db403",
+    "path": "tests/Monolog/Handler/SocketHandlerTest.php",
+    "license": "MIT",
+    "sha256": "23f2f730107cc72d8372552e562f8e1c6c902d3ddbecbb578d15c68b5e406e1b"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

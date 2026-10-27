@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "filamentphp/filament",
+    "commit": "86dc95d4e1ad1f455df00b7265ae2297c3305873",
+    "path": "packages/admin/src/helpers.php",
+    "license": "MIT",
+    "sha256": "7199d5a84aacabdd65d5e6d4441c389b06b7b0a3bb6c2c233a6f66907159eeeb"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 8
+      }
+    ]
+  }
+}

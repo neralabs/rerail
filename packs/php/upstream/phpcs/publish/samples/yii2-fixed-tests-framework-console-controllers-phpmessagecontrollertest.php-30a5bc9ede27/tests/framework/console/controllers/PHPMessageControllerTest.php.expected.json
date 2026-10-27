@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "4c46c6a0969f14cc5f49de8c7b164602214f3880",
+    "path": "tests/framework/console/controllers/PHPMessageControllerTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "30a5bc9ede2760db9d8f82200e2b2efa94363a119246db50778c3ea999df866a"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "slimphp/Slim",
+    "commit": "fc6f71f4bf0db1245c881b09c677c5cae3a01d54",
+    "path": "tests/Assets/PhpFunctionOverrides.php",
+    "license": "MIT",
+    "sha256": "0dc08be2ea71dbc3a641e69dca6163c3b91f7b0e1f103904dc10ca46ea616aec"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": []
+  }
+}

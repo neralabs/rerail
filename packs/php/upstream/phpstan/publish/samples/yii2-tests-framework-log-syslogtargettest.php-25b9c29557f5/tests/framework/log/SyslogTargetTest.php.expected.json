@@ -1,0 +1,27 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "ba0ab403b52124c941dbeb46fbd9efdc12252a5d",
+    "path": "tests/framework/log/SyslogTargetTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "25b9c29557f5e04d883659eeaadcebb0276dd582a11b88597912b82f32b7429b"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 10
+      },
+      {
+        "line": 15
+      },
+      {
+        "line": 20
+      }
+    ]
+  }
+}

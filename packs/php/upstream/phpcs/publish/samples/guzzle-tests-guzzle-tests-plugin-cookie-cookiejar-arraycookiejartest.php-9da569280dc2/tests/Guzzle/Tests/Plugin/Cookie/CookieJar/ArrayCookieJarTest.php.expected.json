@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "guzzle/guzzle",
+    "commit": "805b34a872cc768260cf3acacd9f22a024000871",
+    "path": "tests/Guzzle/Tests/Plugin/Cookie/CookieJar/ArrayCookieJarTest.php",
+    "license": "MIT",
+    "sha256": "9da569280dc2968018d0c4f23357e257344535d60d484a051d453438407d6cd6"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 360,
+        "column": 70
+      }
+    ]
+  }
+}

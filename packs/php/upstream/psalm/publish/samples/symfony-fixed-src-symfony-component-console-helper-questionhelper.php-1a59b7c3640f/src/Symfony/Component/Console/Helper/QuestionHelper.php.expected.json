@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "1342cc1fb5803a725eba1f60fa9076437d1ec4b3",
+    "path": "src/Symfony/Component/Console/Helper/QuestionHelper.php",
+    "license": "MIT",
+    "sha256": "1a59b7c3640f58a150dc1f0c6d950f39613ba7ea7bfcc1beddc0490c2c19ab77"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

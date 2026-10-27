@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "Seldaek/monolog",
+    "commit": "aff8d92e294d638e8022e3f8c1a27111c6b2482a",
+    "path": "src/Monolog/Processor/GitProcessor.php",
+    "license": "MIT",
+    "sha256": "1ebf305d6eb004ed45fc69c1fda2c32d692231ed4a97abd64d3a47dd3f1bac42"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-backtick-operator": [
+      {
+        "line": 54,
+        "column": 21
+      },
+      {
+        "line": 54,
+        "column": 47
+      }
+    ]
+  }
+}

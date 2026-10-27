@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "0df9a82a7f25eb3266c7a87fb03ace234a3eb193",
+    "path": "tests/unit/framework/db/QueryBuilderTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "7f7b53a6a36c939f47c550e29de9b50d84409b7d58ad4ce1a9d1933ea4144c14"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 418,
+        "column": 36
+      }
+    ]
+  }
+}

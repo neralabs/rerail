@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "twigphp/Twig",
+    "commit": "65937619507a2fe2868415695a8a7cfcec1732bf",
+    "path": "lib/Twig/Extension/Core.php",
+    "license": "BSD-3-Clause",
+    "sha256": "4c538ad8b434fe4d348a7a016f1bc3cc8012faefe8fedf23633e8bc2a355e272"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 204,
+        "column": 77
+      },
+      {
+        "line": 215,
+        "column": 23
+      }
+    ]
+  }
+}

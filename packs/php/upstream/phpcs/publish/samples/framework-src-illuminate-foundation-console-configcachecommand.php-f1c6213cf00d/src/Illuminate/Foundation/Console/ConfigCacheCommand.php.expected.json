@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "652cc51dab64ecbd58d7e8083b836a2220f7d184",
+    "path": "src/Illuminate/Foundation/Console/ConfigCacheCommand.php",
+    "license": "MIT",
+    "sha256": "f1c6213cf00d326f8a399b022b2373a3251723c20e8363bb08b643cc1e9f83e4"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 75,
+        "column": 21
+      }
+    ]
+  }
+}

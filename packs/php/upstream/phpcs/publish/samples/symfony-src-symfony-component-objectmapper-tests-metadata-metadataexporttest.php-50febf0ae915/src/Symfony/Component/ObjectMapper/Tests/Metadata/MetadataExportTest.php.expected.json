@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "ab9cecd99bd83214ed72438e97547fe76eb75112",
+    "path": "src/Symfony/Component/ObjectMapper/Tests/Metadata/MetadataExportTest.php",
+    "license": "MIT",
+    "sha256": "50febf0ae9155886cbf1d5af4992529dbf75d04cf84fe48f5ca1e58d013bb45a"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 106,
+        "column": 16
+      }
+    ]
+  }
+}

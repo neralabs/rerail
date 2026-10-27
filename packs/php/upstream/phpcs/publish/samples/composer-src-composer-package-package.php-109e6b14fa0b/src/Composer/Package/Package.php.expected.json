@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "560806f89275d1ede247937f64d2b803e5df9a11",
+    "path": "src/Composer/Package/Package.php",
+    "license": "MIT",
+    "sha256": "109e6b14fa0bbc011ea13f24c524a89527cf4fe2acf10618c7eb1917a197d13c"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": [
+      {
+        "line": 418,
+        "column": 15
+      },
+      {
+        "line": 451,
+        "column": 15
+      }
+    ]
+  }
+}

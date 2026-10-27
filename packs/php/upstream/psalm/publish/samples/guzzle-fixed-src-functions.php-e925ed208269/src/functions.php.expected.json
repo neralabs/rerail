@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "guzzle/guzzle",
+    "commit": "5129164be7ca822d62e745915165ee16321f78df",
+    "path": "src/functions.php",
+    "license": "MIT",
+    "sha256": "e925ed2082691a89a86d283538838eb6703adbc85bcceabc173608e31c5e059e"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

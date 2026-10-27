@@ -1,0 +1,46 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "0e49af927540c5fd96c6ed62695fe3d903bfa520",
+    "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+    "license": "MIT",
+    "sha256": "e3f63af64142d8121db6e2eeb40bf28d7268821eabbb8f359a23e34de1436e8d"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 160,
+        "column": 100
+      },
+      {
+        "line": 160,
+        "column": 148
+      },
+      {
+        "line": 161,
+        "column": 100
+      },
+      {
+        "line": 161,
+        "column": 143
+      },
+      {
+        "line": 162,
+        "column": 80
+      },
+      {
+        "line": 162,
+        "column": 133
+      },
+      {
+        "line": 194,
+        "column": 28
+      }
+    ]
+  }
+}

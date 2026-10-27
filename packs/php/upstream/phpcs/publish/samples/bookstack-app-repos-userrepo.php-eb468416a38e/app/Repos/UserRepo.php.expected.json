@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "BookStackApp/BookStack",
+    "commit": "35e00ddb95733221a8868d81dec65e4d329eb1c3",
+    "path": "app/Repos/UserRepo.php",
+    "license": "MIT",
+    "sha256": "eb468416a38e77bcde9e1de20199ccbd0b2e4dfb70242967627a5c7e2436e3e7"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 153,
+        "column": 86
+      }
+    ]
+  }
+}

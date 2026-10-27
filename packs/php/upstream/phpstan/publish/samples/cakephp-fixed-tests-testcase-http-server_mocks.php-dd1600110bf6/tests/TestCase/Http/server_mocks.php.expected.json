@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "cakephp/cakephp",
+    "commit": "3f742d563e394f0e55f6923df2cab8a8bd40e3d6",
+    "path": "tests/TestCase/Http/server_mocks.php",
+    "license": "MIT",
+    "sha256": "dd1600110bf68e9e397b4f0e0c56171b6d54b723a1426f45aeb23d7757c5e08e"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": []
+  }
+}

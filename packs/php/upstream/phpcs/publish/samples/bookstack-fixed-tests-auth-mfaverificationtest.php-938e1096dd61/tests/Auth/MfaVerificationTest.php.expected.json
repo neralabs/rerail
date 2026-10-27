@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "BookStackApp/BookStack",
+    "commit": "9b271e559fd0ca98319cf5ba0d7c26916511b62a",
+    "path": "tests/Auth/MfaVerificationTest.php",
+    "license": "MIT",
+    "sha256": "938e1096dd6197985964d28e6909f23eece64d2475d2cb1c24df944aa9261215"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

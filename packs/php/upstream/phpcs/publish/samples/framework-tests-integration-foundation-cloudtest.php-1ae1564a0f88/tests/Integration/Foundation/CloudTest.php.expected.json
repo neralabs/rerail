@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "20fef43f54f684b582b176b34320044ddcd0f1e6",
+    "path": "tests/Integration/Foundation/CloudTest.php",
+    "license": "MIT",
+    "sha256": "1ae1564a0f88c042e7580483907cf5888027422718a59833b85931d4fe55d859"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 103,
+        "column": 40
+      }
+    ]
+  }
+}

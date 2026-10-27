@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "laminas/laminas-mail",
+    "commit": "638a41b07183dfac493e1d78dfe91f1632d5a452",
+    "path": "src/Protocol/Imap.php",
+    "license": "BSD-3-Clause",
+    "sha256": "5c8d8b1bddfc3dab2db86d827fb741ef822adbd8a8be5cdef190413f2ddf0aeb"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": [
+      {
+        "line": 446,
+        "column": 15
+      }
+    ]
+  }
+}

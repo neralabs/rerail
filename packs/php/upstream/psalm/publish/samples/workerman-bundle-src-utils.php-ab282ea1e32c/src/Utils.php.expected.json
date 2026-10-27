@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "luzrain/workerman-bundle",
+    "commit": "249e3e525268cc03ab15df89e976c0afb720e942",
+    "path": "src/Utils.php",
+    "license": "MIT",
+    "sha256": "ab282ea1e32cfa5083603110312d6d963c61b365e157ca9e48bec8aa4e74cf4a"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

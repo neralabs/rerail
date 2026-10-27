@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "7d2a2878639283de0c5cb68683a4ea6ab89c7c13",
+    "path": "tests/bootstrap.php",
+    "license": "MIT",
+    "sha256": "a2f46366cbf88b4f1389456b875f6851719ad0f18fe155d827c5a4ddd81c3bd4"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 13
+      }
+    ]
+  }
+}

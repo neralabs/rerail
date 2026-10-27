@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "cakephp/cakephp",
+    "commit": "1bcada258d4ac2938332e41ff09c04eb07c8a236",
+    "path": "tests/TestCase/Error/DebuggerTest.php",
+    "license": "MIT",
+    "sha256": "540dec3d751410d5e770ec8700242ec1ecc71aebe12032853c0d25f52e2ce980"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": []
+  }
+}

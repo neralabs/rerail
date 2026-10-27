@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "Seldaek/monolog",
+    "commit": "240b7458dd312c26ed335d9af14b8ed7a809f5ae",
+    "path": "tests/Monolog/Processor/MercurialProcessorTest.php",
+    "license": "MIT",
+    "sha256": "ffd0d6c8ccbb5603906718c2a5f27ceddf12a4f4d5db852bf4d156d92c5f91fd"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-backtick-operator": [
+      {
+        "line": 23,
+        "column": 9
+      },
+      {
+        "line": 23,
+        "column": 17
+      }
+    ]
+  }
+}

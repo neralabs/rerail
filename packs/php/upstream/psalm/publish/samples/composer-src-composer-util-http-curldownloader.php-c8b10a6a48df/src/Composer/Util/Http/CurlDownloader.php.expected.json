@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "56805ecafe8597a07b4576b45e5532b9862fd65a",
+    "path": "src/Composer/Util/Http/CurlDownloader.php",
+    "license": "MIT",
+    "sha256": "c8b10a6a48df18e5951511f9c4c5f294c6b79f997ad25fcd2279ef8400566b1e"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 231,
+        "column": 25
+      },
+      {
+        "line": 246,
+        "column": 13
+      }
+    ]
+  }
+}

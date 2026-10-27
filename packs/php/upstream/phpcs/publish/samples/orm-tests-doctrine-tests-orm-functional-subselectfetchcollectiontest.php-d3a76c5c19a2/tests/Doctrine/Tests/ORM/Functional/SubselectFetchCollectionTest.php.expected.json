@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "dc899e26cf6501febdeba2be7cc48f321d709732",
+    "path": "tests/Doctrine/Tests/ORM/Functional/SubselectFetchCollectionTest.php",
+    "license": "MIT",
+    "sha256": "d3a76c5c19a2314dfa5e886c3f4185587129e46477980ce3bd9096dcd546db69"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": [
+      {
+        "line": 19,
+        "column": 11
+      }
+    ]
+  }
+}

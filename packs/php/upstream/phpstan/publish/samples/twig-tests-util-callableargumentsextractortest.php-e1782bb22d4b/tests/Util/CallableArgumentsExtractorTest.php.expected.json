@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "twigphp/Twig",
+    "commit": "e1705f88313a85edf2d2ec49862240939e8fff41",
+    "path": "tests/Util/CallableArgumentsExtractorTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "e1782bb22d4b4a116bd24b7451985ca7394cfd466b64df16cc560c4d203af77e"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 154
+      }
+    ]
+  }
+}

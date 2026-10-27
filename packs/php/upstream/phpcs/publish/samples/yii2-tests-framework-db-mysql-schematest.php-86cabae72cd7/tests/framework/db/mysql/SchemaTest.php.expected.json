@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "6a36fa82c7cba8303c57b8d64a5dbcc555c4715a",
+    "path": "tests/framework/db/mysql/SchemaTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "86cabae72cd788259cad5b1096713d04e5114c36eb08666cc2c2edb526910e13"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 110,
+        "column": 28
+      },
+      {
+        "line": 136,
+        "column": 28
+      },
+      {
+        "line": 139,
+        "column": 26
+      },
+      {
+        "line": 146,
+        "column": 29
+      }
+    ]
+  }
+}

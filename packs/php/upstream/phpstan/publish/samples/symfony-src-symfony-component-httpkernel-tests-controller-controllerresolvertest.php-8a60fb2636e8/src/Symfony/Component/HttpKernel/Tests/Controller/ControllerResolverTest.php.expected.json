@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "e323097dacfb62efc7fb1f9cc51e282d14926897",
+    "path": "src/Symfony/Component/HttpKernel/Tests/Controller/ControllerResolverTest.php",
+    "license": "MIT",
+    "sha256": "8a60fb2636e894b532a3b3c1e3cab8db2abb15b9dbdeba1616d19ba32144ecdf"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 196
+      }
+    ]
+  }
+}

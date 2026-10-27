@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "filamentphp/filament",
+    "commit": "c199b1fc22e5b23814f866f812016831ff9c6280",
+    "path": "packages/support/src/Concerns/ResolvesDynamicLivewireProperties.php",
+    "license": "MIT",
+    "sha256": "35c4ef7c0f5372294068b0d4f0ff150198b70fb536c15a992fe9ad27f5011788"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "97e4391e7f1cb0b61376a50b19be23cede45889e",
+    "path": "src/Symfony/Component/Console/Application.php",
+    "license": "MIT",
+    "sha256": "2a27824da122286969b978eed11861c7e93232e96ec2b26b0739919cbbee0267"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

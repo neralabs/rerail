@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "6e7a952d2a56be5e43b30952ee088c8a255e48f3",
+    "path": "tests/Integration/Foundation/CloudBootstrapperTest.php",
+    "license": "MIT",
+    "sha256": "5ec22ca8c928c505c7d79aac2029c4629a2b94b288e47b940b87b860db7dbbdc"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 346,
+        "column": 40
+      }
+    ]
+  }
+}

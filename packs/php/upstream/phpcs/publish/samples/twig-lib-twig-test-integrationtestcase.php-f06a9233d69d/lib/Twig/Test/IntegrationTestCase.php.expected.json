@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "twigphp/Twig",
+    "commit": "69633fc19189699d20114f005efc8851c3fe9288",
+    "path": "lib/Twig/Test/IntegrationTestCase.php",
+    "license": "BSD-3-Clause",
+    "sha256": "f06a9233d69d61e5c8e65d7420f4e45dda4519697398837769e98606b39bb247"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 141,
+        "column": 13
+      },
+      {
+        "line": 153,
+        "column": 28
+      },
+      {
+        "line": 212,
+        "column": 50
+      }
+    ]
+  }
+}

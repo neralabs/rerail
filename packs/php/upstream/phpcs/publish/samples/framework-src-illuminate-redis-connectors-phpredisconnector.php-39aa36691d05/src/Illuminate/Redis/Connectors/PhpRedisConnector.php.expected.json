@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "e9612243fb6de4fa6a31a50bed7e1140440f7b3b",
+    "path": "src/Illuminate/Redis/Connectors/PhpRedisConnector.php",
+    "license": "MIT",
+    "sha256": "39aa36691d0560afe2d2afe91aeb6ffa2de27960542ae8cd869227dd2f722d0d"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 115,
+        "column": 48
+      },
+      {
+        "line": 132,
+        "column": 43
+      }
+    ]
+  }
+}

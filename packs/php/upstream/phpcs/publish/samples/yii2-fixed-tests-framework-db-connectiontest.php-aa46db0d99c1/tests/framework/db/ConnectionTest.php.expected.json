@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "yiisoft/yii2",
+    "commit": "8bb31fb9e56e0809105dc7904864f8f0b8c68dd3",
+    "path": "tests/framework/db/ConnectionTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "aa46db0d99c1ccdc863e1458ece619b53946ff0b7d240b358d189e1fec2a633c"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

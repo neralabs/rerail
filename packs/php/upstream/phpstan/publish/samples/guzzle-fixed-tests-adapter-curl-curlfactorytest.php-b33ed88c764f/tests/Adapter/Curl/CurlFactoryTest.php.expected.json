@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "guzzle/guzzle",
+    "commit": "f93f734823fb9d68fc4d0192cb63e6baaa2b9d4c",
+    "path": "tests/Adapter/Curl/CurlFactoryTest.php",
+    "license": "MIT",
+    "sha256": "b33ed88c764f874cdfc96d41fc6ea328f029271db7342247a6f0afde42c035ea"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": []
+  }
+}

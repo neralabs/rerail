@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "aphiria/aphiria",
+    "commit": "7f2dca396c2fcf692cc35c3a2d696294a5216d61",
+    "path": "src/Console/src/Drivers/UnixLikeDriver.php",
+    "license": "MIT",
+    "sha256": "2d47a796e46d44f961bf949c07d9386b91a035640e94d5d6185df4f11a37679d"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

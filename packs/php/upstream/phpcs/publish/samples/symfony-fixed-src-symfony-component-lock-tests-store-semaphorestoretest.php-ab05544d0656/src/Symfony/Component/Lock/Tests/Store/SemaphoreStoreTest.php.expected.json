@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "9055611dc3e5592d30568a4797e8e9391d9c1e28",
+    "path": "src/Symfony/Component/Lock/Tests/Store/SemaphoreStoreTest.php",
+    "license": "MIT",
+    "sha256": "ab05544d0656bcf7c582b5b6b3c7c1ec5f8c49e2526c0d1842cd06443fbfe263"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-backtick-operator": []
+  }
+}

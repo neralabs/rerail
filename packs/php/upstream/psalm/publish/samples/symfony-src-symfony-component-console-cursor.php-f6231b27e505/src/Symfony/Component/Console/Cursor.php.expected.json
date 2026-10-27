@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "77bd236b8da064c90b19b84a35becfb3e43348db",
+    "path": "src/Symfony/Component/Console/Cursor.php",
+    "license": "MIT",
+    "sha256": "f6231b27e505ff6f1697c77c85f678bf20caca940f800e3de232ff7aef5c853e"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 191,
+        "column": 21
+      },
+      {
+        "line": 192,
+        "column": 9
+      },
+      {
+        "line": 198,
+        "column": 9
+      }
+    ]
+  }
+}

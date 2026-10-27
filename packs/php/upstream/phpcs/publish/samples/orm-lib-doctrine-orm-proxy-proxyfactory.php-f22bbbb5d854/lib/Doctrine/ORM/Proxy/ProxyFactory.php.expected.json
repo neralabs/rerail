@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "eda1909c756ccbd95379deb39c22732c3738be60",
+    "path": "lib/Doctrine/ORM/Proxy/ProxyFactory.php",
+    "license": "MIT",
+    "sha256": "f22bbbb5d854ffc8ce3ca68e23823b6f9c710512e8f99c0ed661c42dcdbbdfe5"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 546,
+        "column": 17
+      }
+    ]
+  }
+}

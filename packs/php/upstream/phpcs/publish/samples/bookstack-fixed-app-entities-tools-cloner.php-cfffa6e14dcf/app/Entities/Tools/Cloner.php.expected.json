@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "BookStackApp/BookStack",
+    "commit": "0288320700668bae9d87bcc7c3e7d66aaa05f6aa",
+    "path": "app/Entities/Tools/Cloner.php",
+    "license": "MIT",
+    "sha256": "cfffa6e14dcff353362a16bc65d8151185531bd70b28347501c06a3bdff2aa74"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

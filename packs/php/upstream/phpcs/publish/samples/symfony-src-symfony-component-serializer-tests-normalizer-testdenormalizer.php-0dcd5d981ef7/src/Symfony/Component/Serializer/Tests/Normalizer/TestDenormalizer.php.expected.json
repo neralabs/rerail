@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "60edc583252cb35846617a7a4902a692061f9ddf",
+    "path": "src/Symfony/Component/Serializer/Tests/Normalizer/TestDenormalizer.php",
+    "license": "MIT",
+    "sha256": "0dcd5d981ef76c3e7a6564025e33b1f12465ed9ed49ab7ec96370c43c8acb750"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 36,
+        "column": 12
+      }
+    ]
+  }
+}

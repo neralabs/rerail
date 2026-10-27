@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "codeigniter4/CodeIgniter4",
+    "commit": "cf96701aef0398416390bc4d245b71fe9a5a34cb",
+    "path": "system/View/View.php",
+    "license": "MIT",
+    "sha256": "b6bf4f68155262d995b62219e77004ac01c82986fd138323d3f7dddc6dcad3a0"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": []
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "twigphp/Twig",
+    "commit": "f67078b5c44d0976a91c020491cf651ef28a8fae",
+    "path": "bin/generate_operators_precedence.php",
+    "license": "BSD-3-Clause",
+    "sha256": "a38aaa3072fc706be29347c8dd254d713141a618a04b645f6494acd62c444aa1"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 11
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "443858dae7632570b5b21d411b98d9cb51b069f6",
+    "path": "src/Composer/Util/Filesystem.php",
+    "license": "MIT",
+    "sha256": "c97c8f44ade16c91ea44c681f447481130263f9d8f8f4c0e937a88e2e3819396"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": [
+      {
+        "line": 57,
+        "column": 9
+      }
+    ]
+  }
+}

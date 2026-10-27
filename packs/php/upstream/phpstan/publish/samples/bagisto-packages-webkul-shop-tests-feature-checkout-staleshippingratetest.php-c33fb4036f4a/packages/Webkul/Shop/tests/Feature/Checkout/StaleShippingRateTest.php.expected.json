@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "bagisto/bagisto",
+    "commit": "1ea2d06079d660a7bb6a8963e597954463d6c490",
+    "path": "packages/Webkul/Shop/tests/Feature/Checkout/StaleShippingRateTest.php",
+    "license": "MIT",
+    "sha256": "c33fb4036f4a931084c98f610dbdd5fc630020fb23a8acce28f8927ebc3fdad9"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 11
+      }
+    ]
+  }
+}

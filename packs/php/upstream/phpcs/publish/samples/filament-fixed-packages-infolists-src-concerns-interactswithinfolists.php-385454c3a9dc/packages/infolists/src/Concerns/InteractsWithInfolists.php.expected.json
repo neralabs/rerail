@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "filamentphp/filament",
+    "commit": "41d986b8c57e427cb294fbf4c38cb770bf5260eb",
+    "path": "packages/infolists/src/Concerns/InteractsWithInfolists.php",
+    "license": "MIT",
+    "sha256": "385454c3a9dc07ad70bc9d486faf87f46973693dd9312d9a4ccb9f01812f42b1"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

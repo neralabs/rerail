@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "doctrine/orm",
+    "commit": "a8787be0bfd53f04424e326c3a1f18d852b5451e",
+    "path": "tests/Doctrine/Tests/ORM/Mapping/php/Doctrine.Tests.ORM.Mapping.Animal.php",
+    "license": "MIT",
+    "sha256": "0b890cf84bcccc8a7e000d069d470d9ad5b44cb3ad3b586097fab9e2e2918830"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "markrogoyski/itertools-php",
+    "commit": "a940961c85760d4f943d6fa1c267fe88a0d0b2d0",
+    "path": "src/Stream.php",
+    "license": "MIT",
+    "sha256": "c6f25449bff7a4299859abfe469983cc80d075dac719cbb8de4cb92d275b2395"
+  },
+  "labelledBy": {
+    "tool": "psalm",
+    "version": "6.19.1",
+    "how": "php test set"
+  },
+  "expected": {
+    "psalm-forbidden-code": []
+  }
+}

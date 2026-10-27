@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "wp-cli/shell-command",
+    "commit": "34424566393bd153b999a20f8c34c79ef206495e",
+    "path": "src/WP_CLI/Shell/REPL.php",
+    "license": "MIT",
+    "sha256": "54ad0975571d89453054534504e771b2eab726053d4ec56c2f64a5a49db8eade"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": []
+  }
+}

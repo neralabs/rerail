@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "slimphp/Slim",
+    "commit": "3dc2c1448263c04e5626bdbf8ad845b1b84ce83b",
+    "path": "tests/getallheaders.php",
+    "license": "MIT",
+    "sha256": "108dbd6d468b50971b954abdc487030290fd5c1b61883993deff89cf4efea071"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 3
+      }
+    ]
+  }
+}

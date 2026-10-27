@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "05daf5360a033b01d4bf3665f0a8042bcf42efef",
+    "path": "src/Symfony/Component/KeyManagement/Bridge/DoctrineOrm/Tests/DependencyInjection/RegisterEncryptedColumnsPassTest.php",
+    "license": "MIT",
+    "sha256": "6a7cd8493d9046b8c3fd0eb64c4fae75a3e9406da9d2479d401faeab32a153ab"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 214,
+        "column": 9
+      }
+    ]
+  }
+}

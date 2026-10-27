@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "e212b33a0048cbfe9dbaadfef82f624070ae587d",
+    "path": "tests/Integration/Database/EloquentPivotWithoutTimestampTest.fixtures.php",
+    "license": "MIT",
+    "sha256": "8c7b1732011c1468ef4122e3fd775fe6dde702eb07bcc08b2e80a9027060758f"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 63
+      }
+    ]
+  }
+}

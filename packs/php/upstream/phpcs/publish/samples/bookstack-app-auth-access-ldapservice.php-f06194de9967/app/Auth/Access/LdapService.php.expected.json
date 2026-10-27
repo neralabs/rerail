@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "BookStackApp/BookStack",
+    "commit": "8e7f703af713c7c81bd1399d2f6e2518bee0d328",
+    "path": "app/Auth/Access/LdapService.php",
+    "license": "MIT",
+    "sha256": "f06194de9967409b9dea507c39b784fd8392fafafcc9f05a2b88f4a85dbffb3b"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 179,
+        "column": 36
+      }
+    ]
+  }
+}

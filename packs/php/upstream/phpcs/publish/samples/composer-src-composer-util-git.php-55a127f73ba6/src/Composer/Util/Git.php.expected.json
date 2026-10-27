@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "5bb0433a51b160c06aef212e8d18cb19a2b62087",
+    "path": "src/Composer/Util/Git.php",
+    "license": "MIT",
+    "sha256": "55a127f73ba6acc34adf8b31b22439ff37c8a3046692ffaa15c8bd8e978fbe66"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 285,
+        "column": 49
+      }
+    ]
+  }
+}

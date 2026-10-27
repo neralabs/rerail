@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "bagisto/bagisto",
+    "commit": "1ea2d06079d660a7bb6a8963e597954463d6c490",
+    "path": "packages/Webkul/Paypal/tests/Feature/PaypalSmartButtonTest.php",
+    "license": "MIT",
+    "sha256": "d2f79e92e42f70c2306493f45f9f44ae99e75588b67fedc0158fcba168a80eef"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 78
+      }
+    ]
+  }
+}

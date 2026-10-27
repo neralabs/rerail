@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "746f83adbc495412a6975430acf53ca7d660ce1a",
+    "path": "src/Symfony/Bridge/PhpUnit/bin/simple-phpunit.php",
+    "license": "MIT",
+    "sha256": "29c02abd5447f4592a6c3090f0ac9ad67165937468b467956fff706e7c3758fd"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-backtick-operator": []
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "twigphp/Twig",
+    "commit": "b8daa6c4589a541670d7dbebf8b0bdd2d123fa3e",
+    "path": "test/Twig/Tests/Extension/SandboxTest.php",
+    "license": "BSD-3-Clause",
+    "sha256": "ce280533d57b44fd6eabd786dc4337124527b4b2aaae9858d1611d6682e607fd"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": [
+      {
+        "line": 271,
+        "column": 11
+      },
+      {
+        "line": 272,
+        "column": 11
+      }
+    ]
+  }
+}

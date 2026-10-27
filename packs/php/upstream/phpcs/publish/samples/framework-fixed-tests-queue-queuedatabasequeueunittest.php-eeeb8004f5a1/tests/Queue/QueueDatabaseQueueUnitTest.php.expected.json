@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "e91ad249d32471fae5733b8b745895474bb86766",
+    "path": "tests/Queue/QueueDatabaseQueueUnitTest.php",
+    "license": "MIT",
+    "sha256": "eeeb8004f5a1dca27046ac9691ae292f55e875adfb699cee146872a6f8d36bae"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

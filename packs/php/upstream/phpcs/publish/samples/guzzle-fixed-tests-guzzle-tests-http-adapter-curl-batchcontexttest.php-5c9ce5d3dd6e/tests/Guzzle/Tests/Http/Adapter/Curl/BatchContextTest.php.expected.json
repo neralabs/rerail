@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "guzzle/guzzle",
+    "commit": "0f502b598d2ce4bd5ca9cfee56b9efe3952d5b5c",
+    "path": "tests/Guzzle/Tests/Http/Adapter/Curl/BatchContextTest.php",
+    "license": "MIT",
+    "sha256": "5c9ce5d3dd6e5d1079a4ca092d6a41d8d7fd9dd707082a2e1a7e4b1b49e374e4"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

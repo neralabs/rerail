@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "Seldaek/monolog",
+    "commit": "8af986b161d89878caa9a371d431bec0530dfe83",
+    "path": "tests/Monolog/Processor/IntrospectionProcessorTest.php",
+    "license": "MIT",
+    "sha256": "b565559257cd4e4a322629a4fe8efd7f89f2872533fd7aaa53d8f49146931ee5"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 22
+      }
+    ]
+  }
+}

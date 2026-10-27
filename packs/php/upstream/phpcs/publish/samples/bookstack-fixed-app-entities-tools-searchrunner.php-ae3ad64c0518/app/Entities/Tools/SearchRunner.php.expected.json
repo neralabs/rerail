@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "BookStackApp/BookStack",
+    "commit": "b3e1c7da73a5a5279b84d16b2efd170f4b7702f9",
+    "path": "app/Entities/Tools/SearchRunner.php",
+    "license": "MIT",
+    "sha256": "ae3ad64c0518b8dec621159cbaf72d842fd52b5b8c93974245801f8fc557520e"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-code-analysis-empty-statement": []
+  }
+}

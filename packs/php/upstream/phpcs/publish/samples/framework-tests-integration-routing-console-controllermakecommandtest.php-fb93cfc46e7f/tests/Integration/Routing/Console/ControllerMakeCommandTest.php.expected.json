@@ -1,0 +1,62 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "2cfee68c82cf432746427978a502b0f93ee6bc3c",
+    "path": "tests/Integration/Routing/Console/ControllerMakeCommandTest.php",
+    "license": "MIT",
+    "sha256": "fb93cfc46e7f5a1224279d1d649f5e9ec0799f8e58fc7c6f94960d6d1efb0fea"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 54,
+        "column": 26
+      },
+      {
+        "line": 71,
+        "column": 20
+      },
+      {
+        "line": 72,
+        "column": 26
+      },
+      {
+        "line": 89,
+        "column": 20
+      },
+      {
+        "line": 91,
+        "column": 26
+      },
+      {
+        "line": 108,
+        "column": 20
+      },
+      {
+        "line": 109,
+        "column": 15
+      },
+      {
+        "line": 110,
+        "column": 26
+      },
+      {
+        "line": 127,
+        "column": 20
+      },
+      {
+        "line": 128,
+        "column": 15
+      },
+      {
+        "line": 130,
+        "column": 26
+      }
+    ]
+  }
+}

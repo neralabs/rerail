@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "e7a3ae710333d67a0f22ee6409fffded887a11de",
+    "path": ".travis.php",
+    "license": "MIT",
+    "sha256": "01ff4147938ebff180479faf1d509e7820c5a64eb6a6d76a931027e0960d9a4e"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-backtick-operator": [
+      {
+        "line": 16,
+        "column": 10
+      },
+      {
+        "line": 16,
+        "column": 54
+      }
+    ]
+  }
+}

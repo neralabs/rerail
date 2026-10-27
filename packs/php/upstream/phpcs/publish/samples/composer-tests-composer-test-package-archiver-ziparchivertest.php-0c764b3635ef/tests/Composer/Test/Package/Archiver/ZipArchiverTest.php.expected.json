@@ -1,0 +1,42 @@
+{
+  "source": {
+    "repo": "composer/composer",
+    "commit": "1ec5fa81e42f45ed2f921365c9c6d1b3d6bb63dd",
+    "path": "tests/Composer/Test/Package/Archiver/ZipArchiverTest.php",
+    "license": "MIT",
+    "sha256": "0c764b3635efd890d0ecd9924d068384ef4d8ee75a2dcf0c09c70dbb8f065321"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": [
+      {
+        "line": 50,
+        "column": 31
+      },
+      {
+        "line": 51,
+        "column": 34
+      },
+      {
+        "line": 52,
+        "column": 28
+      },
+      {
+        "line": 53,
+        "column": 34
+      },
+      {
+        "line": 57,
+        "column": 58
+      },
+      {
+        "line": 89,
+        "column": 35
+      }
+    ]
+  }
+}

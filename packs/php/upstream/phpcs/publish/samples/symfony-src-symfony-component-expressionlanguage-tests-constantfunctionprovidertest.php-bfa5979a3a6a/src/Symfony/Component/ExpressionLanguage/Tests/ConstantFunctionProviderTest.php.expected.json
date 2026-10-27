@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "548e97a682cd4542916e73b46b9f60ebf99879fe",
+    "path": "src/Symfony/Component/ExpressionLanguage/Tests/ConstantFunctionProviderTest.php",
+    "license": "MIT",
+    "sha256": "bfa5979a3a6a65e54efff443d7bb0414bfc4df4550ce96d7cb705870e4b01377"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-squiz-php-eval": [
+      {
+        "line": 141,
+        "column": 27
+      },
+      {
+        "line": 153,
+        "column": 42
+      },
+      {
+        "line": 180,
+        "column": 54
+      },
+      {
+        "line": 183,
+        "column": 53
+      }
+    ]
+  }
+}

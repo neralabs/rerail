@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "Seldaek/monolog",
+    "commit": "2e03107b5666a74a834ad93836c70c684ca07309",
+    "path": "tests/Monolog/Handler/NativeMailerHandlerTest.php",
+    "license": "MIT",
+    "sha256": "d943d703c7d3263df0651412b3c0984a31a0105eaa2c17df9114e8c4fe0eaada"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 18
+      }
+    ]
+  }
+}

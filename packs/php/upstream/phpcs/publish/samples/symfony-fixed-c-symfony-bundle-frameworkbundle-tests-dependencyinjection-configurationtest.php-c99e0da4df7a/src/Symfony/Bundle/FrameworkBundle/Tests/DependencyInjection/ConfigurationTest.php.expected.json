@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "symfony/symfony",
+    "commit": "c35cc5b900835827b7ee6b186775eca52f129172",
+    "path": "src/Symfony/Bundle/FrameworkBundle/Tests/DependencyInjection/ConfigurationTest.php",
+    "license": "MIT",
+    "sha256": "c99e0da4df7aa322b598078bda1a63a9626bcb54a784206aada1ff65c6d18264"
+  },
+  "labelledBy": {
+    "tool": "phpcs",
+    "version": "4.0.4",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpcs-generic-php-lower-case-constant": []
+  }
+}

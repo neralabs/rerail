@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repo": "laravel/framework",
+    "commit": "95aa29f6c249a72664c3c9ae999ee6dcccfe76a4",
+    "path": "tests/Support/OnceTest.php",
+    "license": "MIT",
+    "sha256": "db4b6df26724e229b2ad4642e458fbec873284172181e7318f97b76c06572032"
+  },
+  "labelledBy": {
+    "tool": "phpstan",
+    "version": "2.2.16",
+    "how": "php test set"
+  },
+  "expected": {
+    "phpstan-missing-function-return-type": [
+      {
+        "line": 353
+      }
+    ]
+  }
+}
