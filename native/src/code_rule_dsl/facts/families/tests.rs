@@ -94,6 +94,7 @@ fn check(graph: &(impl Graph + ?Sized), roots: &[HashKey]) {
     let (push, _) = world.push(roots[2]);
     assert_eq!((push.work.waves, push.work.rerun, push.work.changed), (3, 3, 3));
     assert_eq!(world.rule_runs.get(), 2);
+    assert!(world.families.borrow().facts.is_empty(), "the kinds wave took every wave's facts");
     for output in [core_name(WS, "a.py"), kinds_name(WS, "a.py"), RULE.to_owned()] {
         assert!(graph.derivation_valid(&output).unwrap(), "{output}");
     }

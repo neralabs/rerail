@@ -8,8 +8,8 @@
 //!   histogram. An edit that keeps every kind's count (a rename, whitespace, a literal) rebinds
 //!   nothing here, so readers of the histogram (the prefilter, Phase 3) never run.
 //!
-//! The facts themselves are rebuilt from the tape on demand (`core::build`) and cached for one
-//! push, by core digest, so the kinds wave reads the facts the core wave built.
+//! The facts themselves are rebuilt from the tape on demand (`core::build`) and kept, by core
+//! digest, from the core wave until the kinds wave takes them.
 
 use super::Graph;
 use super::core::{self, Built, Facts};
@@ -87,7 +87,7 @@ pub(crate) struct Parses {
 }
 
 /// Recomputes core and kinds derivations for one push. Facts built by the core wave are kept, by
-/// core digest, for the kinds wave; drop the value after the push.
+/// core digest, until the kinds wave takes them; drop the value after the push.
 #[derive(Default)]
 pub(crate) struct Families {
     facts: HashMap<[u8; 32], Arc<Facts>>,
@@ -160,10 +160,12 @@ impl Families {
     pub(crate) fn kinds(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
         let name = core_name(scope, path);
         let read = graph.binding(&name)?.unwrap_or(ABSENT);
-        let facts = match self.facts.get(&read) {
+        // Kinds is the core facts' only reader, so it takes them: the cache holds a wave's facts,
+        // not a push's, and a cold scan stays within the memory budget.
+        let facts = match self.facts.remove(&read) {
             Some(facts) => {
                 self.parses.reused += 1;
-                Some(Arc::clone(facts))
+                Some(facts)
             }
             None if read == ABSENT => None,
             // Not built in this push: rebuild from the path. Facts that are not the ones the core
