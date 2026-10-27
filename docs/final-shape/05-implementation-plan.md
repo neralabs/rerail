@@ -167,6 +167,7 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 
 - Batch vtab: `demand::vtab` on the packed runtime. The CPU `ast_grep` fact post-pass, the navigation producer and their relations are gone, which leaves batch status, producer status, terminal matches, captures and document maps. Row estimates come from `fact_stats` for each relation, which the driver fills when it merges match facts (row 2). Capture rows still compute N's `semanticPlain` structural key with the CPU value adapter; that moves to the findings layer's equality (Phase 8). Inputs from `prefilter/` candidate sets and the slab cache wait on Phases 7 and 9.
 - Driver: `demand::driver::drive(store, batch, statements, files)` runs lowered statements over a registered batch in one transaction on the content store and decodes violation and failure rows. N's catalog lowering (`SqlPlans::compile` over `relational_ir`) is not copied, per the table, so the driver takes statements from the logic planner (Phase 6). For the same reason N's two contract suites (`production_contract_tests.rs`, `policy_lowering_tests.rs`), which Phase 4's check names, cannot run until Phase 6 lowers rule catalogs; they stay outside the tree until then.
+- Gate: full `cargo test --lib`, run once: 1601 passed, 12 failed, 27 ignored; 139 s user + 12 s sys CPU (load average 21–28). The 12 failures are the environmental ones of Phases 1–3 (3 pack fixtures not in git, 9 `git_workspace` temp repos blocked by the agent git hook).
 
 ### Phase 6: the logic language (§12; B1, B3, B4, B10–B14, I9)
 
