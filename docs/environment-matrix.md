@@ -1,10 +1,10 @@
 # Environment matrix
 
-The environment matrix installs a Rerail package on throwaway Azure VMs, one per environment, and checks it there
-the way a user meets it. CI runs it (`.github/workflows/env-matrix.yml`) after a push to `main` that changes what
-core ships, by the rule the Release pull request uses (`scripts/release/core-paths.mjs`), or that changes the matrix
-itself; a pack, test, docs or other CI change leaves the package as the last run tested it. `just rerail-env-matrix`
-runs it by hand.
+The environment matrix installs a Rerail package in each of a set of environments, throwaway Azure VMs for Linux
+and Windows and GitHub-hosted runners for macOS, and checks it there the way a user meets it. CI runs it
+(`.github/workflows/env-matrix.yml`) after a push to `main` that changes what core ships, by the rule the Release pull
+request uses (`scripts/release/core-paths.mjs`), or that changes the matrix itself; a pack, test, docs or other CI
+change leaves the package as the last run tested it. `just rerail-env-matrix` runs the Azure environments by hand.
 
 ## Environments
 
@@ -18,22 +18,30 @@ runs it by hand.
 | `debian-12-x64` | Debian 12 | set-up fails: glibc 2.36 |
 | `rhel-9-x64` | Red Hat Enterprise Linux 9 | set-up fails: glibc 2.34 |
 | `windows-11-x64`, `windows-11-arm64` | Windows 11 Pro 25H2 | pass |
+| `macos-26-arm64`, `macos-15-arm64` | GitHub-hosted runner `macos-26`, `macos-15` (Apple silicon) | pass |
+| `macos-15-x64` | GitHub-hosted runner `macos-15-intel` | pass |
 
 The Linux engines are built on Ubuntu 24.04 and need glibc 2.39, so older distributions are expected to refuse
 set-up. An environment marked `"expect": "setup-fails"` passes when set-up fails there and fails when set-up starts
-succeeding: then support has changed, and the entry moves to `"expect": "pass"`. macOS is not here: Azure has no
-macOS VMs.
+succeeding: then support has changed, and the entry moves to `"expect": "pass"`.
 
-Each VM gets the newest Node release of the major in `environments.json` (`"node"`, overridable per environment)
-from nodejs.org, and Git from the distribution or, on Windows, Git for Windows in its default folder: what a user
-brings, installed the way they would install it.
+Azure has no Macs, so the macOS environments (`"os": "macos"`, with the `"runner"` label to run on) run on
+GitHub-hosted runners: `matrix.mjs local` runs the Linux guest, `guest.sh`, on the runner itself with sudo. A runner
+is not a clean Mac (it carries Xcode, Homebrew and other Nodes), so the guest makes it one the way a developer's is
+set up: the account's shell becomes zsh, and Node comes from nodejs.org's installer into `/usr/local/bin`; the
+facts record which Node the user's shell runs. `local` refuses to run anywhere but a GitHub-hosted runner, which is
+thrown away after the job.
+
+Each environment gets the newest Node release of the major in `environments.json` (`"node"`, overridable per
+environment) from nodejs.org, and Git from the distribution, the Command Line Tools on a Mac, or, on Windows, Git
+for Windows in its default folder: what a user brings, installed the way they would install it.
 
 ## What each environment checks
 
-The checks run as the VM's ordinary user, never as root or SYSTEM: on Linux through a login shell, on Windows in a
-desktop session the user is signed into (automatic sign-in, then a restart), so set-up writes PATH into the user's
-own startup files or registry hive as it would on a person's computer. On Windows the registry, set-up, managed
-install, hook and uninstall steps are `scripts/host/windows-host.ps1`, the same code the release gate
+The checks run as the machine's ordinary user, never as root or SYSTEM: on Linux and macOS through a login shell, on
+Windows in a desktop session the user is signed into (automatic sign-in, then a restart), so set-up writes PATH into
+the user's own startup files or registry hive as it would on a person's computer. On Windows the registry, set-up,
+managed install, hook and uninstall steps are `scripts/host/windows-host.ps1`, the same code the release gate
 (`scripts/host/windows-install-smoke.ps1`) runs on every release.
 
 1. **registry**: the package under test and every rule pack in `packs/` are served from a registry on the VM, as
@@ -44,8 +52,9 @@ install, hook and uninstall steps are `scripts/host/windows-host.ps1`, the same 
    prints for it (allow sessions, read this repository, start with the packs shown) until set-up says Rerail is on.
 4. **status**: `rerail status` reports the daemon running with `Engine: ok`, and `~/.rerail/current` is a symlink (a
    junction on Windows).
-5. **PATH**: a new shell finds `rerail`: a login and an interactive bash on Linux; on Windows, PATH built from the
-   machine and user values in the registry, as a new terminal builds it.
+5. **PATH**: a new shell finds `rerail`: a login and an interactive bash on Linux; on macOS a login interactive zsh (as
+   Terminal.app opens) and an interactive one; on Windows, PATH built from the machine and user values in the
+   registry, as a new terminal builds it.
 6. **hooks**: the SessionStart command set-up registered for Claude Code and for Codex, run the way each agent runs
    it, records its session with the daemon; Cursor's hooks are registered.
 7. **daemon-restart**: `rerail daemon stop` returns within 60 seconds, `status` then reports no daemon, and `rerail
@@ -53,14 +62,15 @@ install, hook and uninstall steps are `scripts/host/windows-host.ps1`, the same 
 8. **uninstall**: `rerail install --remove` leaves no Claude Code, Codex or Cursor config pointing into the Rerail
    home, and takes Rerail's directory off PATH.
 
-Facts about each VM (OS, glibc or Windows build, Node, npm, Git, and on Windows the execution policy and what `npx`
-does in a new Windows PowerShell) are recorded alongside, not judged.
+Facts about each environment (OS, glibc or Windows build, Node and where it lives, npm, Git, and on Windows the
+execution policy and what `npx` does in a new Windows PowerShell) are recorded alongside, not judged.
 
 ## Results
 
 Each run writes, per environment, `<id>.json` (facts and steps, each with its output's tail) and `<id>.log` (the
 whole provisioning and check log), and a `summary.md` table. CI adds the table to the job summary and uploads the
-files as the `env-matrix-<id>` artifact; by hand they land in `.rerail/env-matrix/<run id>/`.
+files as the `env-matrix-<id>` artifact; by hand they land in `.rerail/env-matrix/<run id>/`. Each macOS job writes
+its own table.
 
 ## Running it by hand
 

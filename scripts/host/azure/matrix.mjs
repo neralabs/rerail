@@ -1,26 +1,28 @@
 #!/usr/bin/env node
-// Installs a Rerail build on throwaway Azure VMs, one per environment in environments.json (Linux distributions
-// on x64 and arm64, Windows 11 on x64 and arm64), and checks it there the way a user meets it: `npx
-// @neralabs/rerail setup`, the managed runtime, PATH in new shells, the coding-agent hooks, daemon restart, and
-// removal. See docs/environment-matrix.md.
+// Installs a Rerail build in each environment of environments.json (Linux distributions on x64 and arm64 and
+// Windows 11 on x64 and arm64, on throwaway Azure VMs; macOS on GitHub-hosted runners, since Azure has no Macs) and
+// checks it there the way a user meets it: `npx @neralabs/rerail setup`, the managed runtime, PATH in new shells, the
+// coding-agent hooks, daemon restart, and removal. See docs/environment-matrix.md.
 //
 //   node scripts/host/azure/matrix.mjs run --tarball <neralabs-rerail-*.tgz> [--env <id,...>] [--keep]
 //   node scripts/host/azure/matrix.mjs run --npm <version or dist-tag> [--env <id,...>]
 //   node scripts/host/azure/matrix.mjs stage --tarball <file> --run-id <id>     bundle once for a CI run's jobs, which
 //   node scripts/host/azure/matrix.mjs run --staged --run-id <id> [--env <id,...>]      then each run --staged
-//   node scripts/host/azure/matrix.mjs list [--env <id,...>]     JSON array of ids, for a CI matrix
+//   node scripts/host/azure/matrix.mjs local --tarball <file> --env <id>     a macOS environment, on this Mac (sudo)
+//   node scripts/host/azure/matrix.mjs list --on <azure|github> [--env <id,...>]     JSON, for a CI matrix
 //   node scripts/host/azure/matrix.mjs affected --base <commit> --head <commit>     true when the matrix should run
 //   node scripts/host/azure/matrix.mjs sweep [--run-id <id> | --older-than-hours <n>]
 //
-// Everything goes through the `az` CLI, signed in (`az login` locally, OIDC in CI) to the subscription holding the
-// resource group that scripts/host/azure/bootstrap.sh made. No VM accepts inbound connections: scripts go in through
-// Azure Run Command, the package and results move through short-lived blob SAS URLs, and each VM reaches npmjs,
-// nodejs.org and GitHub through its own public IP. Every resource a run creates carries its run id and is deleted
-// when the environment finishes; `sweep` removes what a cancelled run left.
-import { execFile } from "node:child_process";
+// The Azure environments go through the `az` CLI, signed in (`az login` locally, OIDC in CI) to the subscription
+// holding the resource group that scripts/host/azure/bootstrap.sh made. No VM accepts inbound connections: scripts go
+// in through Azure Run Command, the package and results move through short-lived blob SAS URLs, and each VM reaches
+// npmjs, nodejs.org and GitHub through its own public IP. Every resource a run creates carries its run id and is
+// deleted when the environment finishes; `sweep` removes what a cancelled run left. A macOS environment runs the
+// same guest on the machine `local` runs on, a fresh GitHub-hosted runner in CI, and needs no Azure.
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
@@ -32,12 +34,16 @@ const REPO_ROOT = resolve(HERE, "../../..");
 const MATRIX = JSON.parse(readFileSync(join(HERE, "environments.json"), "utf8"));
 for (const environment of MATRIX.environments) {
   const problem = !/^[a-z0-9.-]+$/.test(environment.id) ? "an id of lowercase letters, digits, dots and dashes"
-    : !["linux", "windows"].includes(environment.os) ? 'os "linux" or "windows"'
+    : !["linux", "windows", "macos"].includes(environment.os) ? 'os "linux", "windows" or "macos"'
+    : environment.os === "macos" ? (!environment.runner ? "a GitHub-hosted runner label" : null)
     : !environment.image || !environment.size ? "an image and a size"
-    : environment.expect === "setup-fails" ? (!environment.failsWith || !environment.because ? "failsWith and because" : null)
+    : null;
+  const expectation = environment.expect === "setup-fails" ? (!environment.failsWith || !environment.because ? "failsWith and because" : null)
     : environment.expect !== "pass" ? 'expect "pass" or "setup-fails"' : null;
-  if (problem) throw new Error(`environments.json: ${environment.id ?? "an environment"} needs ${problem}`);
+  if (problem ?? expectation) throw new Error(`environments.json: ${environment.id ?? "an environment"} needs ${problem ?? expectation}`);
 }
+// Where an environment runs: an Azure VM, or a GitHub-hosted macOS runner.
+const hostOf = (environment) => (environment.os === "macos" ? "github" : "azure");
 const PURPOSE = "rerail-env-matrix";
 const RESOURCE_GROUP = process.env.RERAIL_AZURE_RESOURCE_GROUP ?? "rerail-envtest-rg";
 const VNET = process.env.RERAIL_AZURE_VNET ?? "rerail-env-vnet";
@@ -58,14 +64,17 @@ async function az(args, { json = true } = {}) {
   }
 }
 
-function selectEnvironments(only) {
-  if (only === undefined || only === "" || only === "all") return MATRIX.environments;
+// The environments `only` names (all of them when it names none) that run on `host`. `list` splits a mixed list
+// between the two hosts; `run` and `local` refuse one that leaves them nothing, so a macOS id never runs nothing.
+function selectEnvironments(only, host) {
+  const onHost = MATRIX.environments.filter((environment) => hostOf(environment) === host);
+  if (only === undefined || only === "" || only === "all") return onHost;
   const ids = only.split(",").map((id) => id.trim()).filter(Boolean);
   const unknown = ids.filter((id) => !MATRIX.environments.some((environment) => environment.id === id));
   if (unknown.length > 0) {
     throw new Error(`Unknown environment ${unknown.join(", ")}; known: ${MATRIX.environments.map((e) => e.id).join(", ")}`);
   }
-  return MATRIX.environments.filter((environment) => ids.includes(environment.id));
+  return onHost.filter((environment) => ids.includes(environment.id));
 }
 
 // ---- Storage: the package goes in and results come out through blob SAS URLs -------------------------------------
@@ -130,11 +139,11 @@ async function makeBundle(tarball) {
 
 const log = (environment, message) => console.log(`[${environment.id}] ${message}`);
 
-// The script Run Command takes: the settings the guest reads (shell assignments for bash, a hashtable for Windows
-// PowerShell), then the guest itself; on Windows with scripts/host/windows-host.ps1, which it shares with the
-// release gate, ahead of it.
+// The script the guest runs: the settings it reads (shell assignments for bash, a hashtable for Windows PowerShell),
+// then the guest itself; on Windows with scripts/host/windows-host.ps1, which it shares with the release gate, ahead
+// of it. Linux and macOS share guest.sh.
 function guestScript(environment, settings) {
-  if (environment.os === "linux") {
+  if (environment.os !== "windows") {
     const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
     const header = Object.entries(settings).map(([key, value]) => `RERAIL_ENV_${key.replace(/[A-Z]/g, (c, i) => (i ? "_" : "") + c).toUpperCase()}=${quote(value)}`);
     const body = readFileSync(join(HERE, "guest.sh"), "utf8").replace(/^#!.*\n/, "");
@@ -289,7 +298,7 @@ async function runEnvironment(environment, { runId, container, store, bundleSas,
 const OK_OUTCOMES = new Set(["pass", "expected-fail"]);
 const MARK = { pass: "✅ pass", "expected-fail": "☑️ fails as expected", fail: "❌ fail", "unexpected-pass": "⚠️ now passes", error: "💥 error" };
 
-function report(outcomes, packageLabel) {
+function summary(outcomes, packageLabel) {
   const facts = (results) => {
     const f = results?.facts ?? {};
     return [f.os, f.build, f.glibc, f.node && `Node ${f.node.replace(/^v/, "")}`].filter(Boolean).join(" · ");
@@ -350,7 +359,8 @@ async function commandRun(options) {
     throw new Error("Pass exactly one of --tarball <file>, --npm <version or dist-tag>, or --staged");
   }
   if (options.staged && !options["run-id"]) throw new Error("--staged runs against what `stage` put in --run-id's container");
-  const environments = selectEnvironments(options.env);
+  const environments = selectEnvironments(options.env, "azure");
+  if (environments.length === 0) throw new Error(`${options.env} runs on a GitHub-hosted macOS runner, not Azure: see \`local\``);
   const runId = checkRunId(options["run-id"] ?? newRunId());
   const outDir = resolve(options.out ?? join(REPO_ROOT, ".rerail", "env-matrix", runId));
   mkdirSync(outDir, { recursive: true });
@@ -375,7 +385,13 @@ async function commandRun(options) {
   console.log(`run ${runId}: ${environments.map((e) => e.id).join(", ")} in ${RESOURCE_GROUP}; results in ${outDir}`);
   const outcomes = await Promise.all(environments.map((environment) =>
     runEnvironment(environment, { runId, container, store, bundleSas, npmSpec: options.npm, outDir, keep: options.keep })));
-  const markdown = report(outcomes, packageLabel);
+  report(outcomes, packageLabel, outDir);
+}
+
+// Writes the summary (and the job summary in CI), prints each outcome, and fails the command unless all are as
+// expected.
+function report(outcomes, packageLabel, outDir) {
+  const markdown = summary(outcomes, packageLabel);
   writeFileSync(join(outDir, "summary.md"), markdown);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, markdown);
   for (const { environment, verdict } of outcomes) {
@@ -383,6 +399,46 @@ async function commandRun(options) {
   }
   console.log(`summary: ${join(outDir, "summary.md")}`);
   if (!outcomes.every(({ verdict }) => OK_OUTCOMES.has(verdict.outcome))) process.exitCode = 1;
+}
+
+// A macOS environment, on the Mac this runs on: the guest provisions as root (sudo) and checks as this account, as it
+// does on an Azure VM. It installs Node system-wide, makes this account's shell zsh and writes to its home, so it runs
+// only on a GitHub-hosted runner, which is thrown away afterwards.
+async function commandLocal(options) {
+  if (!options.tarball || !options.env) throw new Error("local needs --tarball <file> and --env <macOS environment id>");
+  const environments = selectEnvironments(options.env, "github");
+  if (environments.length !== 1) throw new Error("local runs exactly one macOS environment: --env <id>");
+  const [environment] = environments;
+  if (process.platform !== "darwin" || process.env.RUNNER_ENVIRONMENT !== "github-hosted") {
+    throw new Error(`${environment.id} runs only on a GitHub-hosted macOS runner: it changes the account and installs Node system-wide`);
+  }
+  const tarball = resolve(options.tarball);
+  if (!existsSync(tarball)) throw new Error(`No tarball at ${tarball}`);
+  const outDir = resolve(options.out ?? join(REPO_ROOT, ".rerail", "env-matrix", environment.id));
+  mkdirSync(outDir, { recursive: true });
+  const { bundle, contents } = await makeBundle(tarball);
+  console.log(`bundle: ${contents.join(", ")}`);
+  const user = userInfo().username;
+  const settings = { Id: environment.id, User: user, Node: environment.node ?? MATRIX.node, BundleUrl: `file://${bundle}` };
+  const file = join(mkdtempSync(join(tmpdir(), "rerail-env-script-")), "guest.sh");
+  writeFileSync(file, guestScript(environment, settings));
+  const started = Date.now();
+  log(environment, `provisioning as root, then checking as ${user}`);
+  const status = await new Promise((done) => spawn("sudo", ["bash", file], { stdio: "inherit" }).on("close", done));
+  log(environment, `guest exited ${status} after ${Math.round((Date.now() - started) / 1000)} s`);
+  // Where the guest leaves results.json and its log when it has no blob URLs to upload them to.
+  const work = "/opt/rerail-env";
+  let results;
+  if (existsSync(join(work, "results.json"))) {
+    const text = readFileSync(join(work, "results.json"), "utf8");
+    writeFileSync(join(outDir, `${environment.id}.json`), text);
+    results = JSON.parse(text);
+  }
+  const logFile = ["all.log", "provision.log"].map((name) => join(work, name)).find(existsSync);
+  const guestLog = logFile ? readFileSync(logFile, "utf8") : "";
+  writeFileSync(join(outDir, `${environment.id}.log`), guestLog);
+  const verdict = judge(environment, results, guestLog);
+  report([{ environment, results, verdict, minutes: Math.round((Date.now() - started) / 6000) / 10 }], basename(tarball), outDir);
 }
 
 // Whether a push from `base` to `head` should run the matrix (core-paths.mjs `matrixChanges`). Prints the reason to
@@ -451,17 +507,26 @@ const { values: options, positionals } = parseArgs({
     "older-than-hours": { type: "string" },
     base: { type: "string" },
     head: { type: "string" },
+    on: { type: "string" },
   },
 });
+
+// A CI matrix: the Azure environments' ids, or the macOS environments' ids with the runner each needs.
+function commandList(options) {
+  if (options.on !== "azure" && options.on !== "github") throw new Error("list needs --on azure or --on github");
+  const environments = selectEnvironments(options.env, options.on);
+  console.log(JSON.stringify(options.on === "azure" ? environments.map((e) => e.id) : environments.map((e) => ({ id: e.id, runner: e.runner }))));
+}
 
 try {
   switch (positionals[0]) {
     case "run": await commandRun(options); break;
     case "stage": await commandStage(options); break;
-    case "list": console.log(JSON.stringify(selectEnvironments(options.env).map((e) => e.id))); break;
+    case "local": await commandLocal(options); break;
+    case "list": commandList(options); break;
     case "affected": await commandAffected(options); break;
     case "sweep": await commandSweep(options); break;
-    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | list [--env <ids>] | affected --base <commit> --head <commit> | sweep [--run-id <id> | --older-than-hours <n>]");
+    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | local --tarball <file> --env <id> | list --on <azure|github> [--env <ids>] | affected --base <commit> --head <commit> | sweep [--run-id <id> | --older-than-hours <n>]");
   }
 } catch (error) {
   console.error(`matrix: ${error.message}`);

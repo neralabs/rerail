@@ -1,9 +1,10 @@
 name: Environment matrix
 
-# Installs the package main would release on throwaway Azure VMs, one per environment in
-# scripts/host/azure/environments.json (Linux distributions on x64 and arm64, Windows 11 on x64 and arm64), the way a
-# user meets it: `npx @neralabs/rerail setup`, then the managed runtime, PATH in new shells, the coding-agent hooks,
-# daemon restart, and removal. scripts/host/azure/matrix.mjs drives each VM; docs/environment-matrix.md explains it.
+# Installs the package main would release in each environment of scripts/host/azure/environments.json, the way a user
+# meets it: `npx @neralabs/rerail setup`, then the managed runtime, PATH in new shells, the coding-agent hooks, daemon
+# restart, and removal. Linux distributions on x64 and arm64 and Windows 11 on x64 and arm64 run on throwaway Azure
+# VMs; macOS runs on GitHub-hosted runners, since Azure has no Macs. scripts/host/azure/matrix.mjs drives each
+# environment; docs/environment-matrix.md explains it.
 #
 # Runs after a push to main that changes what core ships, by the rule the Release pull request uses
 # (scripts/release/core-paths.mjs), or changes the matrix itself; a pack, test, docs or other CI change leaves the
@@ -49,16 +50,16 @@ jobs:
     timeout-minutes: 5
     outputs:
       run: ${{ steps.affected.outputs.run }}
+      azure: ${{ steps.list.outputs.azure }}
+      github: ${{ steps.list.outputs.github }}
     steps:
       - name: Checkout repository
-        if: github.event_name == 'push'
         uses: actions/checkout@v7
         with:
           fetch-depth: 2
           persist-credentials: false
 
       - name: Set up Node.js v24
-        if: github.event_name == 'push'
         uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -77,6 +78,14 @@ jobs:
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
+      - id: list
+        name: List environments
+        env:
+          ENVIRONMENTS: ${{ inputs.environments }}
+        run: |
+          echo "azure=$(node scripts/host/azure/matrix.mjs list --on azure --env "$ENVIRONMENTS")" >> "$GITHUB_OUTPUT"
+          echo "github=$(node scripts/host/azure/matrix.mjs list --on github --env "$ENVIRONMENTS")" >> "$GITHUB_OUTPUT"
+
   package:
     name: Package
     needs: changes
@@ -87,14 +96,12 @@ jobs:
   stage:
     name: Stage the package
     needs: [changes, package]
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.azure != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
-    outputs:
-      ids: ${{ steps.list.outputs.ids }}
     steps:
       # A missing variable is a configuration error (run scripts/host/azure/bootstrap.sh --github), not a skip.
       - name: Require the Azure variables
@@ -123,12 +130,6 @@ jobs:
         with:
           node-version: "24"
 
-      - id: list
-        name: List environments
-        env:
-          ENVIRONMENTS: ${{ inputs.environments }}
-        run: echo "ids=$(node scripts/host/azure/matrix.mjs list --env "$ENVIRONMENTS")" >> "$GITHUB_OUTPUT"
-
       - name: Download the package
         uses: actions/download-artifact@v8
         with:
@@ -149,7 +150,7 @@ jobs:
 
   install:
     name: Install on ${{ matrix.environment }}
-    needs: stage
+    needs: [changes, stage]
     runs-on: ubuntu-24.04
     # A Windows VM: ~2 min to create, ~5 to install Node and Git, ~10 to sign in and check; the driver gives up at 60.
     timeout-minutes: 75
@@ -159,7 +160,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        environment: ${{ fromJSON(needs.stage.outputs.ids) }}
+        environment: ${{ fromJSON(needs.changes.outputs.azure) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -192,12 +193,59 @@ jobs:
           path: results
           if-no-files-found: ignore
 
+  # macOS on a fresh GitHub-hosted runner, which the job throws away: the guest makes the account's shell zsh, installs
+  # Node from nodejs.org system-wide and writes to the account's home, as on a Mac a developer sets up. No Azure.
+  macos:
+    name: Install on ${{ matrix.environment.id }}
+    needs: [changes, package]
+    if: needs.changes.outputs.run == 'true' && needs.changes.outputs.github != '[]'
+    runs-on: ${{ matrix.environment.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.changes.outputs.github) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Runs the driver only; the guest's own Node comes from nodejs.org's installer.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Download the package
+        uses: actions/download-artifact@v8
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Install and check on ${{ matrix.environment.id }}
+        env:
+          ENVIRONMENT: ${{ matrix.environment.id }}
+          TARBALL: release/${{ needs.package.outputs.tarball }}
+        run: node scripts/host/azure/matrix.mjs local --tarball "$TARBALL" --env "$ENVIRONMENT" --out results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: env-matrix-${{ matrix.environment.id }}
+          path: results
+          if-no-files-found: ignore
+
   # Deletes what a cancelled or crashed run left behind (each environment deletes its own VM when it finishes), and the
   # storage containers of earlier runs.
   sweep:
     name: Sweep leftovers
     needs: [changes, install]
-    if: always() && needs.changes.outputs.run == 'true'
+    if: always() && needs.changes.outputs.run == 'true' && needs.changes.outputs.azure != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
