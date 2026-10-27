@@ -6,6 +6,8 @@ use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, 
 #[allow(dead_code)]
 pub(crate) mod core;
 #[allow(dead_code)]
+pub(crate) mod families;
+#[allow(dead_code)]
 pub(crate) mod memo;
 #[allow(dead_code)]
 pub(crate) mod observe;
