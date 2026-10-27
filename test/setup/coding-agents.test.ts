@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { refreshCodingAgents } from "../../src/setup/coding-agents.js";
+import { connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
+import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
@@ -104,5 +105,61 @@ describe("refreshCodingAgents", () => {
     expect(result).toEqual({ agents: [], changes: [], notes: [], failures: [], unchecked: [] });
     expect((await readdir(home)).sort()).toEqual([".claude", ".cursor"]);
     expect(await readdir(join(home, ".cursor"))).toEqual([]);
+  });
+});
+
+describe("connectCodingAgents", () => {
+  it("connects the other agents when one's config is not plain JSON, and leaves that file as it is", async () => {
+    const { root, home } = await fixture();
+    const settings = join(home, ".claude", "settings.json");
+    const commented = "{\n  // mine\n  \"theme\": \"dark\",\n}\n";
+    await writeFile(settings, commented);
+    await mkdir(join(home, ".cursor"));
+    const result = await connectCodingAgents(root, home, ["claude-code", "cursor"]);
+    expect(result.failures).toEqual([{ agent: "claude-code", file: settings, message: expect.stringContaining("JSON") }]);
+    expect(result.changed).toEqual(["cursor"]);
+    expect(result.all).toEqual(["cursor"]);
+    expect(await readFile(settings, "utf8")).toBe(commented);
+    expect(await readdir(join(home, ".claude"))).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.bak$/u)]));
+    expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(join(root, "dist", "hosts", "cursor", "cursor-hook.js"));
+  });
+
+  it("counts an agent as connected when its registration is out of date, as after Node moved, without touching it", async () => {
+    const { root, home } = await fixture();
+    // Registered by a Node that has moved since (nvm switched, or Homebrew's versioned keg is gone).
+    const settings = join(home, ".claude", "settings.json");
+    const registered = await readFile(settings, "utf8");
+    const stale = registered.replaceAll(pinnedNodePath(), "/old/node-v24.0.0/bin/node");
+    expect(stale).not.toBe(registered);
+    await writeFile(settings, stale);
+
+    const result = await connectCodingAgents(root, home, []);
+    expect(result.all).toEqual(["claude-code"]);
+    expect(result.changed).toEqual([]);
+    expect(await readFile(settings, "utf8")).toBe(stale);
+  });
+});
+
+describe("seen coding agents", () => {
+  it("has no record until one is written, keeps every agent recorded since, and forgets one it could not connect", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-seen-"));
+    temporaryDirectories.push(home);
+    expect(seenCodingAgents(home)).toBeUndefined();
+    await recordSeenCodingAgents(home, []);
+    expect(seenCodingAgents(home)).toEqual([]);
+    await recordSeenCodingAgents(home, ["cursor"]);
+    await recordSeenCodingAgents(home, ["codex", "cursor"]);
+    expect(seenCodingAgents(home)).toEqual(["codex", "cursor"]);
+    await forgetSeenCodingAgents(home, ["codex"]);
+    expect(seenCodingAgents(home)).toEqual(["cursor"]);
+  });
+
+  it("treats a record it cannot read as no record", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-seen-"));
+    temporaryDirectories.push(home);
+    await writeFile(join(home, "coding-agents.json"), "{ not json");
+    expect(seenCodingAgents(home)).toBeUndefined();
+    await recordSeenCodingAgents(home, ["claude-code"]);
+    expect(seenCodingAgents(home)).toEqual(["claude-code"]);
   });
 });

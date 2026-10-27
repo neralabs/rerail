@@ -25,7 +25,8 @@ import {
   readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import { repositoryName } from "../engine/catalog/repository-identity.js";
+import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
@@ -51,7 +52,8 @@ import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
 import { runPacksCommand } from "./packs-cli.js";
-import { JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
+import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
+import { checkNodeVersion } from "../setup/node-version.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
@@ -203,14 +205,37 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
   return 0;
 }
 
+/** Whether a Git Rerail can run is installed, and where it looked when none is. */
+function gitLookup(): { found: true } | { found: false; looked: readonly string[] } {
+  try {
+    gitExecutable();
+    return { found: true };
+  } catch (error) {
+    if (error instanceof GitUnavailableError) return { found: false, looked: error.looked };
+    throw error;
+  }
+}
+
 async function runStatusCommand(home: string): Promise<number> {
+  const lookup = await lookupDaemon(home);
+  // No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped.
+  if (lookup.status === "absent" && !existsSync(join(home, "current")) && !existsSync(join(home, RERAIL_DATABASE_FILE))) {
+    process.stdout.write("Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.\n");
+    return 3;
+  }
   const workspace = process.cwd();
   const state = workspaceStartState(workspace);
-  const name = repositoryName(workspace);
-  if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
+  const location = repositoryIdentityLocation(workspace);
+  const name = repositoryFolderName(location);
+  if (!location.git && state === "stopped") {
+    // Without a Git Rerail can run, every folder reads as no repo; say what is actually missing.
+    const git = gitLookup();
+    process.stdout.write(git.found
+      ? `No repo found here (${workspace}). Run rerail status inside your project.\n`
+      : `Rerail needs Git to tell whether this is a repo, and found none where it looks: ${git.looked.join(", ")}. Install Git, then run rerail status again.\n`);
+  } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
-  const lookup = await lookupDaemon(home);
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;
@@ -531,6 +556,22 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
 }
 
+/**
+ * The launcher runs `node` from PATH once the node set-up recorded is gone, and that one can be older than Rerail runs
+ * on. Every command but `setup`, which makes the same check in its own output, refuses there with set-up's message,
+ * as one set-up step under `--json`; undefined where this Node is new enough.
+ */
+function refuseUnsupportedNode(args: readonly string[]): number | undefined {
+  if (takeOption(args, "--profile").args[0] === "setup") return undefined;
+  const json = args.includes(JSON_FLAG);
+  const terminal = !args.includes(SETUP_FLAGS.relay) && process.stdin.isTTY && process.stdout.isTTY;
+  const node = checkNodeVersion(process.versions.node, json ? "json" : terminal ? "terminal" : "agent");
+  if (node.ok) return undefined;
+  if (json) process.stdout.write(`${JSON.stringify(errorStep(node.message.replace(/\n$/u, "")))}\n`);
+  else process.stderr.write(node.message);
+  return 1;
+}
+
 async function main(): Promise<number> {
   const manifest = await packageManifest(packageRoot);
   const home = defaultRerailHome();
@@ -544,6 +585,8 @@ async function main(): Promise<number> {
   const rawArgs = process.argv.slice(2);
   const managedChild = rawArgs[0] === MANAGED_CHILD_ARGUMENT;
   const args = managedChild ? rawArgs.slice(1) : rawArgs;
+  const tooOld = refuseUnsupportedNode(args);
+  if (tooOld !== undefined) return tooOld;
   if (args[0] === "mcp-bridge") {
     if (args.length !== 1) throw new Error("mcp-bridge takes no arguments");
     await runRerailMcpBridge();
@@ -631,6 +674,14 @@ async function runReleaseCommand(command: string, args: readonly string[], conte
     return 0;
   }
   throw new Error(`Unknown command: ${command}\n\n${usage()}`);
+}
+
+// `rerail setup … | head -2` closes the pipe while Rerail still has lines to write. The reader chose not to see them:
+// no stack trace, and the command still finishes what it started (an install half done would hold its lock).
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE") throw error;
+  });
 }
 
 try {

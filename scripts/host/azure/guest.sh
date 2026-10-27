@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# Runs on a throwaway Azure Linux VM, or a GitHub-hosted macOS runner, for scripts/host/azure/matrix.mjs, which
-# prepends the RERAIL_ENV_* settings and sends this file through Azure Run Command (Linux) or runs it with sudo
-# (`matrix.mjs local`, macOS). As root it provisions what a user brings (Node from nodejs.org; Git from the
-# distribution, or the Command Line Tools on a Mac) and the package under test, then runs itself again as the
-# machine's ordinary user through a login shell, the way a person opens a terminal. That run installs Rerail with
-# `npx @neralabs/rerail setup`, answers set-up's questions, and checks the managed runtime: launcher, daemon and native
-# engine, PATH in new shells, the Claude Code and Codex hooks as those agents spawn them, daemon restart, and removal.
-# It uploads results.json and a log to the blob URLs it was given, or leaves them in $WORK when it was given none; the
-# driver judges them against the environment's expectation. Bash 3.2, which is macOS's /bin/bash.
+# Runs on a throwaway Azure Linux VM, or a GitHub-hosted Linux or macOS runner, for scripts/host/azure/matrix.mjs,
+# which prepends the RERAIL_ENV_* settings and sends this file through Azure Run Command, or runs it with sudo on the
+# runner (`matrix.mjs local`: the matrix's macOS environments, and the release workflow's Linux and macOS installs).
+# As root it provisions what a user brings (Node from nodejs.org; Git from the distribution, or the Command Line Tools
+# on a Mac) and the package under test, then runs itself again as the machine's ordinary user through a login shell,
+# the way a person opens a terminal. That run installs Rerail with `npx @neralabs/rerail setup`, answers set-up's
+# questions, and checks the managed runtime: launcher, daemon and native engine, PATH in new shells, the Claude Code
+# and Codex hooks as those agents spawn them, daemon restart, and removal. It uploads results.json and a log to the
+# blob URLs it was given, or leaves them in $WORK when it was given none; the driver judges them against the
+# environment's expectation. Bash 3.2, which is macOS's /bin/bash.
 set -uo pipefail
 
 : "${RERAIL_ENV_ID:?}" "${RERAIL_ENV_USER:?}" "${RERAIL_ENV_NODE:?}"
@@ -92,6 +93,9 @@ provision_linux() {
   version="$(sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p" "$WORK/SHASUMS256.txt")"
   [ -n "$version" ] || { echo "no Node ${RERAIL_ENV_NODE}.x for linux-${arch}" >&2; exit 1; }
   fetch "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" -o "$WORK/node.tar.xz"
+  # A Node already in /usr/local (a GitHub runner's) leaves its npm's files behind under the new one's, and the mix fails
+  # with "Class extends value undefined"; a fresh VM has none to remove.
+  rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
   tar -xJf "$WORK/node.tar.xz" -C /usr/local --strip-components=1
 }
 

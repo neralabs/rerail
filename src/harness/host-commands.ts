@@ -234,6 +234,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       "Remove Rerail from this computer?",
       "",
       "Removes /rerail commands, hooks and the status line from every coding agent; Rerail stops in every repo.",
+      "Removes Rerail itself: its installed versions, the rerail command, rule packs and cache.",
       "Keeps your rules and history, in a backup folder.",
       "",
       "You can reinstall anytime and restore your rules from the backup.",
