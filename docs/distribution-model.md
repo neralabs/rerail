@@ -45,22 +45,13 @@ A customer-specific package, branch, or native build is prohibited by default. C
 
 npmjs is the registry of record. `.github/workflows/release.yml` publishes each tagged version there with npm trusted publishing (OIDC from a protected GitHub environment, no long-lived publish token). No other registry, mirror, or feed carries Rerail.
 
-Until launch the package is restricted: only members of the `neralabs` npm organization can read it. They authenticate with their own npm identities (`npm login`); automation uses a read-only granular access token limited to this package. At launch the package becomes public and installs without an account, matching the Apache-2.0 source, which is public as well.
-
-Pre-launch access grant:
-
-```sh
-npm access grant read-only neralabs:<team> @neralabs/rerail
-```
+The package is public: it installs without an npm account, matching the Apache-2.0 source, which is public as well.
 
 Installation:
 
 ```sh
-npm login   # only while the package is restricted
 npx @neralabs/rerail setup
 ```
-
-Revoking npm access prevents future downloads. It does not remove previously downloaded artifacts or terminate an offline entitlement.
 
 ### Release channels
 
@@ -300,4 +291,4 @@ Rerail is licensed under Apache-2.0. Restricted npm access does not limit the ri
 
 ## Evolution
 
-A restricted npm package is the pre-launch channel; at launch the same package becomes public on npmjs. A customer portal or other artifact registry, if one is ever added, must distribute the same signed, immutable artifacts and must not create customer-specific runtime forks.
+The public npm package is the distribution channel. A customer portal or other artifact registry, if one is ever added, must distribute the same signed, immutable artifacts and must not create customer-specific runtime forks.

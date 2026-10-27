@@ -253,7 +253,7 @@ describe("releasePacks", () => {
       calls,
       steps: {
         publish: (file, distTag) => (calls.push(`publish ${file} ${distTag}`), published[file] ?? { ok: true, output: "" }),
-        assertRestricted: async (name) => void calls.push(`restricted ${name}`),
+        assertPublic: async (name, version) => void calls.push(`public ${name}@${version}`),
         tag: (tag) => void calls.push(`tag ${tag}`),
         log: () => {},
       },
@@ -263,7 +263,7 @@ describe("releasePacks", () => {
   it("skips a version already tagged, so a re-run with the first run's tarballs reaches the rest", async () => {
     const { calls, steps } = recording();
     const released = await releasePacks([entry("a", "0.2.0"), entry("b", "0.2.0")], ["@neralabs/rerail-pack-a@0.2.0"], steps);
-    expect(calls).toEqual(["publish b-0.2.0.tgz latest", "restricted @neralabs/rerail-pack-b", "tag @neralabs/rerail-pack-b@0.2.0"]);
+    expect(calls).toEqual(["publish b-0.2.0.tgz latest", "public @neralabs/rerail-pack-b@0.2.0", "tag @neralabs/rerail-pack-b@0.2.0"]);
     expect(released).toEqual([{ name: "@neralabs/rerail-pack-b", version: "0.2.0", distTag: "latest" }]);
   });
 
@@ -277,7 +277,7 @@ describe("releasePacks", () => {
   it("checks and tags a version the registry already has without its tag, without publishing it again", async () => {
     const { calls, steps } = recording({ "a-0.2.0.tgz": { ok: false, output: conflict } });
     await releasePacks([entry("a", "0.2.0")], [], steps);
-    expect(calls).toEqual(["publish a-0.2.0.tgz latest", "restricted @neralabs/rerail-pack-a", "tag @neralabs/rerail-pack-a@0.2.0"]);
+    expect(calls).toEqual(["publish a-0.2.0.tgz latest", "public @neralabs/rerail-pack-a@0.2.0", "tag @neralabs/rerail-pack-a@0.2.0"]);
   });
 
   it("stops at any other publish failure, tagging nothing", async () => {

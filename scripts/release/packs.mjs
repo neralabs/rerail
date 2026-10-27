@@ -47,7 +47,7 @@ export const alreadyOnRegistry = (output) => /cannot publish over the previously
  * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
  * publishing) is not published again, only checked and tagged. A pack named in `held` (held at an older `latest`) is
  * published under `next`, every other under `latest`. `steps` does the I/O: `publish(file, distTag)` returns
- * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
+ * `{ ok, output }`, `assertPublic(name, version)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
  * this run released.
  */
 export async function releasePacks(manifest, tags, steps, held = []) {
@@ -64,7 +64,7 @@ export async function releasePacks(manifest, tags, steps, held = []) {
     const published = steps.publish(file, distTag);
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
     if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
-    await steps.assertRestricted(name);
+    await steps.assertPublic(name, version);
     steps.tag(tag);
     steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
     released.push({ name, version, distTag });

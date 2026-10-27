@@ -322,14 +322,14 @@ describe("validatePack", () => {
       },
     ],
     [
-      "a public package",
-      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, publishConfig: { access: "public" } })),
-      { package: ["package.json: publishConfig.access is public; packs stay restricted until launch"] },
+      "a restricted package",
+      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, publishConfig: { access: "restricted" } })),
+      { package: ["package.json: publishConfig.access is restricted; packs are public"] },
     ],
     [
       "a package.json with no publishConfig",
       directory => editJson(join(directory, "package.json"), ({ publishConfig: _publishConfig, ...manifest }) => manifest),
-      { package: ["package.json: publishConfig.access is missing; packs stay restricted until launch"] },
+      { package: ["package.json: publishConfig.access is missing; packs are public"] },
     ],
     [
       "upstream/ in package.json files",
