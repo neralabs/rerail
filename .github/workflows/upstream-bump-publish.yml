@@ -184,7 +184,7 @@ jobs:
           mapfile -t jobs < <(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" --jq '.jobs[] | "\(.conclusion // "unfinished")\t\(.name)"')
           for job in "${jobs[@]}"; do
             IFS=$'\t' read -r conclusion name <<< "$job"
-            if [[ "$name" =~ ^Bump\ ([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)\ to\ ([a-z0-9][a-z0-9._-]*)$ ]] && [[ "$conclusion" =~ ^[a-z_]+$ ]]; then
+            if [[ "$conclusion" =~ ^[a-z_]+$ ]] && [[ "$name" =~ ^Bump\ ([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)\ to\ ([a-z0-9][a-z0-9._-]*)$ ]]; then
               printf '%s\t%s\t%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$conclusion" >> "$RUNNER_TEMP/requested.tsv"
             fi
           done
