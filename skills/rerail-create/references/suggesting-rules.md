@@ -53,6 +53,10 @@ the results:
   0.87, and cost rose 54%.
 - **Cheap rules pay.** A defect that is fixed on the first steer pays for itself, for example an `async` function that never
   awaits.
+- **Architecture rules pay where the design is at stake.** On pull requests whose first design the maintainers sent back,
+  agents without rules shipped the rejected design in about 6 runs of 10, and about 2 in 100 with the rules on. On ordinary
+  pull requests the same rules stayed quiet. Score their harm prevented by the cost of the rework a reviewer would ask for (2 or
+  3), not by how often they will fire. See [architecture-rules.md](architecture-rules.md).
 - **Rules the agent fights cost the most.** Steered in 8 or more runs and fixed in fewer than 40% of them: one such rule took a
   fifth of all fixing spend, and 62% of its steers were repeats.
 
@@ -69,7 +73,7 @@ Score each one and keep the best five at most.
 
 | | High | Low |
 |---|---|---|
-| **Evidence** | The person corrected it more than once, or wrote it down as a standard | Your guess that it might help |
+| **Evidence** | The person corrected it more than once, wrote it down as a standard, or a maintainer sent a design back for it in review | Your guess that it might help |
 | **Harm prevented** | Correctness, security, data loss, a broken build (3) | Maintainability (2), style (1) |
 | **Repo agreement** | The repo pass matches a handful of places, and each one is a real violation | Hundreds of matches: the repo's convention says otherwise |
 | **Safe to obey** | Following the steer cannot break working code | The fix it asks for is wrong in some cases the matcher cannot tell apart |
@@ -95,7 +99,7 @@ Rules worth adding to <repo>, from <N> sessions and <standards files>.
                    (or, with no sessions: from <standards files> and the code; Rerail has no sessions here yet)
 
   1. <what it checks, one line>                                  High
-     Why    <"You corrected this 3 times, last: '<quote>' (Oct 12)" | "CLAUDE.md: '<quote>'" | "140 files use logger, 3 use console.log">
+     Why    <"You corrected this 3 times, last: '<quote>' (Oct 12)" | "CLAUDE.md: '<quote>'" | "140 files use logger, 3 use console.log" | "#8335 review: '<quote>'">
      Where  When I edit <files> | When I run <command>
      Risk   <one line: "Existing code follows it: 2 places differ" | "Following it can't break code" | the weak dimension of a Medium>
 
