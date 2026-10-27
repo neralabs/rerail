@@ -338,6 +338,60 @@ CREATE TABLE IF NOT EXISTS tree_pages (
     PRIMARY KEY (page_key, page_index)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
+
+-- The prefilter's per-tape access paths (prefilter.rs, from Pulling-it-all-together's anchor
+-- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
+-- tape and dying with it. Kinds are atoms (tape tag * 1024 + kind code). Postings are delta-varint
+-- preorder lists (`nera_postings`). The frequency tables count over every tape that has a set.
+CREATE TABLE IF NOT EXISTS prefilter_sets (
+    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK(version >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS tape_kind_counts (
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n > 0),
+    postings BLOB NOT NULL,
+    PRIMARY KEY (tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS kind_freq (
+    kind INTEGER PRIMARY KEY,
+    n INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS term_postings (
+    lang INTEGER NOT NULL,
+    term TEXT NOT NULL,
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    postings BLOB NOT NULL,
+    PRIMARY KEY (lang, term, tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS term_postings_by_tape ON term_postings(tape_id);
+CREATE TABLE IF NOT EXISTS term_freq (
+    lang INTEGER NOT NULL,
+    term TEXT NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (lang, term)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS term_coverage (
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    bad INTEGER NOT NULL,
+    residue INTEGER NOT NULL,
+    missing BLOB NOT NULL,
+    PRIMARY KEY (tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS term_coverage_residue ON term_coverage(kind) WHERE residue > 0;
+-- Publication adds the counts in one statement per table; removal, including a cascade from a
+-- collected tape, counts down here.
+CREATE TRIGGER IF NOT EXISTS tape_kind_count_delete AFTER DELETE ON tape_kind_counts BEGIN
+    UPDATE kind_freq SET n=n-OLD.n WHERE kind=OLD.kind;
+    DELETE FROM kind_freq WHERE kind=OLD.kind AND n<=0;
+END;
+CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
+    UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
+    DELETE FROM term_freq WHERE lang=OLD.lang AND term=OLD.term AND n<=0;
+END;
 "#;
 
 impl ContentStore {

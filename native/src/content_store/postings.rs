@@ -1,4 +1,6 @@
-//! Streaming adapter for packed posting segments. SQLite owns all selection and joins.
+//! Streaming adapter for packed posting segments (`nera_postings`), from Pulling-it-all-together's
+//! anchor store. Every store connection has it (`configure_connection`), so the prefilter's SQL
+//! decodes postings where it selects them. SQLite owns all selection and joins.
 use rusqlite::{
     Connection, Result, ffi,
     vtab::{
@@ -11,7 +13,8 @@ use std::{
     ffi::{CStr, c_int},
 };
 
-pub(super) fn append_delta(bytes: &mut Vec<u8>, mut delta: u32) {
+#[allow(dead_code)]
+pub(crate) fn append_delta(bytes: &mut Vec<u8>, mut delta: u32) {
     while delta >= 128 {
         bytes.push(delta as u8 | 128);
         delta >>= 7;

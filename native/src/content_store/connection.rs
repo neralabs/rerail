@@ -320,6 +320,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "cache_size", -1_024_i64)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
+    super::postings::install(connection)?;
     Ok(())
 }
 

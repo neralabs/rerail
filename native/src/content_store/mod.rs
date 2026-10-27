@@ -4,11 +4,20 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 mod atoms;
+// Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
+#[allow(dead_code)]
+mod bounded_insert;
 mod compression;
 mod connection;
 mod derivation;
 mod facts_memo;
 mod objects;
+mod postings;
+#[allow(unused_imports)]
+pub(crate) use postings::append_delta;
+#[allow(dead_code)]
+pub(crate) mod prefilter;
+pub(crate) use prefilter::TapePrefilter;
 mod publication;
 mod read_cache;
 mod reclamation;
@@ -272,6 +281,13 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 pub struct SourceId(i64);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
+
+impl TapeId {
+    /// The row id, for SQL over the store's tables (the prefilter's lowering).
+    pub(crate) fn row(self) -> i64 {
+        self.0
+    }
+}
 
 /// A stored tape whose search index is not built yet, with what building it reads.
 pub(crate) struct UnindexedTape {

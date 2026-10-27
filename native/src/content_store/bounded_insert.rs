@@ -1,7 +1,8 @@
-//! Bounded typed publication batches. SQLite owns stored rows and transaction rollback.
+//! Bounded typed publication batches, from Pulling-it-all-together's anchor store. SQLite owns
+//! stored rows and transaction rollback.
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 
-pub(crate) fn insert<const N: usize>(
+pub(super) fn insert<const N: usize>(
     db: &Connection,
     prefix: &str,
     suffix: &str,
