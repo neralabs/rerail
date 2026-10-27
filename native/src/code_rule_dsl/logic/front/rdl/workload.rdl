@@ -1,0 +1,141 @@
+// The spike workload (../souffle/workload.dl) in Rerail's Datalog dialect.
+// Tree structure comes from the tape: `nearest($n, $s, set)` is $n's nearest strict ancestor whose kind is in `set`.
+// No relation materializes it; the planner chooses a climb from $n or a descent from $s by cost.
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl intval(n: node, v: int)
+.decl op(n: node, s: sym)
+.input doc, node, child, field, text, intval, op
+
+.kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
+
+.decl kind(n: node, k: sym)
+kind($n, $k) :- node(_, $n, $k, _, _).
+.decl docof(n: node, d: int)
+docof($n, $d) :- node($d, $n, _, _, _).
+.decl modnode(d: int, m: node)
+modnode($d, $m) :- node($d, $m, "module", _, _).
+.decl finding(rule: sym, n: node)
+.output finding
+
+// W1
+.decl exc_type(n: node)
+exc_type($n) :- kind($n, "identifier"), text($n, "Exception").
+exc_type($n) :- kind($n, "parenthesized_expression"), child($n, $c, _), exc_type($c).
+.decl has_non_block(e: node)
+has_non_block($e) :- kind($e, "except_clause"), child($e, $c, _), !kind($c, "block").
+.decl catch_all(e: node)
+catch_all($e) :- kind($e, "except_clause"), !has_non_block($e).
+catch_all($e) :- kind($e, "except_clause"), child($e, $c, _), exc_type($c).
+catch_all($e) :- kind($e, "except_clause"), child($e, $c, _), kind($c, "as_pattern"), child($c, $x, _), exc_type($x).
+finding("B110", $e) :- catch_all($e), child($e, $b, _), kind($b, "block"), child($b, $p, _), kind($p, "pass_statement"),
+    $k = count { child($b, _, _) }, $k = 1.
+
+// W2
+.decl seqkind(k: sym)
+seqkind("pattern_list"). seqkind("tuple_pattern"). seqkind("list_pattern").
+seqkind("expression_list"). seqkind("tuple"). seqkind("list").
+.decl mirror(l: node, r: node)
+mirror($l, $r) :- kind($a, "assignment"), field($a, "left", $l), field($a, "right", $r).
+mirror($l2, $r2) :- mirror($l, $r), kind($l, $kl), seqkind($kl), kind($r, $kr), seqkind($kr), child($l, $l2, $i), child($r, $r2, $i).
+finding("SELF_ASSIGN", $l) :- mirror($l, $r), kind($l, "identifier"), kind($r, "identifier"), text($l, $s), text($r, $s).
+
+// W3
+.decl binds(d: int, local: sym, q: sym)
+binds($d, $t, $t) :- kind($i, "import_statement"), field($i, "name", $n), kind($n, "dotted_name"), child($n, $c, 0), text($c, $t), docof($i, $d).
+binds($d, $a, $m) :- kind($i, "import_statement"), field($i, "name", $x), kind($x, "aliased_import"),
+    field($x, "name", $n), text($n, $m), field($x, "alias", $al), text($al, $a), docof($i, $d).
+binds($d, $s, @cat($m, $s)) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), text($mn, $m),
+    field($i, "name", $n), kind($n, "dotted_name"), text($n, $s), docof($i, $d).
+binds($d, $a, @cat($m, $s)) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), text($mn, $m),
+    field($i, "name", $x), kind($x, "aliased_import"), field($x, "name", $n), text($n, $s), field($x, "alias", $al), text($al, $a), docof($i, $d).
+.decl resolves(n: node, q: sym)
+resolves($n, $q) :- kind($n, "identifier"), text($n, $s), docof($n, $d), binds($d, $s, $q).
+resolves($n, @cat($m, $s)) :- kind($n, "attribute"), field($n, "object", $o), resolves($o, $m), field($n, "attribute", $a), text($a, $s).
+.decl timeout_fn(q: sym)
+timeout_fn("urllib.request.urlopen"). timeout_fn("socket.create_connection").
+timeout_fn("http.client.HTTPConnection"). timeout_fn("http.client.HTTPSConnection").
+timeout_fn("subprocess.run"). timeout_fn("subprocess.check_output"). timeout_fn("subprocess.call"). timeout_fn("subprocess.check_call").
+.decl kwarg(c: node, name: sym, v: node)
+kwarg($c, $s, $v) :- kind($c, "call"), field($c, "arguments", $a), child($a, $k, _), kind($k, "keyword_argument"),
+    field($k, "name", $nm), text($nm, $s), field($k, "value", $v).
+.decl has_splat(c: node)
+has_splat($c) :- kind($c, "call"), field($c, "arguments", $a), child($a, $k, _), kind($k, "dictionary_splat").
+.decl has_timeout(c: node)
+has_timeout($c) :- kwarg($c, "timeout", _).
+finding("NO_TIMEOUT", $c) :- kind($c, "call"), field($c, "function", $f), resolves($f, $q), timeout_fn($q), !has_timeout($c), !has_splat($c).
+finding("NO_TIMEOUT", $c) :- kind($c, "call"), field($c, "function", $f), resolves($f, $q), timeout_fn($q), kwarg($c, "timeout", $v), kind($v, "none").
+
+// W4
+.decl lit_type(k: sym, t: sym)
+lit_type("integer", "int"). lit_type("float", "float"). lit_type("string", "str"). lit_type("concatenated_string", "str").
+lit_type("true", "bool"). lit_type("false", "bool"). lit_type("none", "None").
+lit_type("list", "list"). lit_type("list_comprehension", "list"). lit_type("dictionary", "dict").
+lit_type("dictionary_comprehension", "dict"). lit_type("set", "set"). lit_type("set_comprehension", "set"). lit_type("tuple", "tuple").
+.decl assigns(s: node, x: sym, r: node)
+assigns($s, $x, $r) :- kind($a, "assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), field($a, "right", $r), nearest($a, $s, scope).
+.decl defines_class(s: node, x: sym, q: sym)
+defines_class($s, $x, @cat($m, $x)) :- kind($c, "class_definition"), field($c, "name", $nm), text($nm, $x), nearest($c, $s, scope), kind($s, "module"), docof($c, $d), doc($d, _, $m).
+.decl defines_fn(s: node, x: sym, f: node, q: sym)
+defines_fn($s, $x, $f, @cat($m, $x)) :- kind($f, "function_definition"), field($f, "name", $nm), text($nm, $x), nearest($f, $s, scope), kind($s, "module"), docof($f, $d), doc($d, _, $m).
+.decl class_q(q: sym)
+class_q($q) :- defines_class(_, _, $q).
+.decl fn_q(q: sym, f: node)
+fn_q($q, $f) :- defines_fn(_, _, $f, $q).
+.decl bound_in(s: node, x: sym)
+bound_in($s, $x) :- assigns($s, $x, _).
+bound_in($s, $x) :- defines_class($s, $x, _).
+bound_in($s, $x) :- defines_fn($s, $x, _, _).
+bound_in($f, $x) :- kind($f, "function_definition"), field($f, "parameters", $ps), child($ps, $p, _), kind($p, "identifier"), text($p, $x).
+bound_in($f, $x) :- kind($f, "function_definition"), field($f, "parameters", $ps), child($ps, $p, _), child($p, $i, 0), kind($i, "identifier"), text($i, $x).
+.decl lookup(n: node, x: sym, s: node)
+lookup($n, $x, $s) :- kind($n, "identifier"), text($n, $x), nearest($n, $s, scope), bound_in($s, $x).
+lookup($n, $x, $m) :- kind($n, "identifier"), text($n, $x), nearest($n, $s, scope), !bound_in($s, $x), docof($n, $d), modnode($d, $m), bound_in($m, $x).
+.decl class_ref(n: node, q: sym)
+class_ref($f, $q) :- lookup($f, $x, $s), defines_class($s, $x, $q).
+class_ref($f, $q) :- resolves($f, $q), class_q($q).
+.decl fn_ref(n: node, f: node)
+fn_ref($n, $f) :- lookup($n, $x, $s), defines_fn($s, $x, $f, _).
+fn_ref($n, $f) :- resolves($n, $q), fn_q($q, $f).
+.decl type_of(n: node, t: sym)
+.decl returns(f: node, t: sym)
+type_of($n, $t) :- kind($n, $k), lit_type($k, $t).
+type_of($n, $t) :- lookup($n, $x, $s), assigns($s, $x, $r), type_of($r, $t).
+type_of($n, $t) :- kind($n, "parenthesized_expression"), child($n, $c, 0), type_of($c, $t).
+type_of($c, $q) :- kind($c, "call"), field($c, "function", $f), class_ref($f, $q).
+type_of($c, $t) :- kind($c, "call"), field($c, "function", $f), fn_ref($f, $fn), returns($fn, $t).
+returns($f, $t) :- kind($r, "return_statement"), nearest($r, $f, scope), kind($f, "function_definition"), child($r, $e, 0), type_of($e, $t).
+.output type_of
+
+// W4b: a declared flat lattice. `top` is its top; the join of two different constants is `top`.
+.decl const_kind(k: sym)
+const_kind("integer"). const_kind("identifier"). const_kind("binary_operator"). const_kind("parenthesized_expression").
+.decl is_lit(k: sym)
+is_lit($k) :- lit_type($k, _).
+.decl aug_op(a: sym, o: sym)
+aug_op("+=", "+"). aug_op("-=", "-"). aug_op("*=", "*").
+.decl augdef(s: node, x: sym, a: node)
+augdef($s, $x, $a) :- kind($a, "augmented_assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), nearest($a, $s, scope).
+.decl has_def(n: node)
+has_def($n) :- lookup($n, $x, $s), assigns($s, $x, _).
+has_def($n) :- lookup($n, $x, $s), augdef($s, $x, _).
+.decl binval(n: node, o: sym, l: node, r: node)
+binval($n, $o, $l, $r) :- kind($n, "binary_operator"), op($n, $o), field($n, "left", $l), field($n, "right", $r).
+binval($a, $o, $l, $r) :- kind($a, "augmented_assignment"), op($a, $o0), aug_op($o0, $o), field($a, "left", $l), field($a, "right", $r).
+.lattice cv(n: node; v: flat)
+cv($n, $v) :- intval($n, $v).
+cv($n, top) :- kind($n, "integer"), !intval($n, _).
+cv($n, top) :- kind($n, $k), !const_kind($k), !is_lit($k).
+cv($n, top) :- kind($n, $k), is_lit($k), $k != "integer".
+cv($n, top) :- kind($n, "identifier"), !has_def($n).
+cv($n, $v) :- lookup($n, $x, $s), assigns($s, $x, $r), cv($r, $v).
+cv($n, $v) :- lookup($n, $x, $s), augdef($s, $x, $a), cv($a, $v).
+cv($n, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), cv($c, $v).
+cv($n, @flat_bin($o, $a, $b)) :- binval($n, $o, $l, $r), cv($l, $a), cv($r, $b).
+.decl cv_const(n: node, v: int)
+cv_const($n, $v) :- cv($n, $v), $v != top, kind($n, "identifier").
+cv_const($n, $v) :- cv($n, $v), $v != top, kind($n, "binary_operator").
+.output cv_const

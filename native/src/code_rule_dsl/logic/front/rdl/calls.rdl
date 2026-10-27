@@ -1,0 +1,437 @@
+// Call-target resolution and call chains for Python, in Rerail's Datalog dialect.
+//
+// One points-to relation, `pv(n, kind, v)`: expression n may evaluate to v, a function (`fn`, a function_definition),
+// a class object (`cls`), an instance of a class (`inst`), a module (`mod`), or `super()` in a class (`super`).
+// `vopen(n)`: n may also evaluate to something no static name denotes. A call's answer is three-valued, as the
+// native `calls` relation's is: `call_open` (unknown), else the definitions `call_target` names (none: no edge).
+//
+// Python semantics covered: LEGB scope lookup (class scopes are invisible to nested functions), imports (absolute,
+// one-dot relative, aliased, star, function-local), re-exports through module bindings, later unconditional bindings
+// shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns, others unknown),
+// classes and inheritance (method lookup through bases, constructors to `__init__`, instances to `__call__`),
+// late-bound `self`/`cls` (the class and every workspace subclass), `super()`, and function values flowing through
+// assignments, returns and a function's returned parameter.
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl op(n: node, s: sym)
+.decl pkg(d: int, p: sym)
+.input doc, node, child, field, text, op, pkg
+
+.kindset scope = "module" | "function_definition" | "class_definition" | "lambda"
+// What a name in a scope sees when its own scope does not bind it: class scopes are skipped.
+.kindset fscope = "module" | "function_definition" | "lambda"
+.kindset fdef = "function_definition"
+
+.decl kind(n: node, k: sym)
+kind($n, $k) :- node(_, $n, $k, _, _).
+.decl docof(n: node, d: int)
+docof($n, $d) :- node($d, $n, _, _, _).
+.decl modnode(d: int, m: node)
+modnode($d, $m) :- node($d, $m, "module", _, _).
+.decl modname(m: node, q: sym)
+modname($m, $q) :- modnode($d, $m), doc($d, _, $q).
+
+// ---- names read, and the scope that binds them ----------------------------------------------------------------
+.decl nameref(n: node, x: sym)
+nameref($n, $x) :- kind($n, "identifier"), text($n, $x), !field(_, "attribute", $n), !field(_, "name", $n).
+.decl rdefn(s: node, x: sym, f: node)
+rdefn($s, $x, $f) :- kind($f, "function_definition"), field($f, "name", $nm), text($nm, $x), nearest($f, $s, scope).
+rdefn($s, $x, $f) :- kind($f, "class_definition"), field($f, "name", $nm), text($nm, $x), nearest($f, $s, scope).
+.decl rasg(s: node, x: sym, r: node, a: node)
+rasg($s, $x, $r, $a) :- kind($a, "assignment"), field($a, "left", $l), kind($l, "identifier"), text($l, $x), field($a, "right", $r), nearest($a, $s, scope).
+.decl param(f: node, x: sym, i: int)
+param($f, $x, $i) :- field($f, "parameters", $ps), child($ps, $p, $i), kind($p, "identifier"), text($p, $x).
+param($f, $x, $i) :- field($f, "parameters", $ps), child($ps, $p, $i), child($p, $id, 0), kind($id, "identifier"), text($id, $x).
+// Targets whose value is not tracked: patterns, loop and comprehension variables, `with`/`except` names, walrus,
+// augmented assignment, and names a `global`/`nonlocal` declaration hands to another scope.
+.decl patkind(k: sym)
+patkind("pattern_list"). patkind("tuple_pattern"). patkind("list_pattern"). patkind("list_splat_pattern").
+patkind("parenthesized_expression"). patkind("tuple"). patkind("list"). patkind("expression_list").
+.decl tgt(t: node)
+tgt($l) :- kind($a, "assignment"), field($a, "left", $l), !kind($l, "identifier").
+tgt($l) :- kind($a, "augmented_assignment"), field($a, "left", $l).
+tgt($l) :- kind($a, "for_statement"), field($a, "left", $l).
+tgt($l) :- kind($a, "for_in_clause"), field($a, "left", $l).
+tgt($l) :- kind($a, "named_expression"), field($a, "name", $l).
+tgt($l) :- kind($l, "as_pattern_target").
+tgt($c) :- tgt($t), kind($t, $k), patkind($k), child($t, $c, _).
+tgt($c) :- tgt($t), kind($t, "as_pattern_target"), child($t, $c, _).
+.decl rotgt(s: node, x: sym)
+rotgt($s, $x) :- tgt($t), kind($t, "identifier"), text($t, $x), nearest($t, $s, scope).
+
+// Imports, per scope: `ibind(s, x, q)` binds x to the qualified name q; `ifrom` also keeps the module and name.
+.decl impmod(i: node, m: sym)
+impmod($i, $m) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "dotted_name"), text($mn, $m).
+impmod($i, $p) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "relative_import"),
+    child($mn, $pre, 0), text($pre, "."), !child($mn, _, 1), docof($i, $d), pkg($d, $p), $p != "".
+impmod($i, @cat($p, $m)) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "relative_import"),
+    child($mn, $pre, 0), text($pre, "."), child($mn, $dn, 1), text($dn, $m), docof($i, $d), pkg($d, $p), $p != "".
+.decl rifrom(s: node, x: sym, m: sym, y: sym)
+rifrom($s, $y, $m, $y) :- impmod($i, $m), field($i, "name", $n), kind($n, "dotted_name"), text($n, $y), nearest($i, $s, scope).
+rifrom($s, $a, $m, $y) :- impmod($i, $m), field($i, "name", $x), kind($x, "aliased_import"), field($x, "name", $n), text($n, $y),
+    field($x, "alias", $al), text($al, $a), nearest($i, $s, scope).
+.decl ribind(s: node, x: sym, q: sym)
+ribind($s, $x, @cat($m, $y)) :- rifrom($s, $x, $m, $y).
+ribind($s, $t, $t) :- kind($i, "import_statement"), field($i, "name", $n), kind($n, "dotted_name"), child($n, $c, 0), text($c, $t), nearest($i, $s, scope).
+ribind($s, $a, $m) :- kind($i, "import_statement"), field($i, "name", $x), kind($x, "aliased_import"), field($x, "name", $n), text($n, $m),
+    field($x, "alias", $al), text($al, $a), nearest($i, $s, scope).
+// A relative import the facts cannot place (two or more dots, or outside a package): what it binds is unknown.
+.decl irel_open(i: node)
+irel_open($i) :- kind($i, "import_from_statement"), field($i, "module_name", $mn), kind($mn, "relative_import"), !impmod($i, _).
+rotgt($s, $y) :- irel_open($i), field($i, "name", $n), kind($n, "dotted_name"), text($n, $y), nearest($i, $s, scope).
+rotgt($s, $a) :- irel_open($i), field($i, "name", $x), kind($x, "aliased_import"), field($x, "alias", $al), text($al, $a), nearest($i, $s, scope).
+.decl star(s: node)
+star($s) :- kind($i, "import_from_statement"), child($i, $w, _), kind($w, "wildcard_import"), nearest($i, $s, scope).
+
+// `global x` / `nonlocal x`: the scope's bindings of x are the module's / the enclosing function's.
+.decl decl(s: node, x: sym, t: node)
+decl($s, $x, $m) :- kind($g, "global_statement"), child($g, $i, _), text($i, $x), nearest($g, $s, scope), docof($g, $d), modnode($d, $m).
+decl($s, $x, $p) :- kind($g, "nonlocal_statement"), child($g, $i, _), text($i, $x), nearest($g, $s, scope), nearest($s, $p, fscope).
+.decl rbound(s: node, x: sym)
+rbound($s, $x) :- rdefn($s, $x, _).
+rbound($s, $x) :- rasg($s, $x, _, _).
+rbound($s, $x) :- rotgt($s, $x).
+rbound($s, $x) :- ribind($s, $x, _).
+.decl home(s: node, x: sym, t: node)
+home($s, $x, $s) :- rbound($s, $x), !decl($s, $x, _).
+home($s, $x, $t) :- rbound($s, $x), decl($s, $x, $t).
+.decl defn(s: node, x: sym, f: node)
+defn($t, $x, $f) :- rdefn($s, $x, $f), home($s, $x, $t).
+.decl asg(s: node, x: sym, r: node, a: node)
+asg($t, $x, $r, $a) :- rasg($s, $x, $r, $a), home($s, $x, $t).
+.decl otgt(s: node, x: sym)
+otgt($t, $x) :- rotgt($s, $x), home($s, $x, $t).
+.decl ifrom(s: node, x: sym, m: sym, y: sym)
+ifrom($t, $x, $m, $y) :- rifrom($s, $x, $m, $y), home($s, $x, $t).
+.decl ibind(s: node, x: sym, q: sym)
+ibind($t, $x, $q) :- ribind($s, $x, $q), home($s, $x, $t).
+
+.decl bound_in(s: node, x: sym)
+bound_in($s, $x) :- defn($s, $x, _).
+bound_in($s, $x) :- asg($s, $x, _, _).
+bound_in($f, $x) :- param($f, $x, _).
+bound_in($s, $x) :- otgt($s, $x).
+bound_in($s, $x) :- ibind($s, $x, _).
+
+// LEGB: from the nearest scope outwards, skipping class scopes, to the first that binds the name.
+.decl walk(n: node, x: sym, s: node)
+walk($n, $x, $s) :- nameref($n, $x), nearest($n, $s, scope).
+walk($n, $x, $p) :- walk($n, $x, $s), !bound_in($s, $x), nearest($s, $p, fscope).
+.decl look(n: node, x: sym, s: node)
+look($n, $x, $s) :- walk($n, $x, $s), bound_in($s, $x).
+// Bound nowhere: a builtin, or (a star import, `globals()`) unknown.
+.decl miss(n: node, x: sym)
+miss($n, $x) :- walk($n, $x, $m), kind($m, "module"), !bound_in($m, $x).
+.decl builtin_ref(n: node, x: sym)
+builtin_ref($n, $x) :- miss($n, $x), builtin($x), docof($n, $d), modnode($d, $m), !star($m).
+
+// ---- unconditional rebinding --------------------------------------------------------------------------------------
+// A statement of a scope's own body (not inside an `if`, loop or `try`) binding x; a later one replaces an earlier one.
+.decl stmt(st: node, s: node)
+stmt($st, $s) :- kind($s, "module"), child($s, $st, _).
+stmt($st, $s) :- kind($s, "function_definition"), field($s, "body", $b), child($b, $st, _).
+stmt($st, $s) :- kind($s, "class_definition"), field($s, "body", $b), child($b, $st, _).
+.decl defstmt(f: node, st: node)
+defstmt($f, $f) :- kind($f, "function_definition").
+defstmt($f, $f) :- kind($f, "class_definition").
+defstmt($f, $st) :- kind($st, "decorated_definition"), field($st, "definition", $f).
+.decl asgstmt(a: node, st: node)
+asgstmt($a, $st) :- kind($st, "expression_statement"), child($st, $a, 0), kind($a, "assignment").
+.decl sbinds(s: node, x: sym, st: node)
+sbinds($s, $x, $st) :- defn($s, $x, $f), defstmt($f, $st), stmt($st, $s).
+sbinds($s, $x, $st) :- asg($s, $x, _, $a), asgstmt($a, $st), stmt($st, $s).
+.decl shadowed(st: node)
+shadowed($st) :- sbinds($s, $x, $st), sbinds($s, $x, $st2), $st2 > $st.
+.decl live_def(s: node, x: sym, f: node)
+live_def($s, $x, $f) :- defn($s, $x, $f), defstmt($f, $st), !shadowed($st).
+.decl live_asg(s: node, x: sym, r: node)
+live_asg($s, $x, $r) :- asg($s, $x, $r, $a), !asgstmt($a, _).
+live_asg($s, $x, $r) :- asg($s, $x, $r, $a), asgstmt($a, $st), !shadowed($st).
+
+// ---- decorators ---------------------------------------------------------------------------------------------------
+.decl dexpr(f: node, e: node)
+dexpr($f, $e) :- kind($dd, "decorated_definition"), field($dd, "definition", $f), child($dd, $dc, _), kind($dc, "decorator"), child($dc, $e, 0).
+.decl transparent_q(q: sym)
+transparent_q("abc.abstractmethod"). transparent_q("typing.final"). transparent_q("typing.override").
+transparent_q("typing.no_type_check"). transparent_q("typing_extensions.final"). transparent_q("typing_extensions.override").
+transparent_q("functools.wraps"). transparent_q("functools.total_ordering"). transparent_q("dataclasses.dataclass").
+.decl transparent(e: node)
+transparent($e) :- qn($e, $q), transparent_q($q).
+transparent($e) :- kind($e, "call"), field($e, "function", $g), qn($g, $q), transparent_q($q).
+transparent($e) :- builtin_ref($e, "staticmethod").
+transparent($e) :- builtin_ref($e, "classmethod").
+.decl opaque_dec(f: node, e: node)
+opaque_dec($f, $e) :- dexpr($f, $e), !transparent($e).
+.decl isstatic(f: node)
+isstatic($f) :- dexpr($f, $e), builtin_ref($e, "staticmethod").
+.decl classmeth(f: node)
+classmeth($f) :- dexpr($f, $e), builtin_ref($e, "classmethod").
+.decl nopaque(f: node, k: int)
+nopaque($f, $k) :- opaque_dec($f, _), $k = count { opaque_dec($f, _) }.
+// The one decorator that replaces the definition, when there is exactly one.
+.decl dec1(f: node, e: node)
+dec1($f, $e) :- nopaque($f, 1), opaque_dec($f, $e).
+
+// ---- functions: returns, returned parameters ----------------------------------------------------------------------
+.decl isasync(f: node)
+isasync($f) :- op($f, "async").
+.decl isgen(f: node)
+isgen($f) :- kind($y, "yield"), nearest($y, $f, fscope), kind($f, "function_definition").
+.decl retval(f: node, r: node)
+retval($f, $r) :- kind($rs, "return_statement"), nearest($rs, $f, fscope), kind($f, "function_definition"), child($rs, $r, 0).
+// A return of the function's own parameter i (`return func`): the call's value is its i-th argument's.
+.decl retparam(f: node, i: int, r: node)
+retparam($f, $i, $r) :- retval($f, $r), look($r, $x, $f), param($f, $x, $i).
+.decl posarg(c: node, i: int, a: node)
+posarg($c, $i, $a) :- kind($c, "call"), field($c, "arguments", $as), kind($as, "argument_list"), child($as, $a, $i), !kind($a, "keyword_argument"),
+    !kind($a, "list_splat"), !kind($a, "dictionary_splat").
+.decl method(f: node, c: node)
+method($f, $c) :- kind($f, "function_definition"), nearest($f, $c, scope), kind($c, "class_definition").
+
+// ---- classes ------------------------------------------------------------------------------------------------------
+.decl basex(c: node, e: node)
+basex($c, $e) :- kind($c, "class_definition"), field($c, "superclasses", $al), child($al, $e, _), !kind($e, "keyword_argument").
+.decl base(c: node, b: node)
+base($c, $b) :- basex($c, $e), pv($e, "cls", $b).
+// The class and every workspace subclass: what a late-bound `self` or `cls` may be.
+.decl sub(c: node, s: node)
+sub($c, $c) :- kind($c, "class_definition").
+sub($c, $s) :- sub($c, $m), base($s, $m).
+// Attribute lookup: the class itself, else its bases (union over bases for multiple inheritance), on demand.
+.decl need_attr(c: node, a: sym)
+need_attr($c, $a) :- attr_of($n, $o, $a), pv($o, "cls", $c).
+need_attr($c, $a) :- attr_of($n, $o, $a), pv($o, "inst", $c).
+need_attr($b, $a) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b).
+need_attr($c, "__init__") :- callee($k, $e), pv($e, "cls", $c).
+need_attr($c, "__call__") :- callee($k, $e), pv($e, "inst", $c).
+need_attr($b, $a) :- need_attr($c, $a), !bound_in($c, $a), base($c, $b).
+.decl found(c: node, a: sym, at: node)
+found($c, $a, $c) :- need_attr($c, $a), bound_in($c, $a).
+found($c, $a, $x) :- need_attr($c, $a), !bound_in($c, $a), base($c, $b), found($b, $a, $x).
+.decl anc(c: node, b: node)
+anc($c, $c) :- kind($c, "class_definition").
+anc($c, $b) :- anc($c, $m), base($m, $b).
+
+// ---- values ---------------------------------------------------------------------------------------------------
+.decl attr_of(n: node, o: node, a: sym)
+attr_of($n, $o, $a) :- kind($n, "attribute"), field($n, "object", $o), field($n, "attribute", $at), text($at, $a).
+.decl callee(c: node, e: node)
+callee($c, $e) :- kind($c, "call"), field($c, "function", $e).
+// Qualified names: an imported name and attributes of one (`os.path.join`), whether or not the workspace defines it.
+.decl qn(n: node, q: sym)
+qn($n, $q) :- look($n, $x, $s), ibind($s, $x, $q).
+qn($n, @cat($q, $a)) :- attr_of($n, $o, $a), qn($o, $q).
+// What a workspace qualified name denotes: a module, or a module-level binding of one.
+.decl qv(q: sym, k: sym, v: node)
+qv($q, "mod", $m) :- modname($m, $q).
+qv(@cat($q, $x), $k, $v) :- modname($m, $q), bv($m, $x, $k, $v).
+.decl isqmod(q: sym)
+isqmod($q) :- modname(_, $q).
+
+// Binding values: what name x of scope s may hold.
+.decl bv(s: node, x: sym, k: sym, v: node)
+bv($s, $x, "fn", $f) :- live_def($s, $x, $f), kind($f, "function_definition"), !opaque_dec($f, _).
+bv($s, $x, "cls", $c) :- live_def($s, $x, $c), kind($c, "class_definition").
+bv($s, $x, "fn", $f) :- live_def($s, $x, $f), dec1($f, $e), pv($e, "fn", $g), retparam($g, 0, _).
+bv($s, $x, $k, $v) :- live_def($s, $x, $f), dec1($f, $e), pv($e, "fn", $g), retval($g, $r), pv($r, $k, $v).
+bv($s, $x, $k, $v) :- live_asg($s, $x, $r), pv($r, $k, $v).
+bv($s, $x, $k, $v) :- ibind($s, $x, $q), qv($q, $k, $v).
+// `self` (the first parameter of a method that is not static) and `cls` (of a class method) are late bound.
+bv($f, $x, "inst", $s) :- method($f, $c), param($f, $x, 0), !isstatic($f), !classmeth($f), sub($c, $s).
+bv($f, $x, "cls", $s) :- method($f, $c), param($f, $x, 0), classmeth($f), sub($c, $s).
+
+.decl pv(n: node, k: sym, v: node)
+pv($n, $k, $v) :- look($n, $x, $s), bv($s, $x, $k, $v).
+pv($n, $k, $v) :- qn($n, $q), qv($q, $k, $v).
+pv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "cls", $c), found($c, $a, $at), bv($at, $a, $k, $v).
+pv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "inst", $c), found($c, $a, $at), bv($at, $a, $k, $v).
+pv($n, $k, $v) :- attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b), found($b, $a, $at), bv($at, $a, $k, $v).
+pv($n, $k, $v) :- kind($n, "parenthesized_expression"), child($n, $c, 0), pv($c, $k, $v).
+pv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 0), pv($c, $k, $v).
+pv($n, $k, $v) :- kind($n, "conditional_expression"), child($n, $c, 2), pv($c, $k, $v).
+pv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "left", $c), pv($c, $k, $v).
+pv($n, $k, $v) :- kind($n, "boolean_operator"), field($n, "right", $c), pv($c, $k, $v).
+pv($n, $k, $v) :- kind($n, "assignment"), field($n, "right", $c), pv($c, $k, $v).
+pv($n, $k, $v) :- kind($n, "named_expression"), field($n, "value", $c), pv($c, $k, $v).
+// Calls: a class makes an instance; a function returns what its returns hold, or the argument it returns.
+pv($c, "inst", $k) :- callee($c, $e), pv($e, "cls", $k).
+pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !isasync($f), !isgen($f), retval($f, $r), pv($r, $k, $v).
+pv($c, $k, $v) :- callee($c, $e), pv($e, "fn", $f), !method($f, _), retparam($f, $i, _), posarg($c, $i, $a), pv($a, $k, $v).
+pv($c, "super", $k) :- callee($c, $e), builtin_ref($e, "super"), nearest($c, $f, fdef), method($f, $k).
+
+// ---- unknown values -------------------------------------------------------------------------------------------
+// Positions whose value is read: what `vopen` is asked about.
+.decl vpos(n: node)
+vpos($e) :- callee(_, $e).
+vpos($o) :- attr_of(_, $o, _).
+vpos($r) :- asg(_, _, $r, _).
+vpos($r) :- retval(_, $r).
+vpos($e) :- dexpr(_, $e).
+vpos($e) :- basex(_, $e).
+vpos($a) :- posarg(_, _, $a).
+vpos($c) :- vpos($n), kind($n, "parenthesized_expression"), child($n, $c, 0).
+vpos($c) :- vpos($n), kind($n, "conditional_expression"), child($n, $c, 0).
+vpos($c) :- vpos($n), kind($n, "conditional_expression"), child($n, $c, 2).
+vpos($c) :- vpos($n), kind($n, "boolean_operator"), child($n, $c, _).
+vpos($c) :- vpos($n), kind($n, "assignment"), field($n, "right", $c).
+vpos($c) :- vpos($n), kind($n, "named_expression"), field($n, "value", $c).
+.decl tracked(k: sym)
+tracked("identifier"). tracked("attribute"). tracked("call"). tracked("parenthesized_expression"). tracked("conditional_expression").
+tracked("boolean_operator"). tracked("assignment"). tracked("named_expression").
+// Values that are no workspace callable and whose methods are no workspace definition: literals and operators on them.
+tracked("integer"). tracked("float"). tracked("string"). tracked("concatenated_string"). tracked("true"). tracked("false").
+tracked("none"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
+tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
+.decl iattr(c: node, a: sym)
+iattr($c, $a) :- field(_, "left", $t), kind($t, "attribute"), attr_of($t, $o, $a), pv($o, "inst", $c).
+iattr($c, $a) :- field(_, "left", $t), kind($t, "attribute"), attr_of($t, $o, $a), pv($o, "cls", $c).
+// A base that is an external class (a qualified name the workspace does not define, or a builtin): what it holds is
+// no workspace definition. Any other base that is not a workspace class is unknown.
+.decl extb(e: node)
+extb($e) :- basex(_, $e), qn($e, $q), !qknown($q).
+extb($e) :- basex(_, $e), builtin_ref($e, _).
+.decl base_open(c: node)
+base_open($c) :- basex($c, $e), vopen($e).
+base_open($c) :- basex($c, $e), !pv($e, "cls", _), !extb($e).
+.decl attr_open(c: node, a: sym)
+attr_open($c, $a) :- found($c, $a, $at), bopen($at, $a).
+attr_open($c, $a) :- need_attr($c, $a), anc($c, $b), base_open($b).
+attr_open($c, $a) :- need_attr($c, $a), anc($c, $b), iattr($b, $a).
+// Neither bound by a workspace class nor reachable through an external base: set dynamically, or an AttributeError.
+attr_open($c, $a) :- need_attr($c, $a), !found($c, $a, _), !ext_base_up($c), $a != "__init__", $a != "__call__".
+// An attribute an external base supplies: calling it runs no workspace definition, but as a value (a receiver, an
+// assigned value) it may be anything, a workspace class included (`cls.__class__`).
+.decl ext_attr(n: node)
+ext_attr($n) :- attr_of($n, $o, $a), pv($o, "cls", $c), need_attr($c, $a), !found($c, $a, _), ext_base_up($c).
+ext_attr($n) :- attr_of($n, $o, $a), pv($o, "inst", $c), need_attr($c, $a), !found($c, $a, _), ext_base_up($c).
+ext_attr($n) :- attr_of($n, $o, $a), pv($o, "super", $k), base($k, $c), need_attr($c, $a), !found($c, $a, _), ext_base_up($c).
+.decl ext_base_up(c: node)
+ext_base_up($c) :- anc($c, $b), basex($b, $e), extb($e).
+.decl bopen(s: node, x: sym)
+bopen($s, $x) :- otgt($s, $x).
+bopen($f, $x) :- param($f, $x, $i), !selfparam($f, $i).
+bopen($s, $x) :- live_asg($s, $x, $r), vopen($r).
+bopen($s, $x) :- ifrom($s, $x, $m, _), isqmod($m), ibind($s, $x, $q), qopen($q).
+bopen($s, $x) :- ifrom($s, $x, $m, _), isqmod($m), ibind($s, $x, $q), !qknown($q).
+bopen($s, $x) :- live_def($s, $x, $f), opaque_dec($f, _), !dec1($f, _).
+bopen($s, $x) :- live_def($s, $x, $f), dec1($f, $e), !pv($e, "fn", _).
+bopen($s, $x) :- live_def($s, $x, $f), dec1($f, $e), vopen($e).
+bopen($s, $x) :- live_def($s, $x, $f), dec1($f, $e), pv($e, "fn", $g), retval($g, $r), !retparam($g, 0, $r), vopen($r).
+bopen($s, $x) :- live_def($s, $x, $f), dec1($f, $e), pv($e, "fn", $g), !retval($g, _).
+// A property's value is what its getter returns.
+bopen($s, $x) :- live_def($s, $x, $f), dexpr($f, $e), builtin_ref($e, "property").
+.decl selfparam(f: node, i: int)
+selfparam($f, 0) :- method($f, _), !isstatic($f).
+// A workspace module's qualified name that it binds to nothing static (a star import may bind it), or binds openly.
+.decl qopen(q: sym)
+qopen(@cat($q, $x)) :- modname($m, $q), bopen($m, $x).
+.decl qknown(q: sym)
+qknown($q) :- qv($q, _, _).
+
+.decl vopen(n: node)
+vopen($n) :- vpos($n), kind($n, $k), !tracked($k).
+vopen($n) :- vpos($n), look($n, $x, $s), bopen($s, $x).
+vopen($n) :- vpos($n), miss($n, $x), !builtin_ref($n, $x).
+vopen($n) :- vpos($n), qn($n, $q), qopen($q).
+vopen($n) :- vpos($n), attr_of($n, $o, _), qn($o, $q), isqmod($q), qn($n, $q2), !qknown($q2).
+vopen($n) :- vpos($n), attr_of($n, $o, _), vopen($o).
+vopen($n) :- vpos($n), attr_of($n, $o, _), kind($o, $k), !tracked($k).
+vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "cls", $c), attr_open($c, $a).
+vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "inst", $c), attr_open($c, $a).
+vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "super", $c), base($c, $b), attr_open($b, $a).
+vopen($n) :- vpos($n), attr_of($n, $o, $a), pv($o, "super", $c), base_open($c).
+vopen($n) :- vpos($n), attr_of($n, $o, _), pv($o, "fn", _).
+vopen($n) :- vpos($n), ext_attr($n), !callee(_, $n).
+vopen($n) :- vpos($n), kind($n, "parenthesized_expression"), child($n, $c, 0), vopen($c).
+vopen($n) :- vpos($n), kind($n, "conditional_expression"), child($n, $c, 0), vopen($c).
+vopen($n) :- vpos($n), kind($n, "conditional_expression"), child($n, $c, 2), vopen($c).
+vopen($n) :- vpos($n), kind($n, "boolean_operator"), child($n, $c, _), vopen($c).
+vopen($n) :- vpos($n), kind($n, "assignment"), field($n, "right", $c), vopen($c).
+vopen($n) :- vpos($n), kind($n, "named_expression"), field($n, "value", $c), vopen($c).
+// A call's value: unknown when the callee is, when no workspace definition is called (an external or builtin
+// callable), when a workspace function's return is, and for coroutines and generators.
+vopen($c) :- vpos($c), callee($c, $e), vopen($e).
+vopen($c) :- vpos($c), callee($c, $e), !pv($e, _, _), !pv($c, "super", _).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), isasync($f).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), isgen($f).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), retval($f, $r), !retparam($f, _, $r), vopen($r).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), retparam($f, $i, _), !posarg($c, $i, _).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), retparam($f, $i, _), posarg($c, $i, $a), vopen($a).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "fn", $f), method($f, _), retparam($f, _, _).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "inst", _).
+vopen($c) :- vpos($c), callee($c, $e), pv($e, "mod", _).
+
+// ---- call targets ---------------------------------------------------------------------------------------------
+.decl call_target(c: node, f: node)
+call_target($c, $f) :- callee($c, $e), pv($e, "fn", $f).
+call_target($c, $f) :- callee($c, $e), pv($e, "cls", $k), found($k, "__init__", $at), bv($at, "__init__", "fn", $f).
+call_target($c, $f) :- callee($c, $e), pv($e, "inst", $k), found($k, "__call__", $at), bv($at, "__call__", "fn", $f).
+.decl call_open(c: node)
+call_open($c) :- callee($c, $e), vopen($e).
+call_open($c) :- callee($c, $e), pv($e, "cls", $k), attr_open($k, "__init__").
+call_open($c) :- callee($c, $e), pv($e, "inst", $k), attr_open($k, "__call__").
+call_open($c) :- callee($c, $e), pv($e, "mod", _).
+call_open($c) :- callee($c, $e), pv($e, "super", _).
+.output call_target, call_open, base
+
+// ---- call chains ----------------------------------------------------------------------------------------------
+// The function whose body holds a call (a lambda's or a nested class body's calls are the enclosing function's).
+.decl owner(c: node, f: node)
+owner($c, $f) :- kind($c, "call"), nearest($c, $f, fdef).
+.decl calls(f: node, g: node)
+calls($f, $g) :- owner($c, $f), call_target($c, $g).
+.decl calls_open(f: node)
+calls_open($f) :- owner($c, $f), call_open($c).
+// W5 `ASYNC_BLOCKING`: an async function's call, outside `await`, of a sync function that reaches a blocking call
+// through sync functions only (the native `calls` term with `through: sync`).
+.decl blocking(q: sym)
+blocking("time.sleep"). blocking("requests.get"). blocking("subprocess.run").
+.decl dq(f: node, q: sym)
+dq($f, @cat($m, $x)) :- modname($s, $m), live_def($s, $x, $f).
+.decl blocks(f: node)
+blocks($f) :- owner($c, $f), callee($c, $e), qn($e, $q), blocking($q).
+blocks($f) :- owner($c, $f), call_target($c, $g), dq($g, $q), blocking($q).
+.decl reach_sync(f: node)
+reach_sync($f) :- blocks($f), !isasync($f).
+reach_sync($f) :- calls($f, $g), reach_sync($g), !isasync($f).
+// Unknown: an open call on a sync path, where no path is known to reach.
+.decl open_sync(f: node)
+open_sync($f) :- calls_open($f), !isasync($f).
+open_sync($f) :- calls($f, $g), open_sync($g), !isasync($f).
+.decl in_await(c: node)
+in_await($c) :- kind($c, "call"), child($w, $c, 0), kind($w, "await").
+.decl finding(rule: sym, n: node)
+finding("ASYNC_BLOCKING", $c) :- owner($c, $a), isasync($a), !in_await($c), call_target($c, $g), reach_sync($g).
+.decl async_open(c: node)
+async_open($c) :- owner($c, $a), isasync($a), !in_await($c), call_target($c, $g), open_sync($g), !reach_sync($g).
+async_open($c) :- owner($c, $a), isasync($a), !in_await($c), call_open($c).
+// The witness chain for a message: each step of a reaching path.
+.decl chain_step(f: node, g: node)
+chain_step($f, $g) :- calls($f, $g), reach_sync($g), reach_sync($f).
+.output finding, async_open, chain_step, calls
+
+.decl builtin(x: sym)
+builtin("abs"). builtin("aiter"). builtin("all"). builtin("anext"). builtin("any"). builtin("ascii"). builtin("bin").
+builtin("bool"). builtin("breakpoint"). builtin("bytearray"). builtin("bytes"). builtin("callable"). builtin("chr").
+builtin("classmethod"). builtin("compile"). builtin("complex"). builtin("delattr"). builtin("dict"). builtin("dir").
+builtin("divmod"). builtin("enumerate"). builtin("eval"). builtin("exec"). builtin("filter"). builtin("float").
+builtin("format"). builtin("frozenset"). builtin("getattr"). builtin("globals"). builtin("hasattr"). builtin("hash").
+builtin("help"). builtin("hex"). builtin("id"). builtin("input"). builtin("int"). builtin("isinstance").
+builtin("issubclass"). builtin("iter"). builtin("len"). builtin("list"). builtin("locals"). builtin("map"). builtin("max").
+builtin("memoryview"). builtin("min"). builtin("next"). builtin("object"). builtin("oct"). builtin("open"). builtin("ord").
+builtin("pow"). builtin("print"). builtin("property"). builtin("range"). builtin("repr"). builtin("reversed").
+builtin("round"). builtin("set"). builtin("setattr"). builtin("slice"). builtin("sorted"). builtin("staticmethod").
+builtin("str"). builtin("sum"). builtin("super"). builtin("tuple"). builtin("type"). builtin("vars"). builtin("zip").
+builtin("__import__"). builtin("__name__"). builtin("__file__"). builtin("__doc__"). builtin("__spec__"). builtin("__debug__").
+builtin("NotImplemented"). builtin("Ellipsis"). builtin("BaseException"). builtin("Exception"). builtin("ValueError").
+builtin("TypeError"). builtin("KeyError"). builtin("IndexError"). builtin("AttributeError"). builtin("RuntimeError").
+builtin("NotImplementedError"). builtin("OSError"). builtin("ImportError"). builtin("StopIteration"). builtin("LookupError").
+builtin("ArithmeticError"). builtin("AssertionError"). builtin("EOFError"). builtin("FileNotFoundError").
+builtin("ModuleNotFoundError"). builtin("NameError"). builtin("OverflowError"). builtin("PermissionError").
+builtin("RecursionError"). builtin("UnicodeError"). builtin("UnicodeDecodeError"). builtin("UnicodeEncodeError").
+builtin("ZeroDivisionError"). builtin("KeyboardInterrupt"). builtin("SystemExit"). builtin("Warning").
+builtin("DeprecationWarning"). builtin("UserWarning"). builtin("RuntimeWarning"). builtin("EnvironmentError").
+builtin("IOError"). builtin("BufferError"). builtin("ConnectionError"). builtin("TimeoutError"). builtin("GeneratorExit").
