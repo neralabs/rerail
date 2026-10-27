@@ -25,6 +25,8 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+pub(crate) mod syntax;
+
 fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
 }

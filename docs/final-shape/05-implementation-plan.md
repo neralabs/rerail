@@ -195,7 +195,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Fact-access vtab | D `cr/relational/{table.rs, schema.rs, schema/cache.rs}`; P `relational/table.rs` | `facts/vtab.rs` | Access over overlay ∪ SQLite with `best_index` on EQ/IN/range, with a version check for staleness (§4). |
 | Frontier loop | D `cr/relational/batch.rs` (frontier ordering only) | `waves/schedule.rs` | Replace the Rust `advance`/`Step` loop with SQL statements that call `demand(batch)` and loop until no delta. Batch admission by resident bytes becomes 500 MB pools. Overlap cache preparation for chunk k+1 with chunk k (E12). |
 
-**Status (2026-10-27): copies done (`6770e5fe`, `2f3913ae`, `13605f8d`, `2c92eb35`, `554b89c2`); adaptations outstanding. Row 3 step 1: the generic integer vtab with S's `Relation` merged in (decision 0008); next, T's base relations over core facts.**
+**Status (2026-10-27): copies done (`6770e5fe`, `2f3913ae`, `13605f8d`, `2c92eb35`, `554b89c2`); adaptations outstanding. Row 3 step 1: the generic integer vtab with S's `Relation` merged in (decision 0008); step 2: T's base relations over core facts, equal to T's exporter rows on the fixture corpus; next, the planner on these inputs (O13).**
 
 ### Phase 8: facts by vtab and the findings layer (§8; E10, J1)
 
