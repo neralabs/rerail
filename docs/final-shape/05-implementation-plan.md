@@ -180,6 +180,8 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 | Planner + lowering | T `rdl.py` `Stats`, `plan_rule` (Selinger DP), `make_plan`, `sql_select`, `semi_naive_round`, `merge_lattice`, `native_stratum`, `join_spec`, `observe` (**port**) | `logic/plan.rs` | Plans go to `compiled_plans`. The emitted SQL goes through N `sql_ast.rs`. Per-document partition recognition marks rules file-local, which sends them to transducer groups (Phase 4). |
 | References only | M `facts/src/{phys.rs, explain.rs}` | — | Plan-audit rule (refuse a scan per outer row) and the EXPLAIN format, for L2. |
 
+**Status (2026-10-27): copies done (`8934168d` native fixpoint; `091b65fb` `rdl.py` and its programs, the port's source); adaptations outstanding. The YAML row is W's own `compile/*`, so it has no copy.**
+
 Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust port on T's 574/331-file workloads; CPU and RSS ≤ T's numbers.
 
 ### Phase 7: SQL-driven waves (§4, §7; E1, E12, E14)
@@ -191,6 +193,8 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Fact-access vtab | D `cr/relational/{table.rs, schema.rs, schema/cache.rs}`; P `relational/table.rs` | `facts/vtab.rs` | Access over overlay ∪ SQLite with `best_index` on EQ/IN/range, with a version check for staleness (§4). |
 | Frontier loop | D `cr/relational/batch.rs` (frontier ordering only) | `waves/schedule.rs` | Replace the Rust `advance`/`Step` loop with SQL statements that call `demand(batch)` and loop until no delta. Batch admission by resident bytes becomes 500 MB pools. Overlap cache preparation for chunk k+1 with chunk k (E12). |
 
+**Status (2026-10-27): copies done (`6770e5fe`, `2f3913ae`, `13605f8d`, `2c92eb35`, `554b89c2`); adaptations outstanding.**
+
 ### Phase 8: facts by vtab and the findings layer (§8; E10, J1)
 
 | Copy | From | To | Adaptations |
@@ -201,6 +205,8 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Contract | S `cr/query/plan/contract.rs` | `findings/contract.rs` | Copy as-is (`FindingKey`, Complete/Unknown, `Truth`). Move consolidation (S `async_reference.rs` ~711–748) into the one SQL findings layer. |
 | Oracle | S `async_reference.rs`, `native_oracle.rs`, `tests.rs` | `findings/tests/` | Kept as test oracle only. |
 
+**Status (2026-10-27): copies done (`69371b1c`, `0689eb25`, `6c0e860e`, `8190c8fa`, `0e4a64c3`); adaptations outstanding. S's oracle lives in `query/plan/async_reference/{native_oracle.rs, tests.rs}`, not beside `async_reference.rs`.**
+
 ### Phase 9: residency and the pinned GPU cache (§5; F3–F8, K1)
 
 | Copy | From | To | Adaptations |
@@ -208,6 +214,8 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | No-copy buffers | G `T/metal_backend.rs` (`MappedRegion`, `MappedBuffer`, `new_buffer_with_bytes_no_copy`, `StorageModeShared`, guard, pipeline cache) | `residency/metal.rs` | One retained buffer per 64 MiB slab. Remove `PrivateInputUpload` unless Q-R1 (F8) shows private storage wins. |
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
 | Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
+
+**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding.**
 
 ### Phase 10: typing (§13; I1–I18)
 
@@ -217,12 +225,16 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Wavefront + digest cutoff | T `lattice/src/main.rs` (cross-file wavefront, interface-digest cutoff) | `typing/rounds.rs` | Bounded R1..Rk, with k = 2 (I11, X). |
 | Write new | — | `typing/terms.rs`, `typing/declare.rs`, `typing/deps.rs` | Interned type terms (I12), instantiation of generics (I13), `proven`/`possible` (I14), `rerail.types/v1` that fills gaps only (I4, I17), dependency summaries per (package version, module file) with magic-set demand (I18). There is no code in any branch; the design is in the Typing transcript, recorded in 03 §13. |
 
+**Status (2026-10-27): copies done (programs with Phase 6's `091b65fb`, wavefront `59cb33bf`); adaptations and the write-new row outstanding.**
+
 ### Phase 11: gate and tooling (throughout; M1–M4, L1, L2)
 
 | Copy | From | To | Adaptations |
 |---|---|---|---|
 | Data-layer gate | D `packs/data-layer/candidates/rules/*.json`, `conformance/data-layer/{suite.ts, replay.ts}`, `scripts/dsl/data_layer_suite_record.py`, `fixtures/host/data-layer-port/batch-0{1..6}-recording.json`, `scripts/profiling/process.py` | same paths | 10 of 60 rules carry SQL (`relational` stages). Rewrite them as named facts plus logic (B2) before they enter the gate. Gate on CPU (M1), RSS ≤ 500 MB, and finding-key sets. |
 | Profiling | D or P `cr/profile/{sql.rs, memory.rs, trace.rs}`, P `phase_clock.rs`, `budget.rs` | `cr/profile/` | Fixed stage names from 03. Construction is reported separately (M2). |
+
+**Status (2026-10-27): copies done (`8cb32ac5`, moved under `gate/data-layer/` by `d0c47184`; profiling `8dcf82a1`, from P, under `profile/copied/`); adaptations outstanding.**
 
 ## Explicitly not copied
 
