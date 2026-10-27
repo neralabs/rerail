@@ -5,7 +5,7 @@
 //! supplies a semantic verdict and must not screen binding/value demands.
 use crate::code_rule_dsl::{
     identifier::{nfkc, python_identifier},
-    matcher::python_facts::{Fact, qualification_chain},
+    facts::producers::python::python_facts::{Fact, qualification_chain},
     module_path::ModulePath,
     tape::TapeDoc,
 };
@@ -276,7 +276,7 @@ mod tests {
     use super::*;
     use crate::code_rule_dsl::{
         language::GrammarDialect,
-        matcher::python_facts::{self, Fact, Qualification},
+        facts::producers::python::python_facts::{self, Fact, Qualification},
         scope::{
             Reading, ScopeTable,
             options::{DEFAULT_PYTHON_MINOR, PythonOptions},

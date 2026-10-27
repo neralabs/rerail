@@ -380,10 +380,10 @@ pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> Argum
 
 #[cfg(test)]
 mod tests {
+    use super::super::python_structure;
     use super::*;
     use crate::code_rule_dsl::{
         language::GrammarDialect,
-        query::plan::python_structure,
         tape::{Grammar, TapeImage},
     };
     use ast_grep_core::{AstGrep, tree_sitter::StrDoc};

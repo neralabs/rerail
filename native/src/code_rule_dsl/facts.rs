@@ -16,6 +16,8 @@ pub(crate) mod overlay;
 #[allow(dead_code)]
 pub(crate) mod pages;
 #[allow(dead_code)]
+pub(crate) mod producers;
+#[allow(dead_code)]
 pub(crate) mod propagate;
 #[allow(dead_code)]
 pub(crate) mod runs;
