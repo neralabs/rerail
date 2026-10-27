@@ -96,6 +96,16 @@ A real session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `java
 
 Core ships no rules. A rule pack is a set of rules published as its own npm package, `@neralabs/rerail-pack-<id>`. Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
 
+To add a pack after set-up:
+
+```sh
+rerail packs recommend        # the packs that fit this repository, and why
+rerail packs add complexity   # install it into ~/.rerail/packs
+rerail manage                 # Rule packs page: add it to this repository
+```
+
+`rerail packs add` installs a pack but turns it on nowhere; it runs only in the repositories you add it to.
+
 | Pack | Ported from |
 | --- | --- |
 | `python` | Ruff 0.16.9, Bandit 1.9.4 |
