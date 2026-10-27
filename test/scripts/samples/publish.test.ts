@@ -110,9 +110,11 @@ describe("publishedSamples on the source licence", () => {
   });
 
   it("records every repository the committed SAMPLES.md tables list, under the licence they list", () => {
-    const listed = readdirSync("packs", { recursive: true, withFileTypes: true })
-      .filter(entry => entry.isFile() && entry.name === "SAMPLES.md")
-      .flatMap(entry => [...readFileSync(join(entry.parentPath, entry.name), "utf8").matchAll(/^\| ([\w.-]+\/[\w.-]+) \| ([^|]+?) \|/gmu)])
+    // SAMPLES.md sits at packs/<pack>/upstream/<tool>/; walking all of packs/ would read every pulled fixture.
+    const listed = readdirSync("packs")
+      .flatMap(pack => (existsSync(join("packs", pack, "upstream")) ? readdirSync(join("packs", pack, "upstream")).map(tool => join("packs", pack, "upstream", tool, "SAMPLES.md")) : []))
+      .filter(path => existsSync(path))
+      .flatMap(path => [...readFileSync(path, "utf8").matchAll(/^\| ([\w.-]+\/[\w.-]+) \| ([^|]+?) \|/gmu)])
       .map(([, repo, licence]) => [repo!, recordedLicence(repo!) ?? "(none)", licence!]);
     expect(listed.length).toBeGreaterThan(0);
     expect(listed.filter(([, recorded, licence]) => recorded !== licence)).toEqual([]);
