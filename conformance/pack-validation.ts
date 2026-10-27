@@ -760,7 +760,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
     }
   }
 
-  // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and restricted, no
+  // Check 5: package. Named for the pack, published from this repository's packs/<id>/ and public, no
   // dependencies, no validation material published, licence agreeing with what licenses/ records.
   const sources = readSources(directory);
   const packagePath = join(directory, "package.json");
@@ -783,8 +783,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       const repository = { type: "git", url: repositoryUrl(), directory: `packs/${id}` };
       if (!isDeepStrictEqual(manifest.repository, repository))
         fail("package", `package.json: repository is ${JSON.stringify(manifest.repository) ?? "missing"}, not ${JSON.stringify(repository)}`);
-      if (manifest.publishConfig?.access !== "restricted")
-        fail("package", `package.json: publishConfig.access is ${manifest.publishConfig?.access ?? "missing"}; packs stay restricted until launch`);
+      if (manifest.publishConfig?.access !== "public")
+        fail("package", `package.json: publishConfig.access is ${manifest.publishConfig?.access ?? "missing"}; packs are public`);
       for (const material of VALIDATION_MATERIAL) {
         const entry = manifest.files.find(file => publishes(file, material));
         if (entry !== undefined) fail("package", `package.json: files entry ${entry} publishes ${material}, which is validation material`);

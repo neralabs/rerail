@@ -30,10 +30,15 @@ jobs:
             target: aarch64-apple-darwin
           - runner: macos-15-intel
             target: x86_64-apple-darwin
+          # Linux engines link against the glibc 2.17 sysroot of napi-rs's cross toolchain: built on the runner's
+          # own glibc (2.39 on Ubuntu 24.04), they failed to load on every older distribution. The toolchain's
+          # linker also drops the symbol tables (`--strip`), which nothing loads at runtime.
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            napi_cross: true
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            napi_cross: true
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
             windows_runtime_smoke: true
@@ -87,7 +92,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
+          key: rerail-release-${{ matrix.target }}${{ matrix.napi_cross && '-napi-cross' || '' }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
 
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
@@ -96,7 +101,20 @@ jobs:
         run: npm run build:ts
 
       - name: Build native engine
-        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} --manifest-path native/Cargo.toml --output-dir native
+        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
+
+      # Node 24's own Linux binaries need glibc 2.28, the floor docs/installation.md states. The runner's glibc is
+      # newer, so the smokes below cannot catch an engine that needs more.
+      - name: Check Linux engine loads on glibc 2.28
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          newest="$(objdump -T native/rerail_engine.*.node | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          echo "newest glibc symbol version: $newest"
+          if [ "$(printf '%s\n' GLIBC_2.28 "$newest" | sort -V | tail -1)" != GLIBC_2.28 ]; then
+            echo "::error::the Linux engine needs $newest, newer than glibc 2.28" >&2
+            exit 1
+          fi
 
       # Runners ship the Visual C++ runtime, so the load smokes below cannot catch an engine
       # that needs it; a clean Windows install does not have it.

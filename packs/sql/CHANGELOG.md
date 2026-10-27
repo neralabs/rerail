@@ -1,5 +1,12 @@
 # @neralabs/rerail-pack-sql
 
+## 0.1.4
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- 115b81b: SQL pack: its 22 SQLFluff 4.4.0 ports run through the port readiness gates (SQLFluff configured as PostgreSQL, the dialect the engine reads every `.sql` file in), and the 19 that pass every blocking gate ship. On: AL04, AL08, AL09, AM01, AM05, AM09, CV02, CV04, CV05, CV08, RF04, RF05, RF06, ST01, ST02, ST08 and ST10. Off, as SQLFluff's default configuration leaves them (`force_enable = False`): PG01 and PG02. AL05, AM02 and RF01 remain candidates. `licenses/sqlfluff/UPSTREAM.md` lists the SQLFluff test cases the gates read.
+
 ## 0.1.3
 
 ### Patch Changes

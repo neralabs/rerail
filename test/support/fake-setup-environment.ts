@@ -10,7 +10,7 @@ import type { PackStore } from "../../src/setup/index.js";
 import { directoryPackStore } from "./directory-pack-store.js";
 
 export interface FakeSetupEnvironment extends SetupEnvironment {
-  /** Every `connect` call, in order. */
+  /** Every `connect` call that connects a coding agent, in order. */
   readonly connections: Array<{ agents: readonly Harness[]; repoRoot: string | undefined }>;
   /** Every dashboard page set-up asked for, in order, with the checkout it is scoped to. */
   readonly pages: Array<{ repoRoot: string | null; repositoryKey: string; page: DashboardPage; open: boolean }>;
@@ -19,6 +19,10 @@ export interface FakeSetupEnvironment extends SetupEnvironment {
 /** Records what set-up asks of the machine instead of registering coding agents or starting a daemon. */
 export function fakeSetupEnvironment(options: {
   found?: readonly Harness[];
+  /** The coding agents an earlier set-up recorded as seen; no record by default, as on a computer Rerail was never set up on. */
+  seen?: readonly Harness[] | undefined;
+  /** Coding agents whose config is not plain JSON: `connect` names each and connects the others. */
+  unreadable?: readonly Harness[];
   browser?: boolean;
   /** Whether the person has let Rerail read their sessions already; true unless a test asks the question. */
   sessionsApproved?: boolean;
@@ -30,13 +34,28 @@ export function fakeSetupEnvironment(options: {
   let approved = options.sessionsApproved ?? true;
   const connections: FakeSetupEnvironment["connections"] = [];
   const pages: FakeSetupEnvironment["pages"] = [];
+  const found = options.found ?? ["claude-code", "cursor"];
+  let seen = options.seen === undefined ? undefined : new Set(options.seen);
+  const connected = new Set<Harness>();
   return {
     connections,
     pages,
     packs: options.packs ?? directoryPackStore(undefined, ["typescript"]),
-    agentsFound: () => options.found ?? ["claude-code", "cursor"],
+    agentsFound: () => found,
+    agentsSeen: () => (seen === undefined ? undefined : [...seen]),
     async connect(agents, repoRoot) {
-      connections.push({ agents, repoRoot });
+      if (agents.length > 0) connections.push({ agents, repoRoot });
+      const unreadable = new Set(options.unreadable ?? []);
+      const changed = agents.filter(id => !unreadable.has(id) && !connected.has(id));
+      for (const id of changed) connected.add(id);
+      seen ??= new Set();
+      for (const id of [...found, ...agents]) seen[unreadable.has(id) ? "delete" : "add"](id);
+      return {
+        changed,
+        all: [...connected],
+        failures: agents.filter(id => unreadable.has(id)).map(agent => ({ agent, message: "Unexpected token '/'", file: `/home/me/.${agent}/settings.json` })),
+        codexTrust: changed.includes("codex"),
+      };
     },
     sessionsApproved: () => approved,
     async setSessionsApproved(answer) {

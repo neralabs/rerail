@@ -54,13 +54,10 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits and findings, and every event your coding agents report: your prompts, the agent's replies, and tool calls with their inputs and outputs. Also the daemon's state and log, your consent answer, installed rule packs and managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
-| `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them |
+| `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
 
 `~/.rerail/`, the database, the daemon's state and log files and the session ledgers are created readable by your
 user only (directories `0700`, files `0600`).
-
-**Add `.rerail/` to your repository's `.gitignore`.** Rerail does not do it for you, and the session ledgers hold your
-prompts and file contents.
 
 ## The local dashboard and API
 

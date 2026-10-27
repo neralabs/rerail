@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { listPacks, missingChangesets, ROOT } from "./packs.mjs";
+import { listPacks, manifestChanged, missingChangesets, ROOT } from "./packs.mjs";
 
 const base = process.argv[2];
 if (base === undefined) throw new Error("usage: packs-changesets.mjs BASE");
@@ -17,7 +17,19 @@ const git = (args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", m
 const paths = (args) => git(["diff", "-z", ...args]).split("\0").filter((path) => path !== "");
 
 const range = `${base}...HEAD`;
-const changed = paths(["--name-only", "--no-renames", range, "--", "packs/"]);
+const mergeBase = git(["merge-base", base, "HEAD"]).trim();
+/** A pack's package.json at the merge base; undefined where the pack is new. */
+const before = (path) => {
+  try {
+    return git(["show", `${mergeBase}:${path}`]);
+  } catch {
+    return undefined;
+  }
+};
+// A package.json whose only change is publishConfig changes nothing a release would ship (manifestChanged).
+const changed = paths(["--name-only", "--no-renames", range, "--", "packs/"]).filter(
+  (path) => !/^packs\/[^/]+\/package\.json$/u.test(path) || manifestChanged(before(path), readFileSync(join(ROOT, path), "utf8")),
+);
 const changesets = paths(["--name-only", "--no-renames", "--diff-filter=AM", range, "--", ".changeset/"])
   .filter((path) => path.endsWith(".md") && path !== ".changeset/README.md")
   .map((path) => ({ file: path, text: readFileSync(join(ROOT, path), "utf8") }));

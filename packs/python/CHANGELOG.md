@@ -1,5 +1,14 @@
 # @neralabs/rerail-pack-python
 
+## 0.1.5
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- fa6fe5e: Preserve comparison polarity in E711/F632 steers and add concise behavior-preserving guidance for f-string braces, zip truncation, exception ordering, ordered comparisons, deployment environment keys and async HTTP/process waits. Keep existing rule scopes and enforcement modes.
+- d0dd309: README: internal ticket references removed; no rule changes.
+- 211e8b5: The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+
 ## 0.1.4
 
 ### Patch Changes

@@ -60,7 +60,7 @@ packs/<id>/
   "files": ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"],
   "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
-  "publishConfig": { "access": "restricted" }
+  "publishConfig": { "access": "public" }
 }
 ```
 
@@ -74,7 +74,7 @@ packs/<id>/
   `candidates/` are validation material: they stay in the repository and never reach npm, which keeps copied
   upstream tests out of the package.
 - `repository` names this repository and the pack's directory: npm's trusted publishing requires the repository it
-  publishes from. `publishConfig.access` is `restricted` until launch, like core.
+  publishes from. `publishConfig.access` is `public`, like core.
 - The schema is `rulePackPackageSchema` in `src/engine/catalog/rule-packs.ts`.
 
 ### pack.json
@@ -291,7 +291,7 @@ ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule 
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's expected findings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
-| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
+| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `public`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A pulled file falls under a `Not copied` glob, or in a tool's subdirectory is neither authored nor under a `Taken from it` glob; a declared glob matches no pulled file; an `UPSTREAM.md` is malformed, or records a licence off the allowlist; the tool's own `UPSTREAM.md` lists a file outside its tool directory or one that does not exist |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 | 8 | Text | A rule document's description fails a machine-checkable [description](#description) criterion |
@@ -350,7 +350,7 @@ Precisely:
    `conformance/biome-same-sources.generated.ts`, is read from Biome's source by
    `scripts/generate/packs/biome-suppression.mjs`, which also writes `suppress.biome` into the pack documents.
 5. The npm name is `@neralabs/rerail-pack-<id>`, `repository` is `{ "type": "git", "url": <the root package.json's
-   repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `restricted`. `files` must publish
+   repository url>, "directory": "packs/<id>" }`, and `publishConfig.access` is `public`. `files` must publish
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,
    `divergences.json`, `upstream` or `candidates`. Some way to satisfy `license` must name exactly Apache-2.0 plus,
    for each `licenses/<project>/UPSTREAM.md`, one way to satisfy the SPDX expression its `License:` line records: an
@@ -402,8 +402,9 @@ table:
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
-A change counts when it touches what the pack publishes: its `package.json` or a path its `files` lists (`pack.json`,
-`rules/`, `licenses/`, `LICENSE`, `NOTICE`, `README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
+A change counts when it touches what the pack publishes: its `package.json` (except `publishConfig` alone, which only
+steers `npm publish`) or a path its `files` lists (`pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE`,
+`README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
 **Changesets** job of `release-packs.yml` fails a pull request that changes what a pack publishes with no changeset
 of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`); the Release pull request is exempt.
 `npm test` refuses a pending changeset that gives a pack below 1.0.0 a `minor` or `major` bump
@@ -411,7 +412,7 @@ of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`)
 Nobody edits a pack's `version` or `CHANGELOG.md` by hand: `npx changeset version` applies the pending changesets,
 bumps each pack and writes its `CHANGELOG.md` when packs are released. Changesets cover only the packs: the core
 package at the repository root is bumped by the same Release pull request when what it ships changes, with its notes
-in the root `CHANGELOG.md` ([README](../README.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
+in the root `CHANGELOG.md` ([release](release.md#release)), and a changeset naming `@neralabs/rerail` is refused. A pack's first pull request adds it at `0.1.0` with a `patch` changeset for its initial
 rules, so its first release is `0.1.1`.
 
 ### Release
@@ -433,8 +434,8 @@ them; core's `v*` release (`release.yml`) is separate.
      check added to the contract gates publishing with no change to the workflow;
    - `npm pack`, then a check that the tarball holds only `package.json` and what `files` publishes, and no
      validation material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
-   - `npm publish --access restricted --tag latest` with npm trusted publishing (the `release` environment, so a
-     reviewer approves the run), a check that the registry refuses the package to an anonymous reader, and the tag.
+   - `npm publish --access public --tag latest` with npm trusted publishing (the `release` environment, so a
+     reviewer approves the run), a check that an anonymous reader gets the version, and the tag.
      Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used
      from then on. A pack held at an older `latest` (step 3) is published under `next` instead, and its hold stays.
 

@@ -201,7 +201,7 @@ The root [`Justfile`](Justfile) wraps the day-to-day operations; `just` lists th
 
 | Recipe | Does |
 | --- | --- |
-| `just rerail [--tag next] [setup args]` | Installs the published package on this machine (`npx @neralabs/rerail setup`). Until launch the package is restricted: `npm login` with an account that has `@neralabs` access first. `RERAIL_TAG` selects the dist-tag; `--restore [dir]` then restores a `nuke-rerail` backup. |
+| `just rerail [--tag next] [setup args]` | Installs the published package on this machine (`npx @neralabs/rerail setup`). `RERAIL_TAG` selects the dist-tag; `--restore [dir]` then restores a `nuke-rerail` backup. |
 | `just nuke-rerail [--dry-run \| --yes]` | Removes Rerail from this machine (daemon, coding-agent registrations, `~/.rerail`, every checkout's dev daemon), moving it all to `~/.rerail-clean-YYYYMMDD[-HHMMSS]/` for `just rerail --restore`. |
 | `just rerail-native` | Installs rustup and the pinned toolchain if needed, then builds the native engine. |
 | `just rerail-setup` | Reserves this checkout's dev instance (`.rerail/dev/instance.json`: a stable loopback port in 35000–35999 and the home `.rerail/dev/home`) without starting anything. |
@@ -294,7 +294,7 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
 - A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)), and stages the
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
 - A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
-  ([release notes](README.md#release)).
+  ([release notes](docs/release.md#release)).
 - Tests cover the behavior you changed, and docs that describe it are updated.
 
 ## Reporting a bug

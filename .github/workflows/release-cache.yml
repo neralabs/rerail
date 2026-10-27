@@ -47,8 +47,10 @@ jobs:
             target: x86_64-apple-darwin
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            napi_cross: true
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            napi_cross: true
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
           - runner: windows-2025
@@ -79,7 +81,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
+          key: rerail-release-${{ matrix.target }}${{ matrix.napi_cross && '-napi-cross' || '' }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
           lookup-only: true
 
       - if: steps.lookup.outputs.cache-hit != 'true'
@@ -104,7 +106,7 @@ jobs:
 
       - name: Build native engine
         if: steps.lookup.outputs.cache-hit != 'true'
-        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} --manifest-path native/Cargo.toml --output-dir native
+        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
 
       - name: Save the cargo cache
         if: steps.lookup.outputs.cache-hit != 'true'
@@ -114,4 +116,4 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: rerail-release-${{ matrix.target }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
+          key: rerail-release-${{ matrix.target }}${{ matrix.napi_cross && '-napi-cross' || '' }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}

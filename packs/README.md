@@ -3,8 +3,8 @@
 Rule packs for Rerail. Each pack is published to npm as its own package, versioned and released separately from
 the core package at the repository root.
 
-> Status: pre-release (below 1.0.0). Every pack here is published to npm, restricted to the same people who can read
-> core, and core ships none of them: set-up and `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs
+> Status: pre-release (below 1.0.0). Every pack here is published to npm, public like core, and core ships none
+> of them: set-up and `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs
 > here: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and
 > `complexity`. Every rule document Rerail ships lives in a pack; core has no rules of its own, and lists the packs
 > by name only (`src/engine/catalog/pack-list.generated.ts`).

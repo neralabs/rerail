@@ -86,10 +86,10 @@ describe("cleanCommandError", () => {
 });
 
 describe.skipIf(process.platform === "win32")("runNpm", () => {
-  it("passes arguments through without adding a registry, userconfig or registry environment", async () => {
+  it("passes arguments through after quick fetch retries, without adding a registry, userconfig or registry environment", async () => {
     const bin = await fakeNpm('printf "%s\\n" "$@"; printf "registry=%s\\n" "$npm_config_registry"');
     const result = await runNpm(["view", "@neralabs/rerail@latest", "version"], { env: { PATH: bin } });
-    expect(result.stdout).toBe("view\n@neralabs/rerail@latest\nversion\nregistry=\n");
+    expect(result.stdout).toBe("--fetch-retries=1\n--fetch-retry-mintimeout=2000\n--fetch-retry-maxtimeout=10000\nview\n@neralabs/rerail@latest\nversion\nregistry=\n");
   });
 
   it.each([
@@ -100,6 +100,19 @@ describe.skipIf(process.platform === "win32")("runNpm", () => {
     const failure = runNpm(["view", "@neralabs/rerail"], { env: { PATH: bin } });
     await expect(failure).rejects.toThrow("npm registry credentials are missing or expired. Run `npm login` to refresh them.");
     await expect(failure).rejects.not.toThrow("c2VjcmV0");
+  });
+
+  it.each([
+    ["ECONNREFUSED", "npm error code ECONNREFUSED\\nnpm error FetchError: request to http://127.0.0.1:9/@neralabs%%2frerail failed, reason: connect ECONNREFUSED 127.0.0.1:9"],
+    ["timed out", "npm error code FETCH_ERROR\\nnpm error network timeout at: http://127.0.0.1:9/@neralabs%%2frerail"],
+    // Windows ends npm's lines in CRLF; npm 9 and earlier write `npm ERR!`.
+    ["ECONNREFUSED", "npm error code ECONNREFUSED\\r\\nnpm error FetchError: request to http://127.0.0.1:9/@neralabs%%2frerail failed, reason: connect ECONNREFUSED 127.0.0.1:9\\r"],
+    ["ENOTFOUND", "npm ERR! code ENOTFOUND\\nnpm ERR! request to http://127.0.0.1:9/@neralabs%%2frerail failed, reason: getaddrinfo ENOTFOUND"],
+  ])("says which registry npm could not reach (%s) and what to check", async (why, lines) => {
+    const bin = await fakeNpm(`printf "${lines}\\n" >&2; exit 1`);
+    await expect(runNpm(["view", "@neralabs/rerail"], { env: { PATH: bin } })).rejects.toThrow(
+      `could not reach the npm registry (http://127.0.0.1:9, ${why}): check your network, proxy, or registry in ~/.npmrc`,
+    );
   });
 
   it("leaves other npm failures unchanged", async () => {

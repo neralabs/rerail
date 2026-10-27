@@ -2,6 +2,9 @@
 
 ## Using Rerail
 - [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+- [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
+- [reference.md](reference.md): how rules and their configuration work, the database, updates, the daemon and its API,
+  and audits
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated
 - [writing-rules.md](writing-rules.md): which rules are worth having, and suggesting, writing, testing and tuning one
   with `/rerail-create` and `rerail rules evidence|test|add`
@@ -11,6 +14,8 @@
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
 - [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
+- [internal-testing.md](internal-testing.md): features in the code that are not ready for public use, and where each
+  surfaces
 
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
@@ -22,6 +27,7 @@
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
 ## Release
+- [release.md](release.md): how core is built, versioned and published
 - [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first publish to npm and its trusted
   publisher
 
@@ -30,6 +36,7 @@
   (`npm run check:structure`) that enforces them
 
 ## Design notes
+- [vision.md](vision.md): the coordination problem, the semantic monitor, and Rerail's design principles
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and

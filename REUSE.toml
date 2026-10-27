@@ -1539,3 +1539,17 @@ path = ["packs/next/upstream/eslint-plugin-next/fixtures/*/rerail-*", "packs/nex
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."
 SPDX-License-Identifier = "Apache-2.0"
+
+# The coding agents' logos in the README's "Works with" badges: LobeHub's icons for Claude Code, Codex, Cursor and Pi,
+# oh-my-pi's own icon for OMP, each inside a badge drawn by shields.io. The names and logos are their owners' trademarks.
+[[annotations]]
+path = ["docs/images/agents/claude-code.svg", "docs/images/agents/codex.svg", "docs/images/agents/cursor.svg", "docs/images/agents/pi.svg"]
+precedence = "override"
+SPDX-FileCopyrightText = "2023 LobeHub"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docs/images/agents/omp.svg"
+precedence = "override"
+SPDX-FileCopyrightText = ["2025 Mario Zechner", "2025-2026 Can Bölük", "2026 Stencil Labs, Inc."]
+SPDX-License-Identifier = "MIT"
