@@ -4,8 +4,11 @@ use crate::content_store::{ABSENT, DerivationInput, GitTree, GitTreeEntry};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn store() -> ContentStore {
+    // The clock alone is not unique across parallel tests (macOS reads it in microseconds).
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let path = std::env::temp_dir().join(format!("rerail-observe-{}-{nonce}.sqlite", std::process::id()));
+    let path = std::env::temp_dir().join(format!("rerail-observe-{}-{nonce}-{n}.sqlite", std::process::id()));
     ContentStore::open(&path).unwrap()
 }
 
