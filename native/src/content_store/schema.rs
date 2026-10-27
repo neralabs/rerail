@@ -321,6 +321,23 @@ CREATE TABLE IF NOT EXISTS derivation_inputs (
     PRIMARY KEY (output_atom, ordinal)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_atom);
+-- Collection keeps pages some binding names (tree_pages.rs).
+CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
+
+-- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
+-- directory's result depends on; `digest` is the page derivation's output digest.
+CREATE TABLE IF NOT EXISTS tree_pages (
+    page_key BLOB NOT NULL CHECK(length(page_key) = 32),
+    page_index INTEGER NOT NULL CHECK(page_index >= 0),
+    page_count INTEGER NOT NULL CHECK(page_count > 0),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
+    file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
+    frame BLOB NOT NULL,
+    PRIMARY KEY (page_key, page_index)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
 "#;
 
 impl ContentStore {

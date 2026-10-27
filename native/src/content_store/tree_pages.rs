@@ -1,252 +1,184 @@
-// COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
-// l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
-// l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
-const SCHEMA_V10: &str = r#"
-CREATE TABLE tree_result_segments (
-    tree_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    prefix TEXT NOT NULL,
-    catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    page_index INTEGER NOT NULL CHECK(page_index >= 0),
-    page_count INTEGER NOT NULL CHECK(page_count > 0),
-    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
-    file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
-    frame BLOB NOT NULL,
-    PRIMARY KEY (tree_hash_id, prefix, catalog_hash_id, page_index)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX tree_result_segments_by_catalog
-ON tree_result_segments(catalog_hash_id, prefix, tree_hash_id);
-"#;
+//! Per-directory result pages (C16; docs/final-shape/03-architecture.md §15), adapted from Tempo's
+//! tree result segments (ner-1562-scale-test-the-re-railer@8fe9ffed4, `tree_result_segments`):
+//! a directory's results are stored as up to 64-file pages, compressed, and restored whole
+//! wherever the same subtree appears (Tempo E33–E34: complete-root reuse in 610 ms, then 34 ms
+//! median; 47 workspaces 48.7 s → 13.6 s).
+//!
+//! Tempo keyed pages by (tree hash, prefix, candidate catalog) and published them with a
+//! workspace completion. Here they are keyed by what the directory's result depends on, (tree
+//! hash, prefix, context chain, plan), so any scope holding the subtree finds them, and their
+//! digest is the output digest of the scope's page derivation (`facts::pages`): a page set that is
+//! recomputed identical cuts off. Pages no name binds are collected (reclamation.rs).
 
-#[derive(Clone, Debug)]
-pub struct TreeResultSegmentPublication {
-    pub prefix: String,
+use super::{CODEC_ZSTD, ContentStore, HashKey, StoreError, StoreResult, compress};
+use rusqlite::OptionalExtension;
+use sha2::{Digest as _, Sha256};
+use std::io::Cursor;
+
+/// Files per page (Tempo's segment bound).
+pub const TREE_PAGE_FILES: usize = 64;
+
+/// What one directory's result depends on.
+#[derive(Clone, Copy, Debug)]
+pub struct TreePageKey<'a> {
     pub tree: HashKey,
-    pub page_index: usize,
-    pub page_count: usize,
-    pub raw_length: usize,
-    pub file_count: usize,
-    pub frame: Vec<u8>,
+    pub prefix: &'a str,
+    /// The context chain (package markers and other ancestry the result reads), as one digest.
+    pub context: [u8; 32],
+    /// The plan identity of what produced the pages.
+    pub plan: [u8; 32],
 }
 
-#[derive(Clone, Debug)]
-pub struct StoredTreeResultSegment {
-    pub prefix: String,
-    pub page_index: usize,
-    pub page_count: usize,
+impl TreePageKey<'_> {
+    pub fn key(&self) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.tree-page-key/v1\0");
+        hash.update(self.tree.algorithm.to_le_bytes());
+        for lane in self.tree.lanes {
+            hash.update(lane.to_le_bytes());
+        }
+        hash.update((self.prefix.len() as u64).to_le_bytes());
+        hash.update(self.prefix.as_bytes());
+        hash.update(self.context);
+        hash.update(self.plan);
+        hash.finalize().into()
+    }
+}
+
+/// One page: the encoded results of up to `TREE_PAGE_FILES` files.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreePage {
     pub file_count: usize,
     pub bytes: Vec<u8>,
 }
 
+/// The digest of a directory's pages: what its page derivation outputs.
+pub fn tree_pages_digest(pages: &[TreePage]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.tree-pages/v1\0");
+    hash.update((pages.len() as u64).to_le_bytes());
+    for page in pages {
+        hash.update((page.file_count as u64).to_le_bytes());
+        hash.update((page.bytes.len() as u64).to_le_bytes());
+        hash.update(&page.bytes);
+    }
+    hash.finalize().into()
+}
 
-    pub fn complete_snapshot_trees(
-        &self,
-        completion: WorkspaceCompletion,
-        snapshot_id: SnapshotId,
-        catalog: CandidateCatalogIdentity,
-        trees: &[(String, HashKey)],
-        segments: Vec<TreeResultSegmentPublication>,
-    ) -> StoreResult<()> {
-        if trees.is_empty() {
-            return self.complete_workspace_revision(
-                completion.workspace_id,
-                completion.revision,
-                catalog,
-                completion.completed_at,
-            );
+impl ContentStore {
+    /// Stores a directory's pages under `key`; returns their digest. Storing pages again under a
+    /// key is a no-op, and other bytes under a stored key are refused.
+    pub fn put_tree_pages(&self, key: &TreePageKey<'_>, pages: &[TreePage]) -> StoreResult<[u8; 32]> {
+        if pages.is_empty() || pages.iter().any(|page| page.file_count > TREE_PAGE_FILES) {
+            return Err(StoreError::Invalid("a directory has one or more pages of at most 64 files".to_owned()));
         }
-        let input = trees
-            .iter()
-            .map(|(prefix, tree)| {
-                serde_json::json!([
-                    prefix,
-                    tree.algorithm,
-                    tree.lanes[0],
-                    tree.lanes[1],
-                    tree.lanes[2],
-                    tree.lanes[3]
-                ])
-            })
-            .collect::<Vec<_>>();
-        let encoded = serde_json::to_string(&input).map_err(|error| {
-            StoreError::Invalid(format!("completed Git trees cannot be encoded: {error}"))
-        })?;
-        let mut segment_plans = Vec::new();
-        let mut remaining = segments;
-        while !remaining.is_empty() {
-            let tail = remaining.split_off(remaining.len().min(256));
-            let chunk = std::mem::replace(&mut remaining, tail);
+        let (page_key, digest) = (key.key(), tree_pages_digest(pages));
+        let page_count = pages.len() as i64;
+        let mut plans = Vec::new();
+        let mut index = 0_i64;
+        for chunk in pages.chunks(256) {
             let mut sql = String::from(
-                "INSERT INTO tree_result_segments(tree_hash_id,prefix,catalog_hash_id,page_index,page_count,raw_length,file_count,frame) ",
+                "INSERT INTO tree_pages(page_key,page_index,page_count,digest,codec_id,raw_length,file_count,frame) VALUES ",
             );
-            let mut values = Vec::with_capacity(chunk.len() * 12);
-            let mut catalog_indexes = Vec::with_capacity(chunk.len());
-            for (index, segment) in chunk.into_iter().enumerate() {
-                if index == 0 {
-                    sql.push_str("SELECT h.hash_id,?,?,?,?,?,?,? FROM hashes h INDEXED BY hashes_by_prefix WHERE h.algorithm_id=? AND h.lane0=? AND h.lane1=? AND h.lane2=? AND h.lane3=?");
-                } else {
-                    sql.push_str(" UNION ALL SELECT h.hash_id,?,?,?,?,?,?,? FROM hashes h INDEXED BY hashes_by_prefix WHERE h.algorithm_id=? AND h.lane0=? AND h.lane1=? AND h.lane2=? AND h.lane3=?");
+            let mut values = Vec::with_capacity(chunk.len() * 8);
+            for (position, page) in chunk.iter().enumerate() {
+                if position > 0 {
+                    sql.push(',');
                 }
-                values.push(rusqlite::types::Value::Text(segment.prefix));
-                catalog_indexes.push(values.len());
-                values.push(rusqlite::types::Value::Integer(0));
-                values.push(rusqlite::types::Value::Integer(
-                    segment.page_index.try_into().map_err(|_| {
-                        StoreError::Invalid("tree result page index is too large".to_owned())
-                    })?,
-                ));
-                values.push(rusqlite::types::Value::Integer(
-                    segment.page_count.try_into().map_err(|_| {
-                        StoreError::Invalid("tree result page count is too large".to_owned())
-                    })?,
-                ));
-                values.push(rusqlite::types::Value::Integer(
-                    segment.raw_length.try_into().map_err(|_| {
-                        StoreError::Invalid("tree result segment is too large".to_owned())
-                    })?,
-                ));
-                values.push(rusqlite::types::Value::Integer(
-                    segment.file_count.try_into().map_err(|_| {
-                        StoreError::Invalid("tree result file count is too large".to_owned())
-                    })?,
-                ));
-                values.push(rusqlite::types::Value::Blob(segment.frame));
-                values.push(rusqlite::types::Value::Integer(segment.tree.algorithm));
-                values.extend(segment.tree.lanes.map(rusqlite::types::Value::Integer));
+                sql.push_str("(?,?,?,?,?,?,?,?)");
+                values.push(rusqlite::types::Value::Blob(page_key.to_vec()));
+                values.push(rusqlite::types::Value::Integer(index));
+                values.push(rusqlite::types::Value::Integer(page_count));
+                values.push(rusqlite::types::Value::Blob(digest.to_vec()));
+                values.push(rusqlite::types::Value::Integer(CODEC_ZSTD));
+                values.push(rusqlite::types::Value::Integer(page.bytes.len() as i64));
+                values.push(rusqlite::types::Value::Integer(page.file_count as i64));
+                values.push(rusqlite::types::Value::Blob(compress(&page.bytes, self.compression_level)?));
+                index += 1;
             }
-            sql.push_str(" ON CONFLICT(tree_hash_id,prefix,catalog_hash_id,page_index) DO UPDATE SET raw_length=excluded.raw_length \
-                WHERE tree_result_segments.page_count=excluded.page_count \
-                AND tree_result_segments.raw_length=excluded.raw_length \
-                AND tree_result_segments.file_count=excluded.file_count AND tree_result_segments.frame=excluded.frame");
-            let expected = catalog_indexes.len();
-            segment_plans.push((sql, values, catalog_indexes, expected));
+            // A stored page is "updated" to itself only when every column agrees, so the changed
+            // count is the chunk's length exactly when the stored pages are these pages.
+            sql.push_str(
+                " ON CONFLICT(page_key,page_index) DO UPDATE SET raw_length=excluded.raw_length \
+                 WHERE tree_pages.page_count=excluded.page_count AND tree_pages.digest=excluded.digest \
+                 AND tree_pages.raw_length=excluded.raw_length AND tree_pages.file_count=excluded.file_count",
+            );
+            plans.push((sql, values, chunk.len()));
         }
         self.immediate_transaction(|transaction| {
-            let catalog_hash_id = intern_hash(transaction, catalog.key())?;
-            transaction.prepare_cached(
-                "WITH input AS (SELECT json_extract(value,'$[0]') prefix, \
-                 CAST(json_extract(value,'$[1]') AS INTEGER) algorithm, \
-                 CAST(json_extract(value,'$[2]') AS INTEGER) lane0, \
-                 CAST(json_extract(value,'$[3]') AS INTEGER) lane1, \
-                 CAST(json_extract(value,'$[4]') AS INTEGER) lane2, \
-                 CAST(json_extract(value,'$[5]') AS INTEGER) lane3 FROM json_each(?1)) \
-                 INSERT OR IGNORE INTO completed_snapshot_trees(snapshot_id,tree_hash_id,prefix,catalog_hash_id) \
-                 SELECT ?2,h.hash_id,i.prefix,?3 FROM input i \
-                 CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=i.algorithm AND h.lane0=i.lane0 \
-                 AND h.lane1=i.lane1 AND h.lane2=i.lane2 AND h.lane3=i.lane3",
-            )?.execute(params![encoded, snapshot_id.0, catalog_hash_id])?;
-            for (sql, values, catalog_indexes, expected) in &mut segment_plans {
-                for &index in catalog_indexes.iter() {
-                    values[index] = rusqlite::types::Value::Integer(catalog_hash_id);
-                }
-                let changed = transaction.execute(
-                    sql.as_str(),
-                    rusqlite::params_from_iter(values.iter()),
-                )?;
+            for (sql, values, expected) in &plans {
+                let changed = transaction.execute(sql.as_str(), rusqlite::params_from_iter(values.iter()))?;
                 if changed != *expected {
-                    return Err(StoreError::Corrupt(
-                        "tree result segment identity has different bytes".to_owned(),
-                    ));
+                    return Err(StoreError::Corrupt("tree page identity has different bytes".to_owned()));
                 }
             }
-
-    pub fn tree_result_segments(
-        &self,
-        catalog: CandidateCatalogIdentity,
-        trees: &[(String, HashKey)],
-    ) -> StoreResult<Vec<StoredTreeResultSegment>> {
-        if trees.is_empty() {
-            return Ok(Vec::new());
-        }
-        let input = trees
-            .iter()
-            .map(|(prefix, tree)| {
-                serde_json::json!([
-                    prefix,
-                    tree.algorithm,
-                    tree.lanes[0],
-                    tree.lanes[1],
-                    tree.lanes[2],
-                    tree.lanes[3]
-                ])
-            })
-            .collect::<Vec<_>>();
-        let encoded = serde_json::to_string(&input).map_err(|error| {
-            StoreError::Invalid(format!("tree result lookup cannot be encoded: {error}"))
+            Ok(())
         })?;
-        let key = catalog.key();
-        let compressed = {
-            let connection = self
-                .connection
-                .lock()
-                .expect("content store connection unavailable");
-            let mut statement = connection.prepare_cached(
-                "WITH input AS (SELECT json_extract(value,'$[0]') prefix, \
-                 CAST(json_extract(value,'$[1]') AS INTEGER) algorithm, CAST(json_extract(value,'$[2]') AS INTEGER) lane0, \
-                 CAST(json_extract(value,'$[3]') AS INTEGER) lane1, CAST(json_extract(value,'$[4]') AS INTEGER) lane2, \
-                 CAST(json_extract(value,'$[5]') AS INTEGER) lane3 FROM json_each(?1)) \
-                 SELECT i.prefix,r.page_index,r.page_count,r.raw_length,r.file_count,r.frame FROM input i \
-                 CROSS JOIN hashes h INDEXED BY hashes_by_prefix ON h.algorithm_id=i.algorithm AND h.lane0=i.lane0 \
-                 AND h.lane1=i.lane1 AND h.lane2=i.lane2 AND h.lane3=i.lane3 \
-                 JOIN tree_result_segments r ON r.tree_hash_id=h.hash_id AND r.prefix=i.prefix \
-                 JOIN hashes ch ON ch.hash_id=r.catalog_hash_id WHERE ch.algorithm_id=?2 AND ch.lane0=?3 \
-                 AND ch.lane1=?4 AND ch.lane2=?5 AND ch.lane3=?6 ORDER BY i.prefix,r.page_index",
-            )?;
-            statement
-                .query_map(
-                    params![
-                        encoded,
-                        key.algorithm,
-                        key.lanes[0],
-                        key.lanes[1],
-                        key.lanes[2],
-                        key.lanes[3]
-                    ],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, i64>(2)?,
-                            row.get::<_, i64>(3)?,
-                            row.get::<_, i64>(4)?,
-                            row.get::<_, Vec<u8>>(5)?,
-                        ))
-                    },
-                )?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        compressed
-            .into_iter()
-            .map(
-                |(prefix, page_index, page_count, raw_length, file_count, frame)| {
-                    let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
-                    if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
-                        return Err(StoreError::Corrupt(
-                            "tree result length mismatch".to_owned(),
-                        ));
-                    }
-                    Ok(StoredTreeResultSegment {
-                        prefix,
-                        page_index: usize::try_from(page_index).map_err(|_| {
-                            StoreError::Corrupt("tree result page index is invalid".to_owned())
-                        })?,
-                        page_count: usize::try_from(page_count).map_err(|_| {
-                            StoreError::Corrupt("tree result page count is invalid".to_owned())
-                        })?,
-                        file_count: usize::try_from(file_count).map_err(|_| {
-                            StoreError::Corrupt("tree result file count is invalid".to_owned())
-                        })?,
-                        bytes,
-                    })
-                },
-            )
-            .collect()
+        Ok(digest)
     }
 
-        transaction.execute(
-            "DELETE FROM tree_result_segments WHERE (tree_hash_id,prefix,catalog_hash_id) IN (\
-             SELECT r.tree_hash_id,r.prefix,r.catalog_hash_id FROM tree_result_segments r \
-             WHERE NOT EXISTS (SELECT 1 FROM completed_snapshot_trees c WHERE c.tree_hash_id=r.tree_hash_id \
-             AND c.prefix=r.prefix AND c.catalog_hash_id=r.catalog_hash_id) \
-             ORDER BY r.catalog_hash_id,r.prefix,r.tree_hash_id LIMIT ?1)",
-            [limit],
-        )?;
+    /// The pages stored under `key` and their digest, if every page is stored.
+    pub fn tree_pages(&self, key: &TreePageKey<'_>) -> StoreResult<Option<([u8; 32], Vec<TreePage>)>> {
+        let rows = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            connection
+                .prepare_cached(
+                    "SELECT page_index,page_count,digest,codec_id,raw_length,file_count,frame FROM tree_pages \
+                     WHERE page_key=?1 ORDER BY page_index",
+                )?
+                .query_map([&key.key()[..]], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, Vec<u8>>(6)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let Some(first) = rows.first() else {
+            return Ok(None);
+        };
+        let (count, digest) = (first.1, first.2.clone());
+        // A partly collected page set is a miss.
+        if rows.len() as i64 != count {
+            return Ok(None);
+        }
+        let mut pages = Vec::with_capacity(rows.len());
+        for (expected, (index, page_count, page_digest, codec, raw_length, file_count, frame)) in rows.into_iter().enumerate() {
+            if index != expected as i64 || page_count != count || page_digest != digest || codec != CODEC_ZSTD {
+                return Err(StoreError::Corrupt("tree pages disagree".to_owned()));
+            }
+            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+            if bytes.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
+                return Err(StoreError::Corrupt("tree page length mismatch".to_owned()));
+            }
+            let file_count = usize::try_from(file_count)
+                .map_err(|_| StoreError::Corrupt("tree page file count is invalid".to_owned()))?;
+            pages.push(TreePage { file_count, bytes });
+        }
+        let digest: [u8; 32] = digest
+            .try_into()
+            .map_err(|_| StoreError::Corrupt("tree page digest is not 32 bytes".to_owned()))?;
+        if tree_pages_digest(&pages) != digest {
+            return Err(StoreError::Corrupt("tree pages do not match their digest".to_owned()));
+        }
+        Ok(Some((digest, pages)))
+    }
+
+    /// Whether `key` has pages stored (without decoding them).
+    pub fn has_tree_pages(&self, key: &TreePageKey<'_>) -> StoreResult<bool> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        Ok(connection
+            .prepare_cached("SELECT 1 FROM tree_pages WHERE page_key=?1 LIMIT 1")?
+            .query_row([&key.key()[..]], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+}
+
+#[cfg(test)]
+mod tests;

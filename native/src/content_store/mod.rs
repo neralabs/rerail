@@ -19,6 +19,7 @@ mod schema;
 mod search_index;
 mod snapshots;
 mod tree_diff;
+mod tree_pages;
 #[cfg(test)]
 mod tests;
 mod workspaces;
@@ -31,6 +32,7 @@ pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRec
 pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
 pub use tree_diff::{TreeChange, TreeDiff};
+pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
 #[cfg(test)]
 pub(crate) use connection::{

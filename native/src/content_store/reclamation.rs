@@ -349,6 +349,17 @@ impl ContentStore {
              ORDER BY p.set_digest LIMIT ?1)",
             [limit],
         )?;
+        // Pages no name binds: no scope's page derivation outputs them (tree_pages.rs). A page set
+        // whose binding is still in an unwritten overlay layer can be collected; its next lookup
+        // misses and recomputes it.
+        execute_collect(
+            &transaction,
+            "DELETE FROM tree_pages WHERE page_key IN (\
+             SELECT DISTINCT p.page_key FROM tree_pages p \
+             WHERE NOT EXISTS (SELECT 1 FROM name_bindings b WHERE b.digest=p.digest) \
+             ORDER BY p.page_key LIMIT ?1)",
+            [limit],
+        )?;
         execute_collect(
             &transaction,
             "UPDATE store_state SET generation=generation+1 WHERE singleton=1",
