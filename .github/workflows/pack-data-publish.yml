@@ -1,0 +1,440 @@
+name: Publish pack data
+
+# Publishes a pull request's pack data (CONTRIBUTING.md, "Pack test data"): every packs/<pack>/upstream/<tool>/publish/
+# its head tracks becomes a new test data or samples archive in s3://nera-test-fixtures/rerail/archives/, and the locks
+# naming them replace publish/ on the pull request's branch.
+#
+# A maintainer (or an agent with write access) dispatches it on main with the pull request's number, so it always runs
+# main's workflow and code. No job runs anything of the pull request: prep reads its publish/ as git blobs and parses
+# them as data (scripts/s3/pack-fixtures.mjs pack --from), holding only the read role; upload never fetches the pull
+# request and holds the write role only after a code owner approves the test-data-upload deployment, having read prep's
+# summary; finish builds its one commit with git plumbing alone and pushes it with the neralabs-ci app's token, which
+# it mints only after every object is confirmed in S3, and never forces. A fork's branch, or a push GitHub rejects
+# (the branch moved), gets the locks in the sticky comment instead. Re-running is safe: puts are create-only and
+# content-addressed, and confirm accepts an object S3 already holds once it verifies.
+
+run-name: Publish pack data for #${{ inputs.pr }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: The pull request whose publish/ directories to publish.
+        type: number
+        required: true
+      replace:
+        description: >-
+          Make each tool-pack's archive exactly what its publish/ holds (for deletions or a full regeneration), rather
+          than lay publish/ over the locked archive.
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: pack-data-publish-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  # Packs every publish/ of the pull request's head from its blobs with main's code, over the locked archives (read
+  # through the read role) unless replace, checks every file's licence against scripts/check/licence-allowlist.json,
+  # and writes the summary the approver reads. A failure here means no approval is ever asked.
+  prep:
+    name: prep
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    outputs:
+      # [{ kind, pack, tool, key, sha256, files, bytes, compressedBytes }], what upload verifies the artifact against.
+      objects: ${{ steps.pack.outputs.objects }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_ref: ${{ steps.pr.outputs.head_ref }}
+      same_repo: ${{ steps.pr.outputs.same_repo }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The pull request's identity, validated: only its number came from the dispatcher, and its head ref only ever
+      # travels through env.
+      - id: pr
+        name: Read the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          pull="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR")"
+          state="$(jq -r .state <<< "$pull")"
+          head_sha="$(jq -r .head.sha <<< "$pull")"
+          head_ref="$(jq -r .head.ref <<< "$pull")"
+          head_repo="$(jq -r '.head.repo.full_name // ""' <<< "$pull")"
+          if [ "$state" != "open" ]; then
+            echo "::error::pull request #$PR is $state: only an open pull request is published"
+            exit 1
+          fi
+          if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] || ! git check-ref-format "refs/heads/$head_ref"; then
+            echo "::error::pull request #$PR's head is no commit on a valid branch"
+            exit 1
+          fi
+          {
+            echo "head_sha=$head_sha"
+            echo "head_ref=$head_ref"
+            echo "same_repo=$([ "$head_repo" = "$GITHUB_REPOSITORY" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Objects only: refs/pull/<n>/head exists for forks too. It must be the head the API named.
+      - name: Fetch the pull request's head as objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --quiet --no-tags origin "+refs/pull/$PR/head:refs/publish/head"
+          if [ "$(git rev-parse refs/publish/head)" != "$HEAD_SHA" ]; then
+            echo "::error::refs/pull/$PR/head is not $HEAD_SHA: the pull request moved; dispatch again"
+            exit 1
+          fi
+
+      # Main's npm packages: scripts/samples/publish.ts validates samples with them. No npm cache: a job that can mint
+      # a token restores no cache entry.
+      - name: Node.js and dependencies
+        uses: ./.github/actions/node-deps
+        with:
+          npm-cache: "false"
+
+      # The credentials are this step's outputs, not exported, so only the pack step holds them.
+      - id: credentials
+        name: Assume the test data read role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - id: pack
+        name: Pack publish/ and check its licences
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          REPLACE: ${{ inputs.replace }}
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$REPLACE" = "true" ]; then args+=(--replace); fi
+          out="$RUNNER_TEMP/publish"
+          node --import tsx scripts/s3/pack-fixtures.mjs pack --from "$HEAD_SHA" "${args[@]}" \
+            --out "$out/archives" --manifest "$out/publish.json" --summary "$out/summary.md"
+          cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "objects=$(jq -c '[.objects[] | {kind, pack, tool, key, sha256, files, bytes, compressedBytes}]' "$out/publish.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the archives for upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: publish-${{ github.run_id }}
+          path: ${{ runner.temp }}/publish
+          if-no-files-found: error
+          retention-days: 3
+
+  # Waits for a code owner's approval of the test-data-upload deployment, the only place the write role trusts. Then
+  # every archive is verified against prep's job output (not the artifact's own manifest) before any put, put
+  # create-only with its tags, and every object confirmed: head-object, then a fresh download verified against its lock.
+  upload:
+    name: upload
+    needs: prep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: test-data-upload
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    outputs:
+      confirmed: ${{ steps.result.outputs.confirmed }}
+      # [{ key, reason }] for each object not put or confirmed.
+      failed: ${{ steps.result.outputs.failed }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # pack-fixtures.mjs needs Node 22.15 or newer (zlib's zstd) and no npm packages for upload and confirm.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Download prep's archives
+        uses: actions/download-artifact@v8
+        with:
+          name: publish-${{ github.run_id }}
+          path: ${{ runner.temp }}/publish
+
+      # rerail:uploader is the code owner who approved this deployment, or the dispatcher when the API names none.
+      - id: inputs
+        name: Name the objects and the uploader
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OBJECTS: ${{ needs.prep.outputs.objects }}
+          DISPATCHER: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$OBJECTS" > "$RUNNER_TEMP/objects.json"
+          uploader="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            --jq '[.[] | select(.state == "approved") | .user.login] | last // empty')"
+          uploader="${uploader:-$DISPATCHER}"
+          if ! [[ "$uploader" =~ ^[A-Za-z0-9-]+$ ]]; then
+            echo "::error::'$uploader' is not a GitHub login a tag can carry"
+            exit 1
+          fi
+          echo "uploader=$uploader" >> "$GITHUB_OUTPUT"
+
+      - id: credentials
+        name: Assume the test data write role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-write
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - id: upload
+        name: Verify and put the archives
+        env:
+          HEAD_SHA: ${{ needs.prep.outputs.head_sha }}
+          PR: ${{ inputs.pr }}
+          UPLOADER: ${{ steps.inputs.outputs.uploader }}
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: |
+          set -euo pipefail
+          node scripts/s3/pack-fixtures.mjs upload --objects "$RUNNER_TEMP/objects.json" --archives "$RUNNER_TEMP/publish/archives" \
+            --uploaded "$RUNNER_TEMP/uploaded.json" --commit "$HEAD_SHA" --pr "$PR" --run-id "$GITHUB_RUN_ID" --uploader "$UPLOADER"
+
+      # Every object, after every put, and even when a put failed, so the failed state names each object's fate.
+      - id: confirm
+        name: Confirm every object in S3
+        if: ${{ !cancelled() && steps.credentials.outcome == 'success' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+        run: |
+          set -euo pipefail
+          uploaded=()
+          if [ -f "$RUNNER_TEMP/uploaded.json" ]; then uploaded=(--uploaded "$RUNNER_TEMP/uploaded.json"); fi
+          node scripts/s3/pack-fixtures.mjs confirm --objects "$RUNNER_TEMP/objects.json" "${uploaded[@]}" --report "$RUNNER_TEMP/confirm.json"
+
+      # Confirmed only when the puts succeeded and every object verified; finish runs on nothing less.
+      - id: result
+        name: Record the result
+        if: always()
+        env:
+          UPLOAD: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/confirm.json"
+          if [ -f "$report" ] && [ "$UPLOAD" = "success" ] && [ "$(jq -r .confirmed "$report")" = "true" ]; then
+            echo "confirmed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "confirmed=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f "$report" ]; then
+            echo "failed=$(jq -c '.failed' "$report")" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Only after every object is confirmed: one commit on the pull request's head writes the new locks and deletes every
+  # publish/, built with git plumbing alone (no checkout of the pull request, no hooks), and pushed with the app's
+  # token (a push with GITHUB_TOKEN would start no CI) as a plain push GitHub accepts only as a fast-forward. A fork, or
+  # a rejected push, gets the locks in the sticky comment instead.
+  finish:
+    name: finish
+    needs: [prep, upload]
+    if: needs.upload.outputs.confirmed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - id: commit
+        name: Commit the locks and delete publish/
+        if: needs.prep.outputs.same_repo == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          HEAD_SHA: ${{ needs.prep.outputs.head_sha }}
+          OBJECTS: ${{ needs.prep.outputs.objects }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --quiet --no-tags origin "+refs/pull/$PR/head:refs/publish/head"
+          if ! git cat-file -e "$HEAD_SHA^{commit}" 2> /dev/null; then
+            echo "::warning::$HEAD_SHA is no longer the pull request's history; the comment carries the locks instead"
+            echo "made=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          export GIT_INDEX_FILE="$RUNNER_TEMP/publish.index"
+          git read-tree "$HEAD_SHA"
+          mapfile -t locks < <(node scripts/s3/pack-data-publish.mjs locks "$RUNNER_TEMP/locks")
+          for lock in "${locks[@]}"; do
+            oid="$(git hash-object -w -- "$RUNNER_TEMP/locks/$lock")"
+            git update-index --add --cacheinfo "100644,$oid,$lock"
+          done
+          mapfile -t tool_packs < <(jq -r '[.[] | "\(.pack)/\(.tool)"] | unique[]' <<< "$OBJECTS")
+          for entry in "${tool_packs[@]}"; do
+            [[ "$entry" =~ ^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$ ]] || { echo "::error::$entry is not a tool-pack"; exit 1; }
+            git ls-files -z -- "packs/${entry%%/*}/upstream/${entry#*/}/publish" | git update-index -z --force-remove --stdin
+          done
+          left="$(git ls-files -- 'packs/*/upstream/*/publish/*' | wc -l)"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::$left publish/ file(s) of a tool-pack prep did not pack remain; nothing was committed"
+            exit 1
+          fi
+          tree="$(git write-tree)"
+          listed="${tool_packs[*]}"
+          {
+            echo "tree=$tree"
+            echo "made=true"
+            echo "message=chore(pack-data): publish ${listed// /, } (run $GITHUB_RUN_ID)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Minted only now, after every object is confirmed.
+      - id: app-token
+        name: Get the neralabs-ci app token
+        if: steps.commit.outputs.made == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # A plain push: GitHub rejects it unless it fast-forwards the head prep packed. Never --force.
+      - id: push
+        name: Push the commit
+        if: steps.commit.outputs.made == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          HEAD_SHA: ${{ needs.prep.outputs.head_sha }}
+          HEAD_REF: ${{ needs.prep.outputs.head_ref }}
+          TREE: ${{ steps.commit.outputs.tree }}
+          MESSAGE: ${{ steps.commit.outputs.message }}
+        run: |
+          set -euo pipefail
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          export GIT_AUTHOR_NAME="${APP_SLUG}[bot]" GIT_AUTHOR_EMAIL="$email" GIT_COMMITTER_NAME="${APP_SLUG}[bot]" GIT_COMMITTER_EMAIL="$email"
+          new="$(git -c core.hooksPath=/dev/null commit-tree "$TREE" -p "$HEAD_SHA" -m "$MESSAGE")"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          if git -c core.hooksPath=/dev/null -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" \
+            push origin "$new:refs/heads/$HEAD_REF"; then
+            echo "pushed=$new" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::GitHub rejected the push to $HEAD_REF (the branch moved since prep); the comment carries the locks instead"
+          fi
+
+      - name: Update the sticky comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          OBJECTS: ${{ needs.prep.outputs.objects }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ steps.push.outputs.pushed }}
+          SAME_REPO: ${{ needs.prep.outputs.same_repo }}
+        run: |
+          set -euo pipefail
+          if [ -n "$COMMIT" ]; then
+            state=published
+          else
+            state=action-needed
+            if [ "$SAME_REPO" = "true" ]; then
+              export REASON="the push to the pull request's branch was rejected or not made (someone pushed to it since prep)"
+            else
+              export REASON="the pull request's branch is on a fork, which this workflow cannot push to"
+            fi
+          fi
+          body="$(node scripts/s3/pack-data-publish.mjs comment "$state")"
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | .id' | head -n 1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
+          if [ "$state" != "published" ]; then
+            echo "::error::the locks were not committed: $REASON. The comment on #$PR carries them"
+            exit 1
+          fi
+
+  # Prep succeeded but not every object was put and confirmed (a failed put or confirm, a rejected approval, a
+  # cancelled job): the sticky comment names each object's failure. No commit, no lock change; the run is red.
+  failed:
+    name: failed
+    needs: [prep, upload]
+    if: always() && needs.prep.result == 'success' && needs.upload.outputs.confirmed != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Update the sticky comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ inputs.pr }}
+          OBJECTS: ${{ needs.prep.outputs.objects }}
+          FAILED: ${{ needs.upload.outputs.failed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="$(node scripts/s3/pack-data-publish.mjs comment failed)"
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | .id' | head -n 1)"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
+          echo "::error::not every object was put and confirmed in S3; nothing was committed"
+          exit 1

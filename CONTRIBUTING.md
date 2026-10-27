@@ -356,12 +356,13 @@ Pull again after a checkout or merge that changes a `test-data.lock`. `fixtures:
 [AWS CLI v2](https://aws.amazon.com/cli/) and read access to the bucket only for archives it has not fetched before;
 ask a maintainer for access. It verifies every archive against its lock (the tar's sha256, its file count and its
 bytes) before it extracts any, and refuses an archive with a path that has a control character, is not NFC, or equals
-another's ignoring case. It deletes the untracked derived files an archive lacks, which are stale, and keeps
-untracked authored ones, saying so. Files your branch tracks win: a pull puts each tracked file back to its committed
-content (or keeps your working-tree edit of it). It never writes through a symbolic link: when `packs/`, a tool
-directory or a directory an archive's file goes into is one, it stops before writing anything and says to make it a
-directory. `.gitignore` covers the patterns, so pulled data does not show in `git status`. Without the data, the pack
-tests (`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail saying to pull.
+another's ignoring case. Then it lays the tool-pack's `publish/` (below) over what it extracted, so the checkout holds
+what publishing it would make. It deletes the derived files on disk that neither the archive nor `publish/` holds,
+which are stale, and keeps authored ones, saying so. It never writes or reads through a symbolic link: when `packs/`,
+a tool directory, its `publish/` or a directory an archive's file goes into is one, it stops before writing anything
+and says to make it a directory. `.gitignore` covers the patterns, so pulled data does not show in `git status`.
+Without the data, the pack tests (`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail saying
+to pull.
 
 A tool-pack with a `samples.lock` also has real-code samples: real files from open-source repositories, labelled per
 rule with the lines it should report or as clean for it, which the conformance check and the port readiness gates
@@ -369,11 +370,10 @@ judge the rules on ([docs/port-readiness.md](docs/port-readiness.md#samples)). T
 (`s3://nera-test-fixtures/rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst`), which `samples.lock` names in
 `test-data.lock`'s format and `SAMPLES.md` describes (sources, licences, commits). `fixtures:pull` fetches and
 verifies it with the test data and extracts it under `.rerail/pack-data/samples/`, never into the tool directory
-(`node scripts/s3/pack-fixtures.mjs samples` fetches the samples alone). Nothing derives them, and no command edits a
-set yet: to change one (samples, labels, or a renamed or dropped rule's key), a maintainer's script loads the samples
-tree, changes it and re-packs it with `packSamples` and `writeSampleSet` (`scripts/samples/pack.ts`), which write the
-archive into `.rerail/pack-data/archives/samples/` and the lock and `SAMPLES.md`; `node scripts/s3/pack-fixtures.mjs
-samples push --pack <id> --tool <tool>` uploads it.
+(`node scripts/s3/pack-fixtures.mjs samples` fetches the samples alone). Nothing derives them: to change a set
+(samples, labels, or a renamed or dropped rule's key), a maintainer's script loads the samples tree, changes it and
+stages it with `writeSampleSet` (`scripts/samples/pack.ts`) into the tool-pack's `publish/samples/`, which is
+published like test data (below).
 
 CI pulls the same way, in two kinds of job (`.github/actions/pack-test-data`). A fetching job (`fetch: "true"`) only
 warms the Actions cache: it looks up the entry keyed by its tool-packs' locks (`node scripts/s3/pack-fixtures.mjs
@@ -387,7 +387,7 @@ same-repository pull requests only: GitHub gives a fork's or Dependabot's pull r
 
 Two more checks guard the data. **Pack test data is in S3** runs `node scripts/s3/pack-fixtures.mjs check` under the
 read role: a `head-object` for every archive a `test-data.lock` names and every recording a `recording.lock` names,
-downloading nothing, failing with each missing key, its lock and the command that pushes it. Main's runs read only S3
+downloading nothing, failing with each missing key, its lock and its remedy. Main's runs read only S3
 and never record, so a pull request cannot merge until S3 holds what its locks name. **Test data reproduces from the
 pins** derives each tool-pack whose `test-data.lock` the pull request changes again, with no credentials, and compares
 it byte for byte with the data the new archive holds (`npm run fixtures:derive -- --pack <id> --tool <tool> --compare
@@ -395,90 +395,80 @@ it byte for byte with the data the new archive holds (`npm run fixtures:derive -
 is **CI result**, which fails when any CI job failed or was cancelled, since GitHub counts a job skipped after a
 failed dependency as passing ([docs/port-readiness.md](docs/port-readiness.md#ci)).
 
-Structure metric #3 (`npm run check`) fails while any pack test data is tracked, a tool directory lacks a
-`test-data.lock`, or a lock is malformed, so a pull request that checks data in cannot merge until a maintainer has
-archived it.
+Structure metric #3 (`npm run check`) fails while any pack test data is tracked in the pulled layout, a tool directory
+lacks a `test-data.lock`, a lock is malformed, or a `publish/` is tracked ("Pack data waiting to publish"), so a pull
+request cannot merge until its data is in S3 and its locks name it.
 
 ### Adding or changing a pack
 
-Check the authored test data you add or change into your pull request, so review sees it and CI runs on it: the
-cases you wrote for the tool (listed in its `UPSTREAM.md`), or a code corpus with its ground truth under
-`upstream/<tool>/authored/`. The generators and recorders print the command that adds the authored files they wrote.
-Because `.gitignore` covers them, add them with `git add -f`, e.g. `git add -f --
-packs/<id>/upstream/<tool>/fixtures/rerail`. Derived data changes with the pins, a generator or a recipe, which your
-pull request changes instead; a maintainer derives it before merge. The usual rules for third-party material apply
-(below).
+New or changed pack test data reaches S3 through the tool-pack's **`publish/`** directory,
+`packs/<pack>/upstream/<tool>/publish/`: tracked, never ignored, and normally absent. Anything in it is a publish
+request. `publish/<path>` becomes the test data archive's file `<path>` (`publish/fixtures/AL04/x.sql` →
+`fixtures/AL04/x.sql`), and `publish/samples/<path>` the samples archive's; anything else there fails the publish.
+
+1. Make the data in the usual, ignored layout: `npm run fixtures:derive -- --pack <id> --tool <tool> [--update]` or
+   the pack's generator for derived data, your own cases for authored data (listed in the tool's `UPSTREAM.md`, or a
+   code corpus with its ground truth under `upstream/<tool>/authored/`). The generators and recorders say so when they
+   write data.
+2. Stage it: `npm run fixtures:stage -- --pack <id> --tool <tool>` copies every file on disk that the locked archive
+   lacks or holds differently into `publish/`. A file deleted on disk cannot be expressed that way: `--all` copies
+   the whole set, for a publish with **replace**, which makes the archive exactly `publish/`.
+3. `git add packs/<id>/upstream/<tool>/publish`, push, and open the pull request. Review sees the bytes in the diff
+   (`*.expected.json` stays collapsed), and its CI judges the data as it would be published: `fixtures:pull` lays
+   `publish/` over the locked archive, and the samples the runner reads are the locked set overlaid with
+   `publish/samples/`.
+
+The usual rules for third-party material apply (below), and every file going to S3 must be under a licence on
+[scripts/check/licence-allowlist.json](scripts/check/licence-allowlist.json): test data by the
+`packs/<id>/licenses/<project>/UPSTREAM.md` that lists it (Rerail's own files are Apache-2.0), samples by their labels'
+`source.license`. An SPDX `A OR B` passes when either side is on the list, `A AND B` only when both are.
+
+A comment on the pull request ("Pack data waiting to publish") lists the tool-packs and how to run the publish, by hand
+and with the `gh` CLI.
+
+Removing data: a file the archive holds is not in the pull request's diff. An authored file goes with its row: the
+pull request deletes the file's row from the tool's `UPSTREAM.md`, and an overlay publish of that tool-pack drops it.
+Anything else goes with a `replace` publish of the whole set (`fixtures:stage --all`). The old archive stays in S3 for
+the commits that name it.
 
 ### Merging (maintainers)
 
-Before merging a pull request that tracks pack test data, changes a `recording.lock`, or changes what derives the
-data, a maintainer archives each tool-pack it changes and puts its recordings in S3. `fixtures:push` does that with
-the maintainer's own AWS credentials, which can write to the bucket, so it runs in a trusted worktree of main and
-takes the pull request as a git ref: it reads nothing from that commit but its tracked pack test data and lock files
-(with git plumbing), never checks it out and never runs its code. The pull request's scripts, `package.json` and
-generators never run next to the credentials.
+A pull request that tracks a `publish/` is published by **Publish pack data**
+([.github/workflows/pack-data-publish.yml](.github/workflows/pack-data-publish.yml)), which only runs on `main` and is
+dispatched with the pull request's number (`replace` off by default):
 
 ```sh
-# In a trusted worktree of main, with AWS credentials that can write to the bucket:
-git fetch origin pull/<n>/head:pr-<n>   # or the pull request's branch
-gh run download <run-id> -n recordings-<pack>--<tool> -D .rerail/port-readiness/recordings   # when it changes a recording.lock
-npm run fixtures:push -- --from pr-<n> [--pack <id> [--tool <tool>]] [--replace] [--into <checkout of the PR branch>]
+gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> [-f replace=true]
 ```
 
-For each tool-pack, by default every one the commit tracks pack test data for, or whose `test-data.lock`,
-`recording.lock` or `UPSTREAM.md` differs from its merge base with `HEAD`, `fixtures:push --from`:
-
-- starts from the archive the commit's `test-data.lock` names, fetched and verified as `fixtures:pull` does but never
-  into the worktree; drops from it every file the merge base's `UPSTREAM.md` for the tool listed as Rerail's and the
-  commit's no longer lists; and lays the commit's tracked pack test data for the tool directory over it, so a file the
-  commit tracks is kept. Without a merge base it refuses and says to use `--replace`. With `--replace` there is no base
-  archive: the archive is exactly the commit's tracked pack test data of the tool directory, and a selected tool-pack
-  that tracks none fails;
-- archives the result, lists the files it dropped from the lock's archive, uploads it unless S3 holds it, and reads it
-  back and verifies it against the new lock;
-- puts the recording archive the commit's `recording.lock` names in S3, as
-  `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst` from
-  `.rerail/port-readiness/recordings/<sha256>.tar.zst`: a copy that is what the lock names is uploaded by a
-  conditional write, unless S3 holds it, then read back and verified. A recording S3 already holds needs no local copy;
-  one in neither stops the push, naming its sha256 and how to get it;
-- prints the new `test-data.lock` and the git commands to run in a checkout of the pull request's branch: write the
-  lock, `git add` it, and `git rm -r -q --cached --` the tracked data the archive now holds.
+- **prep** (main's code; the read role only) packs every `publish/` of the pull request's head from its git blobs,
+  never checking it out or running its code: per tool-pack and kind, the locked archive less the files its
+  `UPSTREAM.md` stopped listing, overlaid with `publish/` (with replace, `publish/` alone). It refuses any other path
+  under `publish/` and any file whose licence the allowlist does not take, before any approval is asked, and writes a
+  summary: each archive's sha256, files, bytes and licences, and what it adds, changes and drops.
+- **upload** waits for a code owner to approve the `test-data-upload` deployment, after reading that summary. Only
+  then can it assume the write role. It verifies each archive against prep's outputs, puts it create-only (an object
+  is never overwritten), tagged `rerail:commit`, `rerail:pr`, `rerail:run-id` and `rerail:uploader` (the approver),
+  and then confirms every object: S3's head, and a fresh download verified against its lock.
+- **finish**, only after every object is confirmed, commits the new locks and deletes `publish/` in one commit on the
+  pull request's branch, pushed with the `neralabs-ci` app's token so CI runs on it, never forced. A fork's branch, or
+  a push GitHub rejects because the branch moved, gets the locks in the comment instead: commit them, delete
+  `publish/` and push, or pull and publish again. Re-running is safe: an object S3 already holds is accepted once it
+  verifies, and nothing is put twice.
+- **failed**, when an object was not put and confirmed (or the approval was rejected), says which in the comment;
+  nothing is committed and no lock changes.
 
 An archive path must have no control character, be NFC, and differ from every other path in the archive in more than
-case; a symbolic link in a tool directory where pack test data goes is refused. Archiving, pulling and pushing all
-check this.
+case; a symbolic link in a tool directory where pack test data goes is refused. Archiving, pulling, staging and
+publishing all check this.
 
-With `--into <dir>`, a checkout of the pull request's branch at the commit `--from` names, it writes the locks there
-itself and prints only the git commands. It runs no git there and reads only files: it refuses a checkout whose locks
-or tracked pack test data are not byte for byte that commit's, such as the trusted worktree itself. Run the commands in
-that checkout, commit and push; nothing there needs npm. The git you run there reads its `.git/config`, so make it one
-no code of the pull request has run in, such as a fresh `gh pr checkout <n>` in a clone of its own. On a branch of your
-own, `npm run fixtures:push -- --pack <id> --tool <tool>` archives the data as it is on disk (`--dry-run` shows what it
-would archive) and prints the same commands.
-
-Removing data: a file the archive holds is not in the pull request's diff, so deleting it from a checkout removes
-nothing. An authored file goes with its row: the pull request deletes the file's row from the tool's `UPSTREAM.md` (and
-the file, if it tracks it), and `fixtures:push --from` drops it as above. Derived files go with a derivation: the
-sandbox commit below tracks all of the tool directory's data, and `--replace` archives exactly that, so a file the
-derivation no longer makes is gone. Do not `--replace` a commit that tracks only part of the data: the rest would go
-too. The old archive stays in S3 for the commits that name it.
+A maintainer with write credentials may still archive a tool-pack's data as it is on disk and upload it, tagged with
+their `gh` login, with `npm run fixtures:push -- --pack <id> --tool <tool>` (`--dry-run` shows what it would archive);
+the publish workflow is the routine path.
 
 The pull request is then checked by **Pack test data is in S3**, which stays red until S3 holds every archive and
 recording its locks name, and, when it changes a `test-data.lock`, by **Test data reproduces from the pins**, which
 derives the tool-pack again in CI and must find the new archive's data byte for byte.
-
-When that check fails, its leg uploads what Linux derived as artifact `derived-<pack>--<tool>` (a tar of the tool
-directory's pack test data). It is the Linux path for a maintainer without Linux, and the way to correct data that
-does not reproduce: review the difference, then commit the derived files to a local branch and archive exactly them
-from a trusted main worktree:
-
-```sh
-gh run download <run-id> -n derived-<pack>--<tool> -D /tmp/derived
-git switch -c derived-<pack>-<tool> <pull request branch> && tar -xf /tmp/derived/derived.tar
-git add -f -- packs/<pack>/upstream/<tool> && git commit -m "derived data, not for merge"
-# in the main worktree:
-npm run fixtures:push -- --from derived-<pack>-<tool> --replace --pack <pack> --tool <tool>
-```
 
 A pull request that changes a `recording.lock` needs the recordings it names. A same-repository pull request's port
 readiness legs record every tool-pack whose `recording.lock` it changes, never reading the recordings the new lock
@@ -492,19 +482,18 @@ lock names and checks each against its sha256. A fork's pull request has no such
 When a pull request changes a pin, a generator or a recipe, the derived data must be made again, and so must the
 recording of a gated tool-pack. `fixtures:derive` and `port-readiness:record` run the pull request's own generators,
 recipes and recorder, and the upstream code they fetch, so a maintainer reviews that code first and then runs it in a
-sandbox: a clone of its own (not a `git worktree` of the trusted one, which shares its `.git` and hooks), in a
-container or VM that can reach no AWS or GitHub credentials (no `AWS_*` variables, no `~/.aws` or `gh` login), on Linux
-for `rust/clippy`, whose answers are Linux's (Clippy lints only the code rustc compiles for the host). `fixtures:push --from` takes a commit,
-not a directory, so the sandbox commits the derived data on top of the pull request and hands the commit over as a git
-bundle, which is data; the commit is amended to hold only the locks before anything is pushed:
+sandbox: a clone of its own, in a container or VM that can reach no AWS or GitHub credentials (no `AWS_*` variables,
+no `~/.aws` or `gh` login), on Linux for `rust/clippy`, whose answers are Linux's (Clippy lints only the code rustc
+compiles for the host). The sandbox stages the whole derived set into `publish/` and hands the commit over as a git
+bundle, which is data:
 
 ```sh
-# 1. In the trusted worktree: the archive the pull request's test-data.lock names (main's, unless it changes the lock).
+# 1. In a checkout with read access: the archive the pull request's test-data.lock names (main's, unless it changes it).
 npm run fixtures:pull -- --pack <id> --tool <tool>
 
-# 2. In the sandbox, a clone checked out at the pull request, with that archive (the trusted worktree's
-#    .rerail/pack-data/archives/<id>/<tool>/<sha256>.tar.zst, the sha256 its test-data.lock names) copied in, and the
-#    samples archive its samples.lock names, when it has one (.rerail/pack-data/archives/samples/<id>/<tool>/):
+# 2. In the sandbox, a clone checked out at the pull request, with that archive (the
+#    .rerail/pack-data/archives/<id>/<tool>/<sha256>.tar.zst its test-data.lock names) copied in, and the samples
+#    archive its samples.lock names, when it has one (.rerail/pack-data/archives/samples/<id>/<tool>/):
 mkdir -p .rerail/pack-data/archives/<id>/<tool> .rerail/pack-data/archives/samples/<id>/<tool>
 cp <path to>/<sha256>.tar.zst .rerail/pack-data/archives/<id>/<tool>/
 cp <path to>/<samples sha256>.tar.zst .rerail/pack-data/archives/samples/<id>/<tool>/
@@ -512,24 +501,19 @@ npm ci
 npm run fixtures:pull -- --pack <id> --tool <tool>               # extracts the copied archive; reads no S3
 npm run fixtures:derive -- --pack <id> --tool <tool> --update    # the derived data, from the pins
 npm run port-readiness:record -- --pack <id> --tool <tool>       # a gated tool-pack (gates.yaml) only
-git add -f -- packs/<id>/upstream/<tool> packs/<id>/licenses
+npm run fixtures:stage -- --pack <id> --tool <tool> --all        # the whole set, for a replace publish
+git add -- packs/<id>/upstream/<tool>/publish packs/<id>/licenses
 git commit -m "Derive <id>/<tool>"
 git bundle create pr-<n>-derived.bundle HEAD
 # Copy out pr-<n>-derived.bundle and .rerail/port-readiness/recordings/*.tar.zst.
 
-# 3. In the trusted worktree, with the recordings copied into .rerail/port-readiness/recordings/:
-git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
-
-# 4. In a fresh checkout of the pull request's branch:
+# 3. In a fresh checkout of the pull request's branch:
 git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
 git merge --ff-only pr-<n>-derived
-
-# 5. In the trusted worktree: the commit tracks all of the tool directory's data, so the archive is exactly that.
-npm run fixtures:push -- --from pr-<n>-derived --pack <id> --tool <tool> --replace --into <the checkout of step 4>
-
-# 6. In the checkout of step 4: the git commands it printed, then
-git commit --amend --no-edit   # the commit now holds the locks and no test data
 git push
+
+# 4. Publish it with replace:
+gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> -f replace=true
 ```
 
 `fixtures:derive` needs the network (the pinned upstreams and their packages), `uv`, and for the PHP and Blade packs

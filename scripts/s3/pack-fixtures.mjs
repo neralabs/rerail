@@ -10,25 +10,31 @@
 //   upstream/<tool>/UPSTREAM.md lists as Rerail's (pack check 6 reads the same list), and everything under
 //   upstream/<tool>/authored/ (AUTHORED_CORPUS_PATTERN: a contributor's code corpus with its ground truth, where the
 //   corpus is no public repository a pin can name).
-// - derived: everything else, upstream's tests copied or derived and the tool's recorded answers. A maintainer
-//   regenerates it from the tool-pack's pins with `npm run fixtures:derive` (scripts/pack-data/derive.ts) after a pin
-//   changes; pull request CI derives only to check that a changed test-data.lock reproduces.
+// - derived: everything else, upstream's tests copied or derived and the tool's recorded answers. A contributor or a
+//   maintainer regenerates it from the tool-pack's pins with `npm run fixtures:derive` (scripts/pack-data/derive.ts).
 //
-// .gitignore covers the patterns, so a pulled copy is untracked and invisible. A contributor checks new or changed data
-// into a pull request with `git add -f`; before merge a maintainer archives the tool-pack's data with `fixtures:push`,
-// commits the new lock and untracks the data (structure metric #3 fails while any pack test data is tracked, or a tool
-// directory has no well-formed lock).
+// .gitignore covers the patterns, so a pulled copy is untracked and invisible. New or changed data reaches S3 only
+// through the tool-pack's tracked publish/ directory (PUBLISH_DIRECTORY), the publish request: `npm run fixtures:stage`
+// copies what differs from the locked archive into it, the pull request commits it, and the publish workflow
+// (.github/workflows/pack-data-publish.yml, PUBLISH_WORKFLOW) packs it from the commit's blobs (`pack --from`), uploads
+// it after a code owner approves, confirms every object, commits the new locks and deletes publish/. Structure metric
+// #3 blocks the merge while a publish/ is tracked (CONTRIBUTING.md, "Pack test data").
 //
 //   npm run fixtures:pull [-- --pack <id> [--tool <tool>]] [--dry-run]   fetch the locked archives, verify, extract;
-//                                                                          tracked copies (a pull request's) win
-//   npm run fixtures:push [-- --pack <id> [--tool <tool>]] [--dry-run]   maintainer: archive the data on disk, upload
-//                                                                          the archive unless S3 holds it, rewrite the lock
-//   npm run fixtures:push -- --from <ref> [--pack <id> [--tool <tool>]] [--replace] [--into <dir>]
-//       maintainer, in a trusted checkout of main: archive a pull request's tracked pack test data from its commit's
-//       blobs alone (never checking it out or running its code) over the archive its lock names, less the files its
-//       UPSTREAM.md stopped listing as Rerail's (--replace: the tracked data alone, no archive under it), upload, and
-//       print the git commands that commit the new locks and untrack the data in a checkout of the pull request (or
-//       write the locks into --into <dir>)
+//                                                                          a tool-pack's publish/ is laid over them
+//   npm run fixtures:stage -- --pack <id> [--tool <tool>] [--all] [--dry-run]
+//       copy the pack test data on disk that the locked archive lacks or holds differently into publish/ (--all: all
+//       of it, for a `replace` publish)
+//   npm run fixtures:push [-- --pack <id> [--tool <tool>]] [--dry-run]   maintainer with write credentials (optional):
+//       archive the data on disk, upload the archive unless S3 holds it (tagged), rewrite the lock
+//   node scripts/s3/pack-fixtures.mjs pack --from <commit> [--replace] --out <dir> --manifest <file>
+//       the publish workflow's prep: archive each tool-pack's publish/ from the commit's blobs alone (never checking it
+//       out or running its code), over the locked archive (overlay) or alone (--replace), check every file's licence,
+//       and write the archives and their manifest; no AWS write
+//   node scripts/s3/pack-fixtures.mjs upload --objects <file> --archives <dir> [--uploaded <file>] <tags>
+//       the publish workflow's upload: verify each archive against the objects prep named, then put it create-only, tagged
+//   node scripts/s3/pack-fixtures.mjs confirm --objects <file> [--uploaded <file>] [--report <file>]
+//       head and download every object again and verify it against its lock
 //   node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]] [--dry-run]
 //       put the recording archive each recording.lock names into RECORDING_CACHE from S3, verified, and extract it into
 //       RECORDING_CACHE/tree/<sha256>/
@@ -43,6 +49,9 @@
 //       it back, and print the `git add` for the locks
 //   node scripts/s3/pack-fixtures.mjs check [--pack <id> [--tool <tool>]]
 //       fail, listing each with its remedy, unless S3 holds every archive the locks name (head-object only)
+//
+// Every put is tagged (objectTagging): rerail:commit, rerail:pr, rerail:run-id and rerail:uploader. A maintainer's
+// command defaults them to HEAD, "none", "local" and the `gh` login; --commit, --pr, --run-id and --uploader set them.
 //
 // A tool-pack's port-readiness recording, which its recording.lock names, is one canonical archive like a test data
 // archive (the recording tree: conformance/port-readiness/recording/), in the same bucket at
@@ -60,14 +69,16 @@
 // The consumers (the conformance runner, pack validation, the recorders and generators, the Rust tests) report a
 // missing file with missingPackFixture, so a checkout without the data says to pull instead of failing on ENOENT.
 // packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, recorders, UPSTREAM.md, recording.lock,
-// samples.lock, test-data.lock.
+// samples.lock, test-data.lock, and, while a pull request publishes data, publish/.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+import { licenceTerms } from "../check/check-structure/metrics/07-pack-licence-annotations.mjs";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, parseLock, readArchive, sha256, TEST_DATA_LOCK } from "./test-data-archive.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -138,6 +149,29 @@ export const PACK_FIXTURE_PATTERNS = Object.freeze([
 /** What every consumer tells a contributor whose checkout lacks the data. */
 export const PULL_INSTRUCTION =
   'pack test data is not in git: run `npm run fixtures:pull` (each tool-pack\'s archive, which its test-data.lock pins, from S3) (CONTRIBUTING.md, "Pack test data")';
+
+/**
+ * A tool directory's publish request: `packs/<pack>/upstream/<tool>/publish/`, tracked, never ignored. `publish/<path>`
+ * becomes the test data archive's entry `<path>` (a path PACK_FIXTURE_PATTERNS matches in the tool directory), and
+ * `publish/samples/<path>` the samples archive's entry `<path>`; anything else there is refused. No pattern of
+ * PACK_FIXTURE_PATTERNS matches a publish/ path, so pulled data and a publish request never mix.
+ */
+export const PUBLISH_DIRECTORY = "publish";
+/** Under publish/, the samples archive's entries (scripts/samples/pack.ts writes them there). */
+const SAMPLES_IN_PUBLISH = "samples";
+/** A tracked publish/ file's repository path: its pack, tool, and path under publish/. */
+const PUBLISH_PATH = /^packs\/([^/]+)\/upstream\/([^/]+)\/publish\/(.+)$/u;
+/** The workflow that publishes a pull request's publish/ (CONTRIBUTING.md, "Pack test data"). */
+export const PUBLISH_WORKFLOW = "https://github.com/neralabs/rerail/actions/workflows/pack-data-publish.yml";
+/** What a contributor does to publish a tool-pack's new or changed data. */
+const publishInstruction = ({ pack, tool }) =>
+  `stage it with \`npm run fixtures:stage -- --pack ${pack} --tool ${tool}\`, commit packs/${pack}/upstream/${tool}/${PUBLISH_DIRECTORY}/ in the pull request, and run the publish workflow (${PUBLISH_WORKFLOW}) for it (CONTRIBUTING.md, "Pack test data")`;
+
+/** `{ pack, tool, directory, path }` for a repository path under a tool directory's publish/, or undefined. */
+export function publishPath(path) {
+  const match = PUBLISH_PATH.exec(path);
+  return match === null ? undefined : { pack: match[1], tool: match[2], directory: `packs/${match[1]}/upstream/${match[2]}`, path: match[3] };
+}
 
 const escapeRegExp = (text) => text.replace(/[.+^${}()|[\]\\?]/gu, "\\$&");
 
@@ -256,25 +290,21 @@ const shellQuoted = (path) => (/^[\w./@+-]+$/u.test(path) ? path : `'${path.repl
 
 /**
  * What a recorder or generator says after writing pack test data at `paths` (files or directories, in the checkout at
- * `root`): the authored files among them go in a pull request with `git add -f`, and the derived ones never do (a
- * maintainer archives them).
+ * `root`): git ignores it, so new or changed data reaches S3 only staged into its tool-pack's publish/ and published.
  */
 export function packFixturesWritten(paths, root = ROOT) {
-  const authored = authoredListing(root);
-  const written = [...new Set(paths.flatMap((path) => filesAt(isAbsolute(path) ? path : join(root, path))).map((path) => repositoryPath(path, root)))].sort();
-  const own = written.filter((path) => packFixtureKind(path, authored) === "authored");
-  const lines = [];
-  if (written.length > own.length) {
-    lines.push(`Wrote ${written.length - own.length} derived pack test data file(s), which git ignores: a maintainer regenerates them from the pins (\`npm run fixtures:derive\`) and archives them (\`npm run fixtures:push\`), so never commit them (CONTRIBUTING.md, "Pack test data").`);
+  const written = [...new Set(paths.flatMap((path) => filesAt(isAbsolute(path) ? path : join(root, path))).map((path) => repositoryPath(path, root)))]
+    .filter(isPackFixture)
+    .sort();
+  const byToolPack = new Map();
+  for (const path of written) {
+    const [, pack, , tool] = path.split("/");
+    const directory = `packs/${pack}/upstream/${tool}`;
+    byToolPack.set(directory, { pack, tool, count: (byToolPack.get(directory)?.count ?? 0) + 1 });
   }
-  if (own.length > 0) {
-    lines.push(
-      `Wrote ${own.length} authored pack test data file(s) (their UPSTREAM.md lists them as Rerail's), which git ignores (they live in the tool-pack's archive in S3). Put new or changed ones in your pull request with`,
-      `  git add -f -- ${own.map(shellQuoted).join(" ")}`,
-      `and a maintainer archives them before merge (CONTRIBUTING.md, "Pack test data").`,
-    );
-  }
-  return lines.join("\n");
+  return [...byToolPack]
+    .map(([directory, { pack, tool, count }]) => `Wrote ${count} pack test data file(s) under ${directory}/, which git ignores (the tool-pack's data is an archive in S3). To publish new or changed data, ${publishInstruction({ pack, tool })}.`)
+    .join("\n");
 }
 
 /** packFixturesWritten for a recording at `path`: a fixtures recording names the case sources beside it too. */
@@ -309,49 +339,6 @@ export function requireAws(aws = runAws) {
   if (run.status !== 0) {
     throw new Error(`aws is not signed in (aws sts get-caller-identity: ${lastLine(run.stderr) || `exit ${run.status}`}). Sign in (aws login, aws sso login, or AWS_PROFILE) with credentials that can read s3://${BUCKET}/${ARCHIVE_PREFIX}; ask a maintainer for access (CONTRIBUTING.md, "Pack test data").`);
   }
-}
-
-/** The tracked pack test data under `paths` (repository paths) of the checkout at `root`, sorted. */
-export function trackedPackFixtures(root = ROOT, paths = ["packs"]) {
-  return nulList(runGit(root, ["ls-files", "-z", "--", ...paths])).filter(isPackFixture).sort(byBytes);
-}
-
-/** Tracked pack test data under `paths` whose working-tree copy differs from the index (edited or deleted), sorted. */
-function editedPackFixtures(root, paths) {
-  // A refreshed index compares content, not timestamps; it exits 1 when files differ, which ls-files then lists.
-  spawnSync("git", ["update-index", "-q", "--refresh"], { cwd: root });
-  return nulList(runGit(root, ["ls-files", "-z", "-m", "--", ...paths])).filter(isPackFixture).sort(byBytes);
-}
-
-/**
- * The working-tree state a pull keeps under `paths`: every tracked file's committed (index) content, except tracked
- * files edited or deleted in the working tree, which keep their edit. `snapshot` runs before the extraction and
- * `restore` after it.
- */
-export function trackedSnapshot(root = ROOT, paths = ["packs"]) {
-  const tracked = trackedPackFixtures(root, paths);
-  const edited = new Map();
-  for (const path of editedPackFixtures(root, paths)) {
-    const absolute = join(root, path);
-    edited.set(path, existsSync(absolute) ? readFileSync(absolute) : null);
-  }
-  return {
-    tracked,
-    edited,
-    restore() {
-      const unedited = tracked.filter((path) => !edited.has(path));
-      if (unedited.length > 0) runGit(root, ["checkout", "--pathspec-from-file=-", "--pathspec-file-nul", "--"], `${unedited.join("\0")}\0`);
-      for (const [path, bytes] of edited) {
-        const absolute = join(root, path);
-        if (bytes === null) rmSync(absolute, { force: true });
-        else {
-          mkdirSync(dirname(absolute), { recursive: true });
-          writeFileSync(absolute, bytes);
-        }
-      }
-      return { restored: unedited.length, kept: edited.size };
-    },
-  };
 }
 
 /** The tool-packs of the checkout at `root`: every directory packs/<pack>/upstream/<tool>/, sorted, as `{ pack, tool, directory }`. */
@@ -417,6 +404,32 @@ export function toolPackFiles(root, directory) {
   return found.sort(byBytes);
 }
 
+/**
+ * The files of the tool directory's publish/ on disk (a publish request), as paths relative to publish/, sorted by their
+ * UTF-8 bytes; none when it has no publish/. Nothing in it is read through a symlink: a symlink or anything but a
+ * regular file or directory there throws, naming it.
+ */
+export function publishFiles(root, directory) {
+  const publish = `${directory}/${PUBLISH_DIRECTORY}`;
+  refuseSymlinkedDirectories(root, publish);
+  if (!existsSync(join(root, publish))) return [];
+  const found = [];
+  const pending = [""];
+  while (pending.length > 0) {
+    const at = pending.pop();
+    for (const entry of readdirSync(join(root, publish, at), { withFileTypes: true })) {
+      const path = at === "" ? entry.name : `${at}/${entry.name}`;
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile()) found.push(path);
+      else throw new Error(`${publish}/${path} is not a regular file: a publish request holds files alone; replace it with the file it stands for`);
+    }
+  }
+  return found.sort(byBytes);
+}
+
+/** Whether `path` (relative to publish/) is a samples entry, `samples/<path>`. */
+const isPublishedSample = (path) => path.startsWith(`${SAMPLES_IN_PUBLISH}/`);
+
 /** A tool-pack's archive's S3 key, for the tar sha256 `digest`. */
 export function archiveKey({ pack, tool }, digest) {
   return `${ARCHIVE_PREFIX}${pack}/${tool}/${digest}.tar.zst`;
@@ -431,7 +444,7 @@ export function archiveCachePath(root, toolPack, digest) {
 export function readLock(root, toolPack) {
   const label = `${toolPack.directory}/${TEST_DATA_LOCK}`;
   if (!existsSync(join(root, label))) {
-    throw new Error(`${label} is missing: a maintainer archives the tool-pack's test data with \`npm run fixtures:push -- --pack ${toolPack.pack} --tool ${toolPack.tool}\`, which writes it (CONTRIBUTING.md, "Pack test data")`);
+    throw new Error(`${label} is missing: to publish the tool-pack's test data, ${publishInstruction(toolPack)}`);
   }
   return { label, ...parseLock(readFileSync(join(root, label), "utf8"), label) };
 }
@@ -643,38 +656,48 @@ function download(aws, key, destination) {
   throw new Error(`aws s3 cp s3://${BUCKET}/${key} failed: ${lastLine(run.stderr) || `exit ${run.status}`}`);
 }
 
-/** Whether S3 holds `key`. */
-function objectExists(aws, key) {
-  const run = aws(["s3api", "head-object", "--bucket", BUCKET, "--key", key, "--region", REGION]);
+/** S3's head of `key` (head-object's JSON: `ContentLength` and the rest), or undefined when S3 does not hold it. */
+function objectHead(aws, key) {
+  const run = aws(["s3api", "head-object", "--bucket", BUCKET, "--key", key, "--region", REGION, "--output", "json"]);
   if (run.error !== undefined) throw run.error;
-  if (run.status === 0) return true;
-  if (NOT_FOUND.test(run.stderr ?? "")) return false;
+  if (run.status === 0) {
+    try {
+      return JSON.parse(run.stdout || "{}");
+    } catch {
+      throw new Error(`aws s3api head-object ${key} printed no JSON: ${lastLine(run.stdout)}`);
+    }
+  }
+  if (NOT_FOUND.test(run.stderr ?? "")) return undefined;
   throw new Error(`aws s3api head-object ${key} failed: ${lastLine(run.stderr) || `exit ${run.status}`}`);
 }
 
-/** Uploads `file` to `key` unless S3 holds the key already (a conditional write: an object is never overwritten). */
-function putObject(aws, key, file) {
-  const run = aws(["s3api", "put-object", "--bucket", BUCKET, "--key", key, "--body", file, "--if-none-match", "*", "--region", REGION, "--output", "json"]);
+/** Whether S3 holds `key`. */
+function objectExists(aws, key) {
+  return objectHead(aws, key) !== undefined;
+}
+
+/** An S3 tag value: the characters S3 allows in one, at most 256 of them. */
+const TAG_VALUE = /^[\p{L}\p{N} _.:/=+\-@]{1,256}$/u;
+
+/**
+ * The `--tagging` of every put: `rerail:commit` (the commit the data was packed from), `rerail:pr` (its pull request, or
+ * "none"), `rerail:run-id` (the publish workflow's run, or "local") and `rerail:uploader` (the GitHub login of the code
+ * owner who approved it, or of the maintainer who pushed it), URL-encoded. Throws on a missing or invalid value.
+ */
+export function objectTagging({ commit, pr, runId, uploader } = {}) {
+  const tags = [["rerail:commit", commit], ["rerail:pr", pr], ["rerail:run-id", runId], ["rerail:uploader", uploader]];
+  const invalid = tags.filter(([, value]) => typeof value !== "string" || !TAG_VALUE.test(value)).map(([name, value]) => `${name} ${JSON.stringify(value)}`);
+  if (invalid.length > 0) throw new Error(`every upload is tagged, and these tags are missing or not S3 tag values: ${invalid.join(", ")} (--commit, --pr, --run-id, --uploader)`);
+  return tags.map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`).join("&");
+}
+
+/** Uploads `file` to `key`, tagged `tagging`, unless S3 holds the key already (a conditional write: an object is never overwritten). */
+function putObject(aws, key, file, tagging) {
+  const run = aws(["s3api", "put-object", "--bucket", BUCKET, "--key", key, "--body", file, "--if-none-match", "*", "--tagging", tagging, "--region", REGION, "--output", "json"]);
   if (run.error !== undefined) throw run.error;
   if (run.status === 0) return true;
   if (/PreconditionFailed|\(412\)/u.test(run.stderr ?? "")) return false;
   throw new Error(`aws s3api put-object ${key} failed: ${lastLine(run.stderr) || `exit ${run.status}`}`);
-}
-
-/** The narrowest paths whose pack test data `git rm -r --cached` removes for `tracked`: each file's shortest covering ancestor. */
-function untrackPaths(tracked) {
-  const covers = new Set();
-  for (const path of tracked) {
-    const segments = path.split("/");
-    for (let length = 5; length <= segments.length; length += 1) {
-      const candidate = segments.slice(0, length).join("/");
-      if (length === segments.length || isPackFixture(`${candidate}/-`)) {
-        covers.add(candidate);
-        break;
-      }
-    }
-  }
-  return [...covers].sort(byBytes);
 }
 
 /**
@@ -712,7 +735,7 @@ function downloadArchive(root, aws, toolPack, lock) {
   rmSync(partial, { force: true });
   try {
     if (!download(aws, key, partial)) {
-      throw new Error(`${lock.label} names s3://${BUCKET}/${key}, which S3 does not hold: a maintainer uploads it with \`npm run fixtures:push -- --pack ${toolPack.pack} --tool ${toolPack.tool}\` from the data the lock was written for (CONTRIBUTING.md, "Pack test data")`);
+      throw new Error(`${lock.label} names s3://${BUCKET}/${key}, which S3 does not hold: publish the data the lock was written for through the publish workflow (${PUBLISH_WORKFLOW}), or a maintainer with write credentials uploads it with \`npm run fixtures:push -- --pack ${toolPack.pack} --tool ${toolPack.tool}\` (CONTRIBUTING.md, "Pack test data")`);
     }
     const entries = verifiedEntries(readFileSync(partial), lock, key, toolPack.directory);
     renameSync(partial, cached);
@@ -788,15 +811,12 @@ export function verifiedSamples(compressed, lock, key) {
   return verifiedArchive(compressed, lock, key, (path) => path === SAMPLES_LICENSES || SAMPLE_PATH.test(path), `real-code samples (${SAMPLES_LICENSES} or <sample-id>/<path>)`);
 }
 
-/** The maintainer command that puts a tool-pack's built samples archive into S3. */
-const samplesPushCommand = ({ pack, tool }) => `node scripts/s3/pack-fixtures.mjs samples push --pack ${pack} --tool ${tool}`;
-
 /**
- * How a sample set is made or edited today: no command does it, so a maintainer's script loads the samples, changes
- * them (labels, rule keys, files) and re-packs them with scripts/samples/pack.ts, which writes the archive into
- * ARCHIVE_CACHE and the tool-pack's samples.lock and SAMPLES.md; `samples push` then puts the archive in S3.
+ * How a sample set is made or edited: a maintainer's script loads the samples, changes them (labels, rule keys, files)
+ * and stages the set with writeSampleSet (scripts/samples/pack.ts) into the tool-pack's publish/samples/, which the pull
+ * request commits and the publish workflow archives, uploads and locks.
  */
-const REPACK_SAMPLES = `re-pack the set from a script with packSamples and writeSampleSet (scripts/samples/pack.ts), which write the archive into ${ARCHIVE_CACHE}/samples/ and the lock and SAMPLES.md`;
+const REPACK_SAMPLES = `stage the set with writeSampleSet (scripts/samples/pack.ts) into the tool-pack's ${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/ and run the publish workflow (${PUBLISH_WORKFLOW}) for the pull request`;
 
 /**
  * The verified entries of the samples archive `lock` names, as `{ entries, source }`: a cached copy in ARCHIVE_CACHE
@@ -821,7 +841,7 @@ function samplesArchive(root, toolPack, lock, { dryRun, aws, signIn, discarded, 
   rmSync(partial, { force: true });
   try {
     if (!download(aws, key, partial)) {
-      throw new Error(`${lock.label} names s3://${BUCKET}/${key}, which S3 does not hold: a maintainer puts the built samples archive there with \`${samplesPushCommand(toolPack)}\``);
+      throw new Error(`${lock.label} names s3://${BUCKET}/${key}, which S3 does not hold: ${REPACK_SAMPLES}`);
     }
     const entries = verifiedSamples(readFileSync(partial), lock, key);
     renameSync(partial, cached);
@@ -944,23 +964,45 @@ export function samples({ root = ROOT, pack: packId, tool, dryRun = false, aws =
 }
 
 /**
+ * The test data entries of the tool directory's publish/ on disk (publishFiles less `samples/`), as `{ path, bytes }` by
+ * their archive path, and the publish/ files that are neither test data nor samples (the publish workflow refuses
+ * them), as paths relative to publish/.
+ */
+function publishedTestData(root, toolPack) {
+  const files = publishFiles(root, toolPack.directory).filter((path) => !isPublishedSample(path));
+  const foreign = files.filter((path) => !isPackFixture(`${toolPack.directory}/${path}`));
+  const entries = files
+    .filter((path) => isPackFixture(`${toolPack.directory}/${path}`))
+    .map((path) => ({ path, bytes: readFileSync(join(root, toolPack.directory, PUBLISH_DIRECTORY, path)) }));
+  return { entries, foreign };
+}
+
+/**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
- * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory. Every archive is
- * verified before anything is extracted, and every tool directory and directory an entry goes in, from the checkout
- * down, must be no symlink (nor may any pack test data in the tool directory be one). Untracked derived files the
- * archive lacks are deleted (a stale derivation); untracked authored ones are kept and reported. Then each tracked file
- * gets its own content back (its index copy, or the working-tree edit of one being edited), so a pull request's files
- * win over the archive's. The samples archive each selected tool-pack's samples.lock names is put into ARCHIVE_CACHE
- * and verified with the test data archives, before anything is extracted, then extracted into its tree outside the
- * tool directory (samples).
+ * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory, then lays the
+ * tool-pack's publish/ test data (a pull request's publish request) over it, so the checkout holds what publishing it
+ * in overlay mode would. A tool-pack with no lock yet takes its publish/ alone. Every archive is verified before
+ * anything is extracted, and every tool directory and directory an entry goes in, from the checkout down, must be no
+ * symlink (nor may any pack test data in the tool directory, or anything in publish/, be one). Derived files on disk
+ * that neither the archive nor publish/ holds are deleted (a stale derivation); authored ones are kept and reported. The
+ * samples archive each selected tool-pack's samples.lock names is put into ARCHIVE_CACHE and verified with the test
+ * data archives, before anything is extracted, then extracted into its tree outside the tool directory (samples).
  */
 export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
   const selected = selectToolPacks(root, pack, tool);
-  const locked = selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }));
+  const locked = selected.map((toolPack) => {
+    const published = publishedTestData(root, toolPack);
+    const lock = published.entries.length > 0 && !existsSync(join(root, toolPack.directory, TEST_DATA_LOCK)) ? undefined : readLock(root, toolPack);
+    return { toolPack, lock, published };
+  });
   const discarded = [];
   const signIn = signer(aws, discarded, "archive");
   const fetched = [];
-  for (const { toolPack, lock } of locked) {
+  for (const { toolPack, lock, published } of locked) {
+    if (lock === undefined) {
+      fetched.push({ toolPack, lock, entries: [], source: "publish/", published });
+      continue;
+    }
     const fromCache = cachedArchive(root, toolPack, lock, dryRun);
     if (fromCache.discarded !== undefined) discarded.push(fromCache.discarded);
     let entries = fromCache.entries;
@@ -974,51 +1016,49 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
       signIn();
       entries = downloadArchive(root, aws, toolPack, lock);
     }
-    fetched.push({ toolPack, lock, entries, source });
+    fetched.push({ toolPack, lock, entries, source, published });
   }
   const fetchedSamples = fetchSamples(root, selected, { dryRun, aws, signIn, discarded, log });
   if (dryRun) {
     log(`dry run: ${fetched.length} of ${locked.length} archive(s) and ${fetchedSamples.filter(({ entries }) => entries !== undefined).length} of ${fetchedSamples.length} samples archive(s) are in ${ARCHIVE_CACHE}; nothing was extracted`);
-    return { toolPacks: [], restored: 0, kept: 0, samples: [] };
+    return { toolPacks: [], samples: [] };
   }
 
   // No write may go through a symlink: every check runs before the first write.
   const onDisk = new Map();
   const directories = new Set();
-  for (const { toolPack, entries } of fetched) {
+  for (const { toolPack, entries, published } of fetched) {
     onDisk.set(toolPack.directory, toolPackFiles(root, toolPack.directory));
-    for (const entry of entries) {
+    for (const entry of [...entries, ...published.entries]) {
       const path = `${toolPack.directory}/${entry.path}`;
       directories.add(path.slice(0, path.lastIndexOf("/")));
     }
   }
   for (const directory of [...directories].sort(byBytes)) refuseSymlinkedDirectories(root, directory);
 
-  const snapshot = trackedSnapshot(root, selected.map((toolPack) => toolPack.directory));
-  const tracked = new Set(snapshot.tracked);
   const authored = authoredListing(root);
-  for (const { toolPack, lock, entries, source } of fetched) {
-    const archived = new Set(entries.map((entry) => entry.path));
-    const stale = onDisk.get(toolPack.directory).filter((path) => !archived.has(path) && !tracked.has(`${toolPack.directory}/${path}`));
+  for (const { toolPack, lock, entries, source, published } of fetched) {
+    const extracted = new Map([...entries, ...published.entries].map((entry) => [entry.path, entry.bytes]));
+    const stale = onDisk.get(toolPack.directory).filter((path) => !extracted.has(path));
     const kept = stale.filter((path) => packFixtureKind(`${toolPack.directory}/${path}`, authored) === "authored");
     for (const path of stale) if (!kept.includes(path)) rmSync(join(root, toolPack.directory, path));
-    for (const entry of entries) {
-      const absolute = join(root, toolPack.directory, entry.path);
+    for (const [path, bytes] of extracted) {
+      const absolute = join(root, toolPack.directory, path);
       mkdirSync(dirname(absolute), { recursive: true });
-      writeFileSync(absolute, entry.bytes);
+      writeFileSync(absolute, bytes);
     }
     const notes = [
+      ...(published.entries.length > 0 ? [`${published.entries.length} file(s) from ${PUBLISH_DIRECTORY}/ laid over it`] : []),
+      ...(published.foreign.length > 0 ? [`left out ${published.foreign.length} ${PUBLISH_DIRECTORY}/ file(s) that are no pack test data, which publishing refuses: ${published.foreign.slice(0, 5).join(", ")}`] : []),
       ...(stale.length > kept.length ? [`deleted ${stale.length - kept.length} stale derived file(s) the archive lacks`] : []),
-      ...(kept.length > 0 ? [`kept ${kept.length} untracked authored file(s) the archive lacks (check them into your pull request with git add -f, or delete them): ${kept.slice(0, 5).join(", ")}`] : []),
+      ...(kept.length > 0 ? [`kept ${kept.length} authored file(s) the archive lacks (stage them with npm run fixtures:stage to publish them, or delete them): ${kept.slice(0, 5).join(", ")}`] : []),
     ];
-    log(`${toolPack.directory}: ${entries.length} file(s) from archive ${lock.sha256.slice(0, 12)} (${source})${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
+    const from = lock === undefined ? `no archive (no ${TEST_DATA_LOCK} yet)` : `archive ${lock.sha256.slice(0, 12)} (${source})`;
+    log(`${toolPack.directory}: ${entries.length} file(s) from ${from}${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
   }
-  const result = snapshot.restore();
-  if (snapshot.tracked.length > 0) log(`${result.restored} tracked file(s) keep their committed content and ${result.kept} their working-tree edit`);
   extractSamples(root, fetchedSamples, { dryRun, log });
   return {
-    toolPacks: fetched.map(({ toolPack, source }) => ({ ...toolPack, source })),
-    ...result,
+    toolPacks: fetched.map(({ toolPack, source, published }) => ({ ...toolPack, source, published: published.entries.length })),
     samples: fetchedSamples.map(({ toolPack, source }) => ({ ...toolPack, source })),
   };
 }
@@ -1098,17 +1138,11 @@ export function recordings({ root = ROOT, pack: packId, tool, cache = join(root,
 
 /**
  * Archives each selected tool-pack's test data as it is on disk into ARCHIVE_CACHE and rewrites its test-data.lock; no
- * network. It refuses on tracked pack test data edited in the working tree, whose archive would not be what the pull
- * request committed, and on a symlink among the data or on the way to its tool directory (toolPackFiles), which it
- * would otherwise leave out or read through. The bump workflow (port-readiness-bump.yml) packs this way, without
- * credentials; `upload` then puts the archives in S3.
+ * network. It refuses a symlink among the data or on the way to its tool directory (toolPackFiles), which it would
+ * otherwise leave out or read through. `push` packs this way before it uploads.
  */
 export function pack({ root = ROOT, pack: packId, tool, dryRun = false, log = console.log } = {}) {
   const selected = selectToolPacks(root, packId, tool);
-  const edited = editedPackFixtures(root, selected.map((toolPack) => toolPack.directory));
-  if (edited.length > 0) {
-    throw new Error(`tracked pack test data differs from the index in the working tree; commit or restore it first, so the archive holds what the pull request committed:\n${edited.map((path) => `  ${path}`).join("\n")}`);
-  }
   // Every tool-pack's data is listed, refusing a symlink or nothing to archive, before any lock is written.
   const listed = selected.map((toolPack) => {
     const files = toolPackFiles(root, toolPack.directory);
@@ -1187,17 +1221,19 @@ function recordingPlan(root, toolPack, locked) {
 }
 
 /**
- * Puts each plan's local copy into S3 unless S3 holds its key already (a conditional write: an object is never
- * overwritten), then reads back what S3 holds and checks it as the plan says. A plan with no local copy needs S3 to hold
- * its key, and every plan is checked for that before anything is put. Returns the keys put, sorted.
+ * Puts each plan's local copy into S3, tagged (objectTagging's `tags`), unless S3 holds its key already (a conditional
+ * write: an object is never overwritten, and one S3 held keeps its first upload's tags), then reads back what S3 holds
+ * and checks it as the plan says. A plan with no local copy needs S3 to hold its key, and every plan is checked for
+ * that, and the tags for being valid, before anything is put. Returns the keys put, sorted.
  */
-function uploadObjects(aws, plans, log) {
+function uploadObjects(aws, plans, log, tags) {
+  const tagging = objectTagging(tags);
   const sorted = [...plans].sort((a, b) => byBytes(a.key, b.key));
   const absent = sorted.filter((plan) => !plan.local && !objectExists(aws, plan.key));
   if (absent.length > 0) throw new Error(`${absent.map((plan) => plan.absent).join("\n")}\nNothing was uploaded.`);
   const uploaded = [];
   for (const plan of sorted) {
-    const put = plan.local && !objectExists(aws, plan.key) && putObject(aws, plan.key, plan.path);
+    const put = plan.local && !objectExists(aws, plan.key) && putObject(aws, plan.key, plan.path, tagging);
     const readback = `${plan.path}.readback`;
     mkdirSync(dirname(readback), { recursive: true });
     try {
@@ -1214,18 +1250,19 @@ function uploadObjects(aws, plans, log) {
 
 /**
  * Puts each selected tool-pack's locked archive from ARCHIVE_CACHE, and the recording archive its recording.lock names
- * from RECORDING_CACHE, into S3 unless S3 holds their keys already, then reads each back and verifies it against its
- * lock. An archive with no local copy is fine when S3 holds it (and verifies); one in neither place fails the upload,
- * before anything is put.
+ * from RECORDING_CACHE, into S3, tagged `tags`, unless S3 holds their keys already, then reads each back and verifies it
+ * against its lock. An archive with no local copy is fine when S3 holds it (and verifies); one in neither place fails
+ * the upload, before anything is put.
  */
-export function upload({ root = ROOT, pack: packId, tool, aws = runAws, log = console.log } = {}) {
+export function upload({ root = ROOT, pack: packId, tool, tags, aws = runAws, log = console.log } = {}) {
   const selected = selectToolPacks(root, packId, tool);
   const plans = [
     ...archivePlans(root, selected.map((toolPack) => ({ toolPack, lock: readLock(root, toolPack) }))),
     ...lockedRecordingPlans(root, selected).map(({ plan }) => plan),
   ];
+  objectTagging(tags);
   requireAws(aws);
-  return { uploaded: uploadObjects(aws, plans, log) };
+  return { uploaded: uploadObjects(aws, plans, log, tags) };
 }
 
 /** recordingPlan for each of `selected` (tool-packs) that has a recording.lock, as `{ label, plan }`. */
@@ -1242,12 +1279,13 @@ function lockedRecordingPlans(root, selected) {
  * overwritten), reads each back and verifies it against the lock, then prints the `git add` that commits the locks. Run
  * again, it puts nothing ("S3 already holds"). One in neither RECORDING_CACHE nor S3 fails it, before anything is put.
  */
-export function recordingsPush({ root = ROOT, pack: packId, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function recordingsPush({ root = ROOT, pack: packId, tool, dryRun = false, tags, aws = runAws, log = console.log } = {}) {
   if (dryRun) throw new Error("recordings push has no --dry-run");
   const locked = lockedRecordingPlans(root, selectToolPacks(root, packId, tool));
   if (locked.length === 0) throw new Error(`no selected tool-pack has a ${RECORDING_LOCK}: record one with \`npm run port-readiness:record -- --pack <id> --tool <tool>\``);
+  objectTagging(tags);
   requireAws(aws);
-  const uploaded = uploadObjects(aws, locked.map(({ plan }) => plan), log);
+  const uploaded = uploadObjects(aws, locked.map(({ plan }) => plan), log, tags);
   const locks = locked.map(({ label }) => label);
   log(`S3 holds the recording archive(s) the lock(s) name; commit them:\n  git add -- ${locks.map(shellQuoted).join(" ")}`);
   return { uploaded, locks };
@@ -1283,23 +1321,20 @@ function samplesPlan(root, toolPack, lock) {
  * lock, then prints the `git add` that commits the locks. Run again, it puts nothing ("S3 already holds"). A cached
  * archive that is not the locked one, or one in neither ARCHIVE_CACHE nor S3, fails it before anything is put.
  */
-export function samplesPush({ root = ROOT, pack: packId, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function samplesPush({ root = ROOT, pack: packId, tool, dryRun = false, tags, aws = runAws, log = console.log } = {}) {
   if (dryRun) throw new Error("samples push has no --dry-run");
   const locked = selectToolPacks(root, packId, tool).flatMap((toolPack) => {
     const lock = readSamplesLock(root, toolPack);
     return lock === undefined ? [] : [samplesPlan(root, toolPack, lock)];
   });
   if (locked.length === 0) throw new Error(`no selected tool-pack has a ${SAMPLES_LOCK}: to make one, ${REPACK_SAMPLES}`);
+  objectTagging(tags);
   requireAws(aws);
-  const uploaded = uploadObjects(aws, locked, log);
+  const uploaded = uploadObjects(aws, locked, log, tags);
   const locks = locked.map(({ label }) => label);
   log(`S3 holds the samples archive(s) the lock(s) name; commit them:\n  git add -- ${locks.map(shellQuoted).join(" ")}`);
   return { uploaded, locks };
 }
-
-/** A tool directory's file whose change selects its tool-pack for push --from: a lock, or the UPSTREAM.md listing its authored files. */
-const SELECTING_FILE = /^packs\/[^/]+\/upstream\/[^/]+\/(?:test-data\.lock|recording\.lock|samples\.lock|UPSTREAM\.md)$/u;
-const TOOL_DIRECTORY = /^packs\/([^/]+)\/upstream\/([^/]+)\//u;
 
 /** Every entry under packs/ of `commit`'s tree in the repository at `root`, as path → `{ mode, oid }`. */
 function treeEntries(root, commit) {
@@ -1312,222 +1347,496 @@ function treeEntries(root, commit) {
   return entries;
 }
 
-/** A blob's bytes by object id, exactly as committed: cat-file applies no filter, textconv or attribute. */
-function gitBlob(root, oid) {
-  const run = spawnSync("git", ["cat-file", "blob", oid], { cwd: root, maxBuffer: 1 << 30 });
+/**
+ * The bytes of each blob `oids` names, by object id, exactly as committed: cat-file applies no filter, textconv or
+ * attribute. One `git cat-file --batch` reads them all.
+ */
+function gitBlobs(root, oids) {
+  const unique = [...new Set(oids)];
+  const blobs = new Map();
+  if (unique.length === 0) return blobs;
+  const run = spawnSync("git", ["cat-file", "--batch"], { cwd: root, input: `${unique.join("\n")}\n`, maxBuffer: 1 << 30 });
   if (run.error !== undefined) throw run.error;
-  if (run.status !== 0) throw new Error(`git cat-file blob ${oid} failed: ${run.stderr.toString("utf8").trim()}`);
-  return run.stdout;
+  if (run.status !== 0) throw new Error(`git cat-file --batch failed: ${run.stderr.toString("utf8").trim()}`);
+  const output = run.stdout;
+  let at = 0;
+  for (const oid of unique) {
+    const end = output.indexOf(0x0a, at);
+    const [name, type, size] = output.subarray(at, end).toString("utf8").split(" ");
+    if (name !== oid || type !== "blob") throw new Error(`git cat-file --batch: ${oid} is ${type ?? "missing"}, not a blob`);
+    const length = Number(size);
+    blobs.set(oid, output.subarray(end + 1, end + 1 + length));
+    at = end + 1 + length + 1;
+  }
+  return blobs;
 }
 
+/** The commit `from` (a git revision) names in the repository at `root`, as its full object id. */
+function resolveCommit(root, from) {
+  if (typeof from !== "string" || from === "" || from.startsWith("-")) throw new Error(`--from ${JSON.stringify(from)} is not a git revision`);
+  try {
+    return runGit(root, ["rev-parse", "--verify", "--quiet", `${from}^{commit}`]).trim();
+  } catch {
+    throw new Error(`--from ${from} is no commit in ${root}; fetch the pull request first (git fetch origin +refs/pull/<n>/head:refs/publish/head)`);
+  }
+}
+
+/** A pack or tool id a publish request may name: one lowercase path segment. */
+const TOOL_ID = /^[a-z0-9][a-z0-9._-]*$/u;
+/** Git's modes for a regular file. */
+const REGULAR_FILE_MODES = new Set(["100644", "100755"]);
+
 /**
- * The file at repository path `path` in the checkout `into`, as `{ target, bytes }` (bytes undefined when there is
- * none), refusing a missing or symlinked directory on the way and anything there but a regular file. It reads files
- * only: no git command runs in that checkout, whose configuration a pull request's code may have changed if it ever ran
- * there.
+ * The publish requests in a commit's tree (`tree`, treeEntries's; `at` describes the commit): per tool directory with a
+ * tracked publish/, `{ toolPack, testData, samples, paths }`, where `testData` and `samples` are `{ path, oid }` by
+ * archive path and `paths` every publish/ path. Throws, listing each, on a publish/ path no archive takes: neither pack
+ * test data of its tool directory nor under publish/samples/, no regular file, or in a pack or tool that is no id.
  */
-function intoFile(into, path) {
-  const segments = path.split("/");
-  let directory = resolve(into);
-  for (const segment of segments.slice(0, -1)) {
-    directory = join(directory, segment);
-    const stat = lstatSync(directory, { throwIfNoEntry: false });
-    if (stat?.isDirectory() !== true) {
-      const what = stat === undefined ? "does not exist" : stat.isSymbolicLink() ? "is a symlink" : "is not a directory";
-      throw new Error(`--into ${into}: ${relative(resolve(into), directory)} ${what} there, so ${path} cannot be read or written through it`);
+function publishRequests(tree, at) {
+  const requests = new Map();
+  const refused = [];
+  for (const [path, { mode, oid }] of tree) {
+    const found = publishPath(path);
+    if (found === undefined) continue;
+    if (!TOOL_ID.test(found.pack) || !TOOL_ID.test(found.tool)) refused.push(`${path} (no pack or tool id)`);
+    else if (found.path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) refused.push(`${path} (an empty, "." or ".." segment)`);
+    else if (!REGULAR_FILE_MODES.has(mode)) refused.push(`${path} (mode ${mode}: not a regular file)`);
+    else {
+      const sample = isPublishedSample(found.path);
+      if (!sample && !isPackFixture(`${found.directory}/${found.path}`)) {
+        refused.push(`${path} (neither pack test data of ${found.directory} nor under ${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/)`);
+        continue;
+      }
+      if (!requests.has(found.directory)) requests.set(found.directory, { toolPack: namedToolPack(found.pack, found.tool), testData: [], samples: [], paths: [] });
+      const request = requests.get(found.directory);
+      request.paths.push(path);
+      if (sample) request.samples.push({ path: found.path.slice(SAMPLES_IN_PUBLISH.length + 1), oid });
+      else request.testData.push({ path: found.path, oid });
     }
   }
-  const target = join(directory, segments.at(-1));
-  const stat = lstatSync(target, { throwIfNoEntry: false });
-  if (stat !== undefined && !stat.isFile()) throw new Error(`--into ${into}: ${path} is not a regular file there; nothing is read or written through it`);
-  return { target, bytes: stat === undefined ? undefined : readFileSync(target) };
+  if (refused.length > 0) {
+    throw new Error(`${at}: ${PUBLISH_DIRECTORY}/ holds ${refused.length} path(s) no archive takes, so nothing was packed (CONTRIBUTING.md, "Pack test data"):\n${refused.sort(byBytes).map((path) => `  ${path}`).join("\n")}`);
+  }
+  return new Map([...requests].sort(([a], [b]) => byBytes(a, b)));
+}
+
+/** The licence of Rerail's own files, every pack test data file no licenses/<project>/UPSTREAM.md lists. */
+const RERAIL_LICENCE = "Apache-2.0";
+/** The licence an UPSTREAM.md records (metrics/07-pack-licence-annotations.mjs's UPSTREAM_LICENSE). */
+const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
+/** A pack's licenses/<project>/UPSTREAM.md, which lists the files copied from that upstream and its licence. */
+const LICENSES_RECORD = /^packs\/([^/]+)\/licenses\/[^/]+\/UPSTREAM\.md$/u;
+/** The repository's licence allowlist: the SPDX ids anything put in S3 may be under. */
+const LICENCE_ALLOWLIST = "scripts/check/licence-allowlist.json";
+
+/**
+ * Whether data under the SPDX expression `expression` may go to S3: `A OR B` when either side may, `A AND B` (terms as
+ * licenceTerms reads them) when every term is on `allowed`.
+ */
+export function licenceAllowed(expression, allowed) {
+  return String(expression)
+    .split(/\s+OR\s+/u)
+    .some((alternative) => {
+      const terms = licenceTerms(alternative);
+      return terms.length > 0 && terms.every((term) => allowed.has(term));
+    });
+}
+
+/** The allowlist this checkout's code (main's, in the publish workflow) reads. */
+function licenceAllowlist() {
+  return new Set(JSON.parse(readFileSync(join(ROOT, LICENCE_ALLOWLIST), "utf8")));
 }
 
 /**
- * push --from: archives a pull request's tracked pack test data from the commit `from` names, reading nothing of it but
- * the blobs of its pack test data, UPSTREAM.md, test-data.lock, recording.lock and samples.lock files (git plumbing in
- * the trusted checkout at `root`; the commit is never checked out and none of its code runs). Per selected tool-pack,
- * the archive is the one the commit's test-data.lock names, less the files the merge base's UPSTREAM.md listed as
- * Rerail's and the commit's no longer lists, overlaid with the commit's tracked pack test data; with `replace`, it is
- * the commit's tracked pack test data of the tool directory alone. Each archive's log names the files it drops from the
- * one the lock named. It is uploaded with the recordings the commit's recording.lock names and the samples archive its
- * samples.lock names. Then come the git commands that finish the pull request in a checkout of it: write the new locks
- * (or, with `into`, a checkout of that commit, they are written there), `git add` them, and untrack the data.
+ * The licence of each pack test data file a pack's licenses/<project>/UPSTREAM.md lists, by repository path, as the
+ * commit's tree (`tree`, read through `blob`) records it; a listed file whose UPSTREAM.md records none gets a note,
+ * which no allowlist takes.
  */
-function pushFrom({ root, from, pack: packId, tool, into, replace, aws, log }) {
-  if (tool !== undefined && packId === undefined) throw new Error("--tool needs --pack");
-  if (from === "" || from.startsWith("-")) throw new Error(`--from ${JSON.stringify(from)} is not a git revision`);
-  let commit;
-  try {
-    commit = runGit(root, ["rev-parse", "--verify", "--quiet", `${from}^{commit}`]).trim();
-  } catch {
-    throw new Error(`--from ${from} is no commit in ${root}; fetch the pull request first (git fetch origin pull/<n>/head:pr-<n>)`);
+function upstreamLicences(tree, blob) {
+  const licences = new Map();
+  for (const path of tree.keys()) {
+    const match = LICENSES_RECORD.exec(path);
+    if (match === null) continue;
+    const text = blob(path).toString("utf8");
+    const licence = UPSTREAM_LICENSE.exec(text)?.[1] ?? `no licence (${path} records no "License:")`;
+    for (const line of text.split("\n")) {
+      const file = UPSTREAM_ROW.exec(line)?.[1];
+      if (file !== undefined) licences.set(`packs/${match[1]}/${file}`, licence);
+    }
   }
+  return licences;
+}
+
+/**
+ * Per sample id, the licence its labels file (`<sample-id>/<path>.expected.json`) records as `source.license`; the set's
+ * LICENSES.md is Rerail's. A file of a sample with no readable labels gets a note, which no allowlist takes.
+ */
+function sampleLicences(entries) {
+  const bySample = new Map();
+  for (const { path, bytes } of entries) {
+    if (!path.endsWith(".expected.json")) continue;
+    let licence;
+    try {
+      licence = JSON.parse(bytes.toString("utf8"))?.source?.license;
+    } catch {
+      licence = undefined;
+    }
+    if (typeof licence === "string") bySample.set(path.slice(0, path.indexOf("/")), licence);
+  }
+  return (path) => (path === SAMPLES_LICENSES ? RERAIL_LICENCE : bySample.get(path.slice(0, path.indexOf("/"))) ?? "no licence (the sample has no labels file naming source.license)");
+}
+
+/** `{ added, changed, dropped }`: the archive paths `next` adds to, changes in and drops from `base` (both path → bytes), sorted. */
+function archiveChanges(base, next) {
+  const sorted = (paths) => paths.sort(byBytes);
+  return {
+    added: sorted([...next.keys()].filter((path) => !base.has(path))),
+    changed: sorted([...next].filter(([path, bytes]) => base.has(path) && !base.get(path).equals(bytes)).map(([path]) => path)),
+    dropped: sorted([...base.keys()].filter((path) => !next.has(path))),
+  };
+}
+
+/** The format of `pack --from`'s manifest. */
+export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
+
+/**
+ * The publish workflow's prep (`pack --from <commit>`): archives every tool-pack's publish/ in the commit `from` names,
+ * reading nothing of it but blobs (git plumbing in the trusted checkout at `root`, main's; the commit is never checked
+ * out and none of its code runs). Per tool-pack and kind present in its publish/:
+ *
+ * - test data (`publish/<path>`): overlay (default): the archive the commit's test-data.lock names, less the files the
+ *   merge base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; `replace`:
+ *   publish/ alone;
+ * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, then laid over the
+ *   archive the commit's samples.lock names, or alone with `replace`.
+ *
+ * Base archives come from ARCHIVE_CACHE or S3 (a read). Every file going to S3 must be under a licence the allowlist
+ * takes (licenceAllowed): test data by the pack's licenses/<project>/UPSTREAM.md that lists it, else Rerail's
+ * Apache-2.0, and samples by their labels' `source.license`; a failure lists every file and licence before anything is
+ * written. Then each archive is written compressed under `out` (its key less ARCHIVE_PREFIX), the manifest
+ * (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to `summary`, when given. A
+ * commit with no publish/ fails: nothing to publish.
+ */
+export async function packFrom({ root = ROOT, from, replace = false, out, manifest, summary, aws = runAws, log = console.log } = {}) {
+  if (out === undefined) throw new Error("pack --from needs --out <dir>, where the archives are written");
+  const commit = resolveCommit(root, from);
   const at = `${from} (${commit.slice(0, 12)})`;
   const tree = treeEntries(root, commit);
-  /** The bytes of the regular file at `path` in `entries`, the tree of the commit `where` describes. */
-  const blobIn = (entries, where, path) => {
-    const { mode, oid } = entries.get(path);
-    if (mode !== "100644" && mode !== "100755") throw new Error(`${path} at ${where} is not a regular file (mode ${mode}); pack test data, records and locks are regular files`);
-    return gitBlob(root, oid);
+  const requests = publishRequests(tree, at);
+  if (requests.size === 0) throw new Error(`${at} has no ${PUBLISH_DIRECTORY}/ in any packs/<pack>/upstream/<tool>/: nothing to publish`);
+  const blob = (path) => {
+    const { mode, oid } = tree.get(path);
+    if (!REGULAR_FILE_MODES.has(mode)) throw new Error(`${path} at ${at} is not a regular file (mode ${mode})`);
+    return gitBlobs(root, [oid]).get(oid);
   };
-  const blob = (path) => blobIn(tree, at, path);
-  let changed = new Set();
+  const lockAt = (label) => (tree.has(label) ? { label: `${label} at ${at}`, ...parseLock(blob(label).toString("utf8"), `${label} at ${at}`) } : undefined);
+  const discarded = [];
+  const signIn = signer(aws, discarded, "archive");
+  const licensed = upstreamLicences(tree, blob);
+
   let mergeBase;
-  let mergeBaseProblem;
-  try {
-    mergeBase = runGit(root, ["merge-base", "HEAD", commit]).trim();
-    const paths = nulList(runGit(root, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", mergeBase, commit, "--", "packs"]));
-    changed = new Set(paths.filter((path) => SELECTING_FILE.test(path)));
-  } catch (error) {
-    mergeBase = undefined;
-    mergeBaseProblem = error instanceof Error ? error.message : String(error);
-    if (packId === undefined) {
-      throw new Error(`which tool-packs ${at} changes is unknown without its merge base with HEAD (${mergeBaseProblem}); name them with --pack and --tool`);
-    }
-  }
-  let baseTree;
-  /** The authored files the tool directory's UPSTREAM.md lists at the merge base and no longer lists at the commit. */
+  /** The authored files the tool directory's UPSTREAM.md lists at the merge base with HEAD and no longer lists at the commit. */
   const unlisted = (toolPack) => {
     if (mergeBase === undefined) {
-      throw new Error(`which UPSTREAM.md rows ${at} removes is unknown without its merge base with HEAD (${mergeBaseProblem}), so its archive cannot drop their files; rerun with --replace to archive exactly its tracked pack test data`);
+      let base;
+      try {
+        base = runGit(root, ["merge-base", "HEAD", commit]).trim();
+      } catch (error) {
+        throw new Error(`which UPSTREAM.md rows ${at} removes is unknown without its merge base with HEAD (${error instanceof Error ? error.message : String(error)}), so its archive cannot drop their files; publish with replace to archive exactly its publish/`);
+      }
+      mergeBase = treeEntries(root, base);
     }
-    baseTree ??= treeEntries(root, mergeBase);
     const record = `${toolPack.directory}/UPSTREAM.md`;
-    const listing = (entries, where) => (entries.has(record) ? listedAuthored(record, blobIn(entries, where, record).toString("utf8")) : []);
-    const kept = new Set(listing(tree, at));
-    return new Set(listing(baseTree, `the merge base ${mergeBase.slice(0, 12)}`).filter((path) => !kept.has(path) && path.startsWith(`${toolPack.directory}/`)));
+    const listing = (entries) => {
+      const entry = entries.get(record);
+      return entry === undefined || !REGULAR_FILE_MODES.has(entry.mode) ? [] : listedAuthored(record, gitBlobs(root, [entry.oid]).get(entry.oid).toString("utf8"));
+    };
+    const kept = new Set(listing(tree));
+    return new Set(listing(mergeBase).filter((path) => !kept.has(path) && path.startsWith(`${toolPack.directory}/`)));
   };
-  const tracked = [...tree.keys()].filter(isPackFixture).sort(byBytes);
-  const found = new Map();
-  for (const path of tree.keys()) {
-    const match = TOOL_DIRECTORY.exec(path);
-    if (match === null) continue;
-    if ([match[1], match[2]].some((segment) => segment === "." || segment === "..")) throw new Error(`${path} at ${at} has a "." or ".." segment`);
-    const directory = `packs/${match[1]}/upstream/${match[2]}`;
-    found.set(directory, { pack: match[1], tool: match[2], directory });
-  }
-  const owns = (toolPack) => (path) => path.startsWith(`${toolPack.directory}/`);
-  const candidates = [...found.values()].sort((a, b) => byBytes(a.directory, b.directory));
-  const selected = packId === undefined
-    ? candidates.filter((toolPack) => tracked.some(owns(toolPack)) || [TEST_DATA_LOCK, RECORDING_LOCK, SAMPLES_LOCK, "UPSTREAM.md"].some((name) => changed.has(`${toolPack.directory}/${name}`)))
-    : candidates.filter((toolPack) => toolPack.pack === packId && (tool === undefined || toolPack.tool === tool));
-  if (selected.length === 0) {
-    if (packId !== undefined) throw new Error(`no tool-pack packs/${packId}/upstream/${tool ?? "*"}/ at ${at}`);
-    log(`${at} tracks no pack test data and changes no ${TEST_DATA_LOCK}, ${RECORDING_LOCK}, ${SAMPLES_LOCK} or UPSTREAM.md against its merge base with HEAD: nothing to push`);
-    return { changedLocks: [], uploaded: [], tracked: [], dropped: [], script: "" };
-  }
-  const intoRoot = into === undefined ? undefined : resolve(into);
 
-  requireAws(aws);
+  /** The verified entries of the base archive `lock` names (from ARCHIVE_CACHE, else S3); [] with `optional` when S3 lacks a test data archive. */
+  const baseEntries = (toolPack, lock, kind, optional) => {
+    if (kind === "samples") return samplesArchive(root, toolPack, lock, { dryRun: false, aws, signIn, discarded, log }).entries;
+    const cached = cachedArchive(root, toolPack, lock, false);
+    if (cached.discarded !== undefined) discarded.push(cached.discarded);
+    if (cached.entries !== undefined) return cached.entries;
+    signIn();
+    if (optional && !objectExists(aws, archiveKey(toolPack, lock.sha256))) {
+      log(`${toolPack.directory}: S3 does not hold archive ${lock.sha256}, which ${lock.label} names, so what replace drops from it is not listed`);
+      return [];
+    }
+    return downloadArchive(root, aws, toolPack, lock);
+  };
+
+  const allowed = licenceAllowlist();
   const builds = [];
-  const dropped = [];
-  for (const toolPack of selected) {
-    const label = `${toolPack.directory}/${TEST_DATA_LOCK}`;
-    const before = tree.has(label) ? blob(label).toString("utf8") : undefined;
-    let baseEntries = [];
-    let start = `no archive (${at} has no ${label})`;
-    if (before !== undefined) {
-      const lockLabel = `${label} at ${from}`;
-      const lock = { label: lockLabel, ...parseLock(before, lockLabel) };
-      if (changed.has(label)) log(`${label}: ${at} changes it against its merge base with HEAD; the archive starts from the one ${from}'s lock names, ${lock.sha256}`);
-      // --replace needs the archive only to report what it drops, so one S3 does not hold is no failure there.
-      const cached = cachedArchive(root, toolPack, lock).entries;
-      if (cached !== undefined || !replace || objectExists(aws, archiveKey(toolPack, lock.sha256))) baseEntries = cached ?? downloadArchive(root, aws, toolPack, lock);
-      else log(`${toolPack.directory}: S3 does not hold archive ${lock.sha256}, which ${lockLabel} names, so what --replace drops from it is not listed`);
-      start = `archive ${lock.sha256.slice(0, 12)}`;
-    }
-    const own = tracked.filter(owns(toolPack)).map((path) => ({ path, bytes: blob(path) }));
-    const files = new Map();
-    if (!replace) {
-      const gone = baseEntries.length > 0 ? unlisted(toolPack) : new Set();
-      for (const entry of baseEntries) if (!gone.has(`${toolPack.directory}/${entry.path}`)) files.set(entry.path, entry.bytes);
-    }
-    for (const { path, bytes } of own) files.set(path.slice(toolPack.directory.length + 1), bytes);
-    if (files.size === 0) {
-      throw new Error(replace
-        ? `--replace: ${toolPack.directory} tracks no pack test data at ${at}, so its archive would be empty; select the tool-packs to replace with --pack and --tool`
-        : `${toolPack.directory} has neither a ${TEST_DATA_LOCK} nor tracked pack test data at ${at}: nothing to archive`);
-    }
-    const drops = baseEntries.map((entry) => entry.path).filter((path) => !files.has(path)).sort(byBytes);
-    dropped.push(...drops.map((path) => `${toolPack.directory}/${path}`));
-    const archive = buildArchive([...files].map(([path, bytes]) => ({ path, bytes })));
-    cacheArchive(root, toolPack, archive);
-    const lock = { label, sha256: archive.sha256, files: archive.files, bytes: archive.bytes };
-    const recordingLabel = `${toolPack.directory}/${RECORDING_LOCK}`;
-    const recordingAt = tree.has(recordingLabel)
-      ? [recordingPlan(root, toolPack, { label: `${recordingLabel} at ${from}`, archive: lockedRecording(blob(recordingLabel).toString("utf8"), `${recordingLabel} at ${from}`) })]
-      : [];
-    const samplesLabel = `${toolPack.directory}/${SAMPLES_LOCK}`;
-    const samplesAt = tree.has(samplesLabel)
-      ? [samplesPlan(root, toolPack, { label: `${samplesLabel} at ${from}`, ...parseLock(blob(samplesLabel).toString("utf8"), `${samplesLabel} at ${from}`) })]
-      : [];
-    const text = lockText(archive);
-    if (intoRoot !== undefined) {
-      // A checkout of the commit holds its lock and its tracked pack test data as committed.
-      const expected = [{ path: label, bytes: before === undefined ? undefined : Buffer.from(before, "utf8") }, ...own];
-      const differ = expected.filter(({ path, bytes }) => {
-        const current = intoFile(intoRoot, path).bytes;
-        return current === undefined || bytes === undefined ? current !== bytes : !current.equals(bytes);
-      });
-      if (differ.length > 0) throw new Error(`--into ${into} is no checkout of ${at}: ${differ.slice(0, 3).map(({ path }) => path).join(", ")} differ(s) there; check the pull request out there first`);
-    }
-    builds.push({
-      label,
-      text,
-      changed: text !== before,
-      tracked: own.map(({ path }) => path),
-      plans: [...archivePlans(root, [{ toolPack, lock }]), ...recordingAt, ...samplesAt],
-      target: intoRoot !== undefined && text !== before ? intoFile(intoRoot, label).target : undefined,
-    });
-    const made = replace ? `${own.length} tracked file(s) at ${from} alone (--replace)` : `${start} plus ${own.length} tracked file(s) at ${from}`;
-    log(`${toolPack.directory}: ${made} make archive ${archive.sha256} (${archive.files} file(s), ${archive.bytes} byte(s))`);
-    if (drops.length > 0) {
-      const why = replace ? `${from} does not track them` : `the UPSTREAM.md at ${from} no longer lists them as Rerail's`;
-      log(`${toolPack.directory}: archive ${archive.sha256.slice(0, 12)} drops ${drops.length} file(s) of ${start} (${why}):\n${drops.map((path) => `  ${path}`).join("\n")}`);
+  const refused = [];
+  for (const { toolPack, testData, samples } of requests.values()) {
+    const kinds = [
+      ...(testData.length > 0 ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData }] : []),
+      ...(samples.length > 0 ? [{ kind: "samples", name: SAMPLES_LOCK, files: samples }] : []),
+    ];
+    for (const { kind, name, files } of kinds) {
+      const label = `${toolPack.directory}/${name}`;
+      const lock = lockAt(label);
+      const base = new Map(lock === undefined ? [] : baseEntries(toolPack, lock, kind, replace).map((entry) => [entry.path, entry.bytes]));
+      const blobs = gitBlobs(root, files.map(({ oid }) => oid));
+      let published = files.map(({ path, oid }) => ({ path, bytes: blobs.get(oid) }));
+      if (kind === "samples") {
+        const { publishedSamples } = await import("../samples/publish.ts");
+        published = publishedSamples(published);
+      }
+      const next = new Map();
+      if (!replace) {
+        const gone = kind === "test-data" && base.size > 0 ? unlisted(toolPack) : new Set();
+        for (const [path, bytes] of base) if (!gone.has(`${toolPack.directory}/${path}`)) next.set(path, bytes);
+      }
+      for (const { path, bytes } of published) next.set(path, bytes);
+      const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
+      const archive = buildArchive(entries);
+      const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
+      const compressed = compressArchive(archive.tar);
+      // The archive passes the check upload and confirm make, before anything asks for approval.
+      if (kind === "samples") verifiedSamples(compressed, { label, ...archive }, key);
+      else verifiedEntries(compressed, { label, ...archive }, key, toolPack.directory);
+      const licenceOf = kind === "samples" ? sampleLicences(entries) : (path) => licensed.get(`${toolPack.directory}/${path}`) ?? RERAIL_LICENCE;
+      const licences = {};
+      for (const { path } of entries) {
+        const licence = licenceOf(path);
+        licences[licence] = (licences[licence] ?? 0) + 1;
+        if (!licenceAllowed(licence, allowed)) refused.push(`${toolPack.directory}/${kind === "samples" ? `${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/` : ""}${path}: ${licence}`);
+      }
+      builds.push({ kind, toolPack, label, lock, key, archive, compressed, licences, changes: archiveChanges(base, next) });
     }
   }
-  const uploaded = uploadObjects(aws, builds.flatMap((build) => build.plans), log);
+  if (refused.length > 0) {
+    throw new Error(`${refused.length} file(s) going to S3 are under a licence ${LICENCE_ALLOWLIST} does not take (an \`A OR B\` passes when either side is on it), so nothing was packed and no approval is asked:\n${refused.map((line) => `  ${line}`).join("\n")}`);
+  }
 
-  const changedBuilds = builds.filter((build) => build.changed);
-  for (const build of changedBuilds) if (build.target !== undefined) writeFileSync(build.target, build.text);
-  const untracked = builds.flatMap((build) => build.tracked).sort(byBytes);
-  const script = [
-    ...(intoRoot === undefined ? changedBuilds.flatMap((build) => [`cat > ${shellQuoted(build.label)} <<'EOF'`, build.text.trimEnd(), "EOF"]) : []),
-    ...(changedBuilds.length > 0 ? [`git add -- ${changedBuilds.map((build) => shellQuoted(build.label)).join(" ")}`] : []),
-    ...(untracked.length > 0 ? [`git rm -r -q --cached -- ${untrackPaths(untracked).map(shellQuoted).join(" ")}`] : []),
-  ].join("\n");
-  if (script === "") log(`${at}: its locks already name these archives and it tracks no pack test data; nothing to commit`);
-  else {
-    const wrote = intoRoot !== undefined && changedBuilds.length > 0 ? `Wrote ${changedBuilds.map((build) => build.label).join(", ")} in ${into}. ` : "";
-    const where = intoRoot === undefined ? `in a checkout of ${at}` : `in ${into}`;
-    log(`${wrote}To commit the new lock(s) and untrack the pack test data the archives now hold (it stays on disk, ignored), run ${where}:\n${script}`);
+  const objects = builds.map(({ kind, toolPack, label, lock, key, archive, compressed, licences, changes }) => {
+    const file = join(out, key.slice(ARCHIVE_PREFIX.length));
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, compressed);
+    return {
+      kind,
+      pack: toolPack.pack,
+      tool: toolPack.tool,
+      lock: label,
+      key,
+      sha256: archive.sha256,
+      files: archive.files,
+      bytes: archive.bytes,
+      compressedBytes: compressed.length,
+      lockText: lockText(archive),
+      base: lock?.sha256 ?? null,
+      licences: Object.fromEntries(Object.entries(licences).sort(([a], [b]) => byBytes(a, b))),
+      ...changes,
+    };
+  });
+  const result = {
+    format: PUBLISH_MANIFEST_FORMAT,
+    commit,
+    replace,
+    objects,
+    remove: [...requests.values()].flatMap(({ paths }) => paths).sort(byBytes),
+  };
+  if (manifest !== undefined) {
+    mkdirSync(dirname(resolve(manifest)), { recursive: true });
+    writeFileSync(manifest, `${JSON.stringify(result, null, 2)}\n`);
   }
-  return { changedLocks: changedBuilds.map((build) => build.label), uploaded, tracked: untracked, dropped: dropped.sort(byBytes), script };
+  const text = publishSummary(result);
+  if (summary !== undefined) writeFileSync(summary, text);
+  log(text);
+  return result;
+}
+
+/** How many paths of each change list the summary shows. */
+const SUMMARY_PATHS = 10;
+
+/** The approver's view of a manifest (packFrom's), as markdown: one row per archive, then what each changes. */
+export function publishSummary(manifest) {
+  const shown = (paths) => (paths.length === 0 ? "" : `: ${paths.slice(0, SUMMARY_PATHS).map((path) => `\`${path}\``).join(", ")}${paths.length > SUMMARY_PATHS ? ", …" : ""}`);
+  return [
+    `### Pack data to publish from ${manifest.commit} (${manifest.replace ? "replace" : "overlay"})`,
+    "",
+    "| Kind | Tool-pack | sha256 | Files | Bytes | Licences |",
+    "|---|---|---|---|---|---|",
+    ...manifest.objects.map((object) => `| ${object.kind} | \`${object.pack}/${object.tool}\` | \`${object.sha256}\` | ${object.files} | ${object.bytes} | ${Object.entries(object.licences).map(([licence, count]) => `${licence} ${count}`).join(", ")} |`),
+    "",
+    ...manifest.objects.flatMap((object) => [
+      `- ${object.kind} \`${object.pack}/${object.tool}\` against ${object.base === null ? "no locked archive" : `the locked \`${object.base}\``}:`,
+      `  - ${object.added.length} added${shown(object.added)}`,
+      `  - ${object.changed.length} changed${shown(object.changed)}`,
+      `  - ${object.dropped.length} dropped${shown(object.dropped)}`,
+    ]),
+    "",
+    `${manifest.remove.length} ${PUBLISH_DIRECTORY}/ file(s) are deleted by the commit that writes the locks.`,
+    "",
+  ].join("\n");
 }
 
 /**
- * Maintainer: `pack`, then `upload`, for the selected tool-packs; then the commands that finish the change: `git add`
- * the changed locks, and `git rm --cached` the tracked pack test data the archives now hold. With `from` (a git
- * revision), pushFrom instead: a pull request's data from its commit, with nothing of it checked out or run, and with
- * `replace` too, no base archive under it.
+ * Copies the selected tool-packs' pack test data on disk that their locked archive lacks or holds differently into
+ * their publish/ (with `all`, every file, for a `replace` publish), and deletes the test data files publish/ holds that
+ * are no longer to be staged; publish/samples/ is left alone. The locked archive comes from ARCHIVE_CACHE or S3. A file
+ * the archive holds and the disk lacks cannot be expressed as an overlay: it is reported, with the remedy. A dry run
+ * writes and deletes nothing in publish/.
  */
-export function push({ root = ROOT, pack: packId, tool, dryRun = false, from, into, replace = false, aws = runAws, log = console.log } = {}) {
-  if (from !== undefined) {
-    if (dryRun) throw new Error("push --from has no --dry-run");
-    return pushFrom({ root, from, pack: packId, tool, into, replace, aws, log });
+export function stage({ root = ROOT, pack: packId, tool, all = false, dryRun = false, aws = runAws, log = console.log } = {}) {
+  if (packId === undefined) throw new Error("stage needs --pack (and --tool)");
+  const selected = selectToolPacks(root, packId, tool);
+  const discarded = [];
+  const signIn = signer(aws, discarded, "archive");
+  const results = [];
+  for (const toolPack of selected) {
+    const onDisk = new Map(toolPackFiles(root, toolPack.directory).map((path) => [path, readFileSync(join(root, toolPack.directory, path))]));
+    if (onDisk.size === 0) throw new Error(`${toolPack.directory}: no pack test data on disk to stage; pull it (npm run fixtures:pull) and make your change first`);
+    let base = new Map();
+    if (existsSync(join(root, toolPack.directory, TEST_DATA_LOCK))) {
+      const lock = readLock(root, toolPack);
+      const cached = cachedArchive(root, toolPack, lock, dryRun);
+      if (cached.discarded !== undefined) discarded.push(cached.discarded);
+      let entries = cached.entries;
+      if (entries === undefined) {
+        signIn();
+        entries = downloadArchive(root, aws, toolPack, lock);
+      }
+      base = new Map(entries.map((entry) => [entry.path, entry.bytes]));
+    }
+    const staged = [...onDisk].filter(([path, bytes]) => all || !base.get(path)?.equals(bytes)).map(([path]) => path);
+    const wanted = new Set(staged);
+    const removed = publishFiles(root, toolPack.directory).filter((path) => !isPublishedSample(path) && !wanted.has(path));
+    const missing = [...base.keys()].filter((path) => !onDisk.has(path)).sort(byBytes);
+    const publish = `${toolPack.directory}/${PUBLISH_DIRECTORY}`;
+    if (!dryRun) {
+      for (const path of removed) rmSync(join(root, publish, path));
+      for (const path of staged) {
+        refuseSymlinkedDirectories(root, dirname(`${publish}/${path}`));
+        mkdirSync(dirname(join(root, publish, path)), { recursive: true });
+        writeFileSync(join(root, publish, path), onDisk.get(path));
+      }
+    }
+    log(`${toolPack.directory}: ${dryRun ? "would stage" : "staged"} ${staged.length} file(s) in ${publish}/${all ? " (all of the data on disk)" : ""}${removed.length > 0 ? `; ${dryRun ? "would delete" : "deleted"} ${removed.length} staged file(s) no longer to publish` : ""}`);
+    if (missing.length > 0) {
+      log(`${toolPack.directory}: ${missing.length} file(s) of the locked archive are not on disk, e.g. ${missing.slice(0, 5).join(", ")}; ${all ? "a publish with replace drops them" : "an overlay cannot delete a file: to publish exactly the data on disk, stage with --all and publish with replace"}`);
+    }
+    results.push({ ...toolPack, staged, removed, missing });
   }
-  if (into !== undefined) throw new Error("--into needs --from");
-  if (replace) throw new Error("--replace needs --from");
+  const directories = results.filter(({ staged }) => staged.length > 0).map(({ directory }) => `${directory}/${PUBLISH_DIRECTORY}`);
+  if (!dryRun && directories.length > 0) {
+    log(`Commit it and run the publish workflow (${PUBLISH_WORKFLOW}) for your pull request${all ? " with replace" : ""} (CONTRIBUTING.md, "Pack test data"):\n  git add -- ${directories.map(shellQuoted).join(" ")}`);
+  }
+  return { toolPacks: results };
+}
+
+/**
+ * The objects the publish workflow's prep named (its job output, packFrom's manifest objects), each checked and with
+ * what verifies it: `{ kind, toolPack, key, lock, compressedBytes, check }`, the key recomputed from the kind, pack,
+ * tool and sha256. Throws on anything else, a duplicate key included.
+ */
+export function publishedObjects(objects) {
+  if (!Array.isArray(objects) || objects.length === 0) throw new Error("--objects names no object: it must be the JSON array of the objects the publish workflow's prep packed");
+  const keys = new Set();
+  return objects.map((object, index) => {
+    const where = `object ${index}`;
+    if (object === null || typeof object !== "object") throw new Error(`${where} is not an object`);
+    const { kind, pack, tool, sha256: digest, files, bytes, compressedBytes } = object;
+    if (kind !== "test-data" && kind !== "samples") throw new Error(`${where}: kind ${JSON.stringify(kind)} is neither "test-data" nor "samples"`);
+    if (typeof pack !== "string" || typeof tool !== "string" || !TOOL_ID.test(pack) || !TOOL_ID.test(tool)) throw new Error(`${where}: pack ${JSON.stringify(pack)} and tool ${JSON.stringify(tool)} must be ids`);
+    if (!isSha256(digest) || !isCount(files) || !isCount(bytes) || !isCount(compressedBytes)) throw new Error(`${where}: needs a sha256 of 64 lowercase hex digits and counts of files, bytes and compressedBytes`);
+    const toolPack = namedToolPack(pack, tool);
+    const key = kind === "samples" ? samplesKey(toolPack, digest) : archiveKey(toolPack, digest);
+    if (object.key !== undefined && object.key !== key) throw new Error(`${where}: its key ${JSON.stringify(object.key)} is not ${key}, which its kind, pack, tool and sha256 make`);
+    if (keys.has(key)) throw new Error(`${where}: ${key} is named twice`);
+    keys.add(key);
+    const lock = { label: `${toolPack.directory}/${kind === "samples" ? SAMPLES_LOCK : TEST_DATA_LOCK}`, sha256: digest, files, bytes };
+    const check = (compressed) => (kind === "samples" ? verifiedSamples(compressed, lock, key) : verifiedEntries(compressed, lock, key, toolPack.directory));
+    return { kind, toolPack, key, lock, compressedBytes, check };
+  });
+}
+
+/**
+ * The publish workflow's upload (`upload --objects`): verifies each archive under `archives` (packFrom's `out`) against
+ * the object prep named (publishedObjects: its compressed size, then verifiedEntries / verifiedSamples), every one
+ * before anything is put, then puts each create-only, tagged `tags`, and reads it back (uploadObjects). Returns the
+ * keys put.
+ */
+export function uploadPublished({ objects, archives, tags, aws = runAws, log = console.log } = {}) {
+  if (archives === undefined) throw new Error("upload --objects needs --archives <dir>, where prep's archives are");
+  const named = publishedObjects(objects);
+  const problems = [];
+  const plans = named.flatMap(({ kind, toolPack, key, lock, compressedBytes, check }) => {
+    const path = join(archives, key.slice(ARCHIVE_PREFIX.length));
+    try {
+      if (!existsSync(path)) throw new Error(`${path} is missing`);
+      const compressed = readFileSync(path);
+      if (compressed.length !== compressedBytes) throw new Error(`${path} is ${compressed.length} byte(s), not the ${compressedBytes} prep named`);
+      check(compressed);
+    } catch (error) {
+      problems.push(`${key}: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+    return [{ directory: toolPack.directory, label: lock.label, what: kind === "samples" ? "samples archive" : "archive", key, path, local: true, check, absent: "" }];
+  });
+  if (problems.length > 0) throw new Error(`${problems.length} archive(s) are not what prep named, so nothing was uploaded:\n${problems.map((line) => `  ${line}`).join("\n")}`);
+  objectTagging(tags);
+  requireAws(aws);
+  return { uploaded: uploadObjects(aws, plans, log, tags) };
+}
+
+/**
+ * The publish workflow's confirmation (`confirm --objects`), after every put: for each object prep named, S3's head
+ * must find it, with the compressed size prep named when this run put it (`uploaded`; one S3 held before may be
+ * compressed otherwise, and the read-back decides), and a fresh download must verify against its lock
+ * (verifiedEntries / verifiedSamples). Every object is tried; returns `{ confirmed, failed }`, the keys that verified
+ * and `{ key, reason }` for each that did not.
+ */
+export function confirm({ objects, uploaded = [], aws = runAws, log = console.log } = {}) {
+  const named = publishedObjects(objects);
+  const put = new Set(uploaded);
+  requireAws(aws);
+  const scratch = mkdtempSync(join(tmpdir(), "pack-data-confirm-"));
+  const confirmed = [];
+  const failed = [];
+  try {
+    for (const { key, compressedBytes, check } of named) {
+      try {
+        const head = objectHead(aws, key);
+        if (head === undefined) throw new Error("S3 does not hold it");
+        if (put.has(key) && head.ContentLength !== compressedBytes) throw new Error(`S3 holds ${head.ContentLength} byte(s), not the ${compressedBytes} this run put`);
+        const file = join(scratch, "object.tar.zst");
+        if (!download(aws, key, file)) throw new Error("S3 does not hold it on download");
+        try {
+          check(readFileSync(file));
+        } finally {
+          rmSync(file, { force: true });
+        }
+        confirmed.push(key);
+        log(`confirmed s3://${BUCKET}/${key}`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        failed.push({ key, reason });
+        log(`not confirmed s3://${BUCKET}/${key}: ${reason}`);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return { confirmed, failed };
+}
+
+/**
+ * Maintainer with write credentials (optional; the publish workflow is the routine path): `pack`, then `upload`
+ * tagged `tags`, for the selected tool-packs, then the `git add` for the changed locks.
+ */
+export function push({ root = ROOT, pack: packId, tool, dryRun = false, tags, aws = runAws, log = console.log } = {}) {
+  if (!dryRun) objectTagging(tags);
   const { changedLocks } = pack({ root, pack: packId, tool, dryRun, log });
-  if (dryRun) return { changedLocks, uploaded: [], tracked: [] };
-  const { uploaded } = upload({ root, pack: packId, tool, aws, log });
-  const tracked = trackedPackFixtures(root, selectToolPacks(root, packId, tool).map((toolPack) => toolPack.directory));
+  if (dryRun) return { changedLocks, uploaded: [] };
+  const { uploaded } = upload({ root, pack: packId, tool, tags, aws, log });
   if (changedLocks.length > 0) log(`Commit the new lock(s):\n  git add -- ${changedLocks.map(shellQuoted).join(" ")}`);
-  if (tracked.length > 0) {
-    log(`The archive(s) hold the ${tracked.length} tracked pack test data file(s); untrack them (they stay on disk, ignored) and commit that too:\n  git rm -r -q --cached -- ${untrackPaths(tracked).map(shellQuoted).join(" ")}`);
-  }
-  return { changedLocks, uploaded, tracked };
+  return { changedLocks, uploaded };
 }
 
 /**
@@ -1562,7 +1871,6 @@ export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
 export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = console.log } = {}) {
   const selected = selectToolPacks(root, packId, tool);
   const wanted = selected.flatMap((toolPack) => {
-    const push = `npm run fixtures:push -- --from <ref> --pack ${toolPack.pack} --tool ${toolPack.tool}`;
     const lock = readLock(root, toolPack);
     const archive = archiveKey(toolPack, lock.sha256);
     const recorded = readRecordingLock(root, toolPack);
@@ -1570,15 +1878,15 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
     return [
       {
         key: archive,
-        missing: `${lock.label} names s3://${BUCKET}/${archive}, which S3 does not hold: a maintainer archives the pull request's pack test data with \`${push}\``,
+        missing: `${lock.label} names s3://${BUCKET}/${archive}, which S3 does not hold: publish the pull request's data through the publish workflow (${PUBLISH_WORKFLOW}), which commits the lock naming what it uploaded`,
       },
       ...(recorded === undefined ? [] : [{
         key: recordingKey(toolPack, recorded.archive.sha256),
-        missing: `${recorded.label} names ${recorded.archive.name} at s3://${BUCKET}/${recordingKey(toolPack, recorded.archive.sha256)}, which S3 does not hold: a maintainer downloads the pull request's CI recording with \`gh run download <run> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\`, then puts it in S3 with \`${push}\``,
+        missing: `${recorded.label} names ${recorded.archive.name} at s3://${BUCKET}/${recordingKey(toolPack, recorded.archive.sha256)}, which S3 does not hold: a maintainer downloads the pull request's CI recording with \`gh run download <run> -n recordings-${toolPack.pack}--${toolPack.tool} -D ${RECORDING_CACHE}\`, then puts it in S3 with \`node scripts/s3/pack-fixtures.mjs recordings push --pack ${toolPack.pack} --tool ${toolPack.tool}\``,
       }]),
       ...(samplesLock === undefined ? [] : [{
         key: samplesKey(toolPack, samplesLock.sha256),
-        missing: `${samplesLock.label} names s3://${BUCKET}/${samplesKey(toolPack, samplesLock.sha256)}, which S3 does not hold: a maintainer must ${REPACK_SAMPLES}, then put the archive there with \`${samplesPushCommand(toolPack)}\``,
+        missing: `${samplesLock.label} names s3://${BUCKET}/${samplesKey(toolPack, samplesLock.sha256)}, which S3 does not hold: ${REPACK_SAMPLES}`,
       }]),
     ];
   });
@@ -1595,63 +1903,134 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
 
 const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [--tool <tool>]] [--dry-run]
   pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and their
-              samples (as samples does), into ${ARCHIVE_CACHE}, verified
-  push        maintainer: pack, then upload
-              push --from <ref> [--replace] [--into <dir>]: archive a pull request's tracked pack test data from its
-              commit (never checked out or run) over the archive its lock names, less the files its UPSTREAM.md no
-              longer lists (--replace: its tracked data alone), upload, and print the git commands that finish it in a
-              checkout of it (--into: a checkout of that commit, where the locks are written)
+              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them
+  stage       --pack <id> [--tool <tool>] [--all]: copy the pack test data on disk that the locked archive lacks or
+              holds differently into the tool-pack's ${PUBLISH_DIRECTORY}/ (--all: all of it, for a replace publish)
+  push        maintainer with write credentials: pack, then upload (tagged)
   pack        archive the selected tool-packs' data on disk into ${ARCHIVE_CACHE} and rewrite their locks (no network)
+              pack --from <commit> [--replace] --out <dir> [--manifest <file>] [--summary <file>]: the publish
+              workflow's prep: archive every tool-pack's ${PUBLISH_DIRECTORY}/ from the commit's blobs (never checked out or
+              run), over the locked archive (--replace: alone), check every file's licence, and write the archives
   upload      put the locked archives from ${ARCHIVE_CACHE}, and the locked recording archives from ${RECORDING_CACHE},
-              into S3 unless it holds them, and read them back
+              into S3 (tagged) unless it holds them, and read them back
+              upload --objects <file> --archives <dir> [--uploaded <file>]: the publish workflow's upload: verify
+              prep's archives against the objects it named, put them create-only (tagged), and write the keys put
+  confirm     --objects <file> [--uploaded <file>] [--report <file>]: head and download every object prep named and
+              verify it against its lock; the report is {"confirmed": <every one verified>, "failed": [...]}
   recordings  fetch the recording archive the selected tool-packs' recording.lock files name into ${RECORDING_CACHE},
               verified, and extract each into ${RECORDING_CACHE}/tree/<sha256>/
-              recordings push: maintainer: put those archives from ${RECORDING_CACHE} into S3 unless it holds them,
-              read them back, and print the git add for the locks (no --dry-run)
+              recordings push: maintainer: put those archives from ${RECORDING_CACHE} into S3 (tagged) unless it holds
+              them, read them back, and print the git add for the locks (no --dry-run)
   samples     fetch the samples archive the selected tool-packs' samples.lock files name into ${ARCHIVE_CACHE}/samples/,
               verified, and extract each into ${SAMPLES_TREES}/<pack>/<tool>/<sha256>/
-              samples push: maintainer: put those archives from ${ARCHIVE_CACHE}/samples/ into S3 unless it holds
-              them, read them back, and print the git add for the locks (no --dry-run)
+              samples push: maintainer: put those archives from ${ARCHIVE_CACHE}/samples/ into S3 (tagged) unless it
+              holds them, read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive the selected tool-packs' locks name
               (head-object only; nothing is downloaded)
-  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON`;
+  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON
+Every upload is tagged: --commit (default HEAD), --pr (default none), --run-id (default local) and --uploader (default
+the gh CLI's login).`;
 
-const COMMANDS = { pull, push, pack, upload, recordings, samples, check, cache: (options) => console.log(JSON.stringify(archiveCache(options))) };
-/** Commands with a subcommand, as `<command> <subcommand>`. */
-const SUBCOMMANDS = { "recordings push": recordingsPush, "samples push": samplesPush };
+/** The tags of a command that uploads: the options given, else HEAD, "none", "local" and the gh CLI's login. */
+function commandTags(values) {
+  const gh = () => {
+    const run = spawnSync("gh", ["api", "user", "--jq", ".login"], { encoding: "utf8" });
+    if (run.error === undefined && run.status === 0 && run.stdout.trim() !== "") return run.stdout.trim();
+    throw new Error(`every upload is tagged with its uploader's GitHub login, and \`gh api user\` gave none (${lastLine(run.stderr) || run.error?.message || `exit ${run.status}`}): sign in with gh auth login, or pass --uploader <login>`);
+  };
+  return {
+    commit: values.commit ?? runGit(ROOT, ["rev-parse", "HEAD"]).trim(),
+    pr: values.pr ?? "none",
+    runId: values["run-id"] ?? "local",
+    uploader: values.uploader ?? gh(),
+  };
+}
+
+const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
+const writeJson = (file, value) => {
+  if (file !== undefined) writeFileSync(file, `${JSON.stringify(value)}\n`);
+};
+const SELECT = ["pack", "tool", "dry-run"];
+const TAGS = ["commit", "pr", "run-id", "uploader"];
+
+/** Each command's options, and how it runs with the parsed `values`. */
+const COMMANDS = {
+  pull: { options: SELECT, run: (values) => pull(values) },
+  stage: { options: [...SELECT, "all"], run: (values) => stage(values) },
+  push: { options: [...SELECT, ...TAGS], run: (values) => push({ ...values, tags: values.dryRun ? undefined : commandTags(values) }) },
+  pack: {
+    options: [...SELECT, "from", "replace", "out", "manifest", "summary"],
+    run: (values) => {
+      if (values.from === undefined) {
+        if (values.replace || [values.out, values.manifest, values.summary].some((value) => value !== undefined)) throw new Error("--replace, --out, --manifest and --summary need --from");
+        return pack(values);
+      }
+      if (values.pack !== undefined || values.tool !== undefined || values.dryRun) throw new Error("pack --from packs every tool-pack's publish/ and has no --pack, --tool or --dry-run");
+      return packFrom(values);
+    },
+  },
+  upload: {
+    options: ["pack", "tool", "objects", "archives", "uploaded", ...TAGS],
+    run: (values) => {
+      if (values.objects === undefined) {
+        if (values.archives !== undefined || values.uploaded !== undefined) throw new Error("--archives and --uploaded need --objects");
+        return upload({ ...values, tags: commandTags(values) });
+      }
+      if (values.pack !== undefined || values.tool !== undefined) throw new Error("upload --objects uploads the objects it names and has no --pack or --tool");
+      const result = uploadPublished({ objects: readJson(values.objects), archives: values.archives, tags: commandTags(values) });
+      writeJson(values.uploaded, result.uploaded);
+      return result;
+    },
+  },
+  confirm: {
+    options: ["objects", "uploaded", "report"],
+    run: (values) => {
+      if (values.objects === undefined) throw new Error("confirm needs --objects <file>");
+      const { confirmed, failed } = confirm({ objects: readJson(values.objects), uploaded: values.uploaded === undefined ? [] : readJson(values.uploaded) });
+      writeJson(values.report, { confirmed: failed.length === 0, objects: confirmed, failed });
+      if (failed.length > 0) throw new Error(`${failed.length} object(s) are not confirmed in S3:\n${failed.map(({ key, reason }) => `  ${key}: ${reason}`).join("\n")}`);
+    },
+  },
+  recordings: { options: SELECT, run: (values) => recordings(values) },
+  "recordings push": { options: ["pack", "tool", ...TAGS], run: (values) => recordingsPush({ ...values, tags: commandTags(values) }) },
+  samples: { options: SELECT, run: (values) => samples(values) },
+  "samples push": { options: ["pack", "tool", ...TAGS], run: (values) => samplesPush({ ...values, tags: commandTags(values) }) },
+  check: { options: ["pack", "tool"], run: (values) => check(values) },
+  cache: { options: ["pack", "tool"], run: (values) => console.log(JSON.stringify(archiveCache(values))) },
+};
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const string = { type: "string" };
+  const flag = { type: "boolean" };
   let parsed;
   try {
     parsed = parseArgs({
       allowPositionals: true,
       strict: true,
       options: {
-        pack: { type: "string" },
-        tool: { type: "string" },
-        "dry-run": { type: "boolean", default: false },
-        from: { type: "string" },
-        into: { type: "string" },
-        replace: { type: "boolean", default: false },
+        pack: string, tool: string, "dry-run": flag, all: flag,
+        from: string, replace: flag, out: string, manifest: string, summary: string,
+        objects: string, archives: string, uploaded: string, report: string,
+        commit: string, pr: string, "run-id": string, uploader: string,
       },
     });
   } catch (error) {
     console.error(`${error instanceof Error ? error.message : String(error)}\n${USAGE}`);
     process.exitCode = 2;
   }
-  const [command, ...extra] = parsed?.positionals ?? [];
-  const name = [command, ...extra].join(" ");
-  const run = Object.hasOwn(SUBCOMMANDS, name) ? SUBCOMMANDS[name] : extra.length === 0 && Object.hasOwn(COMMANDS, command ?? "") ? COMMANDS[command] : undefined;
-  if (parsed !== undefined && run === undefined) {
+  const name = (parsed?.positionals ?? []).join(" ");
+  const command = Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined;
+  const foreign = parsed === undefined || command === undefined ? [] : Object.keys(parsed.values).filter((option) => !command.options.includes(option));
+  if (parsed !== undefined && command === undefined) {
     console.error(USAGE);
     process.exitCode = 2;
-  } else if (parsed !== undefined && command !== "push" && (parsed.values.from !== undefined || parsed.values.into !== undefined || parsed.values.replace)) {
-    console.error(`--from, --into and --replace belong to push\n${USAGE}`);
+  } else if (foreign.length > 0) {
+    console.error(`${name} takes no ${foreign.map((option) => `--${option}`).join(", ")}\n${USAGE}`);
     process.exitCode = 2;
   } else if (parsed !== undefined) {
+    const { "dry-run": dryRun = false, all = false, replace = false, ...rest } = parsed.values;
     try {
-      const { pack: packId, tool, "dry-run": dryRun, from, into, replace } = parsed.values;
-      run({ pack: packId, tool, dryRun, ...(command === "push" ? { from, into, replace } : {}) });
+      await command.run({ ...rest, dryRun, all, replace });
     } catch (error) {
       console.error(`fixtures:${name}: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;

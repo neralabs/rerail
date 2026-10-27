@@ -64,10 +64,12 @@ describe("#2 rule document location", () => {
 
 describe("#3 fixture data location", () => {
   const lock = (fields = {}) => JSON.stringify({ format: 1, sha256: "a".repeat(64), files: 2, bytes: 10, ...fields });
-  const push = (pack, tool) => `npm run fixtures:push -- --pack ${pack} --tool ${tool}`;
+  const stage = (pack, tool) => `\`npm run fixtures:stage -- --pack ${pack} --tool ${tool}\``;
+  const workflow = "https://github.com/neralabs/rerail/actions/workflows/pack-data-publish.yml";
   const tracked = (pack, tool) =>
-    `the tool-pack's archive holds pack test data: before merge a maintainer runs \`${push(pack, tool)}\` and \`git rm --cached\` it`;
-  const unpinned = (pack, tool) => `the tool-pack's test data archive is unpinned: \`${push(pack, tool)}\` writes it`;
+    `pack test data is never tracked in the pulled layout: move it under packs/${pack}/upstream/${tool}/publish/ (${stage(pack, tool)}) to publish it`;
+  const unpinned = (pack, tool) =>
+    `the tool-pack's test data archive is unpinned: stage its data into packs/${pack}/upstream/${tool}/publish/ (${stage(pack, tool)}) and run the publish workflow (${workflow}), which writes the lock`;
 
   it("flags recordings outside fixtures/ and packs/<id>/upstream/", () => {
     const result = fixtureDataLocation(
@@ -126,6 +128,25 @@ describe("#3 fixture data location", () => {
     );
     expect(result.findings).toEqual([]);
     expect(result.actual).toBe("0");
+  });
+
+  it("blocks the merge once per tool-pack with a tracked publish/, naming its file count and first paths", () => {
+    const files = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`packs/sql/upstream/sqlfluff/publish/fixtures/rerail/${index}.sql`, ""]));
+    const result = fixtureDataLocation(
+      memoryRepo({
+        ...files,
+        "packs/sql/upstream/sqlfluff/test-data.lock": lock(),
+        "packs/new/upstream/tool/gates.yaml": "",
+        "packs/new/upstream/tool/publish/fixtures/a.js": "",
+      }),
+    );
+    expect(result.findings).toEqual([
+      { path: "packs/new/upstream/tool/publish/", message: `Pack data waiting to publish: run the publish workflow (${workflow}) for this pull request: 1 file(s), e.g. \`packs/new/upstream/tool/publish/fixtures/a.js\`` },
+      {
+        path: "packs/sql/upstream/sqlfluff/publish/",
+        message: `Pack data waiting to publish: run the publish workflow (${workflow}) for this pull request: 7 file(s), e.g. ${[0, 1, 2, 3, 4].map((index) => `\`packs/sql/upstream/sqlfluff/publish/fixtures/rerail/${index}.sql\``).join(", ")}`,
+      },
+    ]);
   });
 
   const lockPath = "packs/php/upstream/phpcs/test-data.lock";

@@ -1,23 +1,18 @@
 """Pack test data for the Python recorders (packs/<id>/upstream/common.py and the generate.py beside them): the messages
 scripts/s3/pack-fixtures.mjs gives. The data (a tool's test cases under packs/<id>/upstream/<tool>/ and its recorded
 answers on them) is not in git: each tool-pack's is one archive in S3, which the tool directory's test-data.lock pins by
-sha256. What Rerail wrote for the tool to score (its tool's UPSTREAM.md lists it as Rerail's, or it is under
-upstream/<tool>/authored/) is authored; everything else is derived, which a maintainer regenerates from the pins with
-`npm run fixtures:derive` (CONTRIBUTING.md, "Pack test data")."""
+sha256. New or changed data is staged into the tool-pack's publish/ and published by the publish workflow
+(CONTRIBUTING.md, "Pack test data")."""
 
 from __future__ import annotations
 
 import os
 import pathlib
-import re
-import shlex
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PULL_INSTRUCTION = ('pack test data is not in git: run `npm run fixtures:pull` (each tool-pack\'s archive, which its '
                     'test-data.lock pins, from S3) (CONTRIBUTING.md, "Pack test data")')
-# A row of an UPSTREAM.md file table: its first cell names a pack-relative path (pack-fixtures.mjs's UPSTREAM_ROW).
-_UPSTREAM_ROW = re.compile(r"^\|\s*`([^`]+)`")
 
 
 def _repository_path(path: os.PathLike | str) -> str:
@@ -35,38 +30,22 @@ def require(path: pathlib.Path) -> pathlib.Path:
     return path
 
 
-def _is_authored(path: str) -> bool:
-    """Whether a repository path is authored pack test data (pack-fixtures.mjs's packFixtureKind)."""
-    parts = path.split("/")
-    if len(parts) < 5 or parts[0] != "packs" or parts[2] != "upstream":
-        return False
-    if parts[4] == "authored":
-        return True
-    record = ROOT.joinpath(*parts[:4], "UPSTREAM.md")
-    if not record.exists():
-        return False
-    prefix = f"upstream/{parts[3]}/"
-    listed = {match.group(1) for line in record.read_text(encoding="utf-8").split("\n")
-              if (match := _UPSTREAM_ROW.match(line)) and match.group(1).startswith(prefix)}
-    return "/".join(parts[2:]) in listed
-
-
 def written(*paths: pathlib.Path) -> None:
-    """Tells the contributor which of the pack test data a recorder wrote (files or directories) goes in a pull request."""
+    """Tells the contributor how the pack test data a recorder wrote (files or directories) is published (pack-fixtures.mjs's packFixturesWritten)."""
     files = sorted({_repository_path(file) for path in paths if path.exists()
                     for file in ([path] if path.is_file() else [entry for entry in path.rglob("*") if entry.is_file()])})
-    if not files:
-        return
-    own = [path for path in files if _is_authored(path)]
-    if len(files) > len(own):
-        print(f"Wrote {len(files) - len(own)} derived pack test data file(s), which git ignores: a maintainer regenerates "
-              "them from the pins (`npm run fixtures:derive`) and archives them (`npm run fixtures:push`), so never commit "
-              'them (CONTRIBUTING.md, "Pack test data").', file=sys.stderr)
-    if own:
-        print(f"Wrote {len(own)} authored pack test data file(s) (their UPSTREAM.md lists them as Rerail's), which git "
-              "ignores (they live in the tool-pack's archive in S3). Put new or changed ones in your pull request with\n"
-              f"  git add -f -- {' '.join(shlex.quote(path) for path in own)}\n"
-              'and a maintainer archives them before merge (CONTRIBUTING.md, "Pack test data").', file=sys.stderr)
+    counts: dict[tuple[str, str], int] = {}
+    for file in files:
+        parts = file.split("/")
+        if len(parts) < 5 or parts[0] != "packs" or parts[2] != "upstream":
+            continue
+        counts[(parts[1], parts[3])] = counts.get((parts[1], parts[3]), 0) + 1
+    for (pack, tool), count in sorted(counts.items()):
+        print(f"Wrote {count} pack test data file(s) under packs/{pack}/upstream/{tool}/, which git ignores (the tool-pack's "
+              f"data is an archive in S3). To publish new or changed data, stage it with `npm run fixtures:stage -- --pack "
+              f"{pack} --tool {tool}`, commit packs/{pack}/upstream/{tool}/publish/ in the pull request, and run the publish "
+              "workflow (https://github.com/neralabs/rerail/actions/workflows/pack-data-publish.yml) for it "
+              '(CONTRIBUTING.md, "Pack test data").', file=sys.stderr)
 
 
 def recording_written(path: pathlib.Path, source: dict) -> None:
