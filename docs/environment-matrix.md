@@ -30,7 +30,8 @@ GitHub-hosted runners: `matrix.mjs local` runs the Linux guest, `guest.sh`, on t
 is not a clean Mac (it carries Xcode, Homebrew and other Nodes), so the guest makes it one the way a developer's is
 set up: the account's shell becomes zsh, and Node comes from nodejs.org's installer into `/usr/local/bin`; the
 facts record which Node the user's shell runs. `local` refuses to run anywhere but a GitHub-hosted runner, which is
-thrown away after the job.
+thrown away after the job. Without `--env` it takes the runner it is on as the environment, expected to pass: that is
+how the release workflow installs every release on Linux x64 (`ubuntu-24.04`) and macOS arm64 (`macos-15`).
 
 Each environment gets the newest Node release of the major in `environments.json` (`"node"`, overridable per
 environment) from nodejs.org, and Git from the distribution, the Command Line Tools on a Mac, or, on Windows, Git
@@ -40,9 +41,9 @@ for Windows in its default folder: what a user brings, installed the way they wo
 
 The checks run as the machine's ordinary user, never as root or SYSTEM: on Linux and macOS through a login shell, on
 Windows in a desktop session the user is signed into (automatic sign-in, then a restart), so set-up writes PATH into
-the user's own startup files or registry hive as it would on a person's computer. On Windows the registry, set-up,
-managed install, hook and uninstall steps are `scripts/host/windows-host.ps1`, the same code the release gate
-(`scripts/host/windows-install-smoke.ps1`) runs on every release.
+the user's own startup files or registry hive as it would on a person's computer. The release workflow runs the same
+checks before every publish: `guest.sh` on Linux and macOS (above), and on Windows the registry, set-up, managed
+install, hook and uninstall steps of `scripts/host/windows-host.ps1` through `scripts/host/windows-install-smoke.ps1`.
 
 1. **registry**: the package under test and every rule pack in `packs/` are served from a registry on the VM, as
    npmjs will serve them; everything else comes from npmjs.
