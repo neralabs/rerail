@@ -1,5 +1,5 @@
 /**
- * The nightly upstream-release check (conformance/port-readiness/upstream/releases.ts): each registry's answer read as
+ * The nightly upstream-release check (scripts/upstream/releases.ts): each registry's answer read as
  * its latest stable release; each tool-pack's gap to it (Rust's on major.minor only) reported and listed for the bump;
  * and a breaking gap, pins that disagree, or a registry that cannot be read failing the run. The registry answers are
  * trimmed copies of real ones, recorded on 2026-10-21; nothing reaches the network.
@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
 import {
   checkUpstreamReleases,
   eslintPackage,
@@ -24,9 +24,9 @@ import {
   upstreamPins,
   type Fetch,
   type UpstreamPin,
-} from "../../../../conformance/port-readiness/upstream/releases.js";
+} from "../../../scripts/upstream/releases.js";
 
-const ROOT = join(import.meta.dirname, "..", "..", "..", "..");
+const ROOT = join(import.meta.dirname, "..", "..", "..");
 
 /** registry.npmjs.org/@next%2feslint-plugin-next, abbreviated: the dist-tags, which carry pre-release lines too. */
 const NPM = JSON.stringify({

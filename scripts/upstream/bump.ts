@@ -40,8 +40,8 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-import { gatedToolPacks, parseGatesManifest, readGatesManifest, recordedRuntimes, type GatesManifest } from "../../languages/manifest.js";
-import { RUNTIMES_DIRECTORY } from "../../recorders/port-readiness/recorded-adapter.js";
+import { gatedToolPacks, parseGatesManifest, readGatesManifest, recordedRuntimes, type GatesManifest } from "../../conformance/languages/manifest.js";
+import { RUNTIMES_DIRECTORY } from "../../conformance/recorders/port-readiness/recorded-adapter.js";
 import {
   ECOSYSTEM_NAMES,
   PIN_FILES,
@@ -813,10 +813,10 @@ const invoked = (() => {
   }
 })();
 if (invoked) {
-  main(process.argv.slice(2), resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."), globalThis.fetch).then((code) => {
+  main(process.argv.slice(2), resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), globalThis.fetch).then((code) => {
     process.exitCode = code;
   }, (error: unknown) => {
-    process.stderr.write(`conformance/port-readiness/upstream/bump.ts: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`scripts/upstream/bump.ts: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });
 }

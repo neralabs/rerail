@@ -25,8 +25,8 @@ import { parseArgs } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-import { gatedToolPacks, readGatesManifest, type GatesManifest } from "../../languages/manifest.js";
-import { RUNTIMES_DIRECTORY } from "../../recorders/port-readiness/recorded-adapter.js";
+import { gatedToolPacks, readGatesManifest, type GatesManifest } from "../../conformance/languages/manifest.js";
+import { RUNTIMES_DIRECTORY } from "../../conformance/recorders/port-readiness/recorded-adapter.js";
 
 /** The registries a gated tool-pack's runtime installs its upstream from. */
 export type PackageEcosystem = "npm" | "pypi" | "packagist";
@@ -464,10 +464,10 @@ if (invoked) {
     process.exitCode = 2;
   }
   if (process.exitCode !== 2) {
-    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".."), globalThis.fetch, process.env, behind === undefined ? {} : { behind: resolve(behind) }).then((code) => {
+    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), globalThis.fetch, process.env, behind === undefined ? {} : { behind: resolve(behind) }).then((code) => {
       process.exitCode = code;
     }, (error: unknown) => {
-      process.stderr.write(`conformance/port-readiness/upstream/releases.ts: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`scripts/upstream/releases.ts: ${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 2;
     });
   }

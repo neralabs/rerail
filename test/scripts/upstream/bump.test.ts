@@ -1,5 +1,5 @@
 /**
- * The bump the nightly opens a pull request for (conformance/port-readiness/upstream/bump.ts): each pin of a tool-pack
+ * The bump the nightly opens a pull request for (scripts/upstream/bump.ts): each pin of a tool-pack
  * moved to a newer release, in a throwaway checkout. GitHub's, npm's and Rust's answers are trimmed copies of real ones,
  * recorded on 2026-10-22 (typescript-eslint's annotated tags, Rust 1.99.0 and 1.99.1); nothing reaches the network.
  */
@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../../conformance/recorders/port-readiness/recorded-adapter.js";
-import { applyBump, main, planBump, renderBump, type Sources } from "../../../../conformance/port-readiness/upstream/bump.js";
-import { upstreamPins, type Fetch } from "../../../../conformance/port-readiness/upstream/releases.js";
+import { RUNTIMES_DIRECTORY } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import { applyBump, main, planBump, renderBump, type Sources } from "../../../scripts/upstream/bump.js";
+import { upstreamPins, type Fetch } from "../../../scripts/upstream/releases.js";
 
 const roots: string[] = [];
 afterEach(() => {
