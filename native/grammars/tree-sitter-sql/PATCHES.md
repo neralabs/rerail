@@ -6,7 +6,7 @@ Upstream: https://github.com/DerekStride/tree-sitter-sql, version 0.3.11 (commit
 SQL pack's oracles and corpora hold: SQLFluff 4.4.0's rule fixtures (`packs/sql/upstream/sqlfluff/fixtures/`, pack
 test data: `npm run fixtures:pull`),
 PostgreSQL 18.6's names, values and arguments oracles (`fixtures/sql/{scope,matcher/arguments}/postgres.sql`)
-and the port-readiness corpora (`.rerail/port-readiness/corpus/rerail/`), following PostgreSQL's `gram.y`
+and the real-code corpora the SQL pack was then checked against (since retired), following PostgreSQL's `gram.y`
 wherever the two dialects differ. The oracle inputs and `fixtures/sql/suppress/sqlfluff/postgres_bodies.sql`
 parse without an `ERROR` node. The 277 corpus files the grammar census reads (202 postgres, 71 mattermost,
 4 anki) all parse without an `ERROR` or `MISSING` node. Of the 283
