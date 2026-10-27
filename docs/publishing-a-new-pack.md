@@ -54,8 +54,8 @@ node scripts/release/packs-publish.mjs /tmp/rule-packs
 
 - npm prints "Authenticate your account at: <url>". Open the URL and approve it. One approval covers every pack in
   the run.
-- For each pack the script publishes it as restricted under the `latest` dist-tag, checks that an anonymous reader
-  can't see it, and pushes the release tag to GitHub.
+- For each pack the script publishes it as public under the `latest` dist-tag, checks that an anonymous reader
+  gets the version, and pushes the release tag to GitHub.
 - It's safe to run again after a failure. A version that's already tagged is skipped. A version npm already has but
   that has no tag is checked and tagged, not published again.
 
@@ -140,7 +140,7 @@ rm -rf /tmp/rule-packs
 |---|---|
 | `the checkout has changes; publish from a clean checkout` | Untracked or changed files in the worktree. Start again from step 1. |
 | `commit <sha> is not on GitHub, or gh cannot read the repository` | You're not on a pushed commit, or `gh` isn't logged in. Use `origin/main` as in step 1 and check `gh auth status`. |
-| `<name> answers an anonymous request with 200: it is not restricted` | The package is public. Run `npm access set status=private <name>`, then run the script again. |
+| `<name>@<version> answers an anonymous request with <status>: it is not public` | npm keeps the package private. Run `npm access set status=public <name>`, then run the script again. |
 | `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
 | `npm view` returns 404 just after publishing | The registry hasn't caught up yet. Use `npm dist-tag ls`. |

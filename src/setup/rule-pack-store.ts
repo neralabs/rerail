@@ -92,12 +92,13 @@ const NO_VERSION_UNDER_TAG = /\bETARGET\b|No matching version found|\bnotarget\b
 const NO_ACCESS = /\bE40[34]\b/u;
 
 /**
- * Why npm would not give a pack, in one line. npm answers a restricted package the person may not read with the same
- * 404 as one never published, so the two read alike. `runNpm` already words a missing or expired login.
+ * Why npm would not give a pack, in one line. The packs are public, so a 404 means npm found no such package where it
+ * looked: never published, or a registry or token in the npm configuration that refuses it. `runNpm` already words a
+ * missing or expired login.
  */
 export function fetchProblemReason(packageName: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (NO_ACCESS.test(message)) return `no read access to ${packageName}, or it is not published; ask Nera for access`;
+  if (NO_ACCESS.test(message)) return `npm cannot read ${packageName}: it is not published, or the registry or token in ~/.npmrc refuses it`;
   const unreachable = unreachableRegistryReason(message);
   if (unreachable !== undefined) return unreachable;
   const lines = message.split("\n").map(line => line.trim()).filter(line => line !== "");

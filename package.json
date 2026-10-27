@@ -4,7 +4,7 @@
   "description": "Local semantic monitor and rule runtime for AI coding harnesses",
   "license": "Apache-2.0",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "repository": {
     "type": "git",

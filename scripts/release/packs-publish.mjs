@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Publishes the tarballs packs-pack.ts wrote to <dir>, each restricted and under `latest` (under `next` for a pack
-// named in $HELD, space-separated ids that packs-plan.mjs found held at an older `latest`), checks that the registry
-// does not show it to an anonymous reader, and tags the released commit `<name>@<version>` on GitHub. Any failed run
+// Publishes the tarballs packs-pack.ts wrote to <dir>, each public and under `latest` (under `next` for a pack
+// named in $HELD, space-separated ids that packs-plan.mjs found held at an older `latest`), checks that an anonymous
+// reader gets the version, and tags the released commit `<name>@<version>` on GitHub. Any failed run
 // can be run again, with the same tarballs or fresh ones: a version already tagged is skipped, and one already on the
 // registry without its tag is checked and tagged, not published again (releasePacks in packs.mjs).
 //
@@ -25,10 +25,16 @@ function releasedCommit() {
   return git(["rev-parse", "HEAD"]);
 }
 
-/** Fails unless an anonymous request for `name` is refused, as it is for a restricted package. */
-async function assertRestricted(name) {
-  const response = await fetch(`${REGISTRY}/${name.replace("/", "%2f")}`, { headers: { accept: "application/json" } });
-  if (response.status !== 404) throw new Error(`${name} answers an anonymous request with ${response.status}: it is not restricted. Run npm access set status=private ${name}`);
+/** Fails unless an anonymous reader gets `name@version`, retrying while the registry's cache catches up. */
+async function assertPublic(name, version) {
+  const url = `${REGISTRY}/${name.replace("/", "%2f")}/${version}`;
+  let status;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (attempt > 0) await new Promise((done) => setTimeout(done, 5000));
+    status = (await fetch(url, { headers: { accept: "application/json" } })).status;
+    if (status === 200) return;
+  }
+  throw new Error(`${name}@${version} answers an anonymous request with ${status}: it is not public. Run npm access set status=public ${name}`);
 }
 
 /**
@@ -37,7 +43,7 @@ async function assertRestricted(name) {
  * included, go to stderr, which is captured and shown when npm exits.
  */
 function publish(path, distTag) {
-  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "restricted", "--tag", distTag], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
+  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "public", "--tag", distTag], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
   process.stderr.write(run.stderr ?? "");
   if (run.error !== undefined) throw run.error;
   return { ok: run.status === 0, output: run.stderr };
@@ -58,7 +64,7 @@ const released = await releasePacks(
   releaseTags(),
   {
     publish: (file, distTag) => publish(join(out, file), distTag),
-    assertRestricted,
+    assertPublic,
     tag: (tag) => createReleaseTag(tag, commit),
     log: (line) => console.log(line),
   },

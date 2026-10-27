@@ -367,15 +367,13 @@ is published to. Rerail adds no registry configuration of its own: `setup` and
 `rerail update` run the `npm` next to the Node that runs them, with your normal
 npm configuration.
 
-Until launch the package is restricted. Sign in once with `npm login` as a
-member of the `neralabs` npm organization, or put a read-only granular access
-token for the package in `~/.npmrc`. After launch the package is public and no
-sign-in is needed.
+The package is public, so no sign-in is needed.
 
-When the credential is missing or has expired, npm-backed commands such as
-`rerail update` report that the npm registry credentials are missing or
-expired; sign in again with `npm login`. Rerail redacts `_authToken` and
-`_password` values from any npm output it prints.
+When a token your npm configuration holds for npmjs is invalid or has expired,
+npm-backed commands such as `rerail update` report that the npm registry
+credentials are missing or expired; sign in again with `npm login`, or remove
+the token. Rerail redacts `_authToken` and `_password` values from any npm
+output it prints.
 
 ## Supported and not supported
 

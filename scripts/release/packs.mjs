@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
@@ -47,7 +48,7 @@ export const alreadyOnRegistry = (output) => /cannot publish over the previously
  * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
  * publishing) is not published again, only checked and tagged. A pack named in `held` (held at an older `latest`) is
  * published under `next`, every other under `latest`. `steps` does the I/O: `publish(file, distTag)` returns
- * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
+ * `{ ok, output }`, `assertPublic(name, version)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
  * this run released.
  */
 export async function releasePacks(manifest, tags, steps, held = []) {
@@ -64,7 +65,7 @@ export async function releasePacks(manifest, tags, steps, held = []) {
     const published = steps.publish(file, distTag);
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
     if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
-    await steps.assertRestricted(name);
+    await steps.assertPublic(name, version);
     steps.tag(tag);
     steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
     released.push({ name, version, distTag });
@@ -117,6 +118,17 @@ export function changesetBumpFailures(changesets, packs) {
     }
   }
   return failures;
+}
+
+/**
+ * Whether a pack's package.json changed what installing the pack gives, from its text `before` (undefined: the file is
+ * new) to `after`. `publishConfig` only steers `npm publish`, so a change to it alone needs no release.
+ */
+export function manifestChanged(before, after) {
+  if (before === undefined) return true;
+  const { publishConfig: _before, ...was } = JSON.parse(before);
+  const { publishConfig: _after, ...is } = JSON.parse(after);
+  return !isDeepStrictEqual(was, is);
 }
 
 /**
