@@ -7,6 +7,7 @@ use super::{
     StoreResult, StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
 };
 use rusqlite::{TransactionBehavior, params};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
@@ -25,6 +26,20 @@ pub(super) const TAPES_WITHOUT_SEARCH_INDEX_SQL: &str = "SELECT t.tape_id, t.gra
      WHERE t.grammar_version = ?1 AND t.tape_format_version = ?2 AND t.tape_id > ?3 \
      AND NOT EXISTS (SELECT 1 FROM search_index_sets x WHERE x.tape_id = t.tape_id) \
      ORDER BY t.tape_id LIMIT ?4";
+
+fn order_kind_tokens(tokens: &[String], frequencies: &BTreeMap<String, i64>) -> Vec<String> {
+    let mut tokens = tokens.to_vec();
+    tokens.sort_unstable_by(|left, right| {
+        frequencies
+            .get(left)
+            .copied()
+            .unwrap_or(i64::MAX)
+            .cmp(&frequencies.get(right).copied().unwrap_or(i64::MAX))
+            .then_with(|| left.cmp(right))
+    });
+    tokens.dedup();
+    tokens
+}
 
 impl ContentStore {
     /// Take `tapes`, which this build can never decode into a search index, out of the maintenance
@@ -203,6 +218,26 @@ impl ContentStore {
         &self,
         lookups: &[SearchKindLookup],
     ) -> StoreResult<Vec<StoredKindPresence>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        let tokens = lookups
+            .iter()
+            .flat_map(|lookup| lookup.kind_tokens.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        let tokens = serde_json::to_string(&tokens)
+            .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        let mut frequency_statement = connection.prepare_cached(
+            "SELECT term, cnt FROM search_kind_vocab \
+             WHERE term IN (SELECT CAST(value AS TEXT) FROM json_each(?1))",
+        )?;
+        let frequencies = frequency_statement
+            .query_map([tokens], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        drop(frequency_statement);
         let requests = lookups
             .iter()
             .enumerate()
@@ -211,16 +246,12 @@ impl ContentStore {
                     position,
                     lookup.tape_id.0,
                     lookup.index_version,
-                    lookup.kind_tokens.join(" OR ")
+                    order_kind_tokens(&lookup.kind_tokens, &frequencies).join(" OR ")
                 ])
             })
             .collect::<Vec<_>>();
         let requests = serde_json::to_string(&requests)
             .map_err(|error| StoreError::Invalid(error.to_string()))?;
-        let connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
             "WITH requested AS MATERIALIZED (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) position, \
                CAST(json_extract(value,'$[1]') AS INTEGER) tape_id, \
@@ -254,5 +285,27 @@ impl ContentStore {
             };
         }
         Ok(selections)
+    }
+}
+
+#[cfg(test)]
+mod planning_tests {
+    use super::order_kind_tokens;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn kind_search_planning_uses_stored_frequency_then_stable_token_order() {
+        let frequencies = BTreeMap::from([
+            ("k0001".to_owned(), 90_i64),
+            ("k0002".to_owned(), 3_i64),
+            ("k0003".to_owned(), 3_i64),
+        ]);
+        assert_eq!(
+            order_kind_tokens(
+                &["k0001".to_owned(), "k0003".to_owned(), "k0002".to_owned()],
+                &frequencies,
+            ),
+            ["k0002", "k0003", "k0001"]
+        );
     }
 }

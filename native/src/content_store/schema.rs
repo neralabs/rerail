@@ -252,6 +252,8 @@ CREATE TABLE IF NOT EXISTS search_index_sets (
 CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_fts USING fts5(
     token, content='', contentless_delete=1, detail=full, tokenize='ascii'
 );
+-- Physical rule planning reads exact term frequencies from SQL instead of estimating them in Rust.
+CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_vocab USING fts5vocab(search_kind_fts, 'row');
 CREATE TRIGGER IF NOT EXISTS delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
     DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
 END;
