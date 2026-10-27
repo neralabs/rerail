@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of_val;
 use std::ptr::NonNull;
+use launch::{CheckedComputeEncoder, commit_checked, wait_checked};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
@@ -453,9 +454,11 @@ impl PreparedAnchorScan {
         unsafe {
             self.hit_count.contents().cast::<u32>().write(0);
         }
+        let _execution_guard = metal_execution_guard()?;
         let dispatch_started = std::time::Instant::now();
         let command = self.queue.new_command_buffer();
         let encoder = command.new_compute_command_encoder();
+        encoder.set_label("anchor_selection");
         encoder.set_compute_pipeline_state(&self.pipeline);
         encoder.set_buffer(0, Some(&self.kinds.buffer), 0);
         encoder.set_buffer(1, Some(&self.spans.buffer), 0);
@@ -468,7 +471,8 @@ impl PreparedAnchorScan {
         encoder.set_bytes(7, 4, (&count as *const u32).cast());
         let width = self.pipeline.thread_execution_width();
         // One dispatch is the complete anchor-selection phase.
-        encoder.dispatch_threads(
+        encoder.checked_dispatch_threads(
+            command,
             MTLSize {
                 width: count as u64,
                 height: 1,
@@ -481,8 +485,8 @@ impl PreparedAnchorScan {
             },
         );
         encoder.end_encoding();
-        command.commit();
-        command.wait_until_completed();
+        commit_checked(command)?;
+        wait_checked(command)?;
         let dispatch_and_wait = dispatch_started.elapsed();
         let reconstruction_started = std::time::Instant::now();
         let hit_count = unsafe { self.hit_count.contents().cast::<u32>().read() as usize };

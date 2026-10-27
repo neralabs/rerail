@@ -1,3 +1,6 @@
+use super::metal_backend::launch::{
+    CheckedComputeEncoder, LaunchScope, commit_checked, wait_checked,
+};
 use super::metal_backend::{MappedBuffer, pipeline_named};
 use super::metal_batch_abi::{
     FORMAT_VERSION, FinalCaptureRecord, LinkRecord as CaptureRecord, MetalGlobalArenas,
@@ -604,6 +607,7 @@ pub(super) fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
+    let _evaluation = LaunchScope::enter();
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
@@ -745,14 +749,15 @@ pub(super) fn execute_packed_with_result_limits(
         encoder.set_buffer(index as u64, Some(&buffer.buffer), 0);
     }
     let width = engine.pipeline().thread_execution_width().max(1);
-    encoder.dispatch_threads(
+    encoder.checked_dispatch_threads(
+        command,
         MTLSize::new(batch.evaluation_lanes.len() as u64, 1, 1),
         MTLSize::new(width.min(batch.evaluation_lanes.len() as u64), 1, 1),
     );
     encoder.end_encoding();
     let execution_started = std::time::Instant::now();
-    command.commit();
-    command.wait_until_completed();
+    commit_checked(command)?;
+    wait_checked(command)?;
     let execution_elapsed = execution_started.elapsed();
     if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(

@@ -292,7 +292,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "N's encoders do not route through the guard yet"]
     fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
         use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
         use crate::code_rule_dsl::transducer::packed::{Program, metal_program_backend};
@@ -334,7 +333,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "N's encoders do not route through the guard yet"]
     fn production_encoders_cannot_bypass_the_launch_guard() {
         let directory =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed");
