@@ -317,7 +317,7 @@ Precisely:
    `divergences.json`, `upstream` or `candidates`. The SPDX ids `license` names must be exactly Apache-2.0 plus the
    licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line.
 6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` per upstream repository: its
-   `License:` line, a `Source` table (repository, tag, commit, licence), a `Taken from it` table whose first column
+   `License:` line, a `Source` table (repository, tag, commit, licence; required), a `Taken from it` table whose first column
    holds backticked pack-path globs starting with `upstream/` (with the upstream paths and how each kind of file was
    made), and its `Not copied` lines. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
    `fixtures/`, `tests/`) must be authored or match some project's glob, and each declared glob must match at least
@@ -330,8 +330,8 @@ Precisely:
    (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
    paths nothing is copied from, one per line as
    ``- Not copied: `<upstream path prefix>` as `<pack path glob>` — <project>, <SPDX id>``
-   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a pulled
-   file under the pack-path glob fails. The per-file record (each file, its upstream path and how it was made) is not
+   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); the pack-path
+   glob is required, and a pulled file under it fails. The per-file record (each file, its upstream path and how it was made) is not
    in git: it is `upstream/<tool>/provenance.json` in the tool-pack's test-data archive, beside `LICENSES.md` with the
    licence texts, for audit, and no check reads it. `reuse lint` and `node scripts/check/check-licenses.mjs` stay
    repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts a
@@ -439,6 +439,10 @@ The pack's rule documents (`rules/`, and the rule documents under `candidates/`)
 that same expression, `Apache-2.0 AND <upstream>`, so what `reuse lint` reports for them matches what the package
 publishes; whether adapted rule documents need the upstream licence is an open legal question. Only licences on the
 repository allowlist are accepted.
+
+When test data is published, a file the tool's own `UPSTREAM.md` lists (or one under `authored/`) is Rerail's
+Apache-2.0; any other file takes the licence of the longest `Taken from it` glob that covers it. A file from an
+Apache-2.0-only source is refused unless that glob's kind is `verbatim`, and a file under a `Not copied` glob is refused.
 
 ## Moving to this layout
 
