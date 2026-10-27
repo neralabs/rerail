@@ -33,7 +33,7 @@ packs/<id>/
 ├── rules/
 │   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
 ├── licenses/
-│   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (every copied or adapted file)
+│   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (per repository: source, path patterns taken, not copied)
 │
 │   only for packs that port rules from another tool:
 ├── conformance.json    the conformance pack schema of conformance/languages/pack.ts, as today
@@ -254,7 +254,7 @@ ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule 
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's expected findings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
-| 6 | Licences | A copied file is missing from an `UPSTREAM.md`, or is copied from an upstream path its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
+| 6 | Licences | A copied file falls under no `UPSTREAM.md` pattern, a declared pattern matches no file, or a file falls under a pattern its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 
 Precisely:
@@ -315,22 +315,27 @@ Precisely:
    `pack.json`, `rules`, `LICENSE` and, when present, `licenses`, and no entry may cover `conformance.json`,
    `divergences.json`, `upstream` or `candidates`. The SPDX ids `license` names must be exactly Apache-2.0 plus the
    licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line.
-6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` whose table rows start with a
-   pack-relative path in backticks. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
-   `fixtures/`, `tests/`) must be listed; files directly in `upstream/` or `upstream/<tool>/` (expected findings, generators)
-   are Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
-   corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
-   so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
-   `upstream/<tool>/`. Every listed file must exist (a checkout without the pack's test data fails once per record,
-   saying to run `npm run fixtures:pull`), every recorded licence must be on the
-   repository allowlist (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may
-   declare upstream paths nothing is copied from, one per line as
-   ``- Not copied: `<upstream path prefix>` — <project>, <SPDX id>``
-   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a row whose
-   upstream path (its second column) starts with one fails. `reuse lint` and `node scripts/check/check-licenses.mjs`
-   stay repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts
-   a copied file the catch-all Apache-2.0 annotation covers. Structure metric 7 (`npm run check:structure`) fails a
-   listed file whose REUSE licence lacks the one its `UPSTREAM.md` records, or whose REUSE copyright names only Rerail.
+6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` per upstream repository: its
+   `License:` line, a `Source` table (repository, tag, commit, licence), a `Taken from it` table whose first column
+   holds backticked pack-path globs starting with `upstream/` (with the upstream paths and how each kind of file was
+   made), and its `Not copied` lines. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
+   `fixtures/`, `tests/`) must be authored or match some project's glob, and each declared glob must match at least
+   one pulled file (a checkout without the pack's test data fails once per tool, saying to run
+   `npm run fixtures:pull`); files directly in `upstream/` or `upstream/<tool>/` (expected findings, generators) are
+   Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
+   corpus) is listed instead, per file, in the tool's own `upstream/<tool>/UPSTREAM.md`: it is Rerail's, so it adds no
+   licence to `licenses/` or to the package's `license`. That record may list only files under its own
+   `upstream/<tool>/`, and every file it lists must exist. Every recorded licence must be on the repository allowlist
+   (`scripts/check/licence-allowlist.json`), and the pack needs a `LICENSE`. An `UPSTREAM.md` may declare upstream
+   paths nothing is copied from, one per line as
+   ``- Not copied: `<upstream path prefix>` as `<pack path glob>` — <project>, <SPDX id>``
+   (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); a pulled
+   file under the pack-path glob fails. The per-file record (each file, its upstream path and how it was made) is not
+   in git: it is `upstream/<tool>/provenance.json` in the tool-pack's test-data archive, beside `LICENSES.md` with the
+   licence texts, for audit, and no check reads it. `reuse lint` and `node scripts/check/check-licenses.mjs` stay
+   repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts a
+   copied file the catch-all Apache-2.0 annotation covers. Structure metric 7 (`npm run check:structure`) checks the
+   rule documents' REUSE licence.
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.
@@ -427,7 +432,7 @@ steps are in [publishing-a-new-pack.md](publishing-a-new-pack.md).
 ## Licensing
 
 Rerail's own material in a pack is Apache-2.0. Material copied or adapted from an upstream project keeps its licence:
-listed in `licenses/<project>/UPSTREAM.md` and annotated in the repository's `REUSE.toml`. The pack's `license`
+recorded per repository in `licenses/<project>/UPSTREAM.md` and annotated in the repository's `REUSE.toml`. The pack's `license`
 names every licence its published files carry (for example `Apache-2.0 AND MIT` for rules adapted from an MIT tool).
 The pack's rule documents (`rules/`, and the rule documents under `candidates/`) are annotated in `REUSE.toml` with
 that same expression, `Apache-2.0 AND <upstream>`, so what `reuse lint` reports for them matches what the package

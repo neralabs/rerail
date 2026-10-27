@@ -421,7 +421,7 @@ request. `publish/<path>` becomes the test data archive's file `<path>` (`publis
 
 The usual rules for third-party material apply (below), and every file going to S3 must be under a licence on
 [scripts/check/licence-allowlist.json](scripts/check/licence-allowlist.json): test data by the
-`packs/<id>/licenses/<project>/UPSTREAM.md` that lists it (Rerail's own files are Apache-2.0), samples by their labels'
+`packs/<id>/licenses/<project>/UPSTREAM.md` whose `Taken from it` pattern covers it (Rerail's own files are Apache-2.0), samples by their labels'
 `source.license`. An SPDX `A OR B` passes when either side is on the list, `A AND B` only when both are.
 
 A comment on the pull request ("Pack data waiting to publish") lists the tool-packs and how to run the publish, by hand
@@ -544,8 +544,9 @@ sign-off to add.
 
 Do not paste code, data or rules from another project without recording it:
 
-1. Add an `UPSTREAM.md` entry beside the material: source project, version or revision, files, and whether each is
-   verbatim, derived or an excerpt.
+1. Add an `UPSTREAM.md` beside the material, per upstream repository: source project, version or revision and
+   commit, the paths (or path patterns) taken, and whether each is verbatim, derived or an excerpt. For pack test
+   data it lists patterns, not files; the per-file record is `provenance.json` in the tool-pack's test-data archive.
 2. Add the upstream licence text (to `LICENSES/` or beside the material under `licenses/<project>/`).
 3. Annotate the path in `REUSE.toml`.
 

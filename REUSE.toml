@@ -153,7 +153,7 @@ SPDX-License-Identifier = "ISC"
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with
 # Rerail's own. The upstream licence texts sit in LICENSES/ and, verbatim, beside each UPSTREAM.md.
-# Keep these entries in step with the UPSTREAM.md tables.
+# Keep these entries in step with the UPSTREAM.md `Taken from it` patterns.
 
 # bagisto 635cab68b3 + BookStack f585a7d910 + filament ca4f55bb5e + livewire 3.8.7 (blade/licenses/bagisto/UPSTREAM.md, blade/licenses/bookstack/UPSTREAM.md, blade/licenses/filament/UPSTREAM.md, blade/licenses/livewire/UPSTREAM.md): derived or excerpted
 [[annotations]]

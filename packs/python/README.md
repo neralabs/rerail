@@ -20,7 +20,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, and probes of inputs the ports once misread), its expected findings (`fixtures.expected.json`), the generator (`generate.py`, sharing `upstream/common.py`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 | `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) have no expected findings |
 
 Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it

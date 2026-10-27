@@ -156,6 +156,26 @@ what a commit's rules were judged on, check it out and run `npm run fixtures:pul
 name, verifies them, and extracts them as that commit's CI did. Commits from before the snapshot model also name
 recordings under `rerail/recordings/`, which stay in S3.
 
+## Derive and bumps are paused
+
+Pack test data derivation and upstream bumps are paused until the generators write per-repo provenance (a follow-up
+to the per-repo provenance change). Each `packs/<id>/licenses/<project>/UPSTREAM.md` now records its repository per
+repo: the Source row, the pack-path patterns of the files taken from it, and the `Not copied` lines. The per-file
+record is no longer in git: each tool-pack's test data archive holds `upstream/<tool>/provenance.json` (every file, its
+upstream path and how it was made, a snapshot taken when the tables moved) and `upstream/<tool>/LICENSES.md` (the
+licence texts), for audit. Nothing in the repository reads `provenance.json`; pack check 6, the publish licence check
+and structure metric 7 work from the tracked patterns.
+
+The generators and `fixtures:derive` still write per-file rows, so until the follow-up:
+
+- an ECMA tool-pack's derive (javascript, typescript) fails, since its rename variants look up their originals' rows;
+- every other row-writing derive, run with `--update`, rewrites `UPSTREAM.md` back to per-file rows and must not be
+  committed;
+- `upstream-releases.yml`'s `bump-dispatch` job does not start bumps. The release check still runs and reports which
+  tool-packs are behind.
+
+Do not derive, re-snapshot or bump a tool-pack until the follow-up lands.
+
 ## Upstream releases
 
 A pin says which release the rules were ported against; `upstream-releases.yml` notices when upstream publishes a newer

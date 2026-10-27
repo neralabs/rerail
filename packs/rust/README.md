@@ -12,7 +12,7 @@ This pack follows the [pack structure and validation contract](../../docs/pack-f
 | `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool |
 | `divergences.json` | Declared disagreements with Clippy |
 | `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), the expected findings and their generator (`generate.py`, sharing `upstream/common.py`); the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); the upstream manifest `gates.yaml` (its pins, approved configurations, the file types it lints and the facts of every lint the pack ports) |
-| `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 ## Scores
 

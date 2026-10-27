@@ -23,7 +23,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `conformance.json` | Every port (shipped and candidate): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tool |
 | `divergences.json` | Declared disagreements with SQLFluff |
 | `upstream/sqlfluff/` | SQLFluff's copied tests (`fixtures/`, and Rerail's own PostgreSQL cases beside them in `fixtures/rerail/`, listed as `RERAIL_CASES` in `generate.py`), its expected findings and case list (`fixtures.expected.json`, `fixtures.cases.json`) and the generator (`generate.py`, sharing `fixtures/sql/common.py`); the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`); the upstream manifest `gates.yaml` (its pins, approved configuration, the file types it lints and the facts of every rule the pack ports). The tests, Rerail's cases and the expected findings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches with the samples |
-| `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/sqlfluff/` | SQLFluff's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 ## Rules that start off
 

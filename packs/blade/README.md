@@ -26,7 +26,7 @@ contract](../../docs/pack-format.md)).
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its expected findings (`fixtures.expected.json`; pack test data, derived from the pins and archived in S3: `npm run fixtures:pull`), the generator (`generate.py` with its PHP helpers, sharing `upstream/common.py` and the template capture tlint's and stillat/blade-parser's test readers run, `upstream/blade_capture.php`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `upstream/<tool>/gates.yaml` | The tool's upstream manifest: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports ([docs/upstream.md](../../docs/upstream.md)) |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 ## Candidates
 

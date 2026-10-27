@@ -16,7 +16,7 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises, the shipped rules first and then the candidates; the pinned plugin |
 | `upstream/eslint-plugin-next/` | The plugin's copied rule tests (`tests/`) and the cases extracted from them (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`) and case list (`fixtures.cases.json`), the generator (`generate.mjs`), and the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`). The tests, cases and expected findings are pack test data, derived from the pins (`npm run fixtures:derive`) and archived in S3; `npm run fixtures:pull` fetches them and the samples |
 | `candidates/` | Ports that cannot pass their fixtures yet or that fail the conformance check (`rules/`, none today; scored through `conformance.json`, never gating), the Next fact model's probes (`probes/`), and the generators that write them and `rules/` (`build-policies.mjs`, `build-probes.mjs`) |
-| `licenses/next.js/` | Next.js's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/next.js/` | Next.js's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 The rule documents, `conformance.json`'s and `pack.json`'s rule lists and the candidates are generated, offline:
 

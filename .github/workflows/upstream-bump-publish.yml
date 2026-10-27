@@ -122,7 +122,7 @@ jobs:
       #   (`stage`);
       # - src/engine, which the derivation imports, and the engine source a recipe reads (DEFAULT_PYTHON_MINOR);
       # - the packs' upstream/ directories (generators, gates.yaml, the locks naming the archives the bump started
-      #   from), licenses/ (UPSTREAM.md rows and licence texts) and conformance manifests.
+      #   from), licenses/ (the per-repo UPSTREAM.md and licence texts) and conformance manifests.
       # The build (npm run build:js) writes only dist/, which none of these read. When any of them moved, the whole run
       # is skipped, not failed: the next nightly bumps again from main's head.
       - id: code
@@ -352,8 +352,8 @@ jobs:
       #   the publish workflow packs, licence-checks and summarises, and a code owner approves;
       # - upstream/<tool>/UPSTREAM.md: the generators' list of the cases Rerail wrote (packs/python/upstream/common.py
       #   write_record, the next, vitest and vue generators);
-      # - licenses/<project>/UPSTREAM.md, <project> being gates.yaml's rerail.project: the generators' table of copied
-      #   files, and the rows fixtures:derive (scripts/pack-data/derive.ts) adds;
+      # - licenses/<project>/UPSTREAM.md, <project> being gates.yaml's rerail.project: the per-repo record of what is
+      #   copied (bumps are paused until the generators write it rather than per-file rows; docs/upstream.md);
       # - any other file directly in licenses/<project>/: upstream's licence text, which the generators copy verbatim
       #   from upstream's checkout at the pinned commit (LICENSE, LICENSE.md, license.md, licence.txt, COPYRIGHT, ...).
       # Any other difference fails.
