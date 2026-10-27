@@ -418,7 +418,7 @@ impl LuaPattern {
                         .count();
                     let (minimum, maximum, greedy) = match repetition {
                         LuaRepetition::One => (1, 1, true),
-                        LuaRepetition::Optional => (0, 1, true),
+                        LuaRepetition::Optional => (0, available.min(1), true),
                         LuaRepetition::ZeroOrMore { greedy } => (0, available, *greedy),
                         LuaRepetition::OneOrMore => (1, available, true),
                     };

@@ -312,7 +312,7 @@ impl ValueProgram {
         match self {
             Self::Equal { string } => Ok(bytes == strings[usize::from(*string)]),
             Self::Prefix { string } => Ok(bytes.starts_with(&strings[usize::from(*string)])),
-            Self::Regex(program) => program.is_match(bytes),
+            Self::Regex(program) => program.is_match_with_work(bytes, work, &LookMatcher::new()),
             Self::Lua(program) => program.is_match(bytes, work),
         }
     }
@@ -382,7 +382,7 @@ impl ValueMatcher {
         }
     }
 
-    fn matches(&self, byte: u8) -> bool {
+    pub(super) fn matches(&self, byte: u8) -> bool {
         match self {
             Self::Any => true,
             Self::Byte(expected) => byte == *expected,
@@ -468,6 +468,28 @@ impl LuaProgram {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn test_work_count(&self, bytes: &[u8]) -> (Result<bool, Error>, usize) {
+        let mut work = 0;
+        let result = self.is_match(bytes, &mut work);
+        (result, work)
+    }
+
+    /// Exercise the shared CPU work counter with exactly `remaining` steps available.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) fn test_match_with_budget(
+        &self,
+        bytes: &[u8],
+        remaining: usize,
+    ) -> (Result<bool, Error>, usize) {
+        let Some(initial) = super::MAX_STEPS_PER_PATH.checked_sub(remaining) else {
+            return (Err(Error::InvalidAnchor), 0);
+        };
+        let mut work = initial;
+        let result = self.is_match(bytes, &mut work);
+        (result, work - initial)
+    }
+
     fn is_match(&self, bytes: &[u8], work: &mut usize) -> Result<bool, Error> {
         fn suffix(
             program: &LuaProgram,
@@ -495,7 +517,7 @@ impl LuaProgram {
                         .count();
                     let (minimum, maximum, greedy) = match repetition {
                         0 => (1, 1, true),
-                        1 => (0, 1, true),
+                        1 => (0, available.min(1), true),
                         2 => (0, available, true),
                         3 => (0, available, false),
                         4 => (1, available, true),
@@ -786,20 +808,194 @@ impl ByteNfa {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn is_match(&self, bytes: &[u8]) -> Result<bool, Error> {
         let look = LookMatcher::new();
+        self.is_match_with_work(bytes, &mut 0, &look)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_work_count(&self, bytes: &[u8]) -> (Result<bool, Error>, usize) {
+        let mut work = 0;
+        let result = self.is_match_with_work(bytes, &mut work, &LookMatcher::new());
+        (result, work)
+    }
+
+    /// Exercise the same bounded CPU matcher used by the unbounded cost oracle.
+    #[cfg(all(test, target_os = "macos"))]
+    pub(super) fn test_match_with_budget(
+        &self,
+        bytes: &[u8],
+        remaining: usize,
+    ) -> (Result<bool, Error>, usize) {
+        let Some(initial) = super::MAX_STEPS_PER_PATH.checked_sub(remaining) else {
+            return (Err(Error::InvalidAnchor), 0);
+        };
+        let mut work = initial;
+        let result = self.is_match_with_work(bytes, &mut work, &LookMatcher::new());
+        (result, work - initial)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_find_work_count(&self, bytes: &[u8]) -> (Option<[u32; 2]>, usize) {
+        self.test_find_work_count_from(bytes, 0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_find_work_count_from(
+        &self,
+        bytes: &[u8],
+        start: usize,
+    ) -> (Option<[u32; 2]>, usize) {
+        let (result, work) = self.test_find_with_budget_from(bytes, start, usize::MAX);
+        (result.expect("unbounded CPU find oracle"), work)
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_find_with_budget_from(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        limit: usize,
+    ) -> (Result<Option<[u32; 2]>, Error>, usize) {
+        self.find_with_budget_from(bytes, start, limit)
+    }
+
+    /// Ordered full-input find with an exact bounded state-transition cost.
+    pub(super) fn find_with_budget_from(
+        &self,
+        bytes: &[u8],
+        start: usize,
+        limit: usize,
+    ) -> (Result<Option<[u32; 2]>, Error>, usize) {
+        if start > bytes.len() {
+            return (Err(Error::InvalidAnchor), 0);
+        }
+        struct Budget {
+            used: usize,
+            limit: usize,
+        }
+        impl Budget {
+            fn charge(&mut self) -> Result<(), Error> {
+                self.used = self.used.checked_add(1).ok_or(Error::WorkLimit)?;
+                if self.used > self.limit {
+                    Err(Error::WorkLimit)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        #[allow(clippy::too_many_arguments)]
+        fn closure(
+            nfa: &ByteNfa,
+            bytes: &[u8],
+            at: usize,
+            first: u32,
+            captures: [u32; 2],
+            seen: &mut [bool],
+            output: &mut Vec<(u32, [u32; 2])>,
+            work: &mut Budget,
+        ) -> Result<(), Error> {
+            let mut pending = vec![(first, captures)];
+            while let Some((state, mut captures)) = pending.pop() {
+                work.charge()?;
+                if std::mem::replace(&mut seen[state as usize], true) {
+                    continue;
+                }
+                match &nfa.states[state as usize] {
+                    NfaState::Bytes(_) | NfaState::Match => output.push((state, captures)),
+                    NfaState::Look { kind, next } => {
+                        if LookMatcher::new().matches(*kind, bytes, at) {
+                            pending.push((*next, captures));
+                        }
+                    }
+                    NfaState::Split(next) => {
+                        pending.extend(next.iter().rev().map(|&next| (next, captures)))
+                    }
+                    NfaState::Capture { slot, next } => {
+                        if *slot < 2 {
+                            captures[*slot as usize] = at as u32;
+                        }
+                        pending.push((*next, captures));
+                    }
+                    NfaState::Fail => {}
+                }
+            }
+            Ok(())
+        }
+        let mut work = Budget { used: 0, limit };
+        let result = (|| {
+            let mut current = Vec::new();
+            closure(
+                self,
+                bytes,
+                start,
+                self.start,
+                [u32::MAX; 2],
+                &mut vec![false; self.states.len()],
+                &mut current,
+                &mut work,
+            )?;
+            let mut matched = None;
+            for at in start..=bytes.len() {
+                let keep = current
+                    .iter()
+                    .position(|(state, _)| matches!(self.states[*state as usize], NfaState::Match))
+                    .unwrap_or(current.len());
+                if keep < current.len() {
+                    matched = Some(current[keep].1);
+                }
+                if at == bytes.len() {
+                    break;
+                }
+                let mut next = Vec::new();
+                let mut seen = vec![false; self.states.len()];
+                for (state, captures) in current.iter().take(keep) {
+                    if let NfaState::Bytes(ranges) = &self.states[*state as usize] {
+                        for &(first, last, target) in ranges {
+                            work.charge()?;
+                            if (first..=last).contains(&bytes[at]) {
+                                closure(
+                                    self,
+                                    bytes,
+                                    at + 1,
+                                    target,
+                                    *captures,
+                                    &mut seen,
+                                    &mut next,
+                                    &mut work,
+                                )?;
+                            }
+                        }
+                    }
+                }
+                current = next;
+                if current.is_empty() {
+                    break;
+                }
+            }
+            Ok(matched)
+        })();
+        (result, work.used)
+    }
+
+    fn is_match_with_work(
+        &self,
+        bytes: &[u8],
+        work: &mut usize,
+        look: &LookMatcher,
+    ) -> Result<bool, Error> {
         let mut current = Vec::new();
         let mut seen = vec![false; self.states.len()];
-        let mut work = 0_usize;
         if self.add_state(
             self.start,
             0,
             &mut NfaRun {
                 bytes,
-                look: &look,
+                look,
                 seen: &mut seen,
                 consuming: &mut current,
-                work: &mut work,
+                work: &mut *work,
             },
         )? {
             return Ok(true);
@@ -812,8 +1008,8 @@ impl ByteNfa {
                     continue;
                 };
                 for &(start, end, target) in ranges {
-                    work += 1;
-                    if work > super::MAX_STEPS_PER_PATH {
+                    *work += 1;
+                    if *work > super::MAX_STEPS_PER_PATH {
                         return Err(Error::WorkLimit);
                     }
                     if (start..=end).contains(&byte)
@@ -822,10 +1018,10 @@ impl ByteNfa {
                             at + 1,
                             &mut NfaRun {
                                 bytes,
-                                look: &look,
+                                look,
                                 seen: &mut seen,
                                 consuming: &mut next,
-                                work: &mut work,
+                                work: &mut *work,
                             },
                         )?
                     {
@@ -866,5 +1062,193 @@ impl ByteNfa {
             }
         }
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Regex;
+
+    #[test]
+    fn regex_values_charge_the_inherited_budget_before_acceptance_or_rejection() {
+        for (pattern, text) in [
+            ("^a+$", "aaaa"),
+            ("^a+b$", "aaaa"),
+            ("^", "é"),
+            (r"\bαβ\b", "αβ"),
+        ] {
+            let nfa = ByteNfa::compile(pattern).unwrap();
+            let (expected, cost) = nfa.test_work_count(text.as_bytes());
+            assert_eq!(expected, Ok(Regex::new(pattern).unwrap().is_match(text)));
+            assert!(cost > 0 && cost < super::super::MAX_STEPS_PER_PATH);
+            let program = ValueProgram::Regex(nfa);
+            for remaining in [cost - 1, cost, cost + 1] {
+                let initial = super::super::MAX_STEPS_PER_PATH - remaining;
+                let mut used = initial;
+                let actual = program.is_match(text.as_bytes(), &[], &mut used);
+                assert_eq!(
+                    actual,
+                    if remaining < cost {
+                        Err(Error::WorkLimit)
+                    } else {
+                        expected.clone()
+                    },
+                    "pattern={pattern}, remaining={remaining}"
+                );
+                assert_eq!(
+                    used - initial,
+                    if remaining < cost {
+                        remaining + 1
+                    } else {
+                        cost
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn metal_cutover_retains_independent_cpu_value_oracles() {
+        for (pattern, text, expected) in [
+            ("^a?$", "", true),
+            ("^a?b$", "ab", true),
+            ("^a?b$", "cb", false),
+        ] {
+            let parsed = LuaPattern::parse(pattern.as_bytes()).unwrap();
+            let lowered = LuaProgram::lower(&parsed);
+            let (actual, work) = lowered.test_work_count(text.as_bytes());
+            assert_eq!(actual, Ok(expected));
+            assert!(work > 0);
+            assert_eq!(
+                parsed.matches_with_work(text.as_bytes(), &mut 0).unwrap(),
+                expected
+            );
+        }
+        for pattern in ["ab", "a+", "a.*b", "a|ab", ""] {
+            let regex = Regex::new(pattern).unwrap();
+            let nfa = ByteNfa::compile(pattern).unwrap();
+            for text in ["", "ab", "zzabbb", "caaab", "nomatch"] {
+                let (actual, work) = nfa.test_work_count(text.as_bytes());
+                assert_eq!(actual, Ok(regex.is_match(text)));
+                assert!(work > 0);
+                let expected = regex
+                    .find(text)
+                    .map(|found| [found.start() as u32, found.end() as u32]);
+                assert_eq!(nfa.test_find_work_count(text.as_bytes()).0, expected);
+                for start in 0..=text.len() {
+                    let expected = regex
+                        .find_at(text, start)
+                        .map(|found| [found.start() as u32, found.end() as u32]);
+                    assert_eq!(
+                        nfa.test_find_work_count_from(text.as_bytes(), start).0,
+                        expected,
+                        "pattern={pattern:?}, text={text:?}, start={start}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lua_optional_atoms_consume_only_matching_bytes() {
+        for (pattern, text, expected) in [
+            ("^a?$", "", true),
+            ("^a?$", "a", true),
+            ("^a?$", "b", false),
+            ("^a?b$", "b", true),
+            ("^a?b$", "ab", true),
+            ("^a?b$", "cb", false),
+            ("^a?a?$", "", true),
+            ("^a?a?$", "b", false),
+        ] {
+            let parsed = LuaPattern::parse(pattern.as_bytes()).unwrap();
+            assert_eq!(
+                parsed.matches_with_work(text.as_bytes(), &mut 0),
+                Ok(expected),
+                "{pattern} {text:?}"
+            );
+            assert_eq!(
+                LuaProgram::lower(&parsed).is_match(text.as_bytes(), &mut 0),
+                Ok(expected),
+                "{pattern} {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn byte_dfa_matches_regex_oracle() {
+        let patterns = [
+            "",
+            "^value$",
+            "[A-Z][a-z]+",
+            "(?:foo|bar)+?",
+            r"^[^\n]*$",
+            "é|東京",
+            r"\p{Greek}+",
+        ];
+        let values = [
+            "",
+            "value",
+            "a value here",
+            "ClassName",
+            "foofoobar",
+            "class",
+            "classification",
+            "é",
+            "東京",
+            "αβγ",
+            "line\nbreak",
+        ];
+        for pattern in patterns {
+            let oracle = Regex::new(pattern).unwrap();
+            let dfa = ByteDfa::compile(pattern).unwrap();
+            assert!(dfa.state_count() > 0);
+            for value in values {
+                assert_eq!(
+                    dfa.is_match(value.as_bytes()).unwrap(),
+                    oracle.is_match(value),
+                    "pattern={pattern:?} value={value:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn byte_nfa_lowers_every_regex_shape_without_pattern_cases() {
+        for pattern in [
+            "",
+            "^value$",
+            "[A-Z][a-z]+",
+            "(?:foo|bar)+?",
+            r"\bclass\b",
+            r"^[^\n]*$",
+            "é|東京",
+            r"\p{Greek}+",
+        ] {
+            let oracle = Regex::new(pattern).unwrap();
+            let nfa = ByteNfa::compile(pattern).unwrap();
+            assert!(!nfa.states.is_empty(), "pattern={pattern:?}");
+            assert!((nfa.start as usize) < nfa.states.len());
+            for value in [
+                "",
+                "value",
+                "a value here",
+                "ClassName",
+                "foofoobar",
+                "class",
+                "classification",
+                "é",
+                "東京",
+                "αβγ",
+                "line\nbreak",
+            ] {
+                assert_eq!(
+                    nfa.is_match(value.as_bytes()).unwrap(),
+                    oracle.is_match(value),
+                    "pattern={pattern:?} value={value:?}"
+                );
+            }
+        }
     }
 }
