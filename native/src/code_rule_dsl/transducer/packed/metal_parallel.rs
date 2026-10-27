@@ -361,5 +361,4 @@ impl Scan {
 }
 
 #[cfg(test)]
-#[path = "metal_parallel_scan_tests.rs"]
 mod tests;

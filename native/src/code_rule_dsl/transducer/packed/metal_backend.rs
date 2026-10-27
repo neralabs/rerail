@@ -195,6 +195,16 @@ fn anchor_literal(program: &Program) -> Result<(u16, &[u8], u16, u16), Error> {
     ))
 }
 
+pub(super) fn read<T: Copy>(buffer: &MappedBuffer, count: usize) -> Result<Vec<T>, Error> {
+    let length = count
+        .checked_mul(size_of::<T>())
+        .ok_or(Error::BackendFailure)?;
+    if length as u64 > buffer.buffer.length() {
+        return Err(Error::BackendFailure);
+    }
+    Ok(unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<T>(), count).to_vec() })
+}
+
 static METAL_EXECUTION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 pub(super) struct MetalExecutionGuard {

@@ -22,6 +22,8 @@ use std::time::Duration;
 mod metal_backend;
 mod metal_batch_abi;
 #[cfg(target_os = "macos")]
+mod metal_parallel;
+#[cfg(target_os = "macos")]
 mod metal_program_backend;
 
 #[cfg(all(test, target_os = "macos"))]

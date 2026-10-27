@@ -58,7 +58,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
             wait_checked(command).unwrap();
             let get = |scan: &Scan| {
                 let offsets =
-                    super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, count)
+                    super::super::metal_backend::read::<[u32; 4]>(&scan.values, count)
                         .unwrap();
                 let sum = unsafe { scan.total().contents().cast::<[u32; 4]>().read() };
                 (offsets, sum)
@@ -158,7 +158,7 @@ fn independent_scan_domains_keep_every_saturated_prefix_with_one_dispatch() {
         wait_checked(command).unwrap();
         let execution_seconds = started.elapsed().as_secs_f64();
         for (scan, values) in [(&left, &left_values), (&right, &right_values)] {
-            let actual = super::super::metal_register_execution::read::<[u32; 4]>(
+            let actual = super::super::metal_backend::read::<[u32; 4]>(
                 &scan.values,
                 values.len(),
             )
@@ -214,7 +214,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
             wait_checked(command).unwrap();
             let seconds = started.elapsed().as_secs_f64();
             let actual =
-                super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, count)
+                super::super::metal_backend::read::<[u32; 4]>(&scan.values, count)
                     .unwrap();
             let total = unsafe { scan.total().contents().cast::<[u32; 4]>().read() };
             assert_eq!((actual, total), expected, "count={count}");
@@ -275,7 +275,7 @@ fn gpu_counted_bounded_scans_preserve_inactive_values_and_every_live_prefix() {
             commit_checked(command).unwrap();
             wait_checked(command).unwrap();
             let actual =
-                super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, capacity)
+                super::super::metal_backend::read::<[u32; 4]>(&scan.values, capacity)
                     .unwrap();
             assert_eq!(actual, expected, "count={count}");
             assert_eq!(
