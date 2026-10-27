@@ -6,8 +6,9 @@
 # which native engine is exercised. The environment matrix (scripts/host/azure/guest.ps1) runs the same steps from
 # windows-host.ps1 on Windows 11 VMs.
 #
-# Only the @neralabs scope resolves through the local registry (Verdaccio); every dependency still comes from
-# npmjs, exactly as for a user who installs the published package.
+# Only the @neralabs scope resolves through the local registry (Verdaccio), which serves the package and this
+# checkout's rule packs, as npmjs serves them; every dependency still comes from npmjs, exactly as for a user who
+# installs the published package.
 param([Parameter(Mandatory)][string]$Tarball)
 
 $ErrorActionPreference = "Stop"
@@ -27,8 +28,21 @@ function Step($message) { Write-Host "==> $message" }
 New-Item -ItemType Directory -Force $project, "$sandbox\.claude", "$sandbox\.codex", "$sandbox\.cursor", "$base\npm-cache", "$base\git-bash-home" | Out-Null
 $registry = $null
 try {
+  Step "Packing this checkout's rule packs"
+  # Set-up downloads the packs that fit the project; with none to download it offers only to try again.
+  New-Item -ItemType Directory -Force "$base\packs" | Out-Null
+  $node = Get-RerailNode
+  $npmCli = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin\npm-cli.js"
+  foreach ($pack in Get-ChildItem -Directory (Join-Path $PSScriptRoot "..\..\packs")) {
+    if (-not (Test-Path (Join-Path $pack.FullName "package.json"))) { continue }
+    & $node $npmCli pack $pack.FullName --pack-destination "$base\packs" --ignore-scripts --silent | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm pack $($pack.Name) exited $LASTEXITCODE" }
+  }
+  $packTarballs = @(Get-ChildItem "$base\packs" -Filter *.tgz | ForEach-Object { $_.FullName })
+  Write-Host "packed $($packTarballs.Count) rule packs"
+
   Step "Starting a local registry for the @neralabs scope"
-  $registry = Start-RerailRegistry -Root "$base\registry" -Tarballs @($Tarball)
+  $registry = Start-RerailRegistry -Root "$base\registry" -Tarballs (@($Tarball) + $packTarballs)
 
   Step "Running npx @neralabs/rerail setup in a sandbox profile, answering its questions (stdout captured)"
   # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one Rerail
