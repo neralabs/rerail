@@ -7,7 +7,7 @@ sets(lang,ready,expressions) AS MATERIALIZED (
 )
 INSERT OR IGNORE INTO vocabulary_term
 SELECT s.lang,j.value,v.term
-FROM sets s CROSS JOIN vlex v ON v.lang=s.lang
+FROM sets s CROSS JOIN term_freq v ON v.lang=s.lang
 CROSS JOIN json_each(nera_terms_matching(s.expressions,v.term)) j
 WHERE s.ready=0
 UNION ALL
@@ -18,7 +18,7 @@ WHERE s.ready=1
 UNION ALL
 SELECT l.lang,l.expression,l.term
 FROM vocabulary_predicate p CROSS JOIN vocabulary_literal l ON l.lang=p.lang AND l.expression=p.expression
-CROSS JOIN vlex v ON v.lang=l.lang AND v.term=l.term
+CROSS JOIN term_freq v ON v.lang=l.lang AND v.term=l.term
 WHERE p.ready=0
 UNION ALL
 SELECT l.lang,l.expression,l.term

@@ -345,7 +345,8 @@ CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
 -- preorder lists (`nera_postings`). The frequency tables count over every tape that has a set.
 CREATE TABLE IF NOT EXISTS prefilter_sets (
     tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
-    version INTEGER NOT NULL CHECK(version >= 0)
+    version INTEGER NOT NULL CHECK(version >= 0),
+    nodes INTEGER NOT NULL CHECK(nodes >= 0)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS tape_kind_counts (
     tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
@@ -391,6 +392,45 @@ END;
 CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
     UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
     DELETE FROM term_freq WHERE lang=OLD.lang AND term=OLD.term AND n<=0;
+END;
+
+-- The prefilter's regex vocabulary (vocabulary.rs, from Pulling-it-all-together's
+-- `vocabulary.sql`): each registered predicate's matching terms, filled in SQL when a candidate
+-- statement first names it and kept current by the terms each publication adds. A term that
+-- leaves `term_freq` leaves every predicate's set by cascade.
+CREATE TABLE IF NOT EXISTS vocabulary_predicate (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    ready INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (lang, expression)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS vocabulary_term (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    term TEXT NOT NULL,
+    PRIMARY KEY (lang, expression, term),
+    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE,
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS vocabulary_term_deleted ON vocabulary_term(lang, term);
+-- An exact literal set (`^(?:a|b)$`) matches exactly its literals: a join, not a regex per term.
+CREATE TABLE IF NOT EXISTS vocabulary_literal (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    term TEXT NOT NULL,
+    PRIMARY KEY (lang, term, expression),
+    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS vocabulary_literal_expression ON vocabulary_literal(lang, expression);
+CREATE TABLE IF NOT EXISTS vocabulary_pending (
+    lang INTEGER NOT NULL,
+    term TEXT NOT NULL,
+    PRIMARY KEY (lang, term),
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+-- An upsert that only counts an existing term up is an UPDATE: only new terms are pending.
+CREATE TRIGGER IF NOT EXISTS vocabulary_added AFTER INSERT ON term_freq BEGIN
+    INSERT OR IGNORE INTO vocabulary_pending VALUES(NEW.lang, NEW.term);
 END;
 "#;
 

@@ -18,12 +18,7 @@ pub(super) fn build(set: &mut TapePrefilter, doc: &TapeDoc, interrupted: &impl F
         if pre.is_multiple_of(256) && interrupted() {
             return Err(StoreError::Invalid("index construction interrupted".to_owned()));
         }
-        let kind = base
-            + u32::from(if doc.transducer_flags(pre) & 8 != 0 {
-                0
-            } else {
-                doc.transducer_kind(pre)
-            });
+        let kind = base + u32::from(super::kind_code(doc, pre));
         let text = doc.transducer_text_str(pre);
         let clean = !text.is_empty()
             && text.len() <= TERM_CAP * 4

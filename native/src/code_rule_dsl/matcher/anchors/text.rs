@@ -7,7 +7,7 @@ const MAX_PREFIX_CHARS: usize = 8;
 /// Necessary conditions only: passing this probe never replaces regex matching.
 /// All lengths are UTF-8 byte lengths, as in the regex engine's HIR properties.
 #[derive(Clone, Debug, Default)]
-pub(super) struct TextProbe {
+pub(in crate::code_rule_dsl) struct TextProbe {
     min_len: usize,
     max_len: Option<usize>,
     prefixes: Option<Vec<String>>,

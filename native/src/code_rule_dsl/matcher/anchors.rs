@@ -115,13 +115,13 @@ mod tests;
 // the roots they keep (`run_clause`), including for predicates answered by this index.
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct AnchorPlan {
-    root_kinds: Option<BTreeSet<u16>>,
-    condition: Condition,
-    exact: bool,
+    pub(in crate::code_rule_dsl) root_kinds: Option<BTreeSet<u16>>,
+    pub(in crate::code_rule_dsl) condition: Condition,
+    pub(in crate::code_rule_dsl) exact: bool,
 }
 
 #[derive(Clone)]
-enum Condition {
+pub(in crate::code_rule_dsl) enum Condition {
     Always,
     Pattern(Vec<Requirement>),
     Text {
@@ -143,7 +143,7 @@ enum Condition {
 }
 
 #[derive(Clone, Copy)]
-enum Direction {
+pub(in crate::code_rule_dsl) enum Direction {
     Has,
     Inside,
     Precedes,
@@ -151,16 +151,16 @@ enum Direction {
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-enum Required {
+pub(in crate::code_rule_dsl) enum Required {
     Kind(u16),
     Terminal(u16, String),
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-struct Requirement {
-    value: Required,
+pub(in crate::code_rule_dsl) struct Requirement {
+    pub(in crate::code_rule_dsl) value: Required,
     // Immediate parent first. Smart skips siblings, not ancestor levels.
-    parents: Vec<Option<u16>>,
+    pub(in crate::code_rule_dsl) parents: Vec<Option<u16>>,
 }
 
 /// `matches` references inlined into one query's plan before the rest fall back to unrestricted.

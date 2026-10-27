@@ -122,9 +122,10 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 
 Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse than P on the same captures.
 
-**Status (2026-10-27): row 1 (anchor store) done; rows 2–8 outstanding.**
+**Status (2026-10-27): rows 1–3 done (parts of 2–3 deferred, below); rows 4–8 and the lab outstanding.**
 
 - Anchor store (`8165bd54` copy, `d24a2231`, `21028281`): rows in the content store keyed by `tape_id` (`prefilter_sets`, `tape_kind_counts`, `kind_freq`, `term_postings`, `term_freq`, `term_coverage`), cascading from `tape_objects`; `nera_postings` on every store connection; `ftsk` folded into `search_kind_fts` with kind-atom tokens (`POSITIONAL_INDEX_VERSION` 3). Five store tests ported. Nothing publishes the rows from the scan yet (with O2). `reader.rs`, `session.rs`, `preparation_tests.rs` and the lowering tests were dropped here and return with the lowering row.
+- Lowering + vocabulary (`0afc80d4`, `45fa3c1f` copies; next commit): `prefilter::select(store, lang, plans, tapes)` lowers a batch of plans to one scheduled SQL program over the store's tape-keyed rows. Decoded steps (relations, pattern parent hops, uncovered-text confirmation) became inexact supersets narrowed per tape; transducers confirm (§7). Vocabulary tables in the store schema, regex functions on every connection. Deferred: `nera_tree` for the §17 SQL fallback, atom-keyed vocabulary, `R[tid]` (Phase 4 (g)), `plan_feedback` (row 8). Nothing calls `select` yet (O2).
 
 ### Phase 4: transducer runtime (§3, §5, §7; D2, D3, D9, E5–E9, F1, F2)
 

@@ -13,7 +13,12 @@ use crate::code_rule_dsl::{language, tape::TapeDoc};
 use crate::content_store::{ContentStore, StoreError, StoreResult, TapeId, TapePrefilter};
 use ast_grep_core::Doc;
 
+mod candidates;
+mod execute;
+mod graph;
 mod kinds;
+mod lower;
+pub(crate) mod plans;
 mod values;
 
 pub(crate) use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
@@ -34,6 +39,12 @@ pub(crate) fn kind_token(code: u32) -> String {
     format!("k{}", std::str::from_utf8(&digits[at..]).expect("base36 ASCII"))
 }
 
+/// The kind code of node `pre` in the prefilter's atoms. A restored tape reports ERROR as
+/// tree-sitter's symbol (u16::MAX); the atoms use its tape code, 0, which no other node has.
+pub(crate) fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
+    if doc.transducer_flags(pre) & 8 != 0 { 0 } else { doc.transducer_kind(pre) }
+}
+
 /// A tape's prefilter rows, from the tape alone.
 pub(crate) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> StoreResult<TapePrefilter> {
     let lang = u32::from(language::tape_tag(*doc.get_lang()).ok_or_else(|| StoreError::Invalid("unregistered tape language".to_owned()))?);
@@ -43,7 +54,7 @@ pub(crate) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> b
         if pre.is_multiple_of(256) && interrupted() {
             return Err(StoreError::Invalid("index construction interrupted".to_owned()));
         }
-        let kind = doc.transducer_kind(pre) & 1023;
+        let kind = kind_code(doc, pre);
         positions.push(kind, pre);
         counts[usize::from(kind)] += 1;
     }
@@ -56,6 +67,7 @@ pub(crate) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> b
     let mut set = TapePrefilter {
         tape_id,
         lang,
+        nodes: doc.transducer_len() as u32,
         kinds,
         postings: Default::default(),
         cover: Default::default(),
@@ -80,6 +92,22 @@ pub(crate) fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) 
         store.put_prefilters_bulk(&sets)?;
     }
     Ok(())
+}
+
+/// The candidates of `plans`, all of language `lang` (a tape tag), over `tapes`: per plan, its
+/// (tape, preorder) rows in order. Tapes of another language or without prefilter rows have none.
+/// A superset of each plan's roots (`lower.rs`); the matcher confirms them.
+pub(crate) fn select(
+    store: &ContentStore,
+    lang: u32,
+    plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
+    tapes: &[TapeId],
+) -> StoreResult<Vec<Vec<(i64, u32)>>> {
+    let files = tapes.iter().map(|tape| tape.row()).collect::<Vec<_>>();
+    let statement = lower::batch(plans, lang, &files);
+    let mut rows = vec![Vec::new(); plans.len()];
+    execute::candidates(store, &statement, |plan, tape, pre| rows[plan].push((tape, pre as u32)))?;
+    Ok(rows)
 }
 
 #[cfg(test)]

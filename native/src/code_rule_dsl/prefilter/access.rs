@@ -1,5 +1,5 @@
 //! Value predicates operate on distinct vocabulary terms before locating packed postings.
-use super::{Lower, Set, decode::Property};
+use super::{Lower, Set};
 
 impl Lower {
     pub(super) fn text(&mut self, scope: &Set, expression: &str, literal: bool) -> Result<Set, ()> {
@@ -25,7 +25,7 @@ impl Lower {
                 let lang = self.parameter(i64::from(self.lang));
                 let name = format!("terms{}", self.ctes.len());
                 let body = if literal {
-                    format!("SELECT term FROM vlex WHERE lang={lang} AND term={expression}")
+                    format!("SELECT term FROM term_freq WHERE lang={lang} AND term={expression}")
                 } else {
                     self.predicates
                         .insert(name.clone(), (lang.clone(), expression.clone()));
@@ -40,7 +40,7 @@ impl Lower {
             };
             let lang = self.parameter(i64::from(self.lang));
             let guard = self.value_kind_guard(domain.as_ref(), "v");
-            let set = self.relation(format!("SELECT v.fid,p.pre FROM {terms} t CROSS JOIN cf CROSS JOIN vidx v ON v.fid=cf.fid CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang} AND v.term=t.term{guard}"), true)?;
+            let set = self.relation(format!("SELECT v.tape_id,p.pre FROM {terms} t CROSS JOIN cf CROSS JOIN term_postings v ON v.tape_id=cf.fid CROSS JOIN nera_postings(v.postings) p WHERE v.lang={lang} AND v.term=t.term{guard}"), true)?;
             self.indexed.insert(set.name.clone());
             self.reuse.values.insert(key, set.clone());
             set
@@ -49,7 +49,7 @@ impl Lower {
         // membership, with the value hits outside, rather than scanning the whole kind set.
         let selected = self.value_within(scope, &indexed, bare)?;
         let guard = self.value_kind_guard(domain.as_ref(), "c");
-        let uncovered = self.relation(format!("SELECT c.fid,p.pre FROM cf CROSS JOIN vcov c ON c.fid=cf.fid CROSS JOIN nera_postings(c.missing) p WHERE length(c.missing)>0{guard}"), true)?;
+        let uncovered = self.relation(format!("SELECT c.tape_id,p.pre FROM cf CROSS JOIN term_coverage c ON c.tape_id=cf.fid CROSS JOIN nera_postings(c.missing) p WHERE length(c.missing)>0{guard}"), true)?;
         self.indexed.insert(uncovered.name.clone());
         // Uncovered nodes are often every node of a kind (any node with an interior), so the scope,
         // within the same kinds, is the smaller side: iterate it and probe the indexed postings.
@@ -58,18 +58,13 @@ impl Lower {
         } else {
             self.relation(format!("SELECT s.fid,s.pre FROM {} s WHERE EXISTS(SELECT 1 FROM {} u WHERE u.fid=s.fid AND u.pre=s.pre)", scope.name, uncovered.name), scope.exact)?
         };
-        let expression = self.parameter(expression.to_owned());
-        let spans = self.decoded(&fallback, Property::Span);
-        let predicate = if literal {
-            format!("nera_slice(s.fid,s.start,s.len)={expression}")
-        } else {
-            format!("nera_term_matches({expression},nera_slice(s.fid,s.start,s.len))")
+        // P confirmed uncovered nodes against their decoded source spans. Unconfirmed, they are
+        // candidates: the union is a superset.
+        let confirmed = Set {
+            exact: false,
+            ..fallback
         };
-        let confirmed = self.relation(
-            format!("SELECT s.fid,s.pre FROM {spans} s WHERE {predicate}"),
-            scope.exact,
-        )?;
-        let selected = self.combine(&selected, &confirmed, "UNION", scope.exact)?;
+        let selected = self.combine(&selected, &confirmed, "UNION", false)?;
         Ok(self.narrowed(selected, scope))
     }
     fn value_kind_guard(
@@ -80,7 +75,10 @@ impl Lower {
         domain.map_or(String::new(), |kinds| {
             let parameters = kinds
                 .iter()
-                .map(|&kind| self.parameter(i64::from(if kind == u16::MAX { 0 } else { kind })))
+                .map(|&kind| {
+                    let atom = self.atom(kind);
+                    self.parameter(atom)
+                })
                 .collect::<Vec<_>>();
             format!(" AND {alias}.kind IN ({})", parameters.join(","))
         })

@@ -13,6 +13,7 @@ mod derivation;
 mod facts_memo;
 mod objects;
 mod postings;
+mod vocabulary;
 #[allow(unused_imports)]
 pub(crate) use postings::append_delta;
 #[allow(dead_code)]

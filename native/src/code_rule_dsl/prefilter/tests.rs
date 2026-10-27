@@ -18,7 +18,7 @@ fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
 
 /// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in
 /// microseconds), so a counter disambiguates.
-fn temp() -> PathBuf {
+pub(super) fn temp() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -26,7 +26,7 @@ fn temp() -> PathBuf {
 }
 
 /// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
-fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
+pub(super) fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
     let (doc, bytes) = document(source, lang);
     let grammar = i64::from(language::tape_tag(lang).unwrap());
     let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
@@ -39,7 +39,7 @@ fn count(store: &ContentStore, sql: &str) -> i64 {
     store.query_rows(sql, [], |r| r.get(0)).unwrap()[0]
 }
 
-fn open(path: &Path) -> ContentStore {
+pub(super) fn open(path: &Path) -> ContentStore {
     ContentStore::open(path).unwrap()
 }
 
@@ -66,7 +66,7 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
     assert!(!indexed.iter().any(|(t, _, _)| t == "TARGET"));
     for (text, kind, pre) in indexed {
         assert_eq!(text, doc.transducer_text_str(pre));
-        assert_eq!(kind, base + u32::from(doc.transducer_kind(pre)));
+        assert_eq!(kind, base + u32::from(kind_code(&doc, pre)));
     }
     assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN ('Target','target')"), 2);
 
@@ -157,7 +157,7 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
         let mut seen = 0;
         for code in 0..LANG_STRIDE as u16 {
             let positions = store.kind_positions(tape, base + u32::from(code)).unwrap();
-            assert!(positions.iter().all(|&pre| doc.transducer_kind(pre) & 1023 == code));
+            assert!(positions.iter().all(|&pre| kind_code(&doc, pre) == code));
             seen += positions.len();
             *totals.entry(base + u32::from(code)).or_default() += positions.len() as i64;
         }

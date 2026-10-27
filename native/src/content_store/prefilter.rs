@@ -23,7 +23,8 @@ use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId
 use rusqlite::{Transaction, params, types::Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const PREFILTER_VERSION: i64 = 1;
+/// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
+pub(crate) const PREFILTER_VERSION: i64 = 2;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub(crate) const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -39,6 +40,8 @@ pub(crate) const TOO_BIG: u8 = 4;
 pub(crate) struct TapePrefilter {
     pub tape_id: TapeId,
     pub lang: u32,
+    /// The tape's node count: candidate SQL enumerates every node of a tape from it.
+    pub nodes: u32,
     /// (kind atom, count, delta-varint postings), sorted by atom.
     pub kinds: Vec<(u32, u32, Vec<u8>)>,
     /// Clean leaf terms: (kind atom, term) → preorders, ascending.
@@ -97,6 +100,26 @@ impl ContentStore {
         Ok(rows)
     }
 
+    /// Runs the prefilter's candidate SQL (`code_rule_dsl::prefilter::execute`) on the store's
+    /// connection in one transaction. Its sets are temporary tables; only registering regex
+    /// predicates writes the store (the `vocabulary_*` tables), so a statement that does takes the
+    /// write lock up front and any other reads a snapshot without waiting for a writer.
+    pub(crate) fn candidate_transaction<T>(
+        &self,
+        writes: bool,
+        mut operation: impl FnMut(&rusqlite::Connection) -> rusqlite::Result<T>,
+    ) -> StoreResult<T> {
+        if writes {
+            self.require_write_capacity()?;
+            return self.immediate_transaction(|transaction| Ok(operation(transaction)?));
+        }
+        let mut connection = self.connection.lock().expect("content store mutex poisoned");
+        let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)?;
+        let value = operation(&transaction)?;
+        transaction.commit()?;
+        Ok(value)
+    }
+
     /// Deletes a tape, as collection does, for tests of the cascade.
     #[cfg(test)]
     pub(crate) fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
@@ -126,8 +149,8 @@ fn put(transaction: &Transaction<'_>, set: &TapePrefilter) -> StoreResult<()> {
     // Publishing again replaces: the cascade and triggers count the old rows down.
     transaction.execute("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
     transaction.execute(
-        "INSERT INTO prefilter_sets(tape_id,version) VALUES(?1,?2)",
-        params![tape, PREFILTER_VERSION],
+        "INSERT INTO prefilter_sets(tape_id,version,nodes) VALUES(?1,?2,?3)",
+        params![tape, PREFILTER_VERSION, set.nodes],
     )?;
     // The residue cap applies to the store, not the tape: a kind whose unclean leaves, with the
     // ones already published, exceed it keeps them on the coverage path instead.
