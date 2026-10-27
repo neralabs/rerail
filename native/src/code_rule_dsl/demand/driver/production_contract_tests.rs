@@ -1,0 +1,4265 @@
+//! Production conformance contracts for SQL lowering.
+//!
+//! Every input is an authored, complete `rerail.policy/v1` document. The tests compile these
+//! documents with the public policy compiler and then invoke `SqlCatalogPlan`; there is no compact
+//! form frontend. Compact forms are immutable descriptions only.
+
+use super::relational::SqlCatalogPlan;
+use crate::code_rule_dsl::CodeRuleDslRuntime;
+use crate::code_rule_dsl::language::{GrammarDialect, label};
+use crate::code_rule_dsl::packed::Program;
+use crate::code_rule_dsl::test_support::CAPABILITIES;
+use ast_grep_core::Pattern;
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+fn assert_typed_relation_sources(sql: &str, case: &str) {
+    assert!(
+        !sql.contains("rerail_matches"),
+        "{case}: legacy wide relation"
+    );
+    for relation in [
+        "rerail_batch_status",
+        "rerail_producer_status",
+        "rerail_terminal_match",
+        "rerail_capture",
+        "rerail_navigation",
+        "rerail_document_map",
+    ] {
+        assert_eq!(sql.matches(relation).count(), 1, "{case}: {relation}");
+    }
+    let fact_scans = [
+        "rerail_semantic_fact",
+        "rerail_value_fact",
+        "rerail_parse_fact",
+        "rerail_transform_fact",
+    ]
+    .iter()
+    .map(|relation| sql.matches(relation).count())
+    .sum::<usize>();
+    assert!(fact_scans > 0, "{case}: typed fact family");
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractCase {
+    name: String,
+    form: String,
+    policy: Value,
+    workspace: ContractWorkspace,
+    expected: ContractExpected,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractWorkspace {
+    files: Vec<ContractFile>,
+    document_maps: Vec<ContractDocumentMap>,
+    capabilities: String,
+    failure_injection: Option<FailureInjection>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractFile {
+    path: String,
+    language: String,
+    source: String,
+    module: Option<Value>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractDocumentMap {
+    source_path: String,
+    generated_path: String,
+    spans: Vec<ContractMappedSpan>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractMappedSpan {
+    source_start: usize,
+    source_end: usize,
+    generated_start: usize,
+    generated_end: usize,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct FailureInjection {
+    producer: usize,
+    code: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ContractExpected {
+    oracle: ExpectedOracle,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct ExpectedOracle {
+    violations: Vec<Value>,
+    failures: Vec<Value>,
+}
+
+#[test]
+fn implementation_catalog_fixture_has_one_meaning() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
+    ))
+    .expect("the implementation catalog fixture is JSON");
+    for case in fixture["cases"]
+        .as_array()
+        .expect("the catalog fixture has cases")
+    {
+        assert!(
+            case.get("normalized_sql").is_none(),
+            "{} duplicates its SQL contract in the catalog fixture",
+            case["name"]
+        );
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ImplementationGoldenFile {
+    cases: Vec<ImplementationCatalogGolden>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ImplementationCatalogGolden {
+    name: String,
+    terminal_catalog: Vec<ExpectedTerminal>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActualImplementationGolden {
+    normalized_sql: String,
+    terminal_catalog: Vec<ExpectedTerminal>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ExpectedTerminal {
+    ordinal: usize,
+    kind: String,
+    dialect: String,
+    producer_kind: String,
+    program_digest: String,
+    result_schema: Vec<String>,
+    owning_clause_ids: Vec<String>,
+    result_limit: u32,
+    completion_required: bool,
+}
+
+fn authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    let source = include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.sql"
+    );
+    source
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("an authored SQL contract has a fixture name");
+            let start = body
+                .find("WITH ")
+                .expect("an authored SQL contract has one statement");
+            let sql = body[start..].trim().trim_end_matches(';');
+            assert_eq!(sql.matches(';').count(), 0, "{name} has one statement");
+            (name.trim().to_owned(), normalized_sql(sql))
+        })
+        .collect()
+}
+
+fn phase_five_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    let source =
+        include_str!("../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.sql");
+    source
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("an authored Phase 5 SQL contract has a fixture name");
+            let start = body
+                .find("WITH ")
+                .expect("an authored Phase 5 SQL contract has one statement");
+            (
+                name.trim().to_owned(),
+                normalized_sql(body[start..].trim().trim_end_matches(';')),
+            )
+        })
+        .collect()
+}
+
+fn phase_six_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    include_str!("../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.sql")
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("a Phase 6 SQL fixture name");
+            let start = body.find("WITH ").expect("a Phase 6 SQL statement");
+            (
+                name.trim().to_owned(),
+                normalized_sql(body[start..].trim().trim_end_matches(';')),
+            )
+        })
+        .collect()
+}
+
+fn phase_seven_authored_sql_goldens() -> std::collections::BTreeMap<String, String> {
+    include_str!("../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_7.sql")
+        .split("-- fixture: ")
+        .skip(1)
+        .map(|section| {
+            let (name, body) = section
+                .split_once('\n')
+                .expect("a Phase 7 SQL fixture name");
+            let start = body.find("WITH ").expect("a Phase 7 SQL statement");
+            (
+                name.trim().to_owned(),
+                normalized_sql(body[start..].trim().trim_end_matches(';')),
+            )
+        })
+        .collect()
+}
+
+fn phase_seven_implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_7.json"
+    ))
+    .expect("the Phase 7 implementation goldens have the strict schema")
+}
+
+fn phase_six_implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_6.json"
+    ))
+    .expect("the Phase 6 implementation goldens have the strict schema")
+}
+
+fn phase_five_implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_5.json"
+    ))
+    .expect("the Phase 5 implementation goldens have the strict schema")
+}
+
+fn implementation_goldens() -> ImplementationGoldenFile {
+    serde_json::from_str(include_str!(
+        "../../../../fixtures/code-rule-dsl/query/implementation_goldens_phase_2_4.json"
+    ))
+    .expect("the implementation goldens have the strict schema")
+}
+
+fn normalized_sql(sql: &str) -> String {
+    sql.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn exact_sql(sql: &str) -> String {
+    let sql = sql
+        .find("document_map AS MATERIALIZED")
+        .and_then(|start| {
+            let tail = &sql[start..];
+            ["),", ") ,"]
+                .into_iter()
+                .filter_map(|delimiter| tail.find(delimiter).map(|end| (end, delimiter.len())))
+                .min_by_key(|(end, _)| *end)
+                .map(|(end, delimiter)| &sql[start + end + delimiter..])
+        })
+        .unwrap_or(sql);
+    let mut tokens = Vec::new();
+    let mut chars = sql.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        if character.is_whitespace() {
+            continue;
+        }
+        if character == '\'' {
+            let mut end = start + character.len_utf8();
+            while let Some((index, quoted)) = chars.next() {
+                end = index + quoted.len_utf8();
+                if quoted == '\'' {
+                    if chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                        let (index, escaped) = chars.next().expect("an escaped quote exists");
+                        end = index + escaped.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            tokens.push(sql[start..end].to_owned());
+            continue;
+        }
+        if character.is_ascii_alphanumeric() || matches!(character, '_' | ':' | '.') {
+            let mut end = start + character.len_utf8();
+            while let Some(&(index, next)) = chars.peek() {
+                if next.is_ascii_alphanumeric() || matches!(next, '_' | ':' | '.') {
+                    chars.next();
+                    end = index + next.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            tokens.push(sql[start..end].to_owned());
+            continue;
+        }
+        let mut token = character.to_string();
+        if let Some(&(_, next)) = chars.peek()
+            && matches!(
+                (character, next),
+                ('<', '=') | ('>', '=') | ('<', '>') | ('!', '=') | ('|', '|')
+            )
+        {
+            chars.next();
+            token.push(next);
+        }
+        tokens.push(token);
+    }
+    tokens.join(" ")
+}
+
+fn terminal_kind(kind: super::relational::TerminalKind) -> String {
+    format!("{kind:?}").to_ascii_lowercase()
+}
+
+fn producer_kind(kind: crate::code_rule_dsl::transducer::sql_backend::ProducerKind) -> String {
+    format!("{kind:?}").to_ascii_lowercase()
+}
+
+fn result_schema(kind: super::relational::TerminalKind) -> Vec<String> {
+    use super::relational::TerminalKind;
+    let rows = match kind {
+        TerminalKind::Pattern => &["producer_status", "terminal_match", "capture"][..],
+        TerminalKind::Navigation => &["producer_status", "navigation"],
+        TerminalKind::Value | TerminalKind::Fact | TerminalKind::Parse => {
+            &["producer_status", "fact"]
+        }
+        TerminalKind::Universe
+        | TerminalKind::Kind
+        | TerminalKind::Regex
+        | TerminalKind::Text
+        | TerminalKind::Equality
+        | TerminalKind::CallSeed
+        | TerminalKind::Transform
+        | TerminalKind::File => &["producer_status", "terminal_match"],
+    };
+    rows.iter().map(|row| (*row).to_owned()).collect()
+}
+
+fn compiled_case(case: &ContractCase) -> Arc<crate::code_rule_dsl::model::CompiledCodeRule> {
+    CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason))
+    .inner
+}
+
+fn actual_implementation_golden(case: &ContractCase) -> ActualImplementationGolden {
+    actual_implementation_golden_for(case, false)
+}
+
+fn actual_final_implementation_golden(case: &ContractCase) -> ActualImplementationGolden {
+    actual_implementation_golden_for(case, true)
+}
+
+fn actual_implementation_golden_for(
+    case: &ContractCase,
+    final_projection: bool,
+) -> ActualImplementationGolden {
+    let compiled = compiled_case(case);
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled)]).unwrap_or_else(|error| {
+        panic!("{} lowering: {}", case.name, error.unsupported().join("; "))
+    });
+    let terminal_catalog = plan
+        .terminals()
+        .iter()
+        .enumerate()
+        .map(|(ordinal, terminal)| {
+            let kind = terminal.kind();
+            ExpectedTerminal {
+                ordinal,
+                kind: terminal_kind(kind),
+                dialect: terminal.language().to_owned(),
+                producer_kind: producer_kind(terminal.producer_kind()),
+                program_digest: terminal.program_digest(),
+                result_schema: result_schema(kind),
+                owning_clause_ids: terminal
+                    .clauses()
+                    .iter()
+                    .map(|&(rule, clause)| {
+                        assert_eq!(rule, 0, "{} has one compiled rule", case.name);
+                        format!("{}/{}", compiled.id, compiled.clauses[clause].id)
+                    })
+                    .collect(),
+                result_limit: terminal.result_limit(),
+                completion_required: true,
+            }
+        })
+        .collect();
+    let referenced = plan
+        .clause_terminal_ids()
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        referenced,
+        (0..plan.terminals().len()).collect(),
+        "{} has an unreferenced catalog entry",
+        case.name
+    );
+    ActualImplementationGolden {
+        normalized_sql: normalized_sql(if final_projection {
+            plan.execution_sql()
+        } else {
+            plan.structural_sql()
+        }),
+        terminal_catalog,
+    }
+}
+
+fn authored_cases(source: &str) -> Vec<ContractCase> {
+    serde_json::from_str(source).expect("the authored production contracts have the strict schema")
+}
+
+fn cases() -> Vec<ContractCase> {
+    let mut cases = Vec::with_capacity(108);
+    for fixture in [
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_001_020.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_021_040.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_041_060.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_061_080.json"),
+        include_str!("../../../../fixtures/code-rule-dsl/query/production_contracts_081_108.json"),
+    ] {
+        cases.extend(authored_cases(fixture));
+    }
+    let names = cases
+        .iter()
+        .map(|case| case.name.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        cases.len(),
+        108,
+        "the production contract inventory is fixed"
+    );
+    assert_eq!(names.len(), cases.len(), "contract names are unique");
+    for case in &cases {
+        assert_eq!(case.policy["format"], "rerail.policy/v1", "{}", case.name);
+        assert_eq!(
+            case.policy["id"],
+            format!("sql-contract-{}", case.name),
+            "{}",
+            case.name
+        );
+        assert_eq!(case.policy["revision"], 1, "{}", case.name);
+        assert_eq!(case.policy["mode"], "block", "{}", case.name);
+        assert_eq!(
+            case.policy["clauses"]
+                .as_array()
+                .expect("a production policy has clauses")
+                .len(),
+            1,
+            "{}",
+            case.name
+        );
+    }
+    cases
+}
+
+#[test]
+fn production_contract_phase_one_has_complete_typed_data() {
+    let cases = cases();
+    for case in cases {
+        assert!(
+            !case.workspace.files.is_empty(),
+            "{} has no files",
+            case.name
+        );
+        let paths = case
+            .workspace
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(paths.len(), case.workspace.files.len(), "{}", case.name);
+        assert!(
+            matches!(
+                case.workspace.capabilities.as_str(),
+                "default" | "work-limit-one"
+            ),
+            "{}",
+            case.name
+        );
+        for map in &case.workspace.document_maps {
+            assert!(paths.contains(map.source_path.as_str()), "{}", case.name);
+            assert!(!map.generated_path.is_empty(), "{}", case.name);
+            assert!(!map.spans.is_empty(), "{}", case.name);
+            for span in &map.spans {
+                assert!(span.source_start <= span.source_end, "{}", case.name);
+                assert!(span.generated_start <= span.generated_end, "{}", case.name);
+            }
+        }
+        if let Some(failure) = &case.workspace.failure_injection {
+            assert_eq!(case.name, "semantic-fact-producer-failure");
+            assert_eq!(failure.producer, 0);
+            assert_eq!(failure.code, "capacity-failure");
+        }
+    }
+}
+
+fn contract_capabilities(case: &ContractCase) -> String {
+    let mut capabilities: Value =
+        serde_json::from_str(CAPABILITIES).expect("default test capabilities are JSON");
+    match case.workspace.capabilities.as_str() {
+        "default" => {}
+        "work-limit-one" => capabilities["limits"]["maxVisitedNodes"] = 1.into(),
+        other => panic!("{} has unknown capabilities `{other}`", case.name),
+    }
+    capabilities.to_string()
+}
+
+fn oracle_result(case: &ContractCase) -> Value {
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let files = case
+        .workspace
+        .files
+        .iter()
+        .map(|file| {
+            let mut input = serde_json::json!({
+                "path": file.path,
+                "language": file.language,
+                "source": file.source,
+            });
+            if let Some(module) = &file.module {
+                input["module"] = module.clone();
+            }
+            input
+        })
+        .collect::<Vec<_>>();
+    let snapshot = serde_json::json!({
+        "format": "rerail.repository-snapshot/v1",
+        "revision": 1,
+        "files": files,
+        "facts": [],
+    });
+    let output = compiled
+        .evaluate(snapshot.to_string(), "report".to_owned())
+        .unwrap_or_else(|error| panic!("{} oracle: {}", case.name, error.reason));
+    serde_json::from_str(&output).expect("the oracle returns JSON")
+}
+
+#[test]
+fn production_contract_phase_one_distinct_count_uses_related_capture() {
+    let cases = cases();
+    let case = cases
+        .iter()
+        .find(|case| case.name == "count-distinct-capture")
+        .expect("the distinct-count contract exists");
+    assert_eq!(
+        case.policy["clauses"][0]["budget"]["query"]["evidence"]["query"]["ast"]["rule"]["kind"],
+        "call"
+    );
+    assert_eq!(
+        case.policy["clauses"][0]["budget"]["query"]["evidence"]["query"]["ast"]["rule"]["has"]["pattern"],
+        "$A"
+    );
+    assert!(!case.expected.oracle.violations.is_empty());
+}
+
+#[test]
+fn production_contract_phase_one_oracles_match_committed_results() {
+    let mut differences = Vec::new();
+    for case in cases() {
+        let result = oracle_result(&case);
+        if result["violations"].as_array() != Some(&case.expected.oracle.violations)
+            || result["failures"].as_array() != Some(&case.expected.oracle.failures)
+        {
+            differences.push(case.name);
+        }
+    }
+    assert!(
+        differences.is_empty(),
+        "oracle results differ for: {}",
+        differences.join(", ")
+    );
+}
+
+const PHASE_TWO_CASES: &[&str] = &[
+    "node-value-positive",
+    "node-value-unknown",
+    "all-two-positive",
+    "all-capture-threading",
+    "all-three-valued-false-after-unknown",
+    "all-three-valued-withheld-capture",
+    "any-first-branch",
+    "any-unknown-binding-blocks-later",
+    "any-unknown-without-binding",
+    "not-complete-positive",
+    "not-unknown",
+    "nested-all-any-not",
+    "disabled-when",
+];
+
+#[test]
+fn production_contract_phase_two_comparison_value_and_truth_lower_completely() {
+    let mut failures = Vec::new();
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_TWO_CASES.contains(&case.name.as_str()))
+    {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
+            Ok(plan) => {
+                assert_typed_relation_sources(plan.structural_sql(), &case.name);
+                assert!(
+                    !plan.structural_sql().contains("GrammarMatcher"),
+                    "{}",
+                    case.name
+                );
+                assert!(!plan.structural_sql().contains("tq_"), "{}", case.name);
+                if case.name == "disabled-when" {
+                    assert!(
+                        plan.terminals().is_empty(),
+                        "disabled queries demand no terminals"
+                    );
+                }
+            }
+            Err(error) => failures.push(format!(
+                "{} (`{}`): {}",
+                case.name,
+                case.form,
+                error.unsupported().join("; ")
+            )),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn production_contract_phase_two_sql_rows_equal_committed_oracle_rows() {
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_TWO_CASES.contains(&case.name.as_str()))
+    {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"]
+                        .as_u64()
+                        .expect("oracle violation has a start byte") as usize,
+                    violation["span"]["endByte"]
+                        .as_u64()
+                        .expect("oracle violation has an end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(
+            super::policy_lowering_tests::sql_ranges(&compiled, &case.workspace.files[0].source),
+            expected,
+            "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_resolves_matches_authored_sql() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-resolves")
+        .expect("the resolution contract exists");
+    let expected = authored_sql_goldens();
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "resolution must use the authored semantic-gate SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_four_layout_matches_authored_semantic_gate_sql() {
+    let expected = authored_sql_goldens();
+    let name = "semantic-layout";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the layout contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "layout must use the authored common semantic-gate SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_four_value_and_annotation_targets_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["semantic-binding-value", "semantic-binding-annotation"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the semantic target contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored shared semantic-target SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_site_and_creation_targets_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["semantic-binding-site", "semantic-binds"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the semantic site contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored semantic-site SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_occurrence_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "semantic-binding-occurrence";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the occurrence contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "occurrence must use the authored ordered semantic-target SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_four_redefinitions_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["semantic-redefines-any", "semantic-redefines-every"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the redefinition contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored completion-aware redefinition SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_every_redefinition_rejects_non_true_candidates() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-redefines-every")
+        .expect("the every-redefinition contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the every-redefinition policy compiles");
+    let statements = authored_sql_goldens();
+    let sql = &statements[&case.name];
+    let original = "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6)";
+    for (state, verdict) in [("false", "0"), ("unknown", "NULL")] {
+        let columns = format!(
+            "batch, 6, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, 8, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, {verdict}, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence"
+        );
+        let injected = format!(
+            "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6 UNION ALL SELECT {columns} FROM packed gate WHERE gate.row_kind = 6 AND gate.fact_kind = 0)"
+        );
+        let sql = sql.replacen(original, &injected, 1);
+        assert_ne!(sql, statements[&case.name], "candidate injection applied");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            &sql,
+        );
+        assert!(
+            outcome.ranges.is_empty(),
+            "a {state} slot-8 candidate prevents every-redefinition truth"
+        );
+        assert!(
+            outcome.errors.is_empty(),
+            "candidate {state} is not a producer failure"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_arguments_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["semantic-arguments-bind", "semantic-arguments-filter"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the argument contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored argument-binding SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_formats_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in [
+        "semantic-format-unused-arguments",
+        "semantic-format-missing-fields",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the format contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored completion-aware format SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_incomplete_format_analysis_cannot_match() {
+    let statements = authored_sql_goldens();
+    for (name, position) in [
+        ("semantic-format-unused-arguments", 0),
+        ("semantic-format-missing-fields", 1),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the format contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the format policy compiles");
+        let original = "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6)";
+        let columns = format!(
+            "batch, 6, producer_id, file_index, task_index, match_index, {position}, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, 14, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, 1, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence"
+        );
+        let injected = format!(
+            "fact AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = 6 UNION ALL SELECT {columns} FROM packed gate WHERE gate.row_kind = 6 AND gate.fact_kind = 0)"
+        );
+        let sql = statements[name].replacen(original, &injected, 1);
+        assert_ne!(sql, statements[name], "incomplete-state injection applied");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &sql,
+        );
+        assert!(outcome.ranges.is_empty(), "{name}: incomplete analysis");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: semantic unknown is not failure"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_calls_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["semantic-calls-direct", "semantic-calls-through"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the calls contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored bounded call-target SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_failure_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "semantic-fact-producer-failure";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the semantic failure contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "semantic failure must use the authored atomic failure SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_two_disabled_query_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "disabled-when";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the disabled query contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "a disabled query must use the authored producer-free SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_two_authored_disabled_query_is_empty() {
+    let statements = authored_sql_goldens();
+    let name = "disabled-when";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the disabled query contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the disabled query policy compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        &statements[name],
+    );
+    assert!(outcome.ranges.is_empty(), "disabled query has no ranges");
+    assert!(
+        outcome.errors.is_empty(),
+        "disabled query has no producer failures"
+    );
+}
+
+#[test]
+fn production_contract_phase_two_nested_truth_matches_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "nested-all-any-not";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the nested truth contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "nested Boolean composition must use the authored relational SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_two_authored_nested_truth_equals_oracle() {
+    let statements = authored_sql_goldens();
+    let name = "nested-all-any-not";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the nested truth contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the nested truth policy compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        &statements[name],
+    );
+    let mut expected = case
+        .expected
+        .oracle
+        .violations
+        .iter()
+        .map(|violation| {
+            (
+                violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+            )
+        })
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    assert_eq!(outcome.ranges, expected, "authored nested truth ranges");
+    assert!(outcome.errors.is_empty(), "authored nested truth failures");
+}
+
+#[test]
+fn production_contract_phase_two_not_relations_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["not-complete-positive", "not-unknown"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the negation contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored completion-aware negation SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_two_authored_not_relations_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["not-complete-positive", "not-unknown"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the negation contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the negation policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+}
+
+#[test]
+fn production_contract_phase_two_any_relations_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in [
+        "any-first-branch",
+        "any-unknown-binding-blocks-later",
+        "any-unknown-without-binding",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered alternative contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored three-valued alternative SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_two_authored_any_relations_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in [
+        "any-first-branch",
+        "any-unknown-binding-blocks-later",
+        "any-unknown-without-binding",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered alternative contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the ordered alternative policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+}
+
+#[test]
+fn production_contract_phase_two_all_relations_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in [
+        "all-two-positive",
+        "all-capture-threading",
+        "all-three-valued-false-after-unknown",
+        "all-three-valued-withheld-capture",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered conjunction contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored three-valued conjunction SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_two_authored_all_relations_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in [
+        "all-two-positive",
+        "all-capture-threading",
+        "all-three-valued-false-after-unknown",
+        "all-three-valued-withheld-capture",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the ordered conjunction contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the ordered conjunction policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+}
+
+#[test]
+fn production_contract_phase_two_node_values_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["node-value-positive", "node-value-unknown"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the node-value contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored completion-aware value SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_two_authored_node_values_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["node-value-positive", "node-value-unknown"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the node-value contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the node-value policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+}
+
+#[test]
+fn production_contract_phases_two_and_three_have_complete_physical_sql_contracts() {
+    let statements = authored_sql_goldens();
+    for name in PHASE_TWO_CASES.iter().chain(PHASE_THREE_CASES) {
+        let sql = &statements[*name];
+        assert_eq!(
+            sql.matches("rerail_matches").count(),
+            1,
+            "{name}: packed scan"
+        );
+        assert!(
+            sql.contains("batch_status AS MATERIALIZED"),
+            "{name}: batch status"
+        );
+        for family in [
+            "producer_status",
+            "terminal_match",
+            "capture",
+            "navigation",
+            "fact",
+            "document_map",
+        ] {
+            assert!(
+                sql.contains(&format!("{family} AS MATERIALIZED")),
+                "{name}: {family} physical row family"
+            );
+        }
+        assert!(sql.contains("AS clause_ordinal"), "{name}: clause identity");
+        if *name == "disabled-when" {
+            assert!(
+                !sql.contains("FROM producer_status failed"),
+                "{name}: a producer-free clause has no producer failure union"
+            );
+        } else {
+            assert!(
+                sql.contains("row_kind, failed.producer_id"),
+                "{name}: typed failure union"
+            );
+        }
+        assert!(
+            sql.ends_with("ORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index"),
+            "{name}: deterministic clause ordering"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phases_two_to_four_match_authored_sql_statements() {
+    let expected = authored_sql_goldens();
+    let expected_names = PHASE_TWO_CASES
+        .iter()
+        .copied()
+        .chain(PHASE_THREE_CASES.iter().copied())
+        .chain(PHASE_FOUR_CASES.iter().copied())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expected.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        expected_names,
+        "the authored SQL inventory is exact"
+    );
+    for case in cases()
+        .into_iter()
+        .filter(|case| expected_names.contains(case.name.as_str()))
+        // These contracts keep their independently authored SQL as a semantic oracle. Their
+        // implementation SQL now uses one shared utility body CTE, which the structural contract
+        // below specifies independently.
+        .filter(|case| {
+            !matches!(
+                case.name.as_str(),
+                "utility-shared-component" | "utility-argument-frame-isolation"
+            )
+        })
+    {
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{} exact authored SQL",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn production_contract_phases_two_and_three_have_complete_terminal_catalogs() {
+    let goldens = implementation_goldens();
+    let expected_names = PHASE_TWO_CASES
+        .iter()
+        .chain(PHASE_THREE_CASES)
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let authored = goldens
+        .cases
+        .into_iter()
+        .filter(|golden| expected_names.contains(golden.name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        authored
+            .iter()
+            .map(|golden| golden.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        expected_names,
+        "each Phase 2 and Phase 3 contract must own one terminal catalog"
+    );
+    let cases = cases()
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for golden in authored {
+        let case = &cases[&golden.name];
+        let actual = actual_implementation_golden(case).terminal_catalog;
+        assert_eq!(
+            actual, golden.terminal_catalog,
+            "{} exact catalog",
+            golden.name
+        );
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
+            "{} repeated catalog compilation",
+            golden.name
+        );
+        std::thread::scope(|scope| {
+            let parallel = (0..2)
+                .map(|_| scope.spawn(|| actual_implementation_golden(case).terminal_catalog))
+                .collect::<Vec<_>>();
+            for catalog in parallel {
+                assert_eq!(
+                    catalog
+                        .join()
+                        .expect("parallel catalog compilation completes"),
+                    golden.terminal_catalog,
+                    "{} parallel catalog compilation",
+                    golden.name
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn production_contract_phase_four_has_complete_terminal_catalogs() {
+    let goldens = implementation_goldens();
+    let expected_names = PHASE_FOUR_CASES.iter().copied().collect::<BTreeSet<_>>();
+    let phase_four = goldens
+        .cases
+        .into_iter()
+        .filter(|golden| expected_names.contains(golden.name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        phase_four
+            .iter()
+            .map(|golden| golden.name.as_str())
+            .collect::<BTreeSet<_>>(),
+        expected_names,
+        "each Phase 4 contract must own one authored terminal catalog"
+    );
+    let cases = cases()
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for golden in phase_four {
+        assert!(
+            !golden.terminal_catalog.is_empty(),
+            "{} catalog",
+            golden.name
+        );
+        let case = &cases[&golden.name];
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
+            "{} exact ordered terminal catalog",
+            golden.name
+        );
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
+            "{} repeated catalog compilation",
+            golden.name
+        );
+        std::thread::scope(|scope| {
+            let parallel = (0..2)
+                .map(|_| scope.spawn(|| actual_implementation_golden(case).terminal_catalog))
+                .collect::<Vec<_>>();
+            for catalog in parallel {
+                assert_eq!(
+                    catalog
+                        .join()
+                        .expect("parallel catalog compilation completes"),
+                    golden.terminal_catalog,
+                    "{} parallel catalog compilation",
+                    golden.name
+                );
+            }
+        });
+    }
+}
+
+#[test]
+fn production_contract_phases_two_to_four_have_complete_implementation_goldens() {
+    let goldens = implementation_goldens();
+    let expected_names = PHASE_TWO_CASES
+        .iter()
+        .copied()
+        .chain(PHASE_THREE_CASES.iter().copied())
+        .chain(PHASE_FOUR_CASES.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let actual_names = goldens
+        .cases
+        .iter()
+        .map(|golden| golden.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let missing = expected_names
+        .difference(&actual_names)
+        .copied()
+        .collect::<Vec<_>>();
+    let unexpected = actual_names
+        .difference(&expected_names)
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (missing, unexpected),
+        (Vec::new(), Vec::new()),
+        "each implemented contract must have one terminal-catalog golden"
+    );
+    assert_eq!(
+        actual_names.len(),
+        goldens.cases.len(),
+        "duplicate golden name"
+    );
+    let cases = cases()
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for golden in goldens.cases {
+        for (ordinal, terminal) in golden.terminal_catalog.iter().enumerate() {
+            assert_eq!(terminal.ordinal, ordinal, "{} catalog", golden.name);
+            assert!(
+                !terminal.program_digest.is_empty(),
+                "{} digest",
+                golden.name
+            );
+            assert!(!terminal.result_schema.is_empty(), "{} schema", golden.name);
+            assert!(terminal.completion_required, "{} completion", golden.name);
+        }
+        let case = &cases[&golden.name];
+        let actual = actual_implementation_golden(case).terminal_catalog;
+        assert_eq!(
+            actual, golden.terminal_catalog,
+            "{} implementation catalog",
+            golden.name
+        );
+        assert_eq!(
+            actual_implementation_golden(case).terminal_catalog,
+            golden.terminal_catalog,
+            "{} repeated compilation",
+            golden.name
+        );
+        std::thread::scope(|scope| {
+            let parallel = (0..2)
+                .map(|_| scope.spawn(|| actual_implementation_golden(case).terminal_catalog))
+                .collect::<Vec<_>>();
+            for result in parallel {
+                assert_eq!(
+                    result.join().expect("parallel compilation completes"),
+                    golden.terminal_catalog,
+                    "{} parallel compilation",
+                    golden.name
+                );
+            }
+        });
+    }
+}
+
+const PHASE_FOUR_CASES: &[&str] = &[
+    "semantic-resolves",
+    "semantic-binding-site",
+    "semantic-binding-value",
+    "semantic-binding-annotation",
+    "semantic-binding-occurrence",
+    "semantic-binds",
+    "semantic-redefines-any",
+    "semantic-redefines-every",
+    "semantic-arguments-bind",
+    "semantic-arguments-filter",
+    "semantic-format-unused-arguments",
+    "semantic-format-missing-fields",
+    "semantic-layout",
+    "semantic-calls-direct",
+    "semantic-calls-through",
+    "semantic-fact-producer-failure",
+];
+
+#[test]
+fn production_contract_phase_four_semantic_facts_lower_completely() {
+    let mut failures = Vec::new();
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_FOUR_CASES.contains(&case.name.as_str()))
+    {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        match SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
+            Ok(plan) => {
+                assert_typed_relation_sources(plan.structural_sql(), &case.name);
+                let expected_catalog = match case.name.as_str() {
+                    "semantic-binding-value" | "semantic-binding-annotation" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Pattern,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-format-unused-arguments"
+                    | "semantic-format-missing-fields"
+                    | "semantic-layout" => vec![
+                        super::relational::TerminalKind::Pattern,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-calls-direct" | "semantic-calls-through" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-binding-occurrence" | "semantic-redefines-every" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                    "semantic-arguments-filter" => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                        super::relational::TerminalKind::Kind,
+                    ],
+                    _ => vec![
+                        super::relational::TerminalKind::Kind,
+                        super::relational::TerminalKind::Fact,
+                    ],
+                };
+                assert_eq!(
+                    plan.terminals()
+                        .iter()
+                        .map(super::relational::TerminalPlan::kind)
+                        .collect::<Vec<_>>(),
+                    expected_catalog,
+                    "{}",
+                    case.name
+                );
+                assert!(
+                    plan.shape()
+                        .contains(&super::relational::SqlShape::ScanFact),
+                    "{} does not compose typed facts in SQL",
+                    case.name
+                );
+                assert!(
+                    plan.terminals()
+                        .iter()
+                        .filter_map(super::relational::TerminalPlan::semantic_fact)
+                        .all(|descriptor| !descriptor.source.has_nested_user_rule()),
+                    "{} retains a nested user matcher",
+                    case.name
+                );
+                assert!(
+                    !plan.structural_sql().contains("GrammarMatcher"),
+                    "{}",
+                    case.name
+                );
+                assert!(!plan.structural_sql().contains("tq_"), "{}", case.name);
+            }
+            Err(error) => failures.push(format!(
+                "{} (`{}`): {}",
+                case.name,
+                case.form,
+                error.unsupported().join("; ")
+            )),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn production_contract_phase_four_authored_sql_has_common_clause_output() {
+    let statements = authored_sql_goldens();
+    let expected_columns = [
+        "batch",
+        "row_kind",
+        "producer_id",
+        "file_index",
+        "task_index",
+        "match_index",
+        "capture_index",
+        "capture_occurrence",
+        "capture_sequence_start",
+        "capture_sequence_count",
+        "node",
+        "related_node",
+        "axis_kind",
+        "axis_order",
+        "fact_kind",
+        "document_id",
+        "mapped_document_id",
+        "start_ordinal",
+        "output_label",
+        "capture_label",
+        "text_value",
+        "start_byte",
+        "end_byte",
+        "verdict",
+        "complete",
+        "work_used",
+        "error_code",
+        "field_id",
+        "related_named",
+        "source_text",
+        "structural_key",
+        "named_leaf",
+        "capture_kind",
+        "capture_named",
+        "equality_occurrence",
+        "bindings",
+        "choice_order",
+        "clause_ordinal",
+    ];
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_FOUR_CASES.contains(&case.name.as_str()))
+    {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let dialect = match case.workspace.files[0].language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported dialect `{other}`", case.name),
+        };
+        let sql = &statements[&case.name];
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            dialect,
+            sql,
+        );
+        assert_eq!(outcome.columns, expected_columns, "{} schema", case.name);
+        assert!(
+            sql.contains("CROSS JOIN batch_status batch"),
+            "{} batch guard",
+            case.name
+        );
+        assert!(
+            sql.contains("FROM producer_status failed"),
+            "{} failure union",
+            case.name
+        );
+        assert!(
+            sql.ends_with("ORDER BY clause_ordinal, file_index, node, choice_order, producer_id, match_index, capture_index"),
+            "{} stable order",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_authored_sql_has_one_complete_physical_boundary() {
+    let statements = authored_sql_goldens();
+    let packed = "WITH packed AS MATERIALIZED (SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = :batch)";
+    let families = [
+        ("batch_status", 1),
+        ("producer_status", 2),
+        ("terminal_match", 3),
+        ("capture", 4),
+        ("navigation", 5),
+        ("fact", 6),
+        ("document_map", 7),
+    ];
+    let mut failures = Vec::new();
+    for name in PHASE_FOUR_CASES {
+        let sql = &statements[*name];
+        if !sql.starts_with(packed) {
+            failures.push(format!("{name}: incomplete packed projection"));
+        }
+        if sql.matches("rerail_matches").count() != 1 {
+            failures.push(format!("{name}: packed scan count"));
+        }
+        for (family, row_kind) in families {
+            let expected = format!(
+                "{family} AS MATERIALIZED (SELECT * FROM packed WHERE row_kind = {row_kind})"
+            );
+            if !sql.contains(&expected) {
+                failures.push(format!("{name}: missing {family}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn production_contract_phase_four_calls_through_consumes_bounded_target_facts() {
+    let statements = authored_sql_goldens();
+    let sql = &statements["semantic-calls-through"];
+    assert!(
+        !sql.starts_with("WITH RECURSIVE"),
+        "call reachability belongs to the bounded fact producer"
+    );
+    assert!(
+        sql.contains("target.fact_kind = 16"),
+        "SQL must consume typed call-target facts"
+    );
+    assert!(
+        !sql.contains("reach(file_index"),
+        "SQL must not rebuild the call graph"
+    );
+}
+
+#[test]
+fn production_contract_phase_four_authored_sql_results_equal_semantic_oracles() {
+    let statements = authored_sql_goldens();
+    for case in cases().into_iter().filter(|case| {
+        PHASE_FOUR_CASES.contains(&case.name.as_str())
+            && case.name != "semantic-fact-producer-failure"
+    }) {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let file = &case.workspace.files[0];
+        let dialect = match file.language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported phase-four dialect `{other}`", case.name),
+        };
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().unwrap() as usize,
+                    violation["span"]["endByte"].as_u64().unwrap() as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &file.source,
+            dialect,
+            &statements[&case.name],
+        );
+        assert_eq!(outcome.ranges, expected, "{}", case.name);
+        assert!(outcome.errors.is_empty(), "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_phase_four_sql_results_equal_semantic_oracles() {
+    for case in cases().into_iter().filter(|case| {
+        PHASE_FOUR_CASES.contains(&case.name.as_str())
+            && case.name != "semantic-fact-producer-failure"
+    }) {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let file = &case.workspace.files[0];
+        let dialect = match file.language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported phase-four dialect `{other}`", case.name),
+        };
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"]
+                        .as_u64()
+                        .expect("oracle violation has a start byte") as usize,
+                    violation["span"]["endByte"]
+                        .as_u64()
+                        .expect("oracle violation has an end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        let outcome =
+            super::policy_lowering_tests::sql_outcome_for_dialect(&compiled, &file.source, dialect);
+        assert_eq!(outcome.ranges, expected, "{}", case.name);
+    }
+}
+
+const PHASE_SEVEN_CASES: [&str; 8] = [
+    "capture-anchor",
+    "capture-anchor-fallback",
+    "capture-message-template",
+    "output-fix-and-suppression",
+    "capture-each-distinct",
+    "output-stable-multiplicity",
+    "capture-transform",
+    "capture-fix-range",
+];
+
+#[test]
+fn production_contract_phase_seven_has_complete_authored_sql_and_catalogs() {
+    let sql = phase_seven_authored_sql_goldens();
+    let catalogs = phase_seven_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        sql.len(),
+        PHASE_SEVEN_CASES.len(),
+        "complete authored Phase 7 SQL inventory"
+    );
+    assert_eq!(
+        catalogs.len(),
+        PHASE_SEVEN_CASES.len(),
+        "complete authored Phase 7 catalog inventory"
+    );
+    for name in PHASE_SEVEN_CASES {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 7 contract");
+        let actual = actual_final_implementation_golden(&case);
+        let authored = sql.get(name).expect("authored Phase 7 SQL");
+        assert!(!authored.trim().is_empty(), "{name}: authored SQL");
+        assert_typed_relation_sources(&actual.normalized_sql, name);
+        assert_eq!(
+            authored.matches("rerail_matches").count(),
+            1,
+            "{name}: one packed relation reference"
+        );
+        for forbidden in ["tq_", "rerail_nodes", "rerail_facts"] {
+            assert!(
+                !authored.contains(forbidden),
+                "{name}: callback-shaped SQL fragment {forbidden}"
+            );
+        }
+        assert_eq!(
+            catalogs.get(name).map(|case| &case.terminal_catalog),
+            Some(&actual.terminal_catalog),
+            "{name}: catalog"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_seven_compact_lowering_uses_semantics_not_fixture_identity() {
+    let mut case = cases()
+        .into_iter()
+        .find(|case| case.name == "capture-anchor")
+        .expect("capture-anchor contract");
+    case.policy["id"] = "renamed-output-rule".into();
+    case.policy["mode"] = "steer".into();
+    case.policy["clauses"][0]["id"] = "renamed-output-clause".into();
+    case.policy["clauses"][0]["violation"]["code"] = "RENAMED".into();
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("renamed output contract compiles");
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("renamed output contract lowers");
+    let sql = plan.execution_sql();
+    assert!(sql.starts_with("WITH batch_status AS MATERIALIZED"));
+    assert!(sql.contains("'renamed-output-rule' AS rule_id"));
+    assert!(sql.contains("'renamed-output-clause' AS clause_id"));
+    assert!(sql.contains("'RENAMED' AS code"));
+    assert!(sql.contains("'steer' AS mode"));
+    assert!(!sql.contains("sql-contract-capture-anchor"));
+    assert!(sql.contains("rerail_terminal_match"));
+}
+
+#[test]
+fn production_contract_phase_seven_compact_output_preserves_typed_failures() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "capture-anchor")
+        .expect("capture-anchor contract");
+    let file = &case.workspace.files[0];
+    let dialect = crate::code_rule_dsl::language::dialect_by_label(&file.language)
+        .expect("registered dialect");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("capture-anchor contract compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_with_producer_failure(
+        &compiled,
+        &file.source,
+        dialect,
+        0,
+        "capacity-failure",
+    );
+    assert_eq!(outcome.errors, ["capacity-failure"]);
+    assert!(outcome.ranges.is_empty());
+
+    let authored = phase_seven_authored_sql_goldens()
+        .remove("capture-anchor")
+        .expect("authored capture-anchor SQL");
+    let authored_outcome =
+        super::policy_lowering_tests::sql_outcome_for_statement_with_producer_failure(
+            &compiled,
+            &file.source,
+            dialect,
+            0,
+            "capacity-failure",
+            &authored,
+        );
+    assert_eq!(authored_outcome.errors, ["capacity-failure"]);
+    assert!(authored_outcome.ranges.is_empty());
+}
+
+#[test]
+fn production_contract_phase_seven_catalog_digests_come_from_low_level_programs() {
+    let python = label(GrammarDialect::Python).expect("Python label");
+    let digest_pattern = |source: &str| {
+        let pattern = Pattern::try_new(source, GrammarDialect::Python).expect("Python pattern");
+        Program::compile_ast_grep_pattern(&pattern)
+            .expect("packed pattern")
+            .canonical_digest(python, b"")
+    };
+    let call = Program::compile_kind(GrammarDialect::Python.kind_id("call"))
+        .expect("call kind program")
+        .canonical_digest(python, b"");
+    let universe = Program::compile_universe()
+        .expect("universe")
+        .canonical_digest(python, b"");
+    let navigation = Program::compile_navigation()
+        .expect("navigation")
+        .canonical_digest(python, b"");
+    let catalogs = phase_seven_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name, golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in ["capture-each-distinct", "output-stable-multiplicity"] {
+        assert_eq!(catalogs[name][0].program_digest, call, "{name}: call");
+        assert_eq!(
+            catalogs[name][1].program_digest, universe,
+            "{name}: universe"
+        );
+        assert_eq!(
+            catalogs[name][2].program_digest, navigation,
+            "{name}: navigation"
+        );
+        assert_eq!(
+            catalogs[name][3].program_digest,
+            digest_pattern("$A"),
+            "{name}: capture pattern"
+        );
+    }
+    for (name, pattern) in [
+        ("capture-anchor", "f($A)"),
+        ("capture-message-template", "f($A)"),
+        ("capture-fix-range", "f($A, $B)"),
+        ("capture-transform", "$A"),
+        ("output-fix-and-suppression", "print($A)"),
+    ] {
+        assert_eq!(
+            catalogs[name][0].program_digest,
+            digest_pattern(pattern),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        catalogs["capture-anchor-fallback"][0].program_digest,
+        digest_pattern("f($A)")
+    );
+    assert_eq!(
+        catalogs["capture-anchor-fallback"][1].program_digest,
+        digest_pattern("g()")
+    );
+}
+
+#[test]
+fn production_contract_phase_seven_catalogs_are_repeatable_and_concurrent() {
+    let expected = phase_seven_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name, golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for _ in 0..3 {
+        for name in PHASE_SEVEN_CASES {
+            let case = cases()
+                .into_iter()
+                .find(|case| case.name == name)
+                .expect("Phase 7 contract");
+            assert_eq!(
+                actual_final_implementation_golden(&case).terminal_catalog,
+                expected[name],
+                "{name}: repeatable catalog"
+            );
+        }
+    }
+    let threads = PHASE_SEVEN_CASES.map(|name| {
+        let expected = expected[name].clone();
+        std::thread::spawn(move || {
+            let case = cases()
+                .into_iter()
+                .find(|case| case.name == name)
+                .expect("Phase 7 contract");
+            assert_eq!(
+                actual_final_implementation_golden(&case).terminal_catalog,
+                expected,
+                "{name}: concurrent catalog"
+            );
+        })
+    });
+    for thread in threads {
+        thread.join().expect("Phase 7 compiler thread");
+    }
+}
+
+#[test]
+fn production_contract_phase_seven_authored_sql_equals_typed_oracles() {
+    let statements = phase_seven_authored_sql_goldens();
+    for name in PHASE_SEVEN_CASES {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 7 contract");
+        let file = &case.workspace.files[0];
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(&file.language)
+            .expect("registered dialect");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
+        let actual = super::policy_lowering_tests::sql_violation_values_for_statement(
+            &compiled,
+            &file.path,
+            &file.source,
+            dialect,
+            Some(&statements[name]),
+        );
+        assert_eq!(
+            actual, case.expected.oracle.violations,
+            "{name}: authored SQL"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_seven_output_spans_and_multiplicity_equal_oracles() {
+    for name in PHASE_SEVEN_CASES {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 7 contract");
+        assert_eq!(case.workspace.files.len(), 1, "{name}");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: output rows");
+        assert!(outcome.errors.is_empty(), "{name}: output failures");
+    }
+}
+
+#[test]
+fn production_contract_phase_seven_typed_violation_rows_equal_oracles() {
+    for name in PHASE_SEVEN_CASES {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 7 contract");
+        let file = &case.workspace.files[0];
+        let dialect = crate::code_rule_dsl::language::dialect_by_label(&file.language)
+            .expect("registered dialect");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
+        let actual = super::policy_lowering_tests::sql_violation_values(
+            &compiled,
+            &file.path,
+            &file.source,
+            dialect,
+        );
+        assert_eq!(actual, case.expected.oracle.violations, "{name}");
+    }
+}
+
+#[test]
+fn production_contract_phase_seven_suppression_removes_the_output_row() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "output-fix-and-suppression")
+        .expect("suppression contract");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("suppression policy compiles");
+    let violations = super::policy_lowering_tests::sql_violation_values(
+        &compiled,
+        "test_contract.py",
+        "print(value)  # noqa: F401\n",
+        GrammarDialect::Python,
+    );
+    assert!(
+        violations.is_empty(),
+        "suppressed output reached publication"
+    );
+    assert!(
+        super::policy_lowering_tests::sql_violation_values(
+            &compiled,
+            "test_contract.py",
+            "print(value)  # noqa\n",
+            GrammarDialect::Python,
+        )
+        .is_empty(),
+        "bare noqa must suppress every configured code"
+    );
+    assert_eq!(
+        super::policy_lowering_tests::sql_violation_values(
+            &compiled,
+            "test_contract.py",
+            "print(value)  # noqa: F4010\n",
+            GrammarDialect::Python,
+        )
+        .len(),
+        1,
+        "noqa codes require a complete comma-delimited match"
+    );
+}
+
+#[test]
+fn production_contract_phase_five_has_complete_authored_sql_and_catalogs() {
+    let sql = phase_five_authored_sql_goldens();
+    let catalogs = phase_five_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name.clone(), golden))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+        "semantic-generated-document-map",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 5 contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(
+                sql.get(name)
+                    .unwrap_or_else(|| panic!("{name}: authored SQL"))
+            ),
+            "{name}: exact authored Phase 5 SQL"
+        );
+        assert_eq!(
+            actual.terminal_catalog,
+            catalogs
+                .get(name)
+                .unwrap_or_else(|| panic!("{name}: authored terminal catalog"))
+                .terminal_catalog,
+            "{name}: exact authored Phase 5 catalog"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_six_has_complete_authored_sql_and_catalogs() {
+    let names = [
+        "clause-forbid-content-regex",
+        "clause-forbid-path-regex",
+        "clause-select-when-exists",
+        "clause-require-each",
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+        "clause-file-condition",
+        "clause-syntax-error-unknown",
+        "clause-select-when-absent",
+    ];
+    let sql = phase_six_authored_sql_goldens();
+    let catalogs = phase_six_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|case| (case.name.clone(), case))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        sql.len(),
+        names.len(),
+        "complete authored Phase 6 SQL inventory"
+    );
+    assert_eq!(
+        catalogs.len(),
+        names.len(),
+        "complete authored Phase 6 catalog inventory"
+    );
+    for name in names {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 6 contract");
+        let actual = actual_implementation_golden(&case);
+        let authored = sql.get(name).expect("authored Phase 6 SQL");
+        assert_eq!(
+            exact_sql(authored),
+            exact_sql(&actual.normalized_sql),
+            "{name}: declarative SQL body"
+        );
+        assert_eq!(
+            catalogs.get(name).map(|case| &case.terminal_catalog),
+            Some(&actual.terminal_catalog),
+            "{name}: authored catalog"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_six_authored_sql_equals_oracles() {
+    let statements = phase_six_authored_sql_goldens();
+    for (name, source, ranges) in [
+        ("clause-forbid-content-regex", "unsafe call\n", vec![(0, 6)]),
+        ("clause-forbid-path-regex", "safe\n", vec![(0, 4)]),
+        (
+            "clause-select-when-exists",
+            "import os\nprint(value)\n",
+            vec![(10, 22)],
+        ),
+        ("clause-select-when-absent", "print(value)\n", vec![(0, 12)]),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 6 contract");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            source,
+            GrammarDialect::Python,
+            &statements[name],
+        );
+        assert_eq!(outcome.ranges, ranges, "{name}: authored SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+    }
+    for name in [
+        "clause-require-each",
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+        "clause-file-condition",
+        "clause-syntax-error-unknown",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("Phase 6 contract");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let files = case
+            .workspace
+            .files
+            .iter()
+            .map(|file| (file.path.clone(), file.source.clone()))
+            .collect::<Vec<_>>();
+        let outcome = super::policy_lowering_tests::sql_workspace_ranges_for_statement(
+            &compiled,
+            &files,
+            Some(&statements[name]),
+        );
+        let expected = match name {
+            "clause-require-each" => vec![(0, 0, 10), (1, 0, 10)],
+            "clause-budget-maximum" => vec![(0, 0, 4)],
+            "clause-budget-distinct" => vec![(0, 0, 6)],
+            "clause-budget-group" => vec![(0, 0, 4), (1, 0, 4)],
+            "clause-file-condition" => vec![(0, 0, 7)],
+            "clause-syntax-error-unknown" => Vec::new(),
+            _ => unreachable!(),
+        };
+        assert_eq!(outcome.ranges, expected, "{name}: authored SQL ranges");
+        if name == "clause-syntax-error-unknown" {
+            assert_eq!(outcome.errors, ["source-partial"]);
+        } else {
+            assert!(outcome.errors.is_empty(), "{name}: authored SQL failures");
+        }
+    }
+}
+
+#[test]
+fn production_contract_phase_six_file_and_select_clauses_equal_oracles() {
+    for (name, source, ranges) in [
+        ("clause-forbid-content-regex", "unsafe call\n", vec![(0, 6)]),
+        ("clause-forbid-path-regex", "safe\n", vec![(0, 4)]),
+        (
+            "clause-select-when-exists",
+            "import os\nprint(value)\n",
+            vec![(10, 22)],
+        ),
+        ("clause-select-when-absent", "print(value)\n", vec![(0, 12)]),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 6 contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome(&compiled, source);
+        assert_eq!(outcome.ranges, ranges, "{name}: SQL ranges");
+        assert!(outcome.errors.is_empty(), "{name}: SQL failures");
+    }
+}
+
+#[test]
+fn production_contract_phase_six_cross_file_clauses_equal_oracles() {
+    let contracts = [
+        (
+            "clause-require-each",
+            vec![
+                ("contract.py", "subject(a)\n"),
+                ("second.py", "subject(a)\n"),
+            ],
+            vec![(0, 0, 10), (1, 0, 10)],
+        ),
+        (
+            "clause-budget-maximum",
+            vec![("contract.py", "a\nb\n"), ("second.py", "a\nb\n")],
+            vec![(0, 0, 4)],
+        ),
+        (
+            "clause-budget-distinct",
+            vec![("contract.py", "a\na\nb\n"), ("second.py", "a\na\nb\n")],
+            vec![(0, 0, 6)],
+        ),
+        (
+            "clause-budget-group",
+            vec![("contract.py", "a\nb\n"), ("second.py", "a\nb\n")],
+            vec![(0, 0, 4), (1, 0, 4)],
+        ),
+    ];
+    for (name, files, expected) in contracts {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 6 contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("Phase 6 policy compiles");
+        let files = files
+            .into_iter()
+            .map(|(path, source)| (path.to_owned(), source.to_owned()))
+            .collect::<Vec<_>>();
+        let outcome = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+        assert_eq!(outcome.ranges, expected, "{name}: SQL ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: SQL failures: {:?}",
+            outcome.errors
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_six_rejects_files_before_terminal_demand() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "clause-file-condition")
+        .expect("file-condition contract");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("file-condition policy compiles");
+    let files = case
+        .workspace
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.source.clone()))
+        .collect::<Vec<_>>();
+    let outcome = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+    assert_eq!(outcome.ranges, [(0, 0, 7)]);
+    assert!(outcome.errors.is_empty());
+    assert!(
+        !outcome.statuses.is_empty(),
+        "the accepted file creates terminal tasks"
+    );
+    assert!(
+        outcome.statuses.iter().all(|(file, _)| *file == 0),
+        "rejected files create no producer completion because they create no terminal tasks"
+    );
+}
+
+#[test]
+fn production_contract_phase_six_failed_dependency_does_not_suppress_independent_clause() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-fact-producer-failure")
+        .expect("semantic failure contract");
+    let mut policy = case.policy.clone();
+    policy["clauses"]
+        .as_array_mut()
+        .expect("clauses")
+        .push(serde_json::json!({
+            "id": "independent",
+            "forbid": {"ast": {"language": "python", "rule": {"pattern": "x = 1"}}},
+            "violation": {"anchor": "witness.span", "code": "SQL", "message": "independent"}
+        }));
+    let compiled = CodeRuleDslRuntime::compile(
+        policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("independent-clause policy compiles");
+    let outcome = super::policy_lowering_tests::sql_outcome_with_fact_failure(
+        &compiled,
+        "x = 1\nx\n",
+        GrammarDialect::Python,
+        0,
+        "capacity-failure",
+    );
+    assert_eq!(outcome.errors, ["capacity-failure"]);
+    assert_eq!(
+        outcome.ranges,
+        [(0, 5)],
+        "the independent clause still publishes its violation"
+    );
+}
+
+#[test]
+fn production_contract_phase_six_preserves_syntax_error_unknown() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "clause-syntax-error-unknown")
+        .expect("syntax-error contract");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("syntax-error policy compiles");
+    let files = case
+        .workspace
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.source.clone()))
+        .collect::<Vec<_>>();
+    let outcome = super::policy_lowering_tests::sql_workspace_ranges(&compiled, &files);
+    assert!(
+        outcome.ranges.is_empty(),
+        "unknown cannot prove a violation"
+    );
+    assert_eq!(outcome.errors, ["source-partial"]);
+}
+
+#[test]
+fn production_contract_phase_six_clauses_lower_completely() {
+    for name in [
+        "clause-forbid-content-regex",
+        "clause-forbid-path-regex",
+        "clause-select-when-exists",
+        "clause-select-when-absent",
+        "clause-require-each",
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+        "clause-file-condition",
+        "clause-syntax-error-unknown",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the Phase 6 clause contract exists");
+        SqlCatalogPlan::compile(&[compiled_case(&case)])
+            .unwrap_or_else(|error| panic!("{name}: {}", error.unsupported().join("; ")));
+    }
+}
+
+#[test]
+fn production_contract_phase_five_authored_sql_equals_oracles() {
+    let statements = phase_five_authored_sql_goldens();
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the parsed-document contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the parsed-document policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let expected = case.expected.oracle.violations[0]["span"].clone();
+        assert_eq!(
+            outcome.ranges,
+            [(
+                expected["startByte"].as_u64().expect("start byte") as usize,
+                expected["endByte"].as_u64().expect("end byte") as usize,
+            )],
+            "{name}: authored parse SQL range"
+        );
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored parse SQL completion"
+        );
+    }
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-generated-document-map")
+        .expect("the generated-document contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the generated-document policy compiles");
+    let map = &case.workspace.document_maps[0].spans[0];
+    let outcome = super::policy_lowering_tests::sql_outcome_for_statement_with_document_maps(
+        &compiled,
+        &case.workspace.files[0].source,
+        &[(
+            map.source_start,
+            map.source_end,
+            map.generated_start,
+            map.generated_end,
+        )],
+        &statements["semantic-generated-document-map"],
+    )
+    .expect("the authored generated-document SQL executes");
+    assert_eq!(outcome.ranges, [(0, 13)]);
+    assert_eq!(outcome.file_indices, [0]);
+    assert_eq!(outcome.document_ids, [(0, 1)]);
+    assert!(outcome.errors.is_empty());
+}
+
+#[test]
+fn production_contract_phase_six_catalog_digests_come_from_low_level_programs() {
+    let python = label(GrammarDialect::Python).expect("Python label");
+    let digest_pattern = |source: &str| {
+        let pattern = Pattern::try_new(source, GrammarDialect::Python).expect("Python pattern");
+        Program::compile_ast_grep_pattern(&pattern)
+            .expect("packed pattern")
+            .canonical_digest(python, b"")
+    };
+    let digest_kind = |kind: &str| {
+        Program::compile_kind(GrammarDialect::Python.kind_id(kind))
+            .expect("kind program")
+            .canonical_digest(python, b"")
+    };
+    let universe = Program::compile_universe()
+        .expect("universe")
+        .canonical_digest(python, b"");
+    let navigation = Program::compile_navigation()
+        .expect("navigation")
+        .canonical_digest(python, b"");
+    let regex = Program::compile_regex(&regex::Regex::new("^allowed$").expect("regex"))
+        .expect("regex program")
+        .canonical_digest(python, b"");
+    let catalogs = phase_six_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name, golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in ["clause-forbid-content-regex", "clause-forbid-path-regex"] {
+        assert_eq!(catalogs[name][0].program_digest, universe);
+    }
+    for name in ["clause-select-when-exists", "clause-select-when-absent"] {
+        assert_eq!(
+            catalogs[name][0].program_digest,
+            digest_pattern("print($A)")
+        );
+    }
+    assert_eq!(
+        catalogs["clause-require-each"][0].program_digest,
+        digest_pattern("subject($A)")
+    );
+    assert_eq!(
+        catalogs["clause-require-each"][1].program_digest,
+        digest_pattern("proof($A)")
+    );
+    for name in [
+        "clause-budget-maximum",
+        "clause-budget-distinct",
+        "clause-budget-group",
+    ] {
+        assert_eq!(catalogs[name][0].program_digest, digest_pattern("$A"));
+    }
+    assert_eq!(
+        catalogs["clause-file-condition"][0].program_digest,
+        digest_kind("identifier")
+    );
+    assert_eq!(catalogs["clause-file-condition"][1].program_digest, regex);
+    assert_eq!(
+        catalogs["clause-syntax-error-unknown"][0].program_digest,
+        universe
+    );
+    assert_eq!(
+        catalogs["clause-syntax-error-unknown"][1].program_digest,
+        navigation
+    );
+    assert_eq!(
+        catalogs["clause-syntax-error-unknown"][2].program_digest,
+        digest_kind("identifier")
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][1].program_digest,
+        digest_kind("module")
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][2].program_digest,
+        universe
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][3].program_digest,
+        navigation
+    );
+    assert_eq!(
+        catalogs["clause-select-when-absent"][4].program_digest,
+        digest_kind("import_statement")
+    );
+}
+
+#[test]
+fn production_contract_phase_six_catalogs_are_repeatable_and_concurrent() {
+    let expected = phase_six_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name.clone(), golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let names = expected.keys().cloned().collect::<Vec<_>>();
+    for _ in 0..3 {
+        for name in &names {
+            let case = cases()
+                .into_iter()
+                .find(|case| &case.name == name)
+                .expect("Phase 6 contract");
+            assert_eq!(
+                actual_implementation_golden(&case).terminal_catalog,
+                expected[name],
+                "{name}: repeatable catalog"
+            );
+        }
+    }
+    let threads = names
+        .into_iter()
+        .map(|name| {
+            let expected = expected[&name].clone();
+            std::thread::spawn(move || {
+                let case = cases()
+                    .into_iter()
+                    .find(|case| case.name == name)
+                    .expect("Phase 6 contract");
+                assert_eq!(
+                    actual_implementation_golden(&case).terminal_catalog,
+                    expected,
+                    "{name}: concurrent catalog"
+                );
+            })
+        })
+        .collect::<Vec<_>>();
+    for thread in threads {
+        thread.join().expect("Phase 6 compiler thread");
+    }
+}
+
+#[test]
+fn production_contract_phase_five_catalog_digests_come_from_low_level_programs() {
+    let python = label(GrammarDialect::Python).expect("Python label");
+    let blade = label(GrammarDialect::Blade).expect("Blade label");
+    let python_string = Program::compile_kind(GrammarDialect::Python.kind_id("string"))
+        .expect("Python string program")
+        .canonical_digest(python, b"");
+    let blade_echo = Program::compile_kind(GrammarDialect::Blade.kind_id("echo"))
+        .expect("Blade echo program")
+        .canonical_digest(blade, b"");
+    let python_universe = Program::compile_universe()
+        .expect("universe program")
+        .canonical_digest(python, b"");
+    let catalogs = phase_five_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name, golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+    ] {
+        assert_eq!(catalogs[name][0].program_digest, python_string);
+        assert_eq!(catalogs[name][1].program_digest, python_universe);
+        assert_eq!(catalogs[name][2].program_digest, python_universe);
+    }
+    assert_eq!(
+        catalogs["semantic-generated-document-map"][0].program_digest,
+        blade_echo
+    );
+}
+
+#[test]
+fn production_contract_phase_five_catalogs_are_repeatable_and_concurrent() {
+    let expected = phase_five_implementation_goldens()
+        .cases
+        .into_iter()
+        .map(|golden| (golden.name.clone(), golden.terminal_catalog))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let names = expected.keys().cloned().collect::<Vec<_>>();
+    for _ in 0..3 {
+        for name in &names {
+            let case = cases()
+                .into_iter()
+                .find(|case| &case.name == name)
+                .expect("the Phase 5 contract exists");
+            assert_eq!(
+                actual_implementation_golden(&case).terminal_catalog,
+                expected[name],
+                "{name}: repeatable catalog"
+            );
+        }
+    }
+    let threads = names
+        .into_iter()
+        .map(|name| {
+            let expected = expected[&name].clone();
+            std::thread::spawn(move || {
+                let case = cases()
+                    .into_iter()
+                    .find(|case| case.name == name)
+                    .expect("the concurrent Phase 5 contract exists");
+                assert_eq!(
+                    actual_implementation_golden(&case).terminal_catalog,
+                    expected
+                );
+            })
+        })
+        .collect::<Vec<_>>();
+    for thread in threads {
+        thread
+            .join()
+            .expect("Phase 5 catalog compilation completed");
+    }
+}
+
+#[test]
+fn production_contract_phase_five_parse_capacity_is_atomic() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-parse-literal")
+        .expect("the parsed-document contract exists");
+    let mut capabilities: Value =
+        serde_json::from_str(CAPABILITIES).expect("default capabilities are JSON");
+    capabilities["limits"]["maxVisitedNodes"] = 1.into();
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        capabilities.to_string(),
+    )
+    .expect("the capacity-limited parse policy compiles");
+    let outcome =
+        super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+    assert!(
+        outcome.ranges.is_empty(),
+        "parse failure publishes no partial result"
+    );
+    assert_eq!(outcome.errors, ["parse-fact-capacity"]);
+}
+
+#[test]
+fn production_contract_phase_five_generated_document_maps_are_required() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-generated-document-map")
+        .expect("the generated-document contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .expect("the generated-document policy compiles");
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+        .expect("the generated-document policy lowers");
+    assert!(
+        plan.shape()
+            .contains(&super::relational::SqlShape::MapDocument),
+        "generated results must cross the typed document-map relation"
+    );
+    let spans = case.workspace.document_maps[0]
+        .spans
+        .iter()
+        .map(|span| {
+            (
+                span.source_start,
+                span.source_end,
+                span.generated_start,
+                span.generated_end,
+            )
+        })
+        .collect::<Vec<_>>();
+    let outcome = super::policy_lowering_tests::sql_outcome_with_document_maps(
+        &compiled,
+        &case.workspace.files[0].source,
+        &spans,
+    )
+    .expect("the complete document map executes");
+    assert_eq!(outcome.ranges, [(0, 13)], "mapped source span");
+    assert_eq!(outcome.file_indices, [0], "mapped source file identity");
+    assert_eq!(
+        outcome.document_ids,
+        [(0, 1)],
+        "source and generated documents have distinct identities"
+    );
+    assert_eq!(
+        case.workspace.document_maps[0].source_path, case.expected.oracle.violations[0]["path"],
+        "mapped identity resolves to the oracle source path"
+    );
+    assert_ne!(
+        case.workspace.document_maps[0].generated_path, case.expected.oracle.violations[0]["path"],
+        "the generated path is not published as the source path"
+    );
+    assert!(outcome.errors.is_empty(), "complete map has no failure");
+    assert_eq!(
+        super::policy_lowering_tests::sql_outcome_with_document_maps(
+            &compiled,
+            &case.workspace.files[0].source,
+            &[],
+        )
+        .err()
+        .expect("a generated document without a map fails closed"),
+        "document-map-missing"
+    );
+    assert_eq!(
+        super::policy_lowering_tests::sql_outcome_with_document_maps(
+            &compiled,
+            &case.workspace.files[0].source,
+            &[(0, 13, 0, 20), (5, 13, 10, 20)],
+        )
+        .err()
+        .expect("overlapping map rows are rejected"),
+        "document-map-overlap"
+    );
+    for invalid in [[(0, 0, 0, 20)], [(0, 13, 20, 20)], [(0, 15, 0, 20)]] {
+        assert_eq!(
+            super::policy_lowering_tests::sql_outcome_with_document_maps(
+                &compiled,
+                &case.workspace.files[0].source,
+                &invalid,
+            )
+            .err()
+            .expect("a malformed map span is rejected"),
+            "document-map-invalid-span"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_five_parsed_documents_equal_oracles() {
+    for name in [
+        "semantic-parse-literal",
+        "semantic-parse-host",
+        "semantic-parse-capture-export",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the parsed-document contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the parsed-document policy compiles");
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .unwrap_or_else(|error| panic!("{name}: {}", error.unsupported().join("; ")));
+        assert!(
+            plan.terminals()
+                .iter()
+                .any(|terminal| terminal.kind() == super::relational::TerminalKind::Parse),
+            "{name}: one bounded parse producer"
+        );
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: mapped parse ranges");
+        assert!(outcome.errors.is_empty(), "{name}: complete parse facts");
+        let parse_producers = plan
+            .terminals()
+            .iter()
+            .enumerate()
+            .filter(|(_, terminal)| terminal.kind() == super::relational::TerminalKind::Parse)
+            .map(|(producer, terminal)| {
+                assert_eq!(
+                    terminal.producer_kind(),
+                    crate::code_rule_dsl::transducer::sql_backend::ProducerKind::ParseFact,
+                    "{name}: parse has one physical meaning"
+                );
+                assert!(
+                    terminal.parse_fact().is_some(),
+                    "{name}: typed parse descriptor"
+                );
+                producer as i64
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(parse_producers.len(), 1, "{name}: one parse producer");
+        assert!(
+            outcome.statuses.iter().any(|status| {
+                parse_producers.contains(&status.producer)
+                    && status.complete == 1
+                    && status.verdict == Some(1)
+                    && status.error.is_none()
+            }),
+            "{name}: explicit successful parse completion"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_four_unknown_fact_never_becomes_true() {
+    let mut case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-arguments-bind")
+        .expect("the arguments contract exists");
+    case.policy["clauses"][0]["forbid"]["ast"]["rule"]
+        .as_object_mut()
+        .expect("the arguments rule is an object")
+        .remove("kind");
+    case.workspace.files[0].source = "f(*xs)\n".to_owned();
+    let oracle = oracle_result(&case);
+    assert!(
+        oracle["violations"].as_array().is_some_and(Vec::is_empty),
+        "the matcher oracle keeps an unknown argument result out of violations"
+    );
+    assert!(
+        oracle["failures"].as_array().is_some_and(Vec::is_empty),
+        "semantic unknown is not an execution failure"
+    );
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+    );
+    assert!(
+        outcome.facts.iter().any(|fact| fact.flag == Some(-1)),
+        "the producer must emit an explicit unknown fact"
+    );
+    assert!(outcome.ranges.is_empty(), "unknown is not true");
+    assert!(outcome.errors.is_empty(), "unknown is not a failure");
+}
+
+#[test]
+fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
+    use super::policy_lowering_tests::SqlFactRow;
+
+    let row =
+        |producer, node, related, slot, key, position, flag, target_kind, label: Option<&str>| {
+            SqlFactRow {
+                producer,
+                node,
+                related,
+                slot,
+                key,
+                position,
+                flag: Some(flag),
+                target_kind,
+                label: label.map(str::to_owned),
+            }
+        };
+    for case in cases().into_iter().filter(|case| {
+        matches!(
+            case.name.as_str(),
+            "semantic-resolves"
+                | "semantic-binding-site"
+                | "semantic-binding-value"
+                | "semantic-binding-annotation"
+                | "semantic-binding-occurrence"
+                | "semantic-binds"
+                | "semantic-redefines-any"
+                | "semantic-redefines-every"
+                | "semantic-arguments-bind"
+                | "semantic-arguments-filter"
+                | "semantic-format-unused-arguments"
+                | "semantic-format-missing-fields"
+                | "semantic-layout"
+                | "semantic-calls-direct"
+                | "semantic-calls-through"
+        )
+    }) {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let dialect = match case.workspace.files[0].language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported dialect `{other}`", case.name),
+        };
+        let actual = super::policy_lowering_tests::sql_outcome_for_dialect(
+            &compiled,
+            &case.workspace.files[0].source,
+            dialect,
+        )
+        .facts;
+        let expected = match case.name.as_str() {
+            "semantic-resolves" => vec![row(1, (0, 3), None, 0, 0, 0, 1, None, None)],
+            "semantic-binding-site" => vec![
+                row(1, (6, 7), None, 0, 0, 0, 1, None, None),
+                row(1, (6, 7), Some((0, 5)), 1, 0, 0, 1, Some(199), None),
+            ],
+            "semantic-binding-value" => vec![
+                row(2, (6, 7), None, 0, 0, 0, 1, None, None),
+                row(2, (6, 7), Some((4, 5)), 2, 0, 0, 1, Some(93), None),
+            ],
+            "semantic-binding-annotation" => vec![
+                row(2, (11, 12), None, 0, 0, 0, 1, None, None),
+                row(2, (11, 12), Some((3, 6)), 3, 0, 0, 1, Some(1), None),
+            ],
+            "semantic-binding-occurrence" => vec![
+                row(1, (44, 45), None, 0, 0, 0, 1, None, None),
+                row(1, (44, 45), Some((30, 31)), 4, 0, 0, 1, Some(1), None),
+                row(1, (44, 45), Some((44, 45)), 4, 0, 1, 1, Some(1), None),
+                row(1, (49, 50), None, 0, 0, 0, 1, None, None),
+                row(1, (49, 50), Some((20, 21)), 4, 0, 0, 1, Some(1), None),
+                row(1, (49, 50), Some((49, 50)), 4, 0, 1, 1, Some(1), None),
+            ],
+            "semantic-binds" => vec![
+                row(1, (0, 1), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 1), Some((0, 5)), 1, 0, 0, 1, Some(199), None),
+            ],
+            "semantic-redefines-any" => {
+                vec![row(1, (19, 20), None, 0, 0, 0, 1, None, None)]
+            }
+            "semantic-redefines-every" => vec![
+                row(1, (4, 5), None, 0, 0, 0, 1, None, None),
+                row(1, (20, 21), None, 0, 0, 0, 1, None, None),
+                row(1, (30, 31), None, 0, 0, 0, 1, None, None),
+            ],
+            "semantic-arguments-bind" => vec![
+                row(1, (0, 6), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 6), Some((4, 5)), 15, 0, 0, 1, Some(93), Some("A")),
+            ],
+            "semantic-arguments-filter" => vec![
+                row(1, (0, 10), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 10), Some((4, 9)), 15, 0, 0, 1, Some(1), Some("A")),
+            ],
+            "semantic-format-unused-arguments" => vec![
+                row(1, (0, 18), None, 0, 0, 0, 1, Some(1), None),
+                row(1, (0, 18), Some((16, 17)), 12, 0, 0, 1, Some(1), None),
+                row(1, (0, 18), None, 14, 0, 0, 0, None, None),
+                row(1, (0, 18), None, 14, 0, 1, 0, None, None),
+                row(1, (0, 18), Some((0, 5)), 17, 0, 0, 1, Some(1), Some("S")),
+                row(1, (0, 18), Some((13, 14)), 17, 0, 0, 1, Some(2), Some("A")),
+                row(1, (0, 18), Some((14, 15)), 17, 0, 1, 1, Some(2), Some("A")),
+                row(1, (0, 18), Some((16, 17)), 17, 0, 2, 1, Some(2), Some("A")),
+            ],
+            "semantic-format-missing-fields" => vec![
+                row(1, (0, 25), None, 0, 0, 0, 1, Some(1), None),
+                row(1, (0, 25), Some((19, 24)), 12, 0, 0, 1, Some(1), None),
+                row(1, (0, 25), None, 13, 0, 0, 1, Some(3), None),
+                row(1, (0, 25), None, 14, 0, 0, 0, None, None),
+                row(1, (0, 25), None, 14, 0, 1, 0, None, None),
+                row(1, (0, 25), Some((0, 11)), 17, 0, 0, 1, Some(1), Some("S")),
+                row(1, (0, 25), Some((19, 24)), 17, 0, 0, 1, Some(2), Some("A")),
+            ],
+            "semantic-layout" => vec![
+                row(1, (0, 1), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 8), None, 0, 0, 0, 1, None, None),
+                row(1, (0, 8), None, 0, 0, 0, 1, None, None),
+                row(1, (1, 2), None, 0, 0, 0, 1, None, None),
+                row(1, (1, 8), None, 0, 0, 0, 1, None, None),
+                row(1, (2, 7), None, 0, 0, 0, 1, None, None),
+                row(1, (7, 8), None, 0, 0, 0, 1, None, None),
+            ],
+            "semantic-calls-direct" => vec![
+                row(2, (23, 31), None, 0, 0, 0, 1, None, None),
+                row(2, (23, 31), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
+            ],
+            "semantic-calls-through" => vec![
+                row(2, (42, 50), None, 0, 0, 0, 1, None, None),
+                row(2, (42, 50), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
+                row(2, (51, 60), None, 0, 0, 0, 1, None, None),
+                row(2, (51, 60), Some((0, 22)), 16, 0, 0, 1, Some(145), None),
+                row(2, (51, 60), Some((23, 50)), 16, 0, 1, 1, Some(145), None),
+            ],
+            _ => unreachable!("the exact semantic fact inventory is fixed"),
+        };
+        assert_eq!(actual, expected, "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_phase_four_fact_producers_have_exact_completion_states() {
+    use super::policy_lowering_tests::SqlProducerStatusRow;
+
+    for case in cases().into_iter().filter(|case| {
+        PHASE_FOUR_CASES.contains(&case.name.as_str())
+            && case.name != "semantic-fact-producer-failure"
+    }) {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .unwrap_or_else(|error| panic!("{} lowering: {:?}", case.name, error.unsupported()));
+        let semantic_producers = plan
+            .terminals()
+            .iter()
+            .enumerate()
+            .filter(|(_, terminal)| {
+                terminal.producer_kind()
+                    == crate::code_rule_dsl::transducer::sql_backend::ProducerKind::SemanticFact
+            })
+            .map(|(producer, _)| producer as i64)
+            .collect::<Vec<_>>();
+        let dialect = match case.workspace.files[0].language.as_str() {
+            "python" => crate::code_rule_dsl::language::GrammarDialect::Python,
+            "typescript" => crate::code_rule_dsl::language::GrammarDialect::TypeScript,
+            other => panic!("{} has unsupported dialect `{other}`", case.name),
+        };
+        let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
+            &compiled,
+            &case.workspace.files[0].source,
+            dialect,
+        );
+        let actual = outcome
+            .statuses
+            .into_iter()
+            .filter(|status| semantic_producers.contains(&status.producer))
+            .collect::<Vec<_>>();
+        let expected = semantic_producers
+            .into_iter()
+            .map(|producer| SqlProducerStatusRow {
+                producer,
+                file: 0,
+                complete: 1,
+                verdict: Some(1),
+                work_used: None,
+                error: None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_phase_four_real_fact_capacity_is_atomic() {
+    let mut case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-binding-site")
+        .expect("the binding-site contract exists");
+    case.workspace.capabilities = "work-limit-one".to_owned();
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let outcome = super::policy_lowering_tests::sql_outcome_for_dialect(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+    );
+    assert!(outcome.ranges.is_empty(), "no partial violation is valid");
+    assert!(
+        outcome.facts.is_empty(),
+        "an incomplete producer publishes no facts"
+    );
+    assert_eq!(outcome.errors, ["semantic-fact-capacity"]);
+    assert_eq!(
+        outcome
+            .statuses
+            .into_iter()
+            .filter(|status| status.error.is_some())
+            .collect::<Vec<_>>(),
+        [super::policy_lowering_tests::SqlProducerStatusRow {
+            producer: 1,
+            file: 0,
+            complete: 0,
+            verdict: None,
+            work_used: None,
+            error: Some("semantic-fact-capacity".to_owned()),
+        }]
+    );
+}
+
+#[test]
+fn production_contract_phase_four_authored_failure_sql_projects_every_incomplete_fact_producer() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-fact-producer-failure")
+        .expect("the semantic fact failure contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let statements = authored_sql_goldens();
+    for code in ["capacity-failure", "semantic-fact-capacity"] {
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement_with_fact_failure(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            0,
+            code,
+            &statements[&case.name],
+        );
+        assert!(outcome.ranges.is_empty(), "{code}: no partial violation");
+        assert!(outcome.facts.is_empty(), "{code}: no partial facts");
+        assert_eq!(outcome.errors, [code], "{code}: typed clause failure");
+        assert!(outcome.statuses.iter().any(|status| {
+            status.producer == 1
+                && status.complete == 0
+                && status.verdict.is_none()
+                && status.error.as_deref() == Some(code)
+        }));
+    }
+}
+
+#[test]
+fn production_contract_phase_four_fact_failure_is_incomplete_and_has_no_partial_result() {
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == "semantic-fact-producer-failure")
+        .expect("the semantic fact failure contract exists");
+    let compiled = CodeRuleDslRuntime::compile(
+        case.policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&case),
+    )
+    .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+    let outcome = super::policy_lowering_tests::sql_outcome_with_fact_failure(
+        &compiled,
+        &case.workspace.files[0].source,
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+        0,
+        "capacity-failure",
+    );
+    assert!(outcome.ranges.is_empty(), "no partial violation is valid");
+    assert!(
+        outcome.facts.is_empty(),
+        "an incomplete producer publishes no facts"
+    );
+    assert_eq!(outcome.errors, ["capacity-failure"]);
+    assert_eq!(
+        outcome
+            .statuses
+            .into_iter()
+            .filter(|status| status.error.is_some())
+            .collect::<Vec<_>>(),
+        [super::policy_lowering_tests::SqlProducerStatusRow {
+            producer: 1,
+            file: 0,
+            complete: 0,
+            verdict: None,
+            work_used: None,
+            error: Some("capacity-failure".to_owned()),
+        }]
+    );
+}
+
+const PHASE_THREE_CASES: &[&str] = &[
+    "utility-simple",
+    "utility-nested",
+    "utility-shared-component",
+    "utility-self-recursive",
+    "utility-mutual-recursion",
+    "utility-parameterized-call",
+    "utility-argument-frame-isolation",
+    "utility-capture-return",
+    "utility-depth-limit",
+    "utility-work-limit",
+];
+
+#[test]
+fn production_contract_phase_three_limit_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["utility-depth-limit", "utility-work-limit"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the utility limit contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored typed utility-limit SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_authored_limit_utilities_are_atomic() {
+    let statements = authored_sql_goldens();
+    for (name, error) in [
+        ("utility-depth-limit", "utility-depth-limit"),
+        ("utility-work-limit", "utility-work-limit"),
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the utility limit contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the utility limit policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        assert!(outcome.ranges.is_empty(), "{name}: no partial violation");
+        assert_eq!(outcome.errors, [error], "{name}: exact typed failure");
+    }
+}
+
+#[test]
+fn production_contract_phase_three_parameter_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "utility-parameterized-call";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the parameter utility contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "{name} must use the authored isolated utility-frame SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_three_authored_parameter_utilities_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in [
+        "utility-parameterized-call",
+        "utility-argument-frame-isolation",
+    ] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the parameter utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the parameter utility policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored utility ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored utility failures"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_recursive_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["utility-self-recursive", "utility-mutual-recursion"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the recursive utility contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored bounded recursive utility SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_authored_recursive_utilities_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["utility-self-recursive", "utility-mutual-recursion"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the recursive utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the recursive utility policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored utility ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored utility failures"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_capture_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    let name = "utility-capture-return";
+    let case = cases()
+        .into_iter()
+        .find(|case| case.name == name)
+        .expect("the capture utility contract exists");
+    let actual = actual_implementation_golden(&case);
+    assert_eq!(
+        exact_sql(&actual.normalized_sql),
+        exact_sql(&expected[&case.name]),
+        "{name} must use the authored capture-return utility SQL contract"
+    );
+}
+
+#[test]
+fn production_contract_phase_three_authored_capture_utilities_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["utility-shared-component", "utility-capture-return"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the capture utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the capture utility policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored utility ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored utility failures"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_leaf_utilities_match_authored_sql() {
+    let expected = authored_sql_goldens();
+    for name in ["utility-simple", "utility-nested"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the leaf utility contract exists");
+        let actual = actual_implementation_golden(&case);
+        assert_eq!(
+            exact_sql(&actual.normalized_sql),
+            exact_sql(&expected[&case.name]),
+            "{name} must use the authored named utility SQL contract"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_authored_leaf_utilities_equal_oracles() {
+    let statements = authored_sql_goldens();
+    for name in ["utility-simple", "utility-nested"] {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the leaf utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .expect("the leaf utility policy compiles");
+        let outcome = super::policy_lowering_tests::sql_outcome_for_statement(
+            &compiled,
+            &case.workspace.files[0].source,
+            crate::code_rule_dsl::language::GrammarDialect::Python,
+            &statements[name],
+        );
+        let mut expected = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(outcome.ranges, expected, "{name}: authored utility ranges");
+        assert!(
+            outcome.errors.is_empty(),
+            "{name}: authored utility failures"
+        );
+    }
+}
+
+#[test]
+fn production_contract_phase_three_utilities_lower_to_named_sql_components() {
+    let expected_catalogs = [
+        (
+            "utility-simple",
+            vec![
+                super::relational::TerminalKind::Kind,
+                super::relational::TerminalKind::Universe,
+            ],
+        ),
+        (
+            "utility-nested",
+            vec![
+                super::relational::TerminalKind::Regex,
+                super::relational::TerminalKind::Universe,
+            ],
+        ),
+        (
+            "utility-shared-component",
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
+        ),
+        (
+            "utility-self-recursive",
+            vec![
+                super::relational::TerminalKind::Kind,
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+        (
+            "utility-mutual-recursion",
+            vec![
+                super::relational::TerminalKind::Kind,
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+        (
+            "utility-parameterized-call",
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
+        ),
+        (
+            "utility-argument-frame-isolation",
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
+        ),
+        (
+            "utility-capture-return",
+            vec![
+                super::relational::TerminalKind::Pattern,
+                super::relational::TerminalKind::Universe,
+            ],
+        ),
+        (
+            "utility-depth-limit",
+            vec![
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+        (
+            "utility-work-limit",
+            vec![
+                super::relational::TerminalKind::Universe,
+                super::relational::TerminalKind::Navigation,
+            ],
+        ),
+    ];
+    for (name, expected_catalog) in expected_catalogs {
+        let case = cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .expect("the utility contract exists");
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
+            .unwrap_or_else(|error| panic!("{}: {}", case.name, error.unsupported().join("; ")));
+        assert_eq!(
+            plan.terminals()
+                .iter()
+                .map(super::relational::TerminalPlan::kind)
+                .collect::<Vec<_>>(),
+            expected_catalog,
+            "{}",
+            case.name
+        );
+        let expected_shape = match case.name.as_str() {
+            "utility-simple" | "utility-nested" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-shared-component" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::InnerJoin,
+                super::relational::SqlShape::CaseTruth,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-self-recursive" | "utility-mutual-recursion" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanNavigation,
+                super::relational::SqlShape::RecursiveCte,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-parameterized-call" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::InnerJoin,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::WhereFilter,
+                super::relational::SqlShape::CaseTruth,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-argument-frame-isolation" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::InnerJoin,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::OrderedUnion,
+                super::relational::SqlShape::WindowRank,
+                super::relational::SqlShape::CaseTruth,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-capture-return" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanCapture,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            "utility-depth-limit" | "utility-work-limit" => vec![
+                super::relational::SqlShape::PackedMaterialized,
+                super::relational::SqlShape::StatusJoin,
+                super::relational::SqlShape::ScanTerminal,
+                super::relational::SqlShape::ScanNavigation,
+                super::relational::SqlShape::RecursiveCte,
+                super::relational::SqlShape::Bindings,
+                super::relational::SqlShape::Projection,
+                super::relational::SqlShape::OrderBy,
+            ],
+            _ => unreachable!("the phase-three inventory is fixed"),
+        };
+        assert_eq!(plan.shape(), expected_shape, "{}", case.name);
+        let sql = plan.structural_sql();
+        if case.name.contains("recursive") || case.name.ends_with("-limit") {
+            assert!(sql.contains("_walk_"), "{}", case.name);
+            assert!(sql.contains("UNION ALL"), "{}", case.name);
+        } else if case.name.contains("parameter") || case.name.contains("frame") {
+            assert!(sql.contains("_frame_"), "{}", case.name);
+        } else {
+            assert!(sql.contains("_utility_"), "{}", case.name);
+        }
+        if case.name == "utility-shared-component" {
+            assert_eq!(
+                sql.lines()
+                    .filter(|line| line.contains("utility_shared_45f1e04ddfc4c72e_shared AS ("))
+                    .count(),
+                1,
+                "a shared utility body is defined once"
+            );
+        }
+    }
+}
+
+#[test]
+fn utility_ctes_are_shared_across_clauses_and_parameter_frames() {
+    let policy = serde_json::json!({
+        "format": "rerail.policy/v1",
+        "id": "shared-utility-catalog",
+        "revision": 1,
+        "mode": "block",
+        "clauses": [
+            { "id": "definitions", "define": { "language": "python", "utils": {
+                "leaf": { "pattern": "$A" },
+                "parameter": { "params": ["P"], "rule": { "pattern": "$P" } }
+            }}},
+            { "id": "first", "forbid": { "ast": { "language": "python", "rule": {
+                "pattern": "f($X)", "matches": { "parameter": { "P": "$X" } }
+            }}}, "violation": { "anchor": "capture.X", "code": "SQL", "message": "$X" }},
+            { "id": "second", "forbid": { "ast": { "language": "python", "rule": {
+                "all": [{ "matches": "leaf" }, { "matches": "leaf" }]
+            }}}, "violation": { "anchor": "capture.A", "code": "SQL", "message": "$A" }},
+            { "id": "third", "forbid": { "ast": { "language": "python", "rule": {
+                "pattern": "g($Y)", "matches": { "parameter": { "P": "$Y" } }
+            }}}, "violation": { "anchor": "capture.Y", "code": "SQL", "message": "$Y" }}
+        ]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        policy.to_string(),
+        "json".to_owned(),
+        include_str!("../capabilities.json").to_owned(),
+    )
+    .expect("shared utility policy");
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("shared utility SQL");
+    let sql = plan.structural_sql();
+    for component in ["utility_leaf_", "utility_parameter_"] {
+        assert_eq!(
+            sql.lines()
+                .filter(|line| line.contains(component) && line.contains("_shared AS ("))
+                .count(),
+            1,
+            "{component} has one body CTE"
+        );
+    }
+    assert_eq!(
+        sql.lines()
+            .filter(|line| line.contains("utility_parameter_") && line.contains("_demand AS ("))
+            .count(),
+        1,
+        "the parameter utility has one demand CTE"
+    );
+    let demand = sql.find("_demand AS (").expect("parameter demand CTE");
+    let body_line = sql
+        .lines()
+        .find(|line| line.contains("utility_parameter_") && line.contains("_shared AS ("))
+        .expect("parameter body CTE");
+    let body = sql.find(body_line).expect("parameter body position");
+    assert!(
+        demand < body,
+        "the parameter demand precedes its utility body"
+    );
+}
+
+#[test]
+fn independently_compiled_equal_utilities_share_one_semantic_body() {
+    let policy = |id: &str, clause: &str| {
+        serde_json::json!({
+            "format": "rerail.policy/v1",
+            "id": id,
+            "revision": 1,
+            "mode": "block",
+            "clauses": [
+                { "id": "definitions", "define": { "language": "python", "utils": {
+                    "leaf": { "pattern": "$A" }
+                }}},
+                { "id": clause, "forbid": { "ast": { "language": "python", "rule": {
+                    "matches": "leaf"
+                }}}, "violation": { "anchor": "capture.A", "code": "SQL", "message": "$A" }}
+            ]
+        })
+    };
+    let compile = |policy: serde_json::Value| {
+        CodeRuleDslRuntime::compile(
+            policy.to_string(),
+            "json".to_owned(),
+            include_str!("../capabilities.json").to_owned(),
+        )
+        .expect("utility policy")
+    };
+    let first = compile(policy("semantic-utility-first", "first"));
+    let second = compile(policy("semantic-utility-second", "second"));
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&first.inner), Arc::clone(&second.inner)])
+        .expect("semantic utility SQL");
+    assert_eq!(
+        plan.structural_sql()
+            .lines()
+            .filter(|line| line.contains("utility_leaf_") && line.contains("_shared AS ("))
+            .count(),
+        1,
+        "equal utility definitions compiled in separate policies have one body CTE"
+    );
+}
+
+#[test]
+fn repeated_policy_clauses_keep_one_bounded_utility_body() {
+    let mut clauses = vec![serde_json::json!({
+        "id": "definitions",
+        "define": { "language": "python", "utils": { "leaf": { "pattern": "$A" } } }
+    })];
+    clauses.extend((0..128).map(|ordinal| {
+        serde_json::json!({
+            "id": format!("clause-{ordinal}"),
+            "forbid": { "ast": { "language": "python", "rule": { "matches": "leaf" } } },
+            "violation": { "anchor": "capture.A", "code": "SQL", "message": "$A" }
+        })
+    }));
+    let policy = serde_json::json!({
+        "format": "rerail.policy/v1",
+        "id": "bounded-shared-utility-catalog",
+        "revision": 1,
+        "mode": "block",
+        "clauses": clauses
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        policy.to_string(),
+        "json".to_owned(),
+        include_str!("../capabilities.json").to_owned(),
+    )
+    .expect("repeated utility policy");
+    let plan =
+        SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("bounded utility SQL");
+    let sql = plan.structural_sql();
+    assert_eq!(
+        sql.lines()
+            .filter(|line| line.contains("utility_leaf_") && line.contains("_shared AS ("))
+            .count(),
+        1,
+        "the policy has one utility body CTE"
+    );
+    assert!(
+        sql.len() < 2 * 1024 * 1024,
+        "the shared utility policy produced {} SQL bytes",
+        sql.len()
+    );
+
+    let recursive_case = cases()
+        .into_iter()
+        .find(|case| case.name == "utility-self-recursive")
+        .expect("recursive utility contract");
+    let mut recursive_policy = recursive_case.policy.clone();
+    let clauses = recursive_policy["clauses"]
+        .as_array_mut()
+        .expect("recursive clauses");
+    let mut duplicate = clauses.last().expect("reporting clause").clone();
+    duplicate["id"] = serde_json::json!("second-recursive-call");
+    clauses.push(duplicate);
+    let compiled = CodeRuleDslRuntime::compile(
+        recursive_policy.to_string(),
+        "json".to_owned(),
+        contract_capabilities(&recursive_case),
+    )
+    .expect("repeated recursive utility policy");
+    let plan =
+        SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("recursive utility SQL");
+    assert_eq!(
+        plan.structural_sql()
+            .lines()
+            .filter(|line| line.contains("_fix_") && line.contains(" AS ("))
+            .count(),
+        1,
+        "the recursive SCC has one fixed-point CTE"
+    );
+}
+
+#[test]
+fn shared_utility_choices_stay_in_one_physical_region() {
+    let policy = serde_json::json!({
+        "format": "rerail.policy/v1",
+        "id": "shared-choice-region",
+        "revision": 1,
+        "mode": "block",
+        "clauses": [
+            {
+                "id": "definitions",
+                "define": {
+                    "language": "python",
+                    "utils": {
+                        "selected": {
+                            "any": [
+                                { "kind": "identifier" },
+                                { "kind": "integer" }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "id": "first",
+                "forbid": {
+                    "ast": {
+                        "language": "python",
+                        "rule": { "matches": "selected" }
+                    }
+                },
+                "violation": { "anchor": "witness.span", "code": "SQL", "message": "first" }
+            },
+            {
+                "id": "second",
+                "forbid": {
+                    "ast": {
+                        "language": "python",
+                        "rule": { "matches": "selected" }
+                    }
+                },
+                "violation": { "anchor": "witness.span", "code": "SQL", "message": "second" }
+            }
+        ]
+    });
+    let compiled = CodeRuleDslRuntime::compile(
+        policy.to_string(),
+        "json".to_owned(),
+        include_str!("../capabilities.json").to_owned(),
+    )
+    .expect("shared choice policy");
+    let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("shared choice SQL");
+    assert!(
+        !plan.structural_sql().contains("_branches AS ("),
+        "the single-consumer branch union stays in the utility choice region"
+    );
+    let internal_output = plan
+        .structural_sql()
+        .lines()
+        .find(|line| line.contains("suselected_") && line.contains(" AS ("))
+        .expect("internal utility output CTE");
+    assert!(
+        !internal_output.contains("SELECT*FROM") && !internal_output.contains("SELECT * FROM"),
+        "the internal utility output must own its final query: {internal_output}"
+    );
+}
+
+#[test]
+fn production_contract_phase_three_sql_rows_equal_committed_utility_oracles() {
+    for case in cases()
+        .into_iter()
+        .filter(|case| PHASE_THREE_CASES.contains(&case.name.as_str()))
+    {
+        assert_eq!(case.workspace.files.len(), 1, "{}", case.name);
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected_ranges = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected_ranges.sort_unstable();
+        assert_eq!(outcome.ranges, expected_ranges, "{}", case.name);
+        let expected_errors = match case.name.as_str() {
+            "utility-depth-limit" => vec!["utility-depth-limit".to_owned()],
+            "utility-work-limit" => vec!["utility-work-limit".to_owned()],
+            _ => Vec::new(),
+        };
+        assert_eq!(outcome.errors, expected_errors, "{}", case.name);
+    }
+}
+
+#[test]
+fn production_contract_cross_term_structure_comparisons_equal_oracles() {
+    for case in cases().into_iter().filter(|case| {
+        matches!(
+            case.name.as_str(),
+            "capture-cross-term-equality" | "capture-cross-term-inequality"
+        )
+    }) {
+        let compiled = CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        )
+        .unwrap_or_else(|error| panic!("{} policy: {}", case.name, error.reason));
+        let outcome =
+            super::policy_lowering_tests::sql_outcome(&compiled, &case.workspace.files[0].source);
+        let mut expected_ranges = case
+            .expected
+            .oracle
+            .violations
+            .iter()
+            .map(|violation| {
+                (
+                    violation["span"]["startByte"].as_u64().expect("start byte") as usize,
+                    violation["span"]["endByte"].as_u64().expect("end byte") as usize,
+                )
+            })
+            .collect::<Vec<_>>();
+        expected_ranges.sort_unstable();
+        assert_eq!(outcome.ranges, expected_ranges, "{}", case.name);
+        assert!(outcome.errors.is_empty(), "{}", case.name);
+    }
+}
+
+#[test]
+fn all_108_contracts_are_real_production_inputs_and_lower_to_sql() {
+    let cases = cases();
+    let mut failures = Vec::new();
+    for case in cases {
+        let compiled = match CodeRuleDslRuntime::compile(
+            case.policy.to_string(),
+            "json".to_owned(),
+            contract_capabilities(&case),
+        ) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                failures.push(format!(
+                    "{} (`{}`) policy: {}",
+                    case.name, case.form, error.reason
+                ));
+                continue;
+            }
+        };
+        if let Err(error) = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]) {
+            failures.push(format!(
+                "{} (`{}`) lowering: {}",
+                case.name,
+                case.form,
+                error.unsupported().join("; ")
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn default_capabilities_fixture_remains_valid_json() {
+    let _: Value = serde_json::from_str(CAPABILITIES).expect("default test capabilities are JSON");
+}
