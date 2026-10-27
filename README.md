@@ -1,113 +1,23 @@
 # Rerail
 
-Rerail checks the code your coding agent writes against your team's rules while it works, and steers it back in the same session.
+Rerail checks the code your coding agent writes against your rules while it works, and steers it back in the same session.
 
 [![CI](https://github.com/neralabs/rerail/actions/workflows/ci.yml/badge.svg)](https://github.com/neralabs/rerail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 [Docs](docs/README.md) · [Changelog](CHANGELOG.md)
 
-> [!NOTE]
-> Pre-release. `@neralabs/rerail` and its rule packs are published to npm but restricted until launch: installing
-> them needs an npm login in the `neralabs` organization.
-
 ## What is Rerail
 
-Coding agents drift. They cross architectural seams, repeat approaches the team already rejected, and ignore repository conventions they never saw. Writing more rules into the prompt doesn't fix this: it uses up context, goes stale, and still relies on the model noticing when a rule applies.
+Coding agents drift. They cross architectural seams, repeat approaches you already rejected, and ignore repository conventions they never saw. Writing more rules into the prompt doesn't fix this: it uses up context, goes stale, and still relies on the model noticing when a rule applies.
 
 Rerail takes enforcement out of the model loop. Hooks or extensions in your coding agent send each edit the agent makes to a local daemon. A native Rust engine checks the changed code against your repository's rules, by regex, syntax tree and relations. When the agent breaks a rule, Rerail steers it back during the session and records what fired, where and why.
 
 Rule checking runs on your machine and makes no network requests. No account or API key is needed.
 
-## Quickstart
+## Supported coding agents
 
-You need Node.js 24 or later on macOS, Linux (glibc) or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine.
-
-```sh
-cd your-repo
-npx @neralabs/rerail setup   # install under ~/.rerail, connect your coding agents, start Rerail here
-rerail manage                # open the dashboard (a new shell picks up the rerail launcher)
-```
-
-Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) lists everything set-up writes and how to remove it.
-
-Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
-
-```text
-/rerail-show-me
-```
-
-To add a rule of your own, describe it:
-
-```text
-/rerail-create
-```
-
-The agent drafts the rule, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
-
-## How it works
-
-```mermaid
-flowchart LR
-  agent([Coding agent]) -- edit --> engine[Rerail engine]
-  rules[(Repository rules)] --> engine
-  engine -. steer .-> agent
-  engine --> history[(Sessions and dashboard)]
-```
-
-1. **Capture.** Hooks (Claude Code, Codex, Cursor) or native extensions (OMP, Pi) observe the session automatically, so the agent never has to remember to call Rerail. Before an edit, Rerail records the file as it was, so it can tell which lines the agent changed.
-2. **Evaluate.** One background daemon keeps the engine and every repository's compiled rules in memory, checks the files the agent touched, and reports only the lines it changed.
-3. **Steer.** Each rule has a mode. `log` records the violation. `steer` sends the agent the rule, the location, what is wrong and, where the rule has one, a suggested fix.
-4. **Record.** Sessions and violations are stored in one local SQLite database (`~/.rerail/rerail.sqlite`) and shown in the dashboard, so you can see what fired, where and why.
-
-## Capabilities
-
-- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct.
-- **Only the agent's new work is judged.** Code rules report only the lines the agent changed in the session, so existing code does not bury the signal.
-- **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
-- **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
-- **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
-- **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
-- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it; `rerail update rollback` goes back.
-
-## Packs and languages
-
-Core ships no rules. A rule pack is a set of rules published as its own npm package, `@neralabs/rerail-pack-<id>`. Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
-
-| Pack | Rules (on when added) | Ported from |
-| --- | --- | --- |
-| `python` | 136 (112) | Ruff 0.16.9, Bandit 1.9.4 |
-| `javascript` | 71 (24) | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 |
-| `typescript` | 24 (13) | typescript-eslint 8.70.1, eslint-plugin-vitest 1.6.27 |
-| `next` | 21 (21) | @next/eslint-plugin-next 16.3.8 |
-| `sql` | 19 (17) | SQLFluff 4.4.0 |
-| `vue` | 19 (18) | eslint-plugin-vue 10.11.1 |
-| `rust` | 18 (13) | Clippy (Rust 1.99.0) |
-| `blade` | 10 (8) | Bladestan, tlint, stillat/blade-parser |
-| `php` | 7 (3) | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 |
-| `complexity` | 3 (3) | lizard 1.24.0: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
-| `node` | none yet | eslint-plugin-n 18.4.1 (24 candidates) |
-| `react` | none yet | eslint-plugin-react 7.37.5, react-hooks (21 candidates) |
-
-Every shipped ported rule is scored against the original tool's recorded findings and must pass the [port readiness gates](docs/port-readiness.md). Ports that do not pass yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md) and the [pack format](docs/pack-format.md).
-
-| Language | Files | Parser |
-| --- | --- | --- |
-| Python | `.py`, `.pyi` | vendored tree-sitter-python |
-| TypeScript | `.ts`, `.mts`, `.cts`, `.tsx` | vendored tree-sitter-typescript and tsx |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | vendored tree-sitter-javascript |
-| PHP | `.php` | tree-sitter-php via ast-grep |
-| Blade | `.blade.php` | Rust port of Forte 1.1.0 |
-| Rust | `.rs` | tree-sitter-rust via ast-grep |
-| SQL | `.sql` | vendored tree-sitter-sql |
-| Vue | `.vue` | vendored tree-sitter-vue |
-| Any other file | | none: regex clauses only |
-
-The registry for these lives in [`languages/`](languages/); see [Language packs](docs/language-packs.md). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
-
-## Agent integrations
-
-Set-up connects the coding agents it finds, or the ones you name (`--agents omp,pi,claude-code,codex,cursor`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
+Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
 
 | Agent | Integration | In-session commands | Status line |
 | --- | --- | --- | --- |
@@ -130,12 +40,90 @@ Every agent gets the same commands:
 
 Everything else is a terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
+## Quickstart
+
+You need Node.js 24 or later on macOS, Linux (glibc) or Windows, on arm64 or x64. Prebuilt native engines ship in the package, so nothing is compiled on your machine.
+
+```sh
+cd your-repo
+npx @neralabs/rerail setup   # install under ~/.rerail, connect your coding agents, start Rerail here
+rerail manage                # open the dashboard (a new shell picks up the rerail launcher)
+```
+
+Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) lists everything set-up writes and how to remove it.
+
+Then start a new Claude Code, Codex, Cursor, OMP or Pi session in the repository. To watch Rerail catch a broken rule and steer the fix, run:
+
+```text
+/rerail-show-me
+```
+
+To add a rule of your own, type `/rerail-create` followed by what you want:
+
+```text
+/rerail-create <what you want>
+/rerail-create never import from src/legacy in new code
+```
+
+The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
+
+## How it works
+
+```mermaid
+flowchart LR
+  agent([Coding agent]) -- edit --> engine[Rerail engine]
+  rules[(Repository rules)] --> engine
+  engine -. steer .-> agent
+  engine --> history[(Sessions and dashboard)]
+```
+
+1. **Capture.** Hooks (Claude Code, Codex, Cursor) or native extensions (OMP, Pi) observe the session automatically, so the agent never has to remember to call Rerail. Before an edit, Rerail records the file as it was, so it can tell which lines the agent changed.
+2. **Evaluate.** One background daemon keeps the engine and every repository's compiled rules in memory, checks the files the agent touched, and reports only the lines it changed.
+3. **Steer.** Each rule has a mode. `log` records the violation. `steer` sends the agent the rule, the location, what is wrong and, where the rule has one, a suggested fix.
+4. **Record.** Sessions and violations are stored in one local SQLite database (`~/.rerail/rerail.sqlite`) and shown in the dashboard, so you can see what fired, where and why.
+
+<!-- TODO: replace with a screenshot of a steer in a session, with its clickable links -->
+> **Screenshot placeholder:** an agent breaks a rule, Rerail steers it back in the session, and the steer links to the rule and the session page.
+
+## Capabilities
+
+- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct.
+- **Only the agent's new work is judged.** Code rules report only the lines the agent changed in the session, so existing code does not bury the signal.
+- **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
+- **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
+- **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
+- **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
+- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it; `rerail update rollback` goes back.
+
+## Rule packs
+
+Core ships no rules. A rule pack is a set of rules published as its own npm package, `@neralabs/rerail-pack-<id>`. Set-up recommends the packs that fit a repository, by its files or its dependencies, and installs the ones you confirm into `~/.rerail/packs`. A pack runs only where you add it. Manage packs from the dashboard's **Rule packs** page or with `rerail packs list|add|remove|recommend`.
+
+| Pack | Rules (on when added) | Ported from |
+| --- | --- | --- |
+| `python` | 136 (112) | Ruff 0.16.9, Bandit 1.9.4 |
+| `javascript` | 71 (24) | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 |
+| `typescript` | 24 (13) | typescript-eslint 8.70.1, eslint-plugin-vitest 1.6.27 |
+| `next` | 21 (21) | @next/eslint-plugin-next 16.3.8 |
+| `sql` | 19 (17) | SQLFluff 4.4.0 |
+| `vue` | 19 (18) | eslint-plugin-vue 10.11.1 |
+| `rust` | 18 (13) | Clippy (Rust 1.99.0) |
+| `blade` | 10 (8) | Bladestan, tlint, stillat/blade-parser |
+| `php` | 7 (3) | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 |
+| `complexity` | 3 (3) | lizard 1.24.0: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
+| `node` | none yet | eslint-plugin-n 18.4.1 (24 candidates) |
+| `react` | none yet | eslint-plugin-react 7.37.5, react-hooks (21 candidates) |
+
+Every shipped ported rule is scored against the original tool's recorded findings and must pass the [port readiness gates](docs/port-readiness.md). Ports that do not pass yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md) and the [pack format](docs/pack-format.md).
+
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+
 ## Internal testing
 
 > [!WARNING]
 > **These features are in the code and you can find and run them, but they are not ready for public use.** We are
 > still testing them internally. They are not supported, they may change or be removed in any release without notice,
-> and nothing in this README promises they work. Do not build on them or rely on them in your team's workflow.
+> and nothing in this README promises they work. Do not build on them or rely on them in your workflow.
 
 Each is tagged with an `Internal testing:` comment where it is defined, and every description a person or a coding agent reads for one (CLI usage, MCP tools, OMP and Pi tools and commands) starts with `[Internal testing]`, through `internalTesting()` in `src/engine/internal-testing.ts`.
 
