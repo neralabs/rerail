@@ -54,20 +54,16 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_bugbear/B006_8.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B006_8.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B006_9.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B006_9.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B006_B008.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B006_B008.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_bugbear/B006_extended.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B006_extended.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B007.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B007.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_bugbear/B008_extended.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B008_extended.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B009_B010.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B009_B010.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B011.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B011.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B012.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B012.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B013.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B013.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B014.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B014.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_bugbear/B015.ipynb` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B015.ipynb` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B015.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B015.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B016.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B016.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B017_0.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B017_0.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B017_1.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B017_1.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_bugbear/B018.ipynb` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B018.ipynb` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B018.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B018.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B019.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B019.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B020.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B020.py` | verbatim |
@@ -87,9 +83,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_bugbear/B033.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B033.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B034.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B034.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B035.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B035.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_bugbear/B035_py315.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B035_py315.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B039.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B039.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_bugbear/B039_extended.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B039_extended.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B904.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B904.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B905.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B905.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_bugbear/B911.py` | `crates/ruff_linter/resources/test/fixtures/flake8_bugbear/B911.py` | verbatim |
@@ -121,7 +115,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_simplify/SIM105_2.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM105_2.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM105_3.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM105_3.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM105_4.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM105_4.py` | verbatim |
-| `upstream/ruff/fixtures/flake8_simplify/SIM105_5.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM105_5.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM107.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM107.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM108.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM108.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM109.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM109.py` | verbatim |
@@ -149,7 +142,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/flake8_simplify/SIM905.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM905.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM910.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM910.py` | verbatim |
 | `upstream/ruff/fixtures/flake8_simplify/SIM911.py` | `crates/ruff_linter/resources/test/fixtures/flake8_simplify/SIM911.py` | verbatim |
-| `upstream/ruff/fixtures/isort/required_imports/unused.py` | `crates/ruff_linter/resources/test/fixtures/isort/required_imports/unused.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/MODULE/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/MODULE/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/MODULE/file.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/MODULE/file.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/flake9/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/flake9/__init__.py` | verbatim |
@@ -158,26 +150,17 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pep8_naming/N999/module/mod with spaces/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/mod with spaces/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/mod with spaces/file.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/mod with spaces/file.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/mod-with-dashes/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/mod-with-dashes/__init__.py` | verbatim |
-| `upstream/ruff/fixtures/pep8_naming/N999/module/no_module/test.txt` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/no_module/test.txt` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/valid_name/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/valid_name/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/valid_name/__main__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/valid_name/__main__.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/valid_name/__setup__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/valid_name/__setup__.py` | verbatim |
 | `upstream/ruff/fixtures/pep8_naming/N999/module/valid_name/file-with-dashes.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/valid_name/file-with-dashes.py` | verbatim |
-| `upstream/ruff/fixtures/pep8_naming/N999/module/valid_name/file-with-dashes` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/module/valid_name/file-with-dashes` | verbatim |
-| `upstream/ruff/fixtures/pep8_naming/ignore_names/N999/badAllowed/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pep8_naming/ignore_names/N999/badAllowed/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E40.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E40.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/E402.ipynb` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402.ipynb` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E402_0.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_0.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E402_1.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_1.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E402_2.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_2.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E402_3.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_3.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E402_4.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_4.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E402_5.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_5.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/E402_comments.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_comments.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/E402_docstring.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_docstring.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/E402_future.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_future.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/E402_shebang.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_shebang.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/E402_shebang_docstring_and_future.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E402_shebang_docstring_and_future.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E711.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E711.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E712.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E712.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E713.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E713.py` | verbatim |
@@ -189,7 +172,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pycodestyle/E741.pyi` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E741.pyi` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E742.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E742.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/E743.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/E743.py` | verbatim |
-| `upstream/ruff/fixtures/pycodestyle/W391_after_empty_cell_fix.ipynb` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/W391_after_empty_cell_fix.ipynb` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/W605_0.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/W605_0.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/W605_1.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/W605_1.py` | verbatim |
 | `upstream/ruff/fixtures/pycodestyle/constant_literals.py` | `crates/ruff_linter/resources/test/fixtures/pycodestyle/constant_literals.py` | verbatim |
@@ -217,10 +199,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/F401_28__all_multiple/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_28__all_multiple/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_29__all_conditional/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_29__all_conditional/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_3.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_3.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F401_30.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_30.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F401_31.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_31.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_32.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_32.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F401_33/__init__.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_33/__init__.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_34.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_34.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_35.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_35.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_4.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_4.py` | verbatim |
@@ -229,7 +208,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/F401_7.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_7.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_8.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_8.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F401_9.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F401_9.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F402.ipynb` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F402.ipynb` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F402.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F402.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F403.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F403.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F404_0.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F404_0.py` | verbatim |
@@ -288,9 +266,7 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/F811_30.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_30.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F811_31.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_31.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F811_32.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_32.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F811_33.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_33.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F811_33.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_33.pyi` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F811_34.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_34.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F811_35.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_35.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F811_36.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_36.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F811_4.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F811_4.py` | verbatim |
@@ -315,7 +291,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/F821_2.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_2.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_20.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_20.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_21.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_21.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F821_22.ipynb` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_22.ipynb` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_23.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_23.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_24.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_24.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_25.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_25.py` | verbatim |
@@ -323,7 +298,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/F821_26.pyi` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_26.pyi` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_27.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_27.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_28.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_28.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/F821_29.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_29.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_3.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_3.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_30.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_30.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/F821_31.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/F821_31.py` | verbatim |
@@ -355,13 +329,10 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/pyflakes/builtins.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/builtins.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/future_annotations.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/future_annotations.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/multi_statement_lines.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/multi_statement_lines.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/project/foo/bar.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/project/foo/bar.py` | verbatim |
-| `upstream/ruff/fixtures/pyflakes/project/foo/bop/baz.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/project/foo/bop/baz.py` | verbatim |
 | `upstream/ruff/fixtures/pyflakes/typing_modules.py` | `crates/ruff_linter/resources/test/fixtures/pyflakes/typing_modules.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/RUF050_F401.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF050_F401.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/RUF072_RUF047_SIM105.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF072_RUF047_SIM105.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/RUF072_SIM105.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF072_SIM105.py` | verbatim |
-| `upstream/ruff/fixtures/ruff/RUF100_0.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF100_0.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/RUF100_1.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF100_1.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/RUF100_2.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF100_2.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/RUF100_3.py` | `crates/ruff_linter/resources/test/fixtures/ruff/RUF100_3.py` | verbatim |
@@ -372,16 +343,6 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/ruff/ruff_noqa_all.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_noqa_all.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/ruff_noqa_codes.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_noqa_codes.py` | verbatim |
 | `upstream/ruff/fixtures/ruff/ruff_noqa_invalid.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_noqa_invalid.py` | verbatim |
-| `upstream/ruff/fixtures/ruff/ruff_per_file_ignores.py` | `crates/ruff_linter/resources/test/fixtures/ruff/ruff_per_file_ignores.py` | verbatim |
-| `upstream/ruff/fixtures/ruff/suppressions.py` | `crates/ruff_linter/resources/test/fixtures/ruff/suppressions.py` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/add_missing_cell_id.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/add_missing_cell_id.ipynb` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/before_fix.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/before_fix.ipynb` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/ipy_escape_command.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/ipy_escape_command.ipynb` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/no_cell_id.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/no_cell_id.ipynb` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/undefined_name.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/undefined_name.ipynb` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/unused_variable.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/unused_variable.ipynb` | verbatim |
-| `upstream/ruff/fixtures/ruff_notebook/jupyter/vscode_language_id.ipynb` | `crates/ruff_notebook/resources/test/fixtures/jupyter/vscode_language_id.ipynb` | verbatim |
-| `upstream/ruff/fixtures/syntax_errors/await_scope.ipynb` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/await_scope.ipynb` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/late_future_import.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/late_future_import.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/return_outside_function.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/return_outside_function.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/yield_scope.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/yield_scope.py` | verbatim |
