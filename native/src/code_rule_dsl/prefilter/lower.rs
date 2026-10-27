@@ -21,6 +21,8 @@ use render::Definitions;
 pub(super) mod lifetime;
 pub(super) mod ownership;
 mod waves;
+#[cfg(feature = "code-rule-profile")]
+pub(super) mod working_set;
 
 #[derive(Clone)]
 struct Set {
