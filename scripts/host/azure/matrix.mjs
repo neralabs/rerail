@@ -8,7 +8,7 @@
 //   node scripts/host/azure/matrix.mjs run --npm <version or dist-tag> [--env <id,...>]
 //   node scripts/host/azure/matrix.mjs stage --tarball <file> --run-id <id>     bundle once for a CI run's jobs, which
 //   node scripts/host/azure/matrix.mjs run --staged --run-id <id> [--env <id,...>]      then each run --staged
-//   node scripts/host/azure/matrix.mjs local --tarball <file> --env <id>     a macOS environment, on this Mac (sudo)
+//   node scripts/host/azure/matrix.mjs local --tarball <file> [--env <id>]     this GitHub runner (sudo): a macOS id, or as itself
 //   node scripts/host/azure/matrix.mjs list --on <azure|github> [--env <id,...>]     JSON, for a CI matrix
 //   node scripts/host/azure/matrix.mjs affected --base <commit> --head <commit>     true when the matrix should run
 //   node scripts/host/azure/matrix.mjs sweep [--run-id <id> | --older-than-hours <n>]
@@ -401,16 +401,22 @@ function report(outcomes, packageLabel, outDir) {
   if (!outcomes.every(({ verdict }) => OK_OUTCOMES.has(verdict.outcome))) process.exitCode = 1;
 }
 
-// A macOS environment, on the Mac this runs on: the guest provisions as root (sudo) and checks as this account, as it
-// does on an Azure VM. It installs Node system-wide, makes this account's shell zsh and writes to its home, so it runs
-// only on a GitHub-hosted runner, which is thrown away afterwards.
+// One environment on the machine this runs on: the guest provisions as root (sudo) and checks as this account, as it
+// does on an Azure VM. `--env` names a macOS environment of the matrix; without it, this runner is the environment
+// (`<os>-<arch>`, expected to pass), as the release workflow's Linux and macOS gates run it. It installs Node
+// system-wide, writes to this account's home and on a Mac makes its shell zsh, so it runs only on a GitHub-hosted
+// Linux or macOS runner, which is thrown away afterwards.
 async function commandLocal(options) {
-  if (!options.tarball || !options.env) throw new Error("local needs --tarball <file> and --env <macOS environment id>");
-  const environments = selectEnvironments(options.env, "github");
-  if (environments.length !== 1) throw new Error("local runs exactly one macOS environment: --env <id>");
-  const [environment] = environments;
-  if (process.platform !== "darwin" || process.env.RUNNER_ENVIRONMENT !== "github-hosted") {
-    throw new Error(`${environment.id} runs only on a GitHub-hosted macOS runner: it changes the account and installs Node system-wide`);
+  if (!options.tarball) throw new Error("local needs --tarball <file> [--env <macOS environment id>]");
+  const os = { darwin: "macos", linux: "linux" }[process.platform];
+  let environment = { id: `${os}-${process.arch}`, os, expect: "pass" };
+  if (options.env) {
+    const environments = selectEnvironments(options.env, "github");
+    if (environments.length !== 1) throw new Error("local runs exactly one macOS environment: --env <id>");
+    [environment] = environments;
+  }
+  if (os === undefined || environment.os !== os || process.env.RUNNER_ENVIRONMENT !== "github-hosted") {
+    throw new Error(`${environment.id ?? "local"} runs only on a GitHub-hosted ${environment.os ?? "Linux or macOS"} runner: it changes the account and installs Node system-wide`);
   }
   const tarball = resolve(options.tarball);
   if (!existsSync(tarball)) throw new Error(`No tarball at ${tarball}`);
@@ -526,7 +532,7 @@ try {
     case "list": commandList(options); break;
     case "affected": await commandAffected(options); break;
     case "sweep": await commandSweep(options); break;
-    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | local --tarball <file> --env <id> | list --on <azure|github> [--env <ids>] | affected --base <commit> --head <commit> | sweep [--run-id <id> | --older-than-hours <n>]");
+    default: throw new Error("Usage: matrix.mjs run (--tarball <file> | --npm <spec> | --staged --run-id <id>) [--env <ids>] [--keep] | stage --tarball <file> --run-id <id> | local --tarball <file> [--env <id>] | list --on <azure|github> [--env <ids>] | affected --base <commit> --head <commit> | sweep [--run-id <id> | --older-than-hours <n>]");
   }
 } catch (error) {
   console.error(`matrix: ${error.message}`);
