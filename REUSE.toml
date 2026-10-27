@@ -1121,3 +1121,17 @@ SPDX-License-Identifier = "Apache-2.0"
 # Makuza), eslint-plugin-react 7.37.5 (2014 Yannick Croissant), eslint-plugin-react-hooks 7.1.1 (Meta Platforms, Inc.
 # and affiliates.), @next/eslint-plugin-next 16.3.8 (2025 Vercel, Inc.), ESLint 10.11.0 (OpenJS Foundation and other
 # contributors), eslint-plugin-unicorn 76.0.0 (Sindre Sorhus) — each MIT, combined with Rerail's Apache-2.0.
+
+# The coding agents' logos in the README's "Works with" badges: LobeHub's icons for Claude Code, Codex, Cursor and Pi,
+# oh-my-pi's own icon for OMP, each inside a badge drawn by shields.io. The names and logos are their owners' trademarks.
+[[annotations]]
+path = ["docs/images/agents/claude-code.svg", "docs/images/agents/codex.svg", "docs/images/agents/cursor.svg", "docs/images/agents/pi.svg"]
+precedence = "override"
+SPDX-FileCopyrightText = "2023 LobeHub"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docs/images/agents/omp.svg"
+precedence = "override"
+SPDX-FileCopyrightText = ["2025 Mario Zechner", "2025-2026 Can Bölük", "2026 Stencil Labs, Inc."]
+SPDX-License-Identifier = "MIT"

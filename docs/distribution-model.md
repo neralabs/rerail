@@ -77,7 +77,7 @@ versions. Merging the **Release** pull request, which `.github/workflows/release
 is the release: it bumps core's patch version when anything core ships has changed since its last `v<version>` tag,
 beside the packs' changeset bumps. On merge the workflow tags core's new version, `release.yml` builds and publishes
 it, and `release-packs.yml` publishes the packs; each publish waits for a reviewer to approve the `release`
-environment, and each run then checks that `latest` is the version it published ([README](../README.md#release),
+environment, and each run then checks that `latest` is the version it published ([release](release.md#release),
 [pack-format.md](pack-format.md#release)). `next` and `beta` stay available for a preview: a `v<version>-next.N` or
 `-beta.N` tag pushed by hand publishes under that channel.
 

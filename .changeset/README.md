@@ -10,4 +10,4 @@ merging it publishes the packs
 ([release](../docs/pack-format.md#release)).
 
 The core package at the repository root takes no changeset: the same Release pull request bumps it when what it ships
-changes, and its notes go under `## Unreleased` in the root `CHANGELOG.md` ([README](../README.md#release)).
+changes, and its notes go under `## Unreleased` in the root `CHANGELOG.md` ([release notes](../docs/release.md#release)).
