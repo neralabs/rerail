@@ -1,8 +1,8 @@
 name: Release
 
 # Builds the @neralabs/rerail package with package.yml (native rules engines for every supported target, the
-# TypeScript runtime, and the bundled UI, packed into one cross-platform tarball), installs it on Windows, and
-# publishes it.
+# TypeScript runtime, and the bundled UI, packed into one cross-platform tarball), installs it on Windows, Linux and
+# macOS, and publishes it.
 #
 # A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag: `v1.2.3` -> latest,
 # `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version. Merging the Release
@@ -86,8 +86,8 @@ jobs:
     uses: ./.github/workflows/package.yml
 
   # The managed install renames a staged version into place, runs the native engine, and starts the
-  # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows x64
-  # before it ships.
+  # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows, Linux
+  # and macOS before it ships.
   windows-install:
     name: Windows x64 managed install
     needs: package
@@ -119,6 +119,55 @@ jobs:
         shell: pwsh
         run: ./scripts/host/windows-install-smoke.ps1 -Tarball "release/${{ needs.package.outputs.tarball }}"
 
+  # Linux and macOS the way a user meets them, by the environment matrix's own guest
+  # (scripts/host/azure/guest.sh): Node from nodejs.org, `npx @neralabs/rerail setup` answered in its
+  # JSON lane, then the launcher, daemon and engine, PATH in a new shell (zsh on the Mac), the Claude
+  # Code and Codex hooks, daemon restart, and removal. `matrix.mjs local` runs it on the runner itself.
+  unix-install:
+    name: ${{ matrix.name }} managed install
+    needs: package
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+          - name: macOS arm64
+            runner: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Runs the driver only; the guest installs its own Node from nodejs.org.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Download release tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Install the release with npx @neralabs/rerail setup
+        env:
+          TARBALL: release/${{ needs.package.outputs.tarball }}
+        run: node scripts/host/azure/matrix.mjs local --tarball "$TARBALL" --out results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: install-${{ matrix.runner }}
+          path: results
+          if-no-files-found: ignore
+
   # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
   # publish credential, so no npm token exists anywhere. npmjs must list this repository,
   # `release.yml`, and the `release` environment as the package's trusted publisher.
@@ -126,7 +175,7 @@ jobs:
   # until this repository is public, releases publish without provenance.
   publish:
     name: Publish to npmjs
-    needs: [metadata, package, windows-install]
+    needs: [metadata, package, windows-install, unix-install]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15

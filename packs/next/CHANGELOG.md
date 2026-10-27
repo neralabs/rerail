@@ -1,5 +1,14 @@
 # @neralabs/rerail-pack-next
 
+## 0.1.4
+
+### Patch Changes
+
+- 9c30a1e: Next.js pack: the 15 rules `@next/eslint-plugin-next`'s recommended configuration sets to `warn` now start in `log` mode, recorded but not steered: `no-img-element`, `no-head-element`, `no-sync-scripts`, `no-css-tags`, `google-font-display`, `google-font-preconnect`, `next-script-for-ga`, `no-unwanted-polyfillio`, `no-styled-jsx-in-document`, `no-title-in-document-head`, `no-async-client-component`, `no-before-interactive-script-outside-document`, `no-typos`, `no-page-custom-font` and `no-location-assign-relative-destination`. The six it sets to `error` still steer.
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- d0dd309: README: internal ticket references removed; no rule changes.
+- 211e8b5: The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+
 ## 0.1.3
 
 ### Patch Changes

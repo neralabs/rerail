@@ -289,7 +289,7 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   runs it).
 - A change to a pack under `packs/` adds a changeset ([.changeset/README.md](.changeset/README.md)).
 - A change to what the core package ships adds an entry under `## Unreleased` in `CHANGELOG.md`
-  ([release notes](README.md#release)).
+  ([release notes](docs/release.md#release)).
 - Tests cover the behavior you changed, and docs that describe it are updated.
 
 ## Reporting a bug

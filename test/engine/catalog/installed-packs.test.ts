@@ -109,7 +109,7 @@ describe("the installed-pack catalog", () => {
       {
         name: "a core range that excludes the running core",
         breakPack: directory => editJson(directory, "package.json", manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } })),
-        reason: new RegExp(`^@neralabs/rerail-pack-complexity@${COMPLEXITY_VERSION.replace(/\./gu, "\\.")} needs @neralabs/rerail >=9\\.0\\.0; this is ${activeCoreVersion().replace(/\./gu, "\\.")}$`, "u"),
+        reason: new RegExp(`^it needs a newer Rerail \\(>=9\\.0\\.0\\) than this one \\(${activeCoreVersion().replace(/\./gu, "\\.")}\\); \`rerail update\` installs the newest$`, "u"),
       },
       {
         name: "a pack.json the schema refuses",
@@ -146,7 +146,7 @@ describe("the installed-pack catalog", () => {
             forbid: { regex: { pattern: "(", source: "file.content" } },
           }],
         }),
-        reason: new RegExp(`^rule ${PYTHON_RULE} does not compile: `, "u"),
+        reason: new RegExp(`^this Rerail \\(${activeCoreVersion().replace(/\./gu, "\\.")}\\) cannot run its rule ${PYTHON_RULE}, so the pack may need a newer Rerail \\(\`rerail update\` installs the newest\\)\\. The engine says: `, "u"),
       },
     ];
 
@@ -222,7 +222,7 @@ describe("the installed-pack catalog", () => {
 
     expect(summary(readRuleCatalog([directory]))).toEqual({ packs: ["valid"], skipped: [] });
     expect(summary(readRuleCatalog([directory], { coreVersion: "0.1.0" })).skipped).toEqual([
-      { path: directory, reason: "@neralabs/rerail-pack-valid@0.1.0 needs @neralabs/rerail >=9.0.0; this is 0.1.0" },
+      { path: directory, reason: "it needs a newer Rerail (>=9.0.0) than this one (0.1.0); `rerail update` installs the newest" },
     ]);
   });
 });

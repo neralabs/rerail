@@ -3,7 +3,7 @@
 // package that merging it releases.
 //   - Packs: with changesets pending, `npm run version:packs` (each pack's version and CHANGELOG.md, then the lockfile).
 //   - Core: when core's version is released (its `v<version>` tag exists) and anything core ships has changed since
-//     that tag (coreChanges in core.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
+//     that tag (coreChanges in core-paths.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
 //     root entries, and the root CHANGELOG.md's unreleased section dated today as that version. A version not tagged
 //     yet is a release under way (release-pr.yml tags it before this runs), so core is left alone.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags fetched.
@@ -12,7 +12,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogSection, CORE_NAME, coreChanges, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "./core.mjs";
+import { changelogSection, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setLockVersion, setPackageVersion } from "./core.mjs";
+import { coreChanges } from "./core-paths.mjs";
 import { listPacks, readChangesets, ROOT } from "./packs.mjs";
 
 /** A changelog section longer than this is linked rather than quoted: a pull request description holds 65,536 characters. */

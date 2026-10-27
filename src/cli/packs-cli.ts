@@ -73,6 +73,8 @@ async function recommend(args: readonly string[], usage: () => string, store: Pa
     discovery.recommended.length === 0 ? `No rule pack fits ${workspaceRoot}.` : `Rule packs that fit ${workspaceRoot}:`,
     ...discovery.recommended.map(discoveredLine),
     ...(others.length === 0 ? [] : ["Other rule packs:", ...others.map(discoveredLine)]),
+    // Never offered, since adding one would run nothing; listed so a pack that fits is not simply missing.
+    ...(discovery.withoutRules.length === 0 ? [] : ["No rules yet, so not offered:", ...discovery.withoutRules.map(discoveredLine)]),
     ...(discovery.problems.length === 0 ? [] : ["Not available:", ...discovery.problems.map(problem => `  ${clean(problem)}`)]),
     ...(discovery.recommended.length === 0 ? [] : [`Install them with: rerail packs add ${discovery.recommended.map(found => `${found.pack.id}@${found.version}`).join(" ")}`]),
   ]);

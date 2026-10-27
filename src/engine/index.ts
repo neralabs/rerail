@@ -15,6 +15,7 @@ export {
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
+  STEER_LINE_MESSAGE_TYPE,
   STEER_STRATEGIES,
   type SteerRule,
   type SteerStrategy,
@@ -139,6 +140,6 @@ export {
   steerFeedback,
   workLinks,
 } from "./storage/schema.js";
-export { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
+export { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";

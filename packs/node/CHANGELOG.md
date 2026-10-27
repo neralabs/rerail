@@ -1,5 +1,12 @@
 # @neralabs/rerail-pack-node
 
+## 0.1.5
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- d0dd309: README: internal ticket references removed; no rule changes.
+
 ## 0.1.4
 
 ### Patch Changes

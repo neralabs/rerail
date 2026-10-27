@@ -114,12 +114,12 @@ export function formatTerminalStatus({ status, parts }: SessionPresentation, env
 
 /**
  * A footer drawn without asking any daemon, for hosts whose own read failed: `session unavailable` (●, the session is
- * unknown) or `unavailable` (✕, nothing could be read).
+ * unknown), or `unavailable` or a Node too old to run Rerail (✕, nothing could be read).
  */
-export function fallbackPresentation(reason: "session unavailable" | "unavailable"): SessionPresentation {
-  return reason === "unavailable"
-    ? unavailable("not-running", reason, "compact")
-    : unavailable("unavailable", reason, "compact");
+export function fallbackPresentation(reason: "session unavailable" | "unavailable" | `needs Node ${string}`): SessionPresentation {
+  return reason === "session unavailable"
+    ? unavailable("unavailable", reason, "compact")
+    : unavailable("not-running", reason, "compact");
 }
 
 function unavailable(

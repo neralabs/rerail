@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-node",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Rerail rule pack: eslint-plugin-n rules ported to Rerail code rules.",
   "license": "Apache-2.0 AND MIT",
   "repository": {

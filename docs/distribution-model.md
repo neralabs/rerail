@@ -77,7 +77,7 @@ versions. Merging the **Release** pull request, which `.github/workflows/release
 is the release: it bumps core's patch version when anything core ships has changed since its last `v<version>` tag,
 beside the packs' changeset bumps. On merge the workflow tags core's new version, `release.yml` builds and publishes
 it, and `release-packs.yml` publishes the packs; each publish waits for a reviewer to approve the `release`
-environment, and each run then checks that `latest` is the version it published ([README](../README.md#release),
+environment, and each run then checks that `latest` is the version it published ([release](release.md#release),
 [pack-format.md](pack-format.md#release)). `next` and `beta` stay available for a preview: a `v<version>-next.N` or
 `-beta.N` tag pushed by hand publishes under that channel.
 
@@ -132,7 +132,7 @@ An update:
 8. Moves the staged installation into its immutable version directory.
 9. Atomically records the old current version as previous and activates the new version.
 10. Retains the previous installation for explicit rollback.
-11. Registers the active version again with every coding agent already connected (`rerail install --refresh`, run as that version's CLI), so the commands, skills and hooks it ships arrive and the ones it retired go. This step runs even when no newer version was found. A connected coding agent that cannot be registered again fails this step for that agent only, and the update then exits non-zero with the new version still active; an agent whose configuration cannot be read to tell whether it is connected is named and left alone. The update that brings this step runs the previous version's update, which lacks it: run `rerail install --refresh` once after it.
+11. Registers the active version again with every coding agent already connected (`rerail install --refresh`, run as that version's CLI), so the commands, skills and hooks it ships arrive and the ones it retired go, and writes the launcher again; hooks, status line and launcher then name the Node the update ran on. This step runs even when no newer version was found. A connected coding agent that cannot be registered again fails this step for that agent only, and the update then exits non-zero with the new version still active; an agent whose configuration cannot be read to tell whether it is connected is named and left alone. The update that brings this step runs the previous version's update, which lacks it: run `rerail install --refresh` once after it.
 
 Failed resolution, authentication, installation, or health checks leave the current version unchanged. Revoked npm access therefore prevents future updates without breaking an installed version. Concurrent updates share the update lock and cannot race activation.
 

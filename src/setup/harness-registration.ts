@@ -12,6 +12,7 @@ import {
   realpath,
   rename,
   rm,
+  rmdir,
   stat,
   symlink,
   unlink,
@@ -33,6 +34,7 @@ import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-comma
 import { shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
+import { pinnedNodePath } from "./node-path.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
 
@@ -146,6 +148,26 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+/**
+ * A coding agent's config file that is not plain JSON (a comment, a trailing comma). Registration never rewrites such
+ * a file: what it would write back is JSON, so whatever made it unreadable would be lost.
+ */
+export class UnreadableConfigError extends Error {
+  constructor(readonly path: string, readonly reason: string) {
+    super(`Cannot parse JSON in ${path}: ${reason}`);
+  }
+}
+
+/** Removes `directory` if it is empty: a folder registration made for files it has since taken out again. */
+async function removeIfEmpty(directory: string): Promise<void> {
+  try {
+    await rmdir(directory);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && ["ENOENT", "ENOTEMPTY", "EEXIST"].includes(String(error.code))) return;
+    throw error;
+  }
+}
+
 /** The path cannot exist: it, or a directory on the way to it, is missing or is not a directory. */
 function isAbsent(error: unknown): boolean {
   return isMissing(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR");
@@ -249,20 +271,34 @@ interface HookTarget {
   script: string;
 }
 
-/** Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, or the Windows `cmd` fallback. */
+/**
+ * Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, the Windows `cmd` fallback, or
+ * Codex's PowerShell fallback.
+ */
 function shellHookTarget(context: Context, command: string, executable: string): HookTarget | undefined {
+  const windows = context.platform === "win32";
   const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
   const windowsFallback = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u.exec(command);
+  const literal = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
+  const powershellFallback = new RegExp(
+    String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${literal}\) \{ & \1 ${literal} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
+    "u",
+  ).exec(command);
   let direct = windowsFallback === null ? command : `${windowsFallback[1]} ${windowsFallback[2]}`;
   if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
-  const windows = context.platform === "win32";
+  if (powershellFallback !== null && windows) {
+    direct = [powershellFallback[1]!, powershellFallback[2]!]
+      .map(word => shellArgument(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "win32"))
+      .join(" ");
+  }
   const words = shellWords(direct, windows);
   if (words.length !== 2 || words.join(" ") !== direct) return undefined;
   const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
   const root = registeredRoot(target.script, executable);
   if (root === undefined) return undefined;
   const recorded = { ...context, root, nodePath: target.nodePath };
-  return hookCommand(recorded, executable) === command || directCommand(recorded, executable) === command ? target : undefined;
+  return [hookCommand(recorded, executable), directCommand(recorded, executable), powershellHookCommand(recorded, executable)]
+    .includes(command) ? target : undefined;
 }
 
 /** A node binary as setup records it: `node` or `node.exe`, bare or at any path. */
@@ -305,6 +341,19 @@ function hookCommand(context: Context, executable: string): string {
   const hook = shellArgument(join(context.root, executable), context.platform);
   if (context.platform === "win32") return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
+}
+
+/**
+ * The same order for Codex on Windows, which hands a hook's command to PowerShell (`-Command`): there the `cmd` form's
+ * nested double quotes split at a space in the profile path. A single-quoted literal keeps spaces, `$`, backticks and
+ * `%` as they are; a quote inside is doubled, and PowerShell reads ‘ ’ ‚ ‛ as single quotes too. `$LASTEXITCODE` starts
+ * at 1 so the hook still fails when neither node runs, and `exit` passes on the hook's own exit code.
+ */
+function powershellHookCommand(context: Context, executable: string): string {
+  const quote = (value: string) => `'${value.replace(/['\u2018-\u201B]/gu, "$&$&")}'`;
+  const node = quote(context.nodePath);
+  const hook = quote(join(context.root, executable));
+  return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
 }
 
 /**
@@ -361,7 +410,7 @@ async function readJsonFile(path: string): Promise<JsonFile> {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new Error(`Cannot parse JSON in ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new UnreadableConfigError(path, error instanceof Error ? error.message : String(error));
   }
   if (!isObject(parsed)) throw new Error(`Expected a JSON object at the top level of ${path}`);
   return { exists: true, value: parsed, mode };
@@ -528,9 +577,19 @@ function planGroupedHooks(
     context.mode === "register"
       ? `register rerail hooks for ${events.length} ${label} events`
       : `remove rerail hooks from ${label} settings`;
-  const entry = { type: "command", command: hookCommand(context, executable) };
+  // Only Codex registers through here; on Windows it runs a hook's command through PowerShell.
+  const command = context.platform === "win32" ? powershellHookCommand(context, executable) : hookCommand(context, executable);
+  const entry = { type: "command", command };
   return planJsonFile(harness, path, context, detail, value => updateGroupedHooks(value, path, context, events, toolEvents, executable, entry));
 }
+
+/**
+ * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
+ * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
+ * project's settings, the settings path after it. Windows keeps the direct command, quoted for `cmd`: Claude Code
+ * runs it through Git Bash there, and the `sh` form would need the path quoted for that shell instead.
+ */
+const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
 
 function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
   return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
@@ -545,7 +604,8 @@ function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
-  const command = directCommand(context, ENTRY_POINTS.claudeStatus)
+  const command = (context.platform === "win32" ? "" : CLAUDE_STATUS_FALLBACK)
+    + directCommand(context, ENTRY_POINTS.claudeStatus)
     + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
   const previous = statusLine ?? inherited;
@@ -630,10 +690,14 @@ async function planClaudeSettings(
   });
 }
 
-/** The script of the generated executable shape, recognized even when its old package/ownership is gone. */
+/**
+ * The script of the generated executable shape, recognized even when its old package/ownership is gone: direct, as
+ * Windows and earlier versions write it, or behind the POSIX fallback.
+ */
 function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
-  const words = command.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
-  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== command) return undefined;
+  const direct = command.startsWith(CLAUDE_STATUS_FALLBACK) ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
+  const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
+  if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== direct) return undefined;
   const windows = platform === "win32";
   const script = unquoteShellWord(words[1]!, windows);
   return isNodeExecutable(unquoteShellWord(words[0]!, windows))
@@ -826,7 +890,11 @@ async function planOmp(context: Context): Promise<Plan> {
   if (kind === "missing") return unchanged("no symlink: nothing to remove");
   if (kind === "other") return unchanged("not a symlink: left in place");
   if (target !== canonicalRoot) return unchanged(`symlink points at ${target}: left in place`);
-  return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, () => unlink(path));
+  // The extensions folder goes too once it is empty: registration made it for the link when OMP had none.
+  return planMutation(context, "omp", path, "updated", `remove symlink to ${context.root}`, async () => {
+    await unlink(path);
+    await removeIfEmpty(dirname(path));
+  });
 }
 
 /** The immutable stdio bridge selects the checkout-local MCP endpoint from its launch cwd. */
@@ -889,7 +957,13 @@ async function planCodexSkillRemoval(context: Context, name: string, path: strin
   if (!existing.text.includes(MANAGED_SKILL_MARKER) || !(await runsPackageCli(context, existing.text))) {
     return { change: { harness: "codex", path, action: "unchanged", detail: `no $${name} skill from this Rerail installation to remove` } };
   }
-  return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, () => unlink(path));
+  // The skill's folder is named for it, so it goes with the skill once nothing else is in it, and so does
+  // `skills/` once Rerail's were all it held.
+  return planMutation(context, "codex", path, "updated", `remove the $${name} skill`, async () => {
+    await unlink(path);
+    await removeIfEmpty(dirname(path));
+    await removeIfEmpty(dirname(dirname(path)));
+  });
 }
 
 async function planCodexSkill(context: Context, name: RerailCommandName): Promise<Plan> {
@@ -1007,7 +1081,7 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
     root,
     packageRoots: new Map(),
     home,
-    nodePath: options.nodePath ?? process.execPath,
+    nodePath: options.nodePath ?? pinnedNodePath(),
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
   };
@@ -1054,10 +1128,13 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
   // Codex asks to trust a hook again only when its command changes.
   const codexHooks = join(home, ".codex", "hooks.json");
   if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
-    notes.push("Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.");
+    notes.push(CODEX_TRUST_NOTE);
   }
   return { changes, notes };
 }
+
+/** The note a registration that wrote Codex's hooks carries: Codex runs no hook the person has not trusted. */
+export const CODEX_TRUST_NOTE = "Codex only runs trusted hooks: open Codex and run /hooks to trust the rerail hook.";
 
 export function registerHarnesses(options: RegistrationOptions): Promise<RegistrationReport> {
   return run(options, "register");

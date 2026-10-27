@@ -12,9 +12,29 @@
           "**/*.php"
         ],
         "exclude": [
-          "**/*.blade.php"
+          "**/*.blade.php",
+          "**/test/**",
+          "**/tests/**",
+          "**/Test/**",
+          "**/Tests/**",
+          "**/spec/**",
+          "**/*Test.php",
+          "**/*TestCase.php",
+          "**/scripts/**",
+          "**/script/**",
+          "**/bin/**",
+          "**/tools/**",
+          "**/ci/**",
+          "**/.github/**",
+          "**/config/**",
+          "**/*.config.php",
+          "**/.*.php",
+          "**/rector.php",
+          "**/ecs.php",
+          "**/docs/**",
+          "**/doc/**"
         ],
-        "label": "*.php files"
+        "label": "PHP source files"
       }
     ]
   },

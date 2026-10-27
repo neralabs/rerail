@@ -1,20 +1,46 @@
 #!/usr/bin/env bash
 #
-# Runs on a throwaway Azure Linux VM for scripts/host/azure/matrix.mjs, which prepends the RERAIL_ENV_* settings
-# and sends this file through Azure Run Command. As root it provisions what a user brings (Node from nodejs.org,
-# Git from the distribution) and the package under test, then runs itself again as the VM's ordinary user through a
-# login shell, the way a person opens a terminal. That run installs Rerail with `npx @neralabs/rerail setup`,
-# answers set-up's questions, and checks the managed runtime: launcher, daemon and native engine, PATH in new
-# shells, the Claude Code and Codex hooks as those agents spawn them, daemon restart, and removal. It uploads
-# results.json and a log to the blob URLs it was given; the driver judges them against the environment's
-# expectation.
+# Runs on a throwaway Azure Linux VM, or a GitHub-hosted Linux or macOS runner, for scripts/host/azure/matrix.mjs,
+# which prepends the RERAIL_ENV_* settings and sends this file through Azure Run Command, or runs it with sudo on the
+# runner (`matrix.mjs local`: the matrix's macOS environments, and the release workflow's Linux and macOS installs).
+# As root it provisions what a user brings (Node from nodejs.org; Git from the distribution, or the Command Line Tools
+# on a Mac) and the package under test, then runs itself again as the machine's ordinary user through a login shell,
+# the way a person opens a terminal. That run installs Rerail with `npx @neralabs/rerail setup`, answers set-up's
+# questions, and checks the managed runtime: launcher, daemon and native engine, PATH in new shells, the Claude Code
+# and Codex hooks as those agents spawn them, daemon restart, and removal. It uploads results.json and a log to the
+# blob URLs it was given, or leaves them in $WORK when it was given none; the driver judges them against the
+# environment's expectation. Bash 3.2, which is macOS's /bin/bash.
 set -uo pipefail
 
-: "${RERAIL_ENV_ID:?}" "${RERAIL_ENV_USER:?}" "${RERAIL_ENV_NODE:?}" "${RERAIL_ENV_RESULT_URL:?}" "${RERAIL_ENV_LOG_URL:?}"
+: "${RERAIL_ENV_ID:?}" "${RERAIL_ENV_USER:?}" "${RERAIL_ENV_NODE:?}"
+RERAIL_ENV_RESULT_URL="${RERAIL_ENV_RESULT_URL:-}"
+RERAIL_ENV_LOG_URL="${RERAIL_ENV_LOG_URL:-}"
 WORK=/opt/rerail-env
 
-upload() { # <file> <sas url>
+upload() { # <file> <sas url>; nothing without a URL
+  [ -n "$2" ] || return 0
   curl -fsS --retry 5 --retry-all-errors -X PUT -H 'x-ms-blob-type: BlockBlob' --data-binary "@$1" "$2" >/dev/null
+}
+
+# A download, retried: a new VM's first minutes on the network see failures a person would simply retry.
+fetch() { # <url> [curl options...]
+  curl -fsS --retry 5 --retry-all-errors --retry-delay 5 "$@"
+}
+
+# macOS has no `timeout`; perl's alarm ends the command the same way (the exit code then reports SIGALRM).
+command -v timeout >/dev/null || timeout() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+
+# A Mac as a developer has it: a zsh account (the runner image's account uses bash), Git from the Command Line Tools
+# (which the image carries), and Node from nodejs.org's installer, which puts it in /usr/local/bin.
+provision_macos() {
+  dscl . -create "/Users/$RERAIL_ENV_USER" UserShell /bin/zsh
+  git --version
+  local version
+  fetch "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" -o "$WORK/SHASUMS256.txt"
+  version="$(sed -n "s/.*node-\(v[0-9.]*\)\.pkg$/\1/p" "$WORK/SHASUMS256.txt")"
+  [ -n "$version" ] || { echo "no Node ${RERAIL_ENV_NODE}.x installer for macOS" >&2; exit 1; }
+  fetch "https://nodejs.org/dist/${version}/node-${version}.pkg" -o "$WORK/node.pkg"
+  installer -pkg "$WORK/node.pkg" -target /
 }
 
 provision() {
@@ -23,10 +49,25 @@ provision() {
   cp "$0" "$WORK/guest.sh"
   chmod 0755 "$WORK" "$WORK/guest.sh"
   exec >"$WORK/provision.log" 2>&1
+  if [ "$(uname -s)" = Darwin ]; then
+    provision_macos
+  else
+    provision_linux
+  fi
+  if [ -n "${RERAIL_ENV_BUNDLE_URL:-}" ]; then
+    fetch "$RERAIL_ENV_BUNDLE_URL" -o "$WORK/bundle.tar"
+    mkdir -p "$WORK/bundle"
+    tar -xf "$WORK/bundle.tar" -C "$WORK/bundle"
+    chmod -R a+rX "$WORK/bundle"
+  fi
+}
+
+provision_linux() {
   if command -v apt-get >/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get install -y -q git curl ca-certificates xz-utils
+    # On first boot unattended-upgrades holds the dpkg lock for minutes; wait for it rather than fail.
+    apt-get -o DPkg::Lock::Timeout=600 update -q
+    apt-get -o DPkg::Lock::Timeout=600 install -y -q git curl ca-certificates xz-utils
   elif command -v dnf >/dev/null; then
     dnf install -y -q git curl tar xz
   else
@@ -46,17 +87,16 @@ provision() {
     aarch64) arch=arm64 ;;
     *) echo "unsupported machine $(uname -m)" >&2; exit 1 ;;
   esac
-  # The newest release of the requested major, as a user downloading Node from nodejs.org gets it.
-  version="$(curl -fsS "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" \
-    | sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p")"
+  # The newest release of the requested major, as a user downloading Node from nodejs.org gets it. Every download goes
+  # to a file first: a retried download piped onwards would hand the reader the failed attempt's bytes too.
+  fetch "https://nodejs.org/dist/latest-v${RERAIL_ENV_NODE}.x/SHASUMS256.txt" -o "$WORK/SHASUMS256.txt"
+  version="$(sed -n "s/.*node-\(v[0-9.]*\)-linux-${arch}\.tar\.xz$/\1/p" "$WORK/SHASUMS256.txt")"
   [ -n "$version" ] || { echo "no Node ${RERAIL_ENV_NODE}.x for linux-${arch}" >&2; exit 1; }
-  curl -fsS "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" | tar -xJ -C /usr/local --strip-components=1
-  if [ -n "${RERAIL_ENV_BUNDLE_URL:-}" ]; then
-    curl -fsS --retry 5 "$RERAIL_ENV_BUNDLE_URL" -o "$WORK/bundle.tar"
-    mkdir -p "$WORK/bundle"
-    tar -xf "$WORK/bundle.tar" -C "$WORK/bundle"
-    chmod -R a+rX "$WORK/bundle"
-  fi
+  fetch "https://nodejs.org/dist/${version}/node-${version}-linux-${arch}.tar.xz" -o "$WORK/node.tar.xz"
+  # A Node already in /usr/local (a GitHub runner's) leaves its npm's files behind under the new one's, and the mix fails
+  # with "Class extends value undefined"; a fresh VM has none to remove.
+  rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
+  tar -xJf "$WORK/node.tar.xz" -C /usr/local --strip-components=1
 }
 
 if [ "$(id -u)" = 0 ] && [ "${1:-}" != test ]; then
@@ -71,7 +111,9 @@ if [ "$(id -u)" = 0 ] && [ "${1:-}" != test ]; then
   # A login shell as the user: HOME, SHELL and PATH come from the account, as in a new terminal.
   su - "$RERAIL_ENV_USER" -c "bash $WORK/guest.sh test"
   status=$?
-  cat "$WORK/provision.log" "/home/$RERAIL_ENV_USER/rerail-env/test.log" >"$WORK/all.log" 2>/dev/null
+  user_out="$(su - "$RERAIL_ENV_USER" -c 'printf %s "$HOME"')/rerail-env"
+  cat "$WORK/provision.log" "$user_out/test.log" >"$WORK/all.log" 2>/dev/null
+  cp "$user_out/results.json" "$WORK/results.json" 2>/dev/null
   upload "$WORK/all.log" "$RERAIL_ENV_LOG_URL"
   exit "$status"
 fi
@@ -112,8 +154,11 @@ collect_facts() {
   node -e '
     const { execSync } = require("node:child_process");
     const run = (cmd) => { try { return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim(); } catch (e) { return `unavailable (${(e.stderr || e.message).trim().split("\n")[0]})`; } };
-    const os = Object.fromEntries(require("node:fs").readFileSync("/etc/os-release", "utf8").split("\n").filter(Boolean).map((l) => { const [k, ...v] = l.split("="); return [k, v.join("=").replace(/^"|"$/g, "")]; }));
-    process.stdout.write(JSON.stringify({ os: os.PRETTY_NAME, arch: process.arch, glibc: run("ldd --version").split("\n")[0], node: process.version, npm: run("npm --version"), git: run("git --version"), shell: process.env.SHELL }));
+    const linux = process.platform === "linux";
+    const os = linux
+      ? Object.fromEntries(require("node:fs").readFileSync("/etc/os-release", "utf8").split("\n").filter(Boolean).map((l) => { const [k, ...v] = l.split("="); return [k, v.join("=").replace(/^"|"$/g, "")]; })).PRETTY_NAME
+      : `macOS ${run("sw_vers -productVersion")}`;
+    process.stdout.write(JSON.stringify({ os, arch: process.arch, ...(linux ? { glibc: run("ldd --version").split("\n")[0] } : {}), node: process.version, nodePath: process.execPath, npm: run("npm --version"), git: run("git --version"), shell: process.env.SHELL }));
   ' >"$facts"
 }
 
@@ -143,7 +188,10 @@ packages:
 max_body_size: 200mb
 log: { type: stdout, level: warn }
 EOF
-  setsid npx --yes verdaccio@6 --config "$OUT/verdaccio/config.yaml" --listen "127.0.0.1:$port" >"$OUT/verdaccio.log" 2>&1 &
+  # Its own session where there is setsid (Linux); macOS has none, and a background job is enough there.
+  local detach=""
+  command -v setsid >/dev/null && detach=setsid
+  $detach npx --yes verdaccio@6 --config "$OUT/verdaccio/config.yaml" --listen "127.0.0.1:$port" >"$OUT/verdaccio.log" 2>&1 &
   for _ in $(seq 1 180); do curl -fsS "$REGISTRY/-/ping" >/dev/null 2>&1 && break; sleep 1; done
   curl -fsS "$REGISTRY/-/ping" >/dev/null || { cat "$OUT/verdaccio.log"; return 1; }
   password="$(node -p 'require("crypto").randomBytes(18).toString("hex")')"
@@ -152,11 +200,11 @@ EOF
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).token))')"
   printf '//127.0.0.1:%s/:_authToken=%s\n' "$port" "$token" >"$OUT/publisher.npmrc"
   local tarball
-  for tarball in /opt/rerail-env/bundle/*.tgz; do
+  for tarball in "$WORK"/bundle/*.tgz; do
     npm publish "$tarball" --tag latest --registry "$REGISTRY" --userconfig "$OUT/publisher.npmrc" --loglevel=warn || return 1
   done
   printf '@neralabs:registry=%s/\n' "$REGISTRY" >"$HOME/.npmrc"
-  echo "registry $REGISTRY serves: $(ls /opt/rerail-env/bundle | tr '\n' ' ')"
+  echo "registry $REGISTRY serves: $(ls "$WORK/bundle" | tr '\n' ' ')"
 }
 
 use_npm() {
@@ -198,8 +246,9 @@ run_setup() {
       DONE*) printf '%s\n' "${next#DONE$'\n'}"; grep -q "Rerail is on" <<<"$next" || return 1; setup_ok=1; return 0 ;;
       STOP*) printf '%s\n' "${next#STOP$'\n'}"; return 1 ;;
     esac
-    local -a args
-    mapfile -t args < <(node -e 'for (const a of JSON.parse(process.argv[1])) console.log(a)' "${next#NEXT$'\n'}")
+    local -a args=()
+    local arg
+    while IFS= read -r arg; do args+=("$arg"); done < <(node -e 'for (const a of JSON.parse(process.argv[1])) console.log(a)' "${next#NEXT$'\n'}")
     step_json="$(timeout 900 "$LAUNCHER" "${args[@]}")"
   done
   echo "set-up did not finish in 6 answers"
@@ -212,24 +261,28 @@ check_status() {
   printf '%s\n' "$status"
   [ -L "$HOME/.rerail/current" ] || { echo "$HOME/.rerail/current is not a symlink"; return 1; }
   grep -q "Engine: ok" <<<"$status" || return 1
-  daemon_port="$(sed -n 's#.*running at http://127\.0\.0\.1:\([0-9]*\)/.*#\1#p;T;q' <<<"$status")"
+  daemon_port="$(sed -n 's#.*running at http://127\.0\.0\.1:\([0-9]*\)/.*#\1#p' <<<"$status" | head -n 1)"
   [ -n "$daemon_port" ] || { echo "no daemon URL in rerail status"; return 1; }
   echo "$daemon_port" >"$OUT/daemon-port"
 }
 
-# A new terminal's shell, login and interactive. Startup files may print (Ubuntu's sudo hint), so only the last line
-# is the answer.
+# A new terminal's shell, in the account's own shell: bash on the Linux VMs, zsh on a Mac. Startup files may print
+# (Ubuntu's sudo hint), so only the last line is the answer. Terminal.app opens a login shell that is interactive too;
+# a login zsh that is not interactive never reads .zshrc, which set-up's documentation already says of `zsh -c`.
 check_path_login() {
-  local found
-  found="$(bash -lc 'command -v rerail' 2>/dev/null | tail -n 1)"
-  [ "$found" = "$LAUNCHER" ] || { echo "a login bash finds '${found}', not $LAUNCHER"; return 1; }
-  echo "login bash finds $found"
+  local found shell flags=-lc
+  shell="$(basename "$SHELL")"
+  [ "$shell" = zsh ] && flags=-lic
+  found="$("$SHELL" "$flags" 'command -v rerail' 2>/dev/null | tail -n 1)"
+  [ "$found" = "$LAUNCHER" ] || { echo "a login $shell finds '${found}', not $LAUNCHER"; return 1; }
+  echo "login $shell finds $found"
 }
 check_path_interactive() {
-  local found
-  found="$(bash -ic 'command -v rerail' 2>/dev/null | tail -n 1)"
-  [ "$found" = "$LAUNCHER" ] || { echo "an interactive bash finds '${found}', not $LAUNCHER"; return 1; }
-  echo "interactive bash finds $found"
+  local found shell
+  shell="$(basename "$SHELL")"
+  found="$("$SHELL" -ic 'command -v rerail' 2>/dev/null | tail -n 1)"
+  [ "$found" = "$LAUNCHER" ] || { echo "an interactive $shell finds '${found}', not $LAUNCHER"; return 1; }
+  echo "interactive $shell finds $found"
 }
 
 # Runs each agent's registered SessionStart command the way that agent does (through a shell, payload on stdin),
@@ -267,12 +320,15 @@ check_daemon_restart() {
 
 check_uninstall() {
   "$LAUNCHER" install --remove || return 1
-  if grep -q claude-hook "$HOME/.claude/settings.json" 2>/dev/null; then echo "Claude Code hooks left behind"; return 1; fi
+  # No agent config may still point into the Rerail home, or the agent would run a deleted launcher.
   local file
-  for file in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile"; do
+  for file in "$HOME/.claude/settings.json" "$HOME/.codex/hooks.json" "$HOME/.cursor/hooks.json"; do
+    if [ -f "$file" ] && grep -q '/\.rerail/' "$file"; then echo "Rerail hooks left in $file"; return 1; fi
+  done
+  for file in "$HOME/.bashrc" "$HOME/.profile" "$HOME/.bash_profile" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.zshenv"; do
     if [ -f "$file" ] && grep -q '\.rerail/bin' "$file"; then echo "PATH block left in $file"; return 1; fi
   done
-  echo "agents unhooked and PATH block removed"
+  echo "Claude Code, Codex and Cursor unhooked, and the PATH block removed"
 }
 
 collect_facts
@@ -299,4 +355,4 @@ node -e '
   fs.writeFileSync(out, JSON.stringify({ env: id, provisioned: true, facts: JSON.parse(fs.readFileSync(factsFile, "utf8")), steps }, null, 2));
 ' "$RERAIL_ENV_ID" "$facts" "$steps" "$OUT/results.json"
 upload "$OUT/results.json" "$RERAIL_ENV_RESULT_URL"
-echo "results uploaded"
+echo "results written"
