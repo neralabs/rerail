@@ -369,6 +369,26 @@ describe("validatePack", () => {
       { licences: ['licenses/examplelint/UPSTREAM.md: "Not copied: `tests/pylint/`" names no pack-path glob (`… as `<glob>``)'] },
     ],
     [
+      "a not-copied line spelled otherwise",
+      directory => editUpstream(directory, text => `${text}\n* Not Copied: \`tests/pylint/\` as \`upstream/examplelint/fixtures/pylint/**\` — a copyleft project, GPL-2.0-or-later\n`),
+      { licences: ['licenses/examplelint/UPSTREAM.md: "* Not Copied: `tests/pylint/` as `upstream/examplelint/fixtures/pylint/**` — a copyleft project, GPL-2.0-or-later" is not a `- Not copied: `<prefix>` as `<glob>`` line'] },
+    ],
+    [
+      // clean.py is the tool's authored file, so only the copied asserts.py is judged.
+      "equal-length longest globs that disagree on copy kind",
+      directory => editUpstream(directory, text => `${text}| \`upstream/examplelint/f*xtures/**\` | \`tests/*.py\` | adapted |\n`),
+      {
+        licences: [
+          "upstream/examplelint/fixtures/asserts.py is covered by equal-length globs that disagree: licenses/examplelint/UPSTREAM.md: `upstream/examplelint/fixtures/**`, MIT, verbatim; licenses/examplelint/UPSTREAM.md: `upstream/examplelint/f*xtures/**`, MIT, adapted",
+        ],
+      },
+    ],
+    [
+      "a glob with more than two **",
+      directory => editUpstream(directory, text => `${text}| \`upstream/**/examplelint/**/fixtures/**\` | \`tests/*.py\` | verbatim |\n`),
+      { licences: ["licenses/examplelint/UPSTREAM.md: glob `upstream/**/examplelint/**/fixtures/**` holds 3 `**`; a glob may hold at most 2"] },
+    ],
+    [
       "an UPSTREAM.md with no Source row",
       directory => editUpstream(directory, text => text.replace(/^\| https:.*\n/mu, "")),
       { licences: ["licenses/examplelint/UPSTREAM.md: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)"] },

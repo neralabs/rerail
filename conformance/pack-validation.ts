@@ -26,7 +26,7 @@ import {
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
-import { inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
+import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -380,11 +380,17 @@ interface SourcePattern {
   matcher: RegExp;
 }
 
+/** A "Taken from it" glob, with the licence its record records and its copy kind (copyKind), which decidingPattern weighs. */
+interface TakenPattern extends SourcePattern {
+  licence: string | undefined;
+  how: string;
+}
+
 interface Sources {
   /** The licence each `licenses/<project>/UPSTREAM.md` records. */
   recorded: Map<string, string>;
   /** The "Taken from it" globs: what each upstream repository's files are, by pack path. */
-  taken: SourcePattern[];
+  taken: TakenPattern[];
   /** The "Not copied" globs: pack paths no file may have, with the upstream prefix each stands for. */
   notCopied: (SourcePattern & { prefix: string })[];
   failures: string[];
@@ -393,7 +399,7 @@ interface Sources {
 /** Per upstream repository (`licenses/<project>/UPSTREAM.md`): its licence, its Source row, and its patterns, compiled once. */
 function readSources(directory: string): Sources {
   const recorded = new Map<string, string>();
-  const taken: SourcePattern[] = [];
+  const taken: TakenPattern[] = [];
   const notCopied: (SourcePattern & { prefix: string })[] = [];
   const failures: string[] = [];
   const licenses = join(directory, "licenses");
@@ -415,10 +421,26 @@ function readSources(directory: string): Sources {
       const lacking = [...(tag ? [] : ["a tag"]), ...(commit !== undefined && /^[0-9a-f]{40}$/u.test(commit) ? [] : ["a 40-hex commit"]), ...(licence ? [] : ["a licence"])];
       if (lacking.length > 0) failures.push(`${record}: Source row ${repository} lacks ${lacking.join(" and ")} (| <repository URL> | <tag> | <commit> | <licence> |)`);
     }
-    for (const { glob } of sources.taken) taken.push({ glob, record, matcher: pathGlob(glob) });
+    for (const line of sources.malformed) failures.push(`${record}: "${line}" is not a \`- Not copied: \`<prefix>\` as \`<glob>\`\` line`);
+    /** The glob's matcher, or undefined (and a failure) when pathGlob refuses it. */
+    const compiled = (glob: string): RegExp | undefined => {
+      try {
+        return pathGlob(glob);
+      } catch (error) {
+        failures.push(`${record}: ${message(error)}`);
+        return undefined;
+      }
+    };
+    for (const { glob, how } of sources.taken) {
+      const matcher = compiled(glob);
+      if (matcher !== undefined) taken.push({ glob, record, matcher, licence: sources.licence, how });
+    }
     for (const { prefix, glob } of sources.notCopied) {
       if (glob === undefined) failures.push(`${record}: "Not copied: \`${prefix}\`" names no pack-path glob (\`… as \`<glob>\`\`)`);
-      else notCopied.push({ prefix, glob, record, matcher: pathGlob(glob) });
+      else {
+        const matcher = compiled(glob);
+        if (matcher !== undefined) notCopied.push({ prefix, glob, record, matcher });
+      }
     }
   }
   return { recorded, taken, notCopied, failures };
@@ -426,9 +448,10 @@ function readSources(directory: string): Sources {
 
 /**
  * Check 6's per-file checks over the files deeper than `upstream/<tool>/` (`files`, pack-relative): (c) none matches a
- * "Not copied" glob; (b) each is Rerail's (`authored`, first) or matches some "Taken from it" glob; (a) each glob
- * matches at least one copied file. A glob matching nothing because the checkout lacks its tool's test data gives one
- * failure per tool, saying to pull it.
+ * "Not copied" glob; (b) each is Rerail's (`authored`, first) or matches some "Taken from it" glob, and equal-length
+ * longest globs covering it agree on licence and copy kind (decidingPattern); (a) each glob matches at least one copied
+ * file. A glob matching nothing because the checkout lacks its tool's test data gives one failure per tool, saying to
+ * pull it.
  */
 function sourceFailures(directory: string, sources: Sources, authored: ReadonlySet<string>, files: readonly string[]): string[] {
   const failures: string[] = [];
@@ -441,6 +464,9 @@ function sourceFailures(directory: string, sources: Sources, authored: ReadonlyS
     for (const pattern of covering) matched.add(pattern);
     if (covering.length === 0)
       failures.push(`${file} is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)`);
+    const { tie } = decidingPattern(covering);
+    if (tie !== undefined)
+      failures.push(`${file} is covered by equal-length globs that disagree: ${tie.map(({ record, glob, licence, how }) => `${record}: \`${glob}\`, ${licence ?? "no licence"}, ${how || "no copy kind"}`).join("; ")}`);
   }
   const absent = new Set<string>();
   for (const pattern of sources.taken.filter(pattern => !matched.has(pattern))) {

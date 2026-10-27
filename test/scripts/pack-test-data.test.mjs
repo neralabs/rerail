@@ -18,6 +18,8 @@ import {
   BUCKET,
   check,
   confirm,
+  copyKind,
+  decidingPattern,
   inToolSubdirectory,
   isPackFixture,
   licenceAllowed,
@@ -27,7 +29,9 @@ import {
   packFixtureKind,
   packFixturesWritten,
   packFrom,
+  pathGlob,
   publishPath,
+  publishSummary,
   pull,
   push,
   readLock,
@@ -1163,9 +1167,43 @@ describe("pack --from (the publish workflow's prep)", () => {
     expect(await packFailure(context, "link")).toContain("packs/p/upstream/t/publish/cases.json (mode 120000: not a regular file)");
   });
 
-  it("fails with nothing to publish when the commit has no publish/", async () => {
+  it("fails with nothing to publish when the commit has no publish/ and removes no UPSTREAM.md row", async () => {
     const context = published();
-    expect(await packFailure(context, "HEAD")).toMatch(/^HEAD \([0-9a-f]{12}\) has no publish\/ in any packs\/<pack>\/upstream\/<tool>\/: nothing to publish$/u);
+    expect(await packFailure(context, "HEAD")).toMatch(/^HEAD \([0-9a-f]{12}\) has no publish\/ in any packs\/<pack>\/upstream\/<tool>\/ and removes no UPSTREAM.md row: nothing to publish$/u);
+  });
+
+  it("archives, as an overlay, a commit that only removes an authored row: the next archive drops the file", async () => {
+    const context = published();
+    branch(context.root, "unlist-only", { "packs/p/upstream/t/UPSTREAM.md": record([]) });
+    const { manifest, out } = await packed(context, "unlist-only");
+    expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped }) => [kind, id, tool, added, changed, dropped])).toEqual([["test-data", "p", "t", [], [], ["fixtures/rerail/a.py"]]]);
+    expect(manifest.remove).toEqual([]);
+    expect(archivedObject(out, manifest.objects[0])).toEqual({ "fixtures/upstream/b.py": "derived\n", "x y.expected.json": "{}\n" });
+
+    // replace archives publish/ alone, so a removal alone gives it nothing.
+    expect(await packFailure(context, "unlist-only", { replace: true })).toContain("nothing to publish");
+  });
+
+  it("refuses every file of a pack whose licences record misspells a Not copied line", async () => {
+    const context = published();
+    for (const [name, line] of [["indented", " - Not copied:"], ["starred", "* Not copied:"], ["capital", "- Not Copied:"], ["bare", "- Not copied: tests/gpl/ as upstream/t/fixtures/upstream/** —"]]) {
+      const extra = `\n## Not copied\n\n${line.endsWith(":") ? `${line} \`tests/gpl/\` as \`upstream/t/fixtures/upstream/**\` — other, GPL-3.0-only` : line}\n`;
+      branch(context.root, name, { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "Apache-2.0", extra }), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+      const message = await packFailure(context, name);
+      expect(message, name).toContain("4 file(s) going to S3");
+      expect(message, name).toContain("  packs/p/upstream/t/fixtures/upstream/b.py: malformed record (packs/p/licenses/tool/UPSTREAM.md: ");
+    }
+  });
+
+  it("refuses a file whose equal-length longest covering globs disagree on licence", async () => {
+    const context = published();
+    branch(context.root, "tie", {
+      "packs/p/licenses/other/UPSTREAM.md": licensesRecord({ licence: "MIT", taken: "upstream/t/fixtures/upstream/b*" }),
+      "packs/p/upstream/t/publish/cases.json": "[]\n",
+    });
+    expect(await packFailure(context, "tie")).toContain(
+      "  packs/p/upstream/t/fixtures/upstream/b.py: ambiguous (equal-length globs disagree: packs/p/licenses/other/UPSTREAM.md: `upstream/t/fixtures/upstream/b*`, MIT, verbatim; packs/p/licenses/tool/UPSTREAM.md: `upstream/t/fixtures/upstream/**`, Apache-2.0, verbatim)",
+    );
   });
 
   it("refuses, before writing anything, a file whose licence the allowlist does not take, listing it with its licence", async () => {
@@ -1299,6 +1337,75 @@ describe("readUpstreamSources", () => {
     expect(licence("MIT AND GPL-3.0-only (Copyright (c) Someone)")).toBe("MIT AND GPL-3.0-only");
     expect(licence("MIT OR Apache-2.0 (Copyright (c) The Rust Project Contributors); [`LICENSE-MIT`](LICENSE-MIT)")).toBe("MIT OR Apache-2.0");
     expect(licence("(MIT OR Apache-2.0) AND GPL-3.0-only")).toBe("(MIT OR Apache-2.0) AND GPL-3.0-only");
+  });
+
+  it("reports a list item meant as a Not copied line but spelled otherwise as malformed, and keeps a heading out", () => {
+    const glob = "`tests/gpl/` as `upstream/t/fixtures/gpl/**` — other, GPL-3.0-only";
+    const read = (line) => readUpstreamSources(`# Tool\n\n## Not copied\n\n${line}\n`);
+    for (const variant of [` - Not copied: ${glob}`, `* Not copied: ${glob}`, `+ Not copied: ${glob}`, `- Not Copied: ${glob}`, `- not copied ${glob}`, "- Not copied: tests/gpl/ as upstream/t/fixtures/gpl/**"])
+      expect(read(variant), variant).toMatchObject({ notCopied: [], malformed: [variant.trim()] });
+    expect(read(`- Not copied: ${glob}`)).toMatchObject({ notCopied: [{ prefix: "tests/gpl/", glob: "upstream/t/fixtures/gpl/**" }], malformed: [] });
+    expect(readUpstreamSources(readFileSync(join(REPOSITORY, "packs/python/licenses/ruff/UPSTREAM.md"), "utf8"))).toMatchObject({ malformed: [] });
+  });
+
+  it("takes the Source row from the Source section alone", () => {
+    const row = `| https://example.com/tool | \`v1\` | \`${"1".repeat(40)}\` | MIT |`;
+    expect(readUpstreamSources(`# Tool\n\n## Notes\n\n${row}\n`).source).toBeUndefined();
+    expect(readUpstreamSources(`# Tool\n\n## Source\n\n${row}\n`).source).toEqual({ repository: "https://example.com/tool", tag: "v1", commit: "1".repeat(40), licence: "MIT" });
+  });
+});
+
+describe("copyKind and decidingPattern (pack check 6 and the publish licence check decide by them)", () => {
+  it("reads a How cell's most modified copy kind, never verbatim when it names another", () => {
+    expect(copyKind("verbatim")).toBe("verbatim");
+    expect(copyKind("verbatim: the rule test files")).toBe("verbatim");
+    expect(copyKind("extracted: each file is one RuleTester case's `code`, verbatim")).toBe("extracted");
+    expect(copyKind("verbatim, one RuleTester case's `code`; or adapted, a script case wrapped in a `<script>` element")).toBe("adapted");
+    expect(copyKind("verbatim, renamed with a `.php` suffix")).toBe("renamed");
+    expect(copyKind("copied as is")).toBe("");
+  });
+
+  it("decides by the longest glob, and leaves a file undecided when equal-length longest globs disagree", () => {
+    const pattern = (glob, licence = "MIT", how = "verbatim") => ({ glob, licence, how });
+    expect(decidingPattern([])).toEqual({});
+    expect(decidingPattern([pattern("upstream/t/**"), pattern("upstream/t/fixtures/**", "Apache-2.0")])).toEqual({ pattern: pattern("upstream/t/fixtures/**", "Apache-2.0") });
+    expect(decidingPattern([pattern("upstream/t/a*"), pattern("upstream/t/*b")])).toEqual({ pattern: pattern("upstream/t/a*") });
+    expect(decidingPattern([pattern("upstream/t/a*"), pattern("upstream/t/*b", "Apache-2.0")]).tie).toHaveLength(2);
+    expect(decidingPattern([pattern("upstream/t/a*"), pattern("upstream/t/*b", "MIT", "adapted")]).tie).toHaveLength(2);
+  });
+});
+
+describe("pathGlob", () => {
+  it("matches zero or more segments with a ** segment and collapses runs of **", () => {
+    expect(pathGlob("upstream/a/**/x").test("upstream/a/x")).toBe(true);
+    expect(pathGlob("upstream/a/**/x").test("upstream/a/b/c/x")).toBe(true);
+    expect(pathGlob("upstream/a/**/x").test("upstream/ab/x")).toBe(false);
+    expect(pathGlob("upstream/a/**/**/x").test("upstream/a/x")).toBe(true);
+    expect(pathGlob("upstream/a/****").test("upstream/a/b/c")).toBe(true);
+    expect(pathGlob("upstream/a/*.py").test("upstream/a/b/c.py")).toBe(false);
+  });
+
+  it("refuses a glob with more than two **, and matches a long path against two quickly", () => {
+    expect(() => pathGlob("**a".repeat(12))).toThrow("holds 12 `**`; a glob may hold at most 2");
+    const started = performance.now();
+    expect(pathGlob("**a**a").test(`${"a".repeat(30)}b`)).toBe(false);
+    expect(pathGlob("**/a/**").test(`${"x/".repeat(2000)}b`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(50);
+  });
+});
+
+describe("the approver's publish summary", () => {
+  it("refuses an archive path that could break out of a code span or a table cell", () => {
+    for (const path of ["x`<!--.js", "a|b.js", "<b>.js"]) expect(() => buildArchive([{ path, bytes: Buffer.from("x") }]), path).toThrow("which the publish summary cannot show safely");
+    expect(licenceAllowed("MIT OR <!--", new Set(["MIT"]))).toBe(false);
+  });
+
+  it("lists each samples archive's repositories with their licences, as inert text", () => {
+    const object = (kind, sources) => ({ kind, pack: "p", tool: "t", sha256: "0".repeat(64), files: 2, bytes: 4, licences: { "Apache-2.0": 1, MIT: 1 }, ...(sources === undefined ? {} : { sources }), base: null, added: [], changed: [], dropped: [] });
+    const text = publishSummary({ commit: "1".repeat(40), replace: false, remove: [], objects: [object("test-data"), object("samples", { "example/demo": "MIT", "x/y|<b>": "MIT" })] });
+    expect(text).toContain("| Licences | Sources |");
+    expect(text).toContain("| Apache-2.0 1, MIT 1 | `licenses/*/UPSTREAM.md` |");
+    expect(text).toContain("| Apache-2.0 1, MIT 1 | example/demo MIT, x/y&#124;&#60;b&#62; MIT |");
   });
 });
 

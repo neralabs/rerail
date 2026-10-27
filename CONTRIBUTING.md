@@ -373,9 +373,10 @@ rule with the lines it should report or as clean for it, which the conformance c
 `test-data.lock`'s format and `SAMPLES.md` describes (sources, licences, commits). `fixtures:pull` fetches and
 verifies it with the test data and extracts it under `.rerail/pack-data/samples/`, never into the tool directory
 (`node scripts/s3/pack-fixtures.mjs samples` fetches the samples alone). Nothing derives them: to change a set
-(samples, labels, or a renamed or dropped rule's key), a maintainer's script loads the samples tree, changes it and
-stages it with `writeSampleSet` (`scripts/samples/pack.ts`) into the tool-pack's `publish/samples/`, which is
-published like test data (below).
+(samples, labels, or a renamed or dropped rule's key), a maintainer uses the sample builders in `scripts/samples/`,
+a library API with no command of its own (tests and one-off maintainer scripts call it): load the samples tree, change
+it, and stage it with `writeSampleSet` (`scripts/samples/pack.ts`) into the tool-pack's `publish/samples/`, which
+is published like test data (below).
 
 CI pulls the same way, in two kinds of job (`.github/actions/pack-test-data`). A fetching job (`fetch: "true"`) only
 warms the Actions cache: it looks up the entry keyed by its tool-packs' locks (`node scripts/s3/pack-fixtures.mjs
@@ -431,7 +432,8 @@ A comment on the pull request ("Pack data waiting to publish") lists the tool-pa
 and with the `gh` CLI.
 
 Removing data: a file the archive holds is not in the pull request's diff. An authored file goes with its row: the
-pull request deletes the file's row from the tool's `UPSTREAM.md`, and an overlay publish of that tool-pack drops it.
+pull request deletes the file's row from the tool's `UPSTREAM.md`, and an overlay publish of that tool-pack drops it;
+the removed row alone makes the tool-pack a publish request, with nothing staged in `publish/`.
 Anything else goes with a `replace` publish of the whole set (`fixtures:stage --all`). The old archive stays in S3 for
 the commits that name it.
 
@@ -482,6 +484,8 @@ request's head with its `publish/`: `npm run fixtures:pull` (which lays `publish
 `npm run fixtures:derive -- --pack <id> --tool <tool> --update` and
 `npm run fixtures:stage -- --pack <id> --tool <tool> --all`; `git status -- packs/<id>/upstream/<tool>/publish` then
 shows every file where the derivation differs from what the pull request publishes, and is clean when they agree.
+
+**Derive and bumps are paused** until the generators write per-repo provenance ([docs/upstream.md](docs/upstream.md#derive-and-bumps-are-paused)): `npm run fixtures:derive` refuses every tool-pack before its generator runs, `npm run upstream:bump` only plans a bump (`--dry-run`), and the bump workflow (`upstream-bump.yml`, `resnapshot` included) fails at its first step. The derive, re-snapshot and bump steps below describe how they work once the pause lifts.
 
 When a pull request changes a pin, a generator or a recipe, the derived data must be made again. `fixtures:derive`
 runs the pull request's own generators and recipes, and the upstream code they fetch, so a maintainer reviews that

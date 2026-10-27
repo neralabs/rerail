@@ -336,12 +336,17 @@ Precisely:
    paths nothing is copied from, one per line as
    ``- Not copied: `<upstream path prefix>` as `<pack path glob>` — <project>, <SPDX id>``
    (an upstream's material derived from a copyleft project, such as Ruff's fixtures for its pylint ports); the pack-path
-   glob is required, and a pulled file under it fails, authored or not. The per-file record (each file, its upstream path and how it was made) is not
+   glob is required, and a pulled file under it fails, authored or not. A list item that means to be such a line but is
+   spelled otherwise (`* Not copied:`, `- Not Copied:`, an indented one, or one without the backticks) fails too. A
+   file two projects' globs cover takes the longest glob; equal-length longest globs that disagree on licence or copy
+   kind fail. A How cell's copy kind is the most modified of `verbatim`, `extracted`, `renamed` and `adapted` it names
+   (`verbatim …; or adapted …` is `adapted`). A glob may hold at most two `**`; a `**` segment matches zero or more
+   segments (`a/**/x` matches `a/x`). The per-file record (each file, its upstream path and how it was made) is not
    in git: it is `upstream/<tool>/provenance.json` in the tool-pack's test-data archive, beside `LICENSES.md` with the
    licence texts, for audit, and no check reads it. `reuse lint` and `node scripts/check/check-licenses.mjs` stay
-   repository-wide gates in CI; annotate copied files in `REUSE.toml` as well, since `reuse lint` alone accepts a
-   copied file the catch-all Apache-2.0 annotation covers. Structure metric 7 (`npm run check:structure`) checks the
-   rule documents' REUSE licence.
+   repository-wide gates in CI. Copied test data is not in git, so `REUSE.toml` annotates none of it: its licences are
+   the `licenses/<project>/UPSTREAM.md` records above and each archive's `LICENSES.md`. Structure metric 7
+   (`npm run check:structure`) checks the rule documents' REUSE licence.
 7. `match` must be present: without it set-up never recommends the pack. For a directory under `packs/`,
    `src/engine/catalog/pack-list.generated.ts` must list the pack's id and equal what `npm run generate:packs` writes.
    Fixture packs elsewhere are not published, so no list names them; `listed: true` checks the list for them too.

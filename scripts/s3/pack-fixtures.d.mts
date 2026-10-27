@@ -54,6 +54,8 @@ export interface PublishedObject {
   base: string | null;
   /** SPDX expression → how many of the archive's files are under it. */
   licences: Record<string, number>;
+  /** A samples archive's: each repository its labels name as `source.repo`, with the `source.license` they record. */
+  sources?: Record<string, string>;
   added: string[];
   changed: string[];
   dropped: string[];
@@ -86,8 +88,11 @@ export interface UpstreamSources {
   source: { repository: string; tag: string | undefined; commit: string | undefined; licence: string | undefined } | undefined;
   taken: { glob: string; how: string }[];
   notCopied: { prefix: string; glob: string | undefined }[];
+  malformed: string[];
 }
 export function readUpstreamSources(text: string): UpstreamSources;
+export function copyKind(how: string): string;
+export function decidingPattern<P extends { glob: string; licence: string | undefined; how: string }>(covering: readonly P[]): { pattern?: P; tie?: P[] };
 export function pathGlob(glob: string): RegExp;
 export function toolRecords(root?: string): string[];
 export function authoredListing(root?: string): Set<string>;
