@@ -25,12 +25,12 @@ mod metal_batch_abi;
 mod metal_program_backend;
 
 #[cfg(all(test, target_os = "macos"))]
-pub(super) fn reset_metal_execution_metrics() {
+pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {
     metal_program_backend::reset_metrics();
 }
 
 #[cfg(all(test, target_os = "macos"))]
-pub(super) fn metal_execution_metrics() -> (usize, usize) {
+pub(in crate::code_rule_dsl) fn metal_execution_metrics() -> (usize, usize) {
     metal_program_backend::metrics()
 }
 // The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
@@ -107,7 +107,7 @@ const FORK: u8 = 0x30;
 const GOTO: u8 = 0x31;
 const EMIT: u8 = 0x40;
 
-pub(super) const NAMED: u8 = 1;
+pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
 const EXTRA: u8 = 2;
 const MISSING: u8 = 4;
@@ -118,7 +118,7 @@ const MAX_STEPS_PER_PATH: usize = 1 << 20;
 const MAX_WORK_PER_TASK: usize = 1 << 26;
 
 #[derive(Clone)]
-pub(super) enum TextPredicate {
+pub(in crate::code_rule_dsl) enum TextPredicate {
     Equal(u16),
     Prefix(u16),
     Regex { source: u16, compiled: Regex },
@@ -126,7 +126,7 @@ pub(super) enum TextPredicate {
 }
 
 #[derive(Clone)]
-pub(super) struct LuaPattern {
+pub(in crate::code_rule_dsl) struct LuaPattern {
     anchored: bool,
     items: Vec<LuaItem>,
     end_anchored: bool,
@@ -571,11 +571,11 @@ enum PackedPattern {
     },
 }
 
-pub(super) struct AstPatternCapture {
-    pub(super) label: String,
-    pub(super) occurrence: usize,
-    pub(super) node: u32,
-    pub(super) multi: bool,
+pub(in crate::code_rule_dsl) struct AstPatternCapture {
+    pub(in crate::code_rule_dsl) label: String,
+    pub(in crate::code_rule_dsl) occurrence: usize,
+    pub(in crate::code_rule_dsl) node: u32,
+    pub(in crate::code_rule_dsl) multi: bool,
 }
 
 #[derive(Clone, Default)]
@@ -594,7 +594,7 @@ enum PatternVerdict {
 }
 
 #[derive(Clone)]
-pub(super) struct Program {
+pub(in crate::code_rule_dsl) struct Program {
     words: Vec<u32>,
     strings: Vec<Vec<u8>>,
     predicates: Vec<TextPredicate>,
@@ -610,7 +610,7 @@ pub(super) struct Program {
 }
 
 #[derive(Clone)]
-pub(super) enum Directive {
+pub(in crate::code_rule_dsl) enum Directive {
     Set {
         key: u16,
         value: Option<u16>,
@@ -642,7 +642,7 @@ pub(super) enum Directive {
 }
 
 #[derive(Clone)]
-pub(super) enum CapturePredicate {
+pub(in crate::code_rule_dsl) enum CapturePredicate {
     Equal {
         left: u16,
         right: u16,
@@ -692,29 +692,29 @@ pub(super) enum CapturePredicate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Capture {
-    pub(super) label: u16,
-    pub(super) node: u32,
-    pub(super) span: Range<usize>,
-    pub(super) text: Option<Vec<u8>>,
-    pub(super) properties: Vec<(u16, Option<u16>)>,
+pub(in crate::code_rule_dsl) struct Capture {
+    pub(in crate::code_rule_dsl) label: u16,
+    pub(in crate::code_rule_dsl) node: u32,
+    pub(in crate::code_rule_dsl) span: Range<usize>,
+    pub(in crate::code_rule_dsl) text: Option<Vec<u8>>,
+    pub(in crate::code_rule_dsl) properties: Vec<(u16, Option<u16>)>,
 }
 
 type DynamicProperty = (Vec<u8>, Option<Vec<u8>>);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Output {
-    pub(super) task_ordinal: u32,
-    pub(super) local_ordinal: u32,
-    pub(super) start: u32,
-    pub(super) label: u16,
-    pub(super) captures: Vec<Capture>,
-    pub(super) properties: Vec<(u16, Option<u16>)>,
-    pub(super) dynamic_properties: Vec<DynamicProperty>,
+pub(in crate::code_rule_dsl) struct Output {
+    pub(in crate::code_rule_dsl) task_ordinal: u32,
+    pub(in crate::code_rule_dsl) local_ordinal: u32,
+    pub(in crate::code_rule_dsl) start: u32,
+    pub(in crate::code_rule_dsl) label: u16,
+    pub(in crate::code_rule_dsl) captures: Vec<Capture>,
+    pub(in crate::code_rule_dsl) properties: Vec<(u16, Option<u16>)>,
+    pub(in crate::code_rule_dsl) dynamic_properties: Vec<DynamicProperty>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ExecutionBackend {
+pub(in crate::code_rule_dsl) enum ExecutionBackend {
     CpuInterpreter,
     CpuJit,
     MetalInterpreter,
@@ -722,7 +722,7 @@ pub(super) enum ExecutionBackend {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Error {
+pub(in crate::code_rule_dsl) enum Error {
     InvalidOpcode(usize),
     InvalidMode(usize),
     InvalidOperand(usize),
@@ -1072,7 +1072,7 @@ impl CaptureAntichain {
     }
 }
 
-pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
+pub(in crate::code_rule_dsl) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
@@ -1383,7 +1383,7 @@ impl Program {
         )
     }
 
-    pub(super) fn compile_regex(regex: &Regex) -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn compile_regex(regex: &Regex) -> Result<Self, Error> {
         Self::new(
             vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![
@@ -1400,7 +1400,7 @@ impl Program {
         )
     }
 
-    pub(super) fn is_navigation_descriptor(&self) -> bool {
+    pub(in crate::code_rule_dsl) fn is_navigation_descriptor(&self) -> bool {
         self.words == [word(STOP, 0, 0)]
             && self.strings.is_empty()
             && self.predicates.is_empty()
@@ -1415,7 +1415,7 @@ impl Program {
             && self.ast_pattern.is_none()
     }
 
-    pub(super) fn compile_navigation() -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn compile_navigation() -> Result<Self, Error> {
         Self::new(
             vec![word(STOP, 0, 0)],
             Vec::new(),
@@ -1425,7 +1425,7 @@ impl Program {
         )
     }
 
-    pub(super) fn compile_universe() -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn compile_universe() -> Result<Self, Error> {
         Self::new(
             vec![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![b"match".to_vec(), b"universe".to_vec()],
@@ -1435,11 +1435,11 @@ impl Program {
         )
     }
 
-    pub(super) fn compile_kind(kind: u16) -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn compile_kind(kind: u16) -> Result<Self, Error> {
         Self::compile_kind_operation(KIND, kind)
     }
 
-    pub(super) fn compile_supertype(kind: u16) -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn compile_supertype(kind: u16) -> Result<Self, Error> {
         Self::compile_kind_operation(SUPERTYPE, kind)
     }
 
@@ -1457,7 +1457,7 @@ impl Program {
         )
     }
 
-    pub(super) fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
@@ -1467,11 +1467,11 @@ impl Program {
         Ok(program)
     }
 
-    pub(super) fn is_ast_pattern(&self) -> bool {
+    pub(in crate::code_rule_dsl) fn is_ast_pattern(&self) -> bool {
         self.ast_pattern.is_some()
     }
 
-    pub(super) fn execute_ast_pattern(
+    pub(in crate::code_rule_dsl) fn execute_ast_pattern(
         &self,
         tape: &TapeDoc,
         root: u32,
@@ -1503,7 +1503,7 @@ impl Program {
         Ok(Some(captures))
     }
 
-    pub(super) fn new(
+    pub(in crate::code_rule_dsl) fn new(
         words: Vec<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
@@ -1513,7 +1513,7 @@ impl Program {
         Self::new_with_capture_predicates(words, strings, predicates, Vec::new(), labels, longs)
     }
 
-    pub(super) fn new_with_capture_predicates(
+    pub(in crate::code_rule_dsl) fn new_with_capture_predicates(
         words: Vec<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
@@ -1549,7 +1549,7 @@ impl Program {
         Ok(program)
     }
 
-    pub(super) fn canonical_digest(&self, language: &str, scm_source: &[u8]) -> String {
+    pub(in crate::code_rule_dsl) fn canonical_digest(&self, language: &str, scm_source: &[u8]) -> String {
         let mut digest = Sha256::new();
         digest.update(b"tempo-program-v7\0");
         digest.update((language.len() as u64).to_le_bytes());
@@ -1749,7 +1749,7 @@ impl Program {
         format!("{:x}", digest.finalize())
     }
 
-    pub(super) fn leading_kinds(&self) -> Option<BTreeSet<u16>> {
+    pub(in crate::code_rule_dsl) fn leading_kinds(&self) -> Option<BTreeSet<u16>> {
         let mut pending = vec![0_usize];
         let mut visited = BTreeSet::new();
         let mut kinds = BTreeSet::new();
@@ -1781,16 +1781,16 @@ impl Program {
         (!kinds.is_empty()).then_some(kinds)
     }
 
-    pub(super) fn label_name(&self, label: u16) -> Option<&str> {
+    pub(in crate::code_rule_dsl) fn label_name(&self, label: u16) -> Option<&str> {
         let string = *self.labels.get(usize::from(label))?;
         std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
     }
 
-    pub(super) fn string_value(&self, string: u16) -> Option<&str> {
+    pub(in crate::code_rule_dsl) fn string_value(&self, string: u16) -> Option<&str> {
         std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
     }
 
-    pub(super) fn capture_names(&self) -> impl Iterator<Item = &str> {
+    pub(in crate::code_rule_dsl) fn capture_names(&self) -> impl Iterator<Item = &str> {
         self.words
             .iter()
             .filter(|word| (**word & 0xff) as u8 == CAPTURE)
@@ -1801,13 +1801,13 @@ impl Program {
             })
     }
 
-    pub(super) fn leaves_start(&self) -> bool {
+    pub(in crate::code_rule_dsl) fn leaves_start(&self) -> bool {
         self.words
             .iter()
             .any(|word| matches!((word & 0xff) as u8, NEXT | PARENT))
     }
 
-    pub(super) fn with_capture_predicates(
+    pub(in crate::code_rule_dsl) fn with_capture_predicates(
         mut self,
         capture_predicates: Vec<CapturePredicate>,
     ) -> Result<Self, Error> {
@@ -1827,7 +1827,7 @@ impl Program {
         Ok(self)
     }
 
-    pub(super) fn tree_sitter_top_level_patterns(source: &str) -> Result<Vec<String>, Error> {
+    pub(in crate::code_rule_dsl) fn tree_sitter_top_level_patterns(source: &str) -> Result<Vec<String>, Error> {
         scm::parse(source).map(|patterns| {
             patterns
                 .into_iter()
@@ -1837,7 +1837,7 @@ impl Program {
     }
 
     /// Parses one complete Tree-sitter query pattern and lowers its typed syntax tree to Program.
-    pub(super) fn compile_tree_sitter_query_pattern(
+    pub(in crate::code_rule_dsl) fn compile_tree_sitter_query_pattern(
         source: &str,
         grammar: &tree_sitter::Language,
     ) -> Result<Self, Error> {
@@ -2392,7 +2392,7 @@ impl Program {
         if negated { matched.1 } else { matched.0 }
     }
 
-    pub(super) fn match_node_with_env<'tree, D: Doc>(
+    pub(in crate::code_rule_dsl) fn match_node_with_env<'tree, D: Doc>(
         &self,
         start: Node<'tree, D>,
         env: &mut Cow<MetaVarEnv<'tree, D>>,
@@ -2764,7 +2764,7 @@ impl Program {
             .collect()
     }
 
-    pub(super) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
+    pub(in crate::code_rule_dsl) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
 
@@ -2776,7 +2776,7 @@ impl Program {
         Ok((output, stats))
     }
 
-    pub(super) fn execute_roots(
+    pub(in crate::code_rule_dsl) fn execute_roots(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3213,7 +3213,7 @@ impl Program {
 
 /// Executes several programs after one tape scan. A leading kind test becomes dispatch data;
 /// every other instruction retains the ordinary transducer semantics.
-pub(super) fn execute_batch(
+pub(in crate::code_rule_dsl) fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: Option<&[Vec<Vec<u32>>]>,
@@ -3259,9 +3259,9 @@ pub(super) fn execute_batch(
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) struct BatchOutcome {
-    pub(super) outputs: Vec<Vec<Vec<Output>>>,
-    pub(super) errors: Vec<Vec<Option<Error>>>,
+pub(in crate::code_rule_dsl) struct BatchOutcome {
+    pub(in crate::code_rule_dsl) outputs: Vec<Vec<Vec<Output>>>,
+    pub(in crate::code_rule_dsl) errors: Vec<Vec<Option<Error>>>,
 }
 
 impl BatchOutcome {
@@ -3333,7 +3333,7 @@ fn execute_batch_outcomes(
     Ok(outcome)
 }
 
-pub(super) fn execute_with_backend(
+pub(in crate::code_rule_dsl) fn execute_with_backend(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -3342,7 +3342,7 @@ pub(super) fn execute_with_backend(
     execute_with_backend_outcomes(backend, programs, files, anchors)?.into_result()
 }
 
-pub(super) fn packed_workspace_fits(
+pub(in crate::code_rule_dsl) fn packed_workspace_fits(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3354,7 +3354,7 @@ pub(super) fn packed_workspace_fits(
         .map(|_| ())
 }
 
-pub(super) fn execute_with_backend_packed_result_limits(
+pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -3618,7 +3618,7 @@ fn execute_with_backend_bounded_limit(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ProductionDispatchGroup {
+pub(in crate::code_rule_dsl) struct ProductionDispatchGroup {
     id: u64,
     expected_files: usize,
 }
@@ -3626,7 +3626,7 @@ pub(super) struct ProductionDispatchGroup {
 #[cfg(target_os = "macos")]
 static NEXT_PRODUCTION_DISPATCH_GROUP: AtomicU64 = AtomicU64::new(1);
 
-pub(super) fn new_production_dispatch_group(expected_files: usize) -> ProductionDispatchGroup {
+pub(in crate::code_rule_dsl) fn new_production_dispatch_group(expected_files: usize) -> ProductionDispatchGroup {
     ProductionDispatchGroup {
         #[cfg(target_os = "macos")]
         id: NEXT_PRODUCTION_DISPATCH_GROUP.fetch_add(1, Ordering::Relaxed),
@@ -3779,7 +3779,7 @@ static PRODUCTION_DISPATCH: LazyLock<mpsc::SyncSender<ProductionDispatchRequest>
         sender
     });
 
-pub(super) fn warm_production_programs(programs: &[Program]) -> Result<(), Error> {
+pub(in crate::code_rule_dsl) fn warm_production_programs(programs: &[Program]) -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     {
         metal_program_backend::compile_jit_cached(programs).map(|_| ())
@@ -3793,7 +3793,7 @@ pub(super) fn warm_production_programs(programs: &[Program]) -> Result<(), Error
     }
 }
 
-pub(super) fn execute_production_packed_result_limits(
+pub(in crate::code_rule_dsl) fn execute_production_packed_result_limits(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3847,10 +3847,10 @@ pub(super) fn execute_production_packed_result_limits(
     }
 }
 
-pub(super) const POSITIONAL_INDEX_VERSION: i64 = 3;
+pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 3;
 const VALUE_INDEX_LIMIT: usize = 96;
 
-pub(super) fn execute_many(
+pub(in crate::code_rule_dsl) fn execute_many(
     programs: &[Program],
     tape: &TapeDoc,
 ) -> Result<Vec<Vec<Output>>, Error> {

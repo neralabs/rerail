@@ -2,6 +2,7 @@ mod blade;
 mod budget;
 mod calls;
 mod compile;
+mod demand;
 mod embed;
 mod eval;
 mod facts;

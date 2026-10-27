@@ -163,7 +163,9 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 | Plan identity | N `cr/query/plan/identity.rs` | `stats/identity.rs` | Key for `compiled_plans`. |
 | Reusable from N's SQL lowering | N `query/plan/sql_ast.rs` (typed SQL AST), `typed_boundary.rs`, `physical.rs` `FactFamilyContract` | `logic/sql/` | Copy these. **Do not copy** `relational_ir.rs`/`relational.rs` (tree axes in SQL). |
 
-**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`); rows 3 (`4c54f94d`) and 4 (next commit) adapted; rows 1 and 2 outstanding.**
+**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`, `1fa55934`); rows 1 (next commit), 3 (`4c54f94d`) and 4 (`5feaaddd`) adapted; row 2 outstanding.**
+
+- Batch vtab: `demand::vtab` on the packed runtime. The CPU `ast_grep` fact post-pass, the navigation producer and their relations are gone, which leaves batch status, producer status, terminal matches, captures and document maps. Row estimates come from `fact_stats` for each relation, which the driver fills when it merges match facts (row 2). Capture rows still compute N's `semanticPlain` structural key with the CPU value adapter; that moves to the findings layer's equality (Phase 8). Inputs from `prefilter/` candidate sets and the slab cache wait on the driver and Phase 9.
 
 ### Phase 6: the logic language (§12; B1, B3, B4, B10–B14, I9)
 

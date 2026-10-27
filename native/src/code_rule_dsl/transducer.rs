@@ -13,7 +13,7 @@ use std::ops::Range;
 // The packed runtime (05 Phase 4, from ner-1562-scale-test-the-re-railer): every backend over one
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
-mod packed;
+pub(super) mod packed;
 
 #[cfg(test)]
 const STOP: u8 = 0x00;
