@@ -14,8 +14,8 @@ import { parseArgs } from "node:util";
 
 import { packFixturesWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";
-import { DEFAULT_CACHE_ROOT } from "../../port-readiness/corpus.js";
-import { ProcessCommandRunner } from "../../port-readiness/process.js";
+import { DEFAULT_CACHE_ROOT } from "./corpus.js";
+import { ProcessCommandRunner } from "../../process.js";
 import { archiveCachePath, cacheArchive, RECORDING_ARCHIVE } from "../../port-readiness/recording/archive.js";
 import { renderRecordingChanges, type RecordingChanges } from "../../port-readiness/recording/diff.js";
 import { parseRecordingLock, RECORDING_LOCK, recordingLockText } from "../../port-readiness/recording/store.js";

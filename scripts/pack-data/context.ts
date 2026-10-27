@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import type { CommandRunner } from "../../conformance/port-readiness/process.js";
+import type { CommandRunner } from "../../conformance/process.js";
 
 export interface RunOptions {
   cwd?: string;

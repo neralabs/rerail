@@ -342,23 +342,6 @@ jobs:
           TOOL: ${{ matrix.tool }}
         run: npm run port-readiness:record -- --pack "$PACK" --tool "$TOOL" --check
 
-  gates:
-    name: Port readiness, uncached
-    needs: build
-    # Forks that turn scheduled workflows back on skip it; change the owner if the repository moves.
-    if: github.repository_owner == 'neralabs'
-    # The called report job asks for issues and pull-requests to post on pull requests; a scheduled run posts nothing.
-    # id-token: the called test-data job pulls each planned tool-pack's archive (.github/actions/pack-test-data), from S3
-    # on a cache miss.
-    permissions:
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/port-readiness.yml
-    with:
-      no-cache: true
-
   # Red only when an upstream tool has published a stable release that breaks its tool-pack's pin (a major release ahead
   # of it, or a minor one when the pinned major is 0), when the pins disagree, or when a registry cannot be read:
   # gates.yaml's version and the runtime's pin under conformance/recorders/port-readiness/runtimes/, against npm, PyPI,

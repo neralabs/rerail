@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
+import { readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { composerRuntime, PHP_INI, pinnedPhp, RUNTIMES_DIRECTORY } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { derivationEnvironment, type DeriveRecipe } from "../context.js";
 

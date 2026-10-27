@@ -28,11 +28,11 @@ import { parseArgs } from "node:util";
 import { spawnSync } from "node:child_process";
 
 import { authoredListing, isPackFixture, packFixtureKind } from "../s3/pack-fixtures.mjs";
-import { DEFAULT_CACHE_ROOT } from "../../conformance/port-readiness/corpus.js";
-import { readGatesManifest } from "../../conformance/port-readiness/manifest.js";
-import { ProcessCommandRunner } from "../../conformance/port-readiness/process.js";
+import { DEFAULT_CACHE_ROOT } from "../../conformance/recorders/port-readiness/corpus.js";
+import { readGatesManifest } from "../../conformance/languages/manifest.js";
+import { ProcessCommandRunner } from "../../conformance/process.js";
 import { CASE_LAYOUTS, hasRecordingNote, inlineTextsSource, listedCopies, readLockedRecording, recordCaseSources, withRecordingNote, withUpstreamRows } from "../../conformance/recorders/port-readiness/record.js";
-import { licenseFiles } from "../../conformance/port-readiness/recorded-adapter.js";
+import { licenseFiles } from "../../conformance/recorders/port-readiness/recorded-adapter.js";
 import { createContext, type DeriveRecipe } from "./context.js";
 import { RECIPES } from "./recipes/index.js";
 

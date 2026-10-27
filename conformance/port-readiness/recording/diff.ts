@@ -8,7 +8,7 @@
  * change in it is a reason to look at the rule.
  */
 
-import { canonicalJson } from "../checks/compact.js";
+import { canonicalJson } from "../../languages/checks/compact.js";
 import type { GatesRecording, RecordedSpan } from "./schema.js";
 
 /** How one upstream rule's recorded answers moved. */

@@ -40,9 +40,8 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-import { parseGatesManifest, readGatesManifest, recordedRuntimes, type GatesManifest } from "../manifest.js";
-import { RUNTIMES_DIRECTORY } from "../recorded-adapter.js";
-import { gatedToolPacks } from "../run.js";
+import { gatedToolPacks, parseGatesManifest, readGatesManifest, recordedRuntimes, type GatesManifest } from "../../languages/manifest.js";
+import { RUNTIMES_DIRECTORY } from "../../recorders/port-readiness/recorded-adapter.js";
 import {
   ECOSYSTEM_NAMES,
   PIN_FILES,

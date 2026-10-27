@@ -28,11 +28,14 @@ import {
   isCandidate,
   MINIMUM_RULES,
   RERAIL_ROOT,
+  unitKey,
   type Divergence,
   type FixtureRecording,
   type LoadedPack,
   type PackRule,
   type Recording,
+  type UnitOrigin,
+  type UpstreamFinding,
 } from "./pack.js";
 import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
 import { precisionRecall, scoreSamples, scoreSource, type JudgedSample, type Point, type SourceScore } from "./score.js";
@@ -265,6 +268,8 @@ interface RuleActual {
   pathlessIncomplete: number;
   /** Files this rule's clauses skipped with `SYNTAX_ERROR_FAILURE` or as unread (`isUnreadFailure`), at the first syntax error. */
   syntaxErrorFiles: Map<string, SyntaxErrorLocation>;
+  /** Fixture units (`unitKey`) whose evaluation reported a failure of this rule naming no file. */
+  pathlessUnits: Set<string>;
 }
 
 const noActual = (): RuleActual => ({
@@ -275,18 +280,30 @@ const noActual = (): RuleActual => ({
   incompletePaths: new Map(),
   pathlessIncomplete: 0,
   syntaxErrorFiles: new Map(),
+  pathlessUnits: new Set(),
 });
 
 const total = (counts: ReadonlyMap<string, number>, paths: (path: string) => boolean = () => true): number =>
   [...counts].reduce((sum, [path, count]) => (paths(path) ? sum + count : sum), 0);
 
+/** A scored fixture unit: its key (`unitKey`), its source paths, and its upstream origin when `source.units` has one. */
+interface ScoredUnit {
+  key: string;
+  paths: readonly string[];
+  origin: UnitOrigin | undefined;
+}
+
 interface FixturesRun {
-  /** Per pack rule id. */
+  /** Per pack rule id, over the original units. */
   actual: Map<string, RuleActual>;
+  /** Per pack rule id, over the rename variants (`source.units[key].renamedFrom`), scored apart from the originals. */
+  renamedActual: Map<string, RuleActual>;
   /** Per tool: its recording, or the reason there is none. */
   recordings: Map<string, Recording | string>;
   /** `tool\0path` of every file evaluated; a recording lists every file it ran on. */
   scored: ReadonlySet<string>;
+  /** Per tool, every unit evaluated, rename variants included. */
+  units: Map<string, ScoredUnit[]>;
   summary: SourceSummary;
 }
 
@@ -310,6 +327,7 @@ function collectActual(
   sources: ReadonlyMap<string, Buffer>,
   syntaxErrors: ReadonlyMap<string, SyntaxErrorLocation>,
   actual: Map<string, RuleActual>,
+  unit?: string,
 ): void {
   const byCodeRule = new Map(compiled.map(entry => [entry.policyId, entry.rule.id]));
   const slot = (rule: string): RuleActual => {
@@ -342,6 +360,7 @@ function collectActual(
       if (failure.path === undefined) entry.pathlessEngineFailures += 1;
       else entry.engineFailurePaths.set(failure.path, (entry.engineFailurePaths.get(failure.path) ?? 0) + 1);
     }
+    if (failure.path === undefined && unit !== undefined) slot(rule).pathlessUnits.add(unit);
   }
 }
 
@@ -386,8 +405,10 @@ async function evaluateApart(rules: readonly CompiledRule[], files: readonly Sou
 async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[], errors: string[]): Promise<FixturesRun> {
   const languages = familyLanguages(loaded);
   const actual: FixturesRun["actual"] = new Map();
+  const renamedActual: FixturesRun["renamedActual"] = new Map();
   const recordings: FixturesRun["recordings"] = new Map();
   const scored = new Set<string>();
+  const units: FixturesRun["units"] = new Map();
   const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
   for (const tool of toolsOf(compiled)) {
     const recording = pinnedRecording(loaded, tool, fixturesRecordingPath(loaded, tool));
@@ -395,6 +416,8 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
     if (typeof recording === "string") continue;
     const source = (recording as FixtureRecording).source;
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
+    const toolUnits: ScoredUnit[] = [];
+    units.set(tool, toolUnits);
     for (const unit of source.files) {
       const paths = typeof unit === "string" ? [unit] : unit;
       const unitRules = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
@@ -416,12 +439,17 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
         files.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
       }
       if (files.length === 0) continue;
+      const key = unitKey(unit);
+      const origin = source.units?.[key];
+      // A rename variant's findings are scored apart from the originals' (`renamed` on the row).
+      const into = origin?.renamedFrom === undefined ? actual : renamedActual;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
       for (const [group, evaluation] of await evaluateApart(unitRules, [...manifests, ...files])) {
-        collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), actual);
+        collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), into, key);
         summary.evaluationMs += evaluation.ms;
       }
       for (const file of files) scored.add(`${tool}\0${file.path}`);
+      toolUnits.push({ key, paths: files.map(file => file.path), origin });
       summary.units += 1;
       summary.files += files.length;
       summary.bytes += [...sources.values()].reduce((total, bytes) => total + bytes.length, 0);
@@ -429,7 +457,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   }
   summary.evaluationMs = Math.round(summary.evaluationMs);
   summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-  return { actual, recordings, scored, summary };
+  return { actual, renamedActual, recordings, scored, units, summary };
 }
 
 /** The tools of `compiled`'s rules, each once, in order. */
@@ -623,6 +651,10 @@ interface Scored {
   reviewed: readonly Point[];
   cleanSamples: number;
   silentCleanSamples: number;
+  ownUnits: number;
+  silentOwnUnits: number;
+  upstreamFindings: number;
+  renamed: RuleRow["renamed"];
   engineFailures: number;
   contextFailures: number;
   partialFiles: number;
@@ -647,6 +679,10 @@ function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, score
     reviewedFindings: scored.reviewed.slice(0, EXAMPLE_LIMIT),
     cleanSamples: scored.cleanSamples,
     silentCleanSamples: scored.silentCleanSamples,
+    ownUnits: scored.ownUnits,
+    silentOwnUnits: scored.silentOwnUnits,
+    upstreamFindings: scored.upstreamFindings,
+    renamed: scored.renamed,
     engineFailures: scored.engineFailures,
     contextFailures: scored.contextFailures,
     partialFiles: scored.partialFiles,
@@ -675,7 +711,10 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
   }
   // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
   const findings = recording.findings.filter(finding => finding.rule === rule.upstream.rule && coversFixture(rule, finding.path));
+  const units = run.units.get(tool) ?? [];
+  const variantPaths = new Set(units.filter(unit => unit.origin?.renamedFrom !== undefined).flatMap(unit => unit.paths));
   const expected: Point[] = [];
+  const expectedRenamed: Point[] = [];
   for (const finding of findings) {
     if (!run.scored.has(`${tool}\0${finding.path}`)) {
       errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
@@ -685,16 +724,19 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
       errors.push(`${rule.id} (fixtures): ${finding.path}:${finding.line} has no column; the rule matches line+column`);
       continue;
     }
-    expected.push({ path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) });
+    (variantPaths.has(finding.path) ? expectedRenamed : expected).push({ path: finding.path, line: finding.line, ...(rule.match === "line+column" ? { column: finding.column! } : {}) });
   }
+  const pointsOf = (rerail: RuleActual): Point[] => rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
   const rerail = run.actual.get(rule.id) ?? noActual();
-  const actual = rerail.points.map(point => (rule.match === "line" ? { path: point.path, line: point.line } : point));
   const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === "fixtures"));
   return rowOf(entry, loaded, "fixtures", {
-    score: scoreSource(expected, actual, rule.match, applicable),
+    score: scoreSource(expected, pointsOf(rerail), rule.match, applicable),
     reviewed: [],
     cleanSamples: 0,
     silentCleanSamples: 0,
+    ...ownUnits(rule, units, findings, rerail),
+    upstreamFindings: expected.length,
+    renamed: variantPaths.size === 0 ? null : renamedScore(rule, units, expectedRenamed, pointsOf(run.renamedActual.get(rule.id) ?? noActual()), applicable, used),
     // On the fixtures, which the port must read as upstream does, every failure but `source-partial` and the T1
     // syntax-error skips is an engine failure, parse-induced `source-incomplete` included.
     engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures + total(rerail.incompletePaths) + rerail.pathlessIncomplete,
@@ -702,6 +744,44 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
     partialFiles: rerail.partialPaths.size,
     syntaxErrorFiles: [...rerail.syntaxErrorFiles.values()],
   }, used);
+}
+
+/**
+ * A rule's own upstream units and, of those, the silent ones: an original unit (no `renamedFrom`) the rule is scored on
+ * whose origin names the rule's upstream rule, where upstream reports the rule nowhere and Rerail reads every file in
+ * full and reports nothing. A unit with no origin is never the rule's own: its silence proves nothing about the rule.
+ */
+function ownUnits(rule: PackRule, units: readonly ScoredUnit[], findings: readonly UpstreamFinding[], rerail: RuleActual): { ownUnits: number; silentOwnUnits: number } {
+  const own = units.filter(
+    unit => unit.origin !== undefined && unit.origin.renamedFrom === undefined && unit.origin.rules.includes(rule.upstream.rule) && unit.paths.some(path => coversFixture(rule, path)),
+  );
+  const upstreamReports = new Set(findings.map(finding => finding.path));
+  const reported = new Set(rerail.points.map(point => point.path));
+  const unsure = (path: string): boolean =>
+    reported.has(path) || rerail.engineFailurePaths.has(path) || rerail.incompletePaths.has(path) || rerail.partialPaths.has(path) || rerail.syntaxErrorFiles.has(path);
+  const silent = own.filter(unit => !rerail.pathlessUnits.has(unit.key) && unit.paths.every(path => !upstreamReports.has(path) && !unsure(path)));
+  return { ownUnits: own.length, silentOwnUnits: silent.length };
+}
+
+/** The rule scored on its tool's rename variants alone, as the originals are scored (holds-under-rename). */
+function renamedScore(
+  rule: PackRule,
+  units: readonly ScoredUnit[],
+  expected: readonly Point[],
+  actual: readonly Point[],
+  applicable: readonly Divergence[],
+  used: Set<Divergence>,
+): NonNullable<RuleRow["renamed"]> {
+  const score = scoreSource([...expected], [...actual], rule.match, [...applicable]);
+  for (const entry of score.explained) used.add(entry.divergence);
+  return {
+    units: units.filter(unit => unit.origin?.renamedFrom !== undefined && unit.paths.some(path => coversFixture(rule, path))).length,
+    tp: score.tp,
+    fp: score.falsePositives.length,
+    fn: score.falseNegatives.length,
+    falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
+    falseNegatives: score.falseNegatives.slice(0, EXAMPLE_LIMIT),
+  };
 }
 
 /**
@@ -733,6 +813,10 @@ function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, us
     reviewed: score.reviewed,
     cleanSamples: clean.length,
     silentCleanSamples: silent.length,
+    ownUnits: 0,
+    silentOwnUnits: 0,
+    upstreamFindings: 0,
+    renamed: null,
     engineFailures: total(rerail.engineFailurePaths, path => judged.has(path)) + rerail.pathlessEngineFailures,
     contextFailures: total(rerail.engineFailurePaths, path => !judged.has(path)),
     partialFiles: readInPart.size + rerail.pathlessIncomplete,
@@ -815,8 +899,8 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
  * in part (a T1 syntax error, `source-partial`, a parse-induced `source-incomplete`: `isParseIncomplete`) is still
  * judged but fails nothing by itself: a sample judges the rule, and a label the partial read hides is a missed label.
  * A sample's context files are never judged, so their engine failures fail nothing either. Other engine failures fail
- * on both. A candidate's row (a port under `candidates/`) is reported but fails
- * nothing; its errors and stale divergences still do.
+ * on both. On the fixtures' rename variants, scored apart, an unexplained FP or FN fails too (holds-under-rename). A
+ * candidate's row (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
@@ -832,6 +916,8 @@ export function reportFailures(report: T4Report): string[] {
         if (row.fp > 0) problems.push(`${where}: ${row.fp} unexplained FP, first ${JSON.stringify(row.falsePositives[0])}`);
         if (row.fn > 0) problems.push(`${where}: ${row.fn} unexplained FN, first ${JSON.stringify(row.falseNegatives[0])}`);
         if (row.tp === 0 && !row.examples) problems.push(`${where}: 0 TP and no examples in pack.json; nothing shows it catches anything`);
+        if (row.renamed !== null && row.renamed.fp > 0) problems.push(`${where}: ${row.renamed.fp} unexplained FP on rename variants, first ${JSON.stringify(row.renamed.falsePositives[0])}`);
+        if (row.renamed !== null && row.renamed.fn > 0) problems.push(`${where}: ${row.renamed.fn} unexplained FN on rename variants, first ${JSON.stringify(row.renamed.falseNegatives[0])}`);
       }
       if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
       return problems;

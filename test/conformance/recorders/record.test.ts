@@ -5,13 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
-import { readGatesManifest, recordedRuntimes } from "../../../conformance/port-readiness/manifest.js";
+import { readGatesManifest, recordedRuntimes } from "../../../conformance/languages/manifest.js";
 import { answerConfig, archiveCachePath, cacheArchive, cachedTree, configId, memoryTree, notCopiedPrefixes, treeDirectory, treeFiles } from "../../../conformance/port-readiness/recording/archive.js";
 import { gatesRecordingSchema, spanOf } from "../../../conformance/port-readiness/recording/schema.js";
 import { recordingLockText } from "../../../conformance/port-readiness/recording/store.js";
 import { loadRecording } from "../../../conformance/port-readiness/recording/tree.js";
-import { createRecordedAdapter, readRecordedInputs } from "../../../conformance/port-readiness/recorded-adapter.js";
-import type { PackAdapter } from "../../../conformance/port-readiness/types.js";
+import { createRecordedAdapter, readRecordedInputs } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import type { PackAdapter } from "../../../conformance/recorders/port-readiness/types.js";
 import { CASE_LAYOUTS, checkRecording, committedSources, diffRecording, listedCopies, recordToolPack, withUpstreamRows, writeRecording, type AdapterFactory, type CommittedSources } from "../../../conformance/recorders/port-readiness/record.js";
 import { extensionList, RUNTIMES_DIRECTORY, runtimePinDigests, unpinnedComposerDependencies, unpinnedNpmDependencies, unpinnedPythonDependencies, withoutMachinePaths } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { PACKAGE_ROOT } from "../../../src/engine/index.js";

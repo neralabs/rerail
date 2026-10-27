@@ -9,8 +9,9 @@
 //   - it sits in `test/` or `integration/` and its name says fixture (`hook-fixtures.ts`).
 // It may live only under `fixtures/` or `packs/<id>/upstream/` (a pack's tool recordings and their inputs). Declared
 // exemptions: `packs/<id>/candidates/` (ports still scored, never shipped, with their hand-labelled probe packs: pack
-// data), `gate-pins` (the port readiness gates' pinned inputs and workers: `conformance/port-readiness/*.json`, the task list and pack lists
-// the gates read; `conformance/recorders/port-readiness/runtimes/**`, the manifests that pin each upstream runtime; and the Python
+// data), `gate-pins` (the conformance gate's lists: `conformance/languages/ungated-rules.json` and
+// `conformance/languages/pending.json`, the not-gated rules and pending tool-packs it reads;
+// `conformance/recorders/port-readiness/runtimes/**`, the manifests that pin each upstream runtime; and the Python
 // and PHP workers under `conformance/recorders/port-readiness/`, code the recorder runs inside those runtimes) and, for code-rule
 // documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
 //
@@ -74,9 +75,9 @@ function fixtureKind(repo, path) {
   return undefined;
 }
 
-/** Exemption `gate-pins`: the port readiness gates' pinned inputs and the recorder's Python and PHP workers (see the header). */
+/** Exemption `gate-pins`: the conformance gate's lists and the recorder's runtimes and Python and PHP workers (see the header). */
 function isGatePin(path) {
-  if (/^conformance\/port-readiness\/[^/]+\.json$/u.test(path)) return true;
+  if (path === "conformance/languages/ungated-rules.json" || path === "conformance/languages/pending.json") return true;
   if (path.startsWith("conformance/recorders/port-readiness/runtimes/")) return true;
   return path.startsWith("conformance/recorders/port-readiness/") && (path.endsWith(".py") || path.endsWith(".php"));
 }

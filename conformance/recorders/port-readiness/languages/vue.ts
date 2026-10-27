@@ -1,4 +1,4 @@
-import type { ParserVerdict } from "../../../port-readiness/types.js";
+import type { ParserVerdict } from "../types.js";
 import { parserVerdicts, type IndependentParsers } from "./ecmascript.js";
 
 /**

@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "vitest";
 
-import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
-import { gatedToolPacks, ROOT } from "../../../conformance/port-readiness/plan.mjs";
-import { licenseFiles } from "../../../conformance/port-readiness/recorded-adapter.js";
+import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
+import { RERAIL_ROOT as ROOT } from "../../../conformance/languages/pack.js";
+import { licenseFiles } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
 import { inlineTextsSource, recordingNote, withRecordingNote } from "../../../conformance/recorders/port-readiness/record.js";
 
 const ROWS = [

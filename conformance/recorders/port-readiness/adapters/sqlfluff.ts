@@ -1,10 +1,10 @@
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { sqlfluffSpan, SQLFLUFF_SPAN_PARTS, violationSpan } from "../../../port-readiness/span-units/sqlfluff.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import { upstreamLicenseText } from "../recorded-adapter.js";
+import { sqlfluffSpan, SQLFLUFF_SPAN_PARTS, violationSpan } from "../span-units/sqlfluff.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
 import { checkoutUpstream, existsExactly, treeDigest, uvRuntime } from "../runtimes.js";
 

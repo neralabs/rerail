@@ -7,7 +7,7 @@
  */
 import { join } from "node:path";
 
-import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
+import { readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { npmRuntime } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import type { DeriveContext, DeriveRecipe } from "../context.js";
 

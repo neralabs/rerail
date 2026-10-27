@@ -62,6 +62,30 @@ export const ruleRowSchema = z.object({
   cleanSamples: z.number().int().nonnegative(),
   silentCleanSamples: z.number().int().nonnegative(),
   /**
+   * Fixtures only (0 on samples): the rule's own upstream units, the original units whose `source.units` origin names
+   * its upstream rule (a unit with no origin is never one, nor a rename variant); and of those, the ones upstream
+   * reports the rule nowhere in and Rerail reads in full and reports nothing in (stays-silent evidence).
+   */
+  ownUnits: z.number().int().nonnegative(),
+  silentOwnUnits: z.number().int().nonnegative(),
+  /** Fixtures only (0 on samples): upstream's findings of the rule on the original units the rule is scored on. */
+  upstreamFindings: z.number().int().nonnegative(),
+  /**
+   * Fixtures only: the rule scored on its tool's rename variants, apart from the originals (the other counts are the
+   * originals' alone); an unexplained FP or FN here fails a shipped rule (holds-under-rename). Null when the tool's
+   * test data has no rename variants, and on samples.
+   */
+  renamed: z
+    .object({
+      units: z.number().int().nonnegative(),
+      tp: z.number().int().nonnegative(),
+      fp: z.number().int().nonnegative(),
+      fn: z.number().int().nonnegative(),
+      falsePositives: z.array(pointSchema),
+      falseNegatives: z.array(pointSchema),
+    })
+    .nullable(),
+  /**
    * Failures other than `source-partial` and `syntaxErrorFiles` this rule's code rule reported; each fails a shipped
    * rule. On samples, only those on judged files and those naming no file, and never a parse-induced
    * `source-incomplete` (counted in `partialFiles`).

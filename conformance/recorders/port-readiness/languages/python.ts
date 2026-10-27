@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import type { ParserVerdict } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import type { ParserVerdict } from "../types.js";
 import { uvRuntime } from "../runtimes.js";
 
 /** The worker that reads Python for the gates, run in the pinned environment of runtimes/python. */

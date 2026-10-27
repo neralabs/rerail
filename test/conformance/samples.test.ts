@@ -1,6 +1,6 @@
 /**
  * The conformance runner's real-code samples (`runSamples`, `scoreSamples` and `reportFailures`,
- * conformance/languages/), and the passes-conformance gate's samples checks: samples are judged by intent, line only.
+ * conformance/languages/), and the conformance checks on samples: samples are judged by intent, line only.
  * A labelled violation must be caught on its line, a clean sample must get no finding, a judged sample must be read;
  * an extra report on a labelled sample is only reviewed. Trees are hand-made and reached through `samplesDirectory`.
  */
@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadPack, type Divergence } from "../../conformance/languages/pack.js";
 import type { RuleRow, T4Report } from "../../conformance/languages/report.js";
 import { reportFailures, runPack, type RunOptions } from "../../conformance/languages/runner.js";
-import { conformanceOf, passesConformanceChecks } from "../../conformance/port-readiness/checks/passes-conformance.js";
+import { conformanceChecks, conformanceOf } from "../../conformance/languages/checks/conformance.js";
 import { fixturesPath } from "../support/oracles.js";
 import { writeSamplesTree, type HandMadeSample } from "../support/samples.js";
 
@@ -28,10 +28,10 @@ const samplesRows = (report: T4Report) =>
 
 const samplesRow = (report: T4Report): RuleRow => report.rules.find(row => row.source === "samples")!;
 
-/** The passes-conformance checks assert-used fails, from the report the gate would read, given one own silent upstream case. */
+/** The conformance checks assert-used fails, from the report the gate would read; stays-silent is judged below. */
 const failingChecks = (report: T4Report): string[] =>
-  passesConformanceChecks(conformanceOf(loadPack(directory), report), "assert-used", 1)
-    .filter(check => !check.ok)
+  conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used")
+    .filter(check => !check.ok && check.id !== "stays-silent")
     .map(check => check.id);
 
 let directory: string;
@@ -218,41 +218,89 @@ describe("samples divergences", () => {
   });
 });
 
-describe("stays-silent", () => {
-  /** The gate's stays-silent check for assert-used, given `ownSilentCases` from its matches-upstream-tests cases. */
-  const staysSilent = (report: T4Report, ownSilentCases: number) =>
-    passesConformanceChecks(conformanceOf(loadPack(directory), report), "assert-used", ownSilentCases).find(check => check.id === "stays-silent")!;
-  const clean: HandMadeSample = { name: "clean", path: "app.py", text: "ready = True\n", expected: { "assert-used": [] } };
-
-  it("is not met by fixture units of other rules, however silent; a silent clean sample meets it", async () => {
-    // clean.py is a fixture unit examplelint reports nothing on and the rule is silent on, but it is no case of the
-    // rule's own upstream tests (none is silent here), so it proves nothing about the rule.
-    const fixturesOnly = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
-    expect(staysSilent(fixturesOnly, 0)).toMatchObject({ ok: false });
-    const { report } = await score([clean], { fixtures: true });
-    expect(samplesRows(report)).toEqual([expect.objectContaining({ cleanSamples: 1, silentCleanSamples: 1 })]);
-    expect(staysSilent(report, 0)).toEqual({ id: "stays-silent", ok: true, detail: "silent where it should be: 0 own upstream case(s), 1 clean sample(s)" });
+/** Sets examplelint's fixture units' origins (`source.units`), and adds `findings` to its recording. */
+const setUnits = (units: Record<string, { rules: string[]; renamedFrom?: string }>, files: string[] = [], findings: unknown[] = []): void =>
+  editJson(join(directory, "upstream", "examplelint", "fixtures.expected.json"), recording => {
+    const source = recording.source as Record<string, unknown>;
+    return { ...recording, source: { ...source, files: [...(source.files as string[]), ...files], units }, findings: [...(recording.findings as unknown[]), ...findings] };
   });
 
-  it("is met by the rule's own silent upstream cases", async () => {
+describe("stays-silent", () => {
+  const staysSilent = (report: T4Report) => conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(check => check.id === "stays-silent")!;
+  const fixturesRow = (report: T4Report): RuleRow => report.rules.find(row => row.source === "fixtures")!;
+  const clean: HandMadeSample = { name: "clean", path: "app.py", text: "ready = True\n", expected: { "assert-used": [] } };
+
+  it("is not met by fixture units of unknown origin or of other rules, however silent; a silent clean sample meets it", async () => {
+    // clean.py is a fixture unit examplelint reports nothing on and the rule is silent on, but no origin names the
+    // rule's upstream rule, so it proves nothing about the rule.
+    const unknown = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(fixturesRow(unknown)).toMatchObject({ ownUnits: 0, silentOwnUnits: 0 });
+    expect(staysSilent(unknown)).toMatchObject({ ok: false });
+    setUnits({ "clean.py": { rules: ["EX202"] } });
+    expect(staysSilent(await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE }))).toMatchObject({ ok: false });
+    const { report } = await score([clean], { fixtures: true });
+    expect(samplesRows(report)).toEqual([expect.objectContaining({ cleanSamples: 1, silentCleanSamples: 1 })]);
+    expect(staysSilent(report)).toEqual({ id: "stays-silent", ok: true, detail: "silent where it should be: 0 of 0 own upstream unit(s), 1 clean sample(s)" });
+  });
+
+  it("is met by the rule's own units upstream and the rule are silent on, and not by its own units upstream reports", async () => {
+    setUnits({ "asserts.py": { rules: ["EX101"] }, "clean.py": { rules: ["EX101"] } });
     const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
-    expect(staysSilent(report, 2)).toEqual({ id: "stays-silent", ok: true, detail: "silent where it should be: 2 own upstream case(s), 0 clean sample(s)" });
+    expect(fixturesRow(report)).toMatchObject({ ownUnits: 2, silentOwnUnits: 1, upstreamFindings: 2 });
+    expect(staysSilent(report)).toEqual({ id: "stays-silent", ok: true, detail: "silent where it should be: 1 of 2 own upstream unit(s), 0 clean sample(s)" });
   });
 
   it("is not met by a clean sample the engine cannot read", async () => {
     const { report } = await score([{ ...clean, text: UNREADABLE }], { fixtures: true });
-    expect(staysSilent(report, 0).ok).toBe(false);
+    expect(staysSilent(report).ok).toBe(false);
   });
 
   it("is not met by a clean sample read in part, nor by one a parse-induced source-incomplete leaves unknown", async () => {
     const partial = await score([{ ...clean, text: "ready = True\nx = (\n" }], { fixtures: true });
     expect(samplesRow(partial.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, partialFiles: 1 });
-    expect(staysSilent(partial.report, 0).ok).toBe(false);
+    expect(staysSilent(partial.report).ok).toBe(false);
     rmSync(tree, { recursive: true, force: true });
     addEvidenceClause();
     const incomplete = await score([{ ...clean, text: "ready = True\npass\n", context: { "ctx.py": UNREADABLE } }], { fixtures: true });
     expect(samplesRow(incomplete.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, engineFailures: 0, partialFiles: 1 });
-    expect(staysSilent(incomplete.report, 0).ok).toBe(false);
+    expect(staysSilent(incomplete.report).ok).toBe(false);
+  });
+});
+
+describe("rename variants", () => {
+  /** renamed/asserts.py: asserts.py renamed, labelled by examplelint as it labels the original (the nested assert skipped). */
+  const addVariant = (): void => {
+    const fixtures = join(directory, "upstream", "examplelint", "fixtures");
+    mkdirSync(join(fixtures, "renamed"), { recursive: true });
+    writeFileSync(join(fixtures, "renamed", "asserts.py"), "assert q\nz = 1\nassert w\nif z:\n    assert e\n");
+    setUnits(
+      { "asserts.py": { rules: ["EX101"] }, "renamed/asserts.py": { rules: ["EX101"], renamedFrom: "asserts.py" } },
+      ["renamed/asserts.py"],
+      [1, 3].map(line => ({ rule: "EX101", path: "renamed/asserts.py", line, column: 1 })),
+    );
+  };
+  const fixturesRow = (report: T4Report): RuleRow => report.rules.find(row => row.source === "fixtures")!;
+
+  it("are scored apart from the originals and never count as the rule's own units", async () => {
+    const before = fixturesRow(await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE }));
+    expect(before.renamed).toBeNull();
+    addVariant();
+    const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    const row = fixturesRow(report);
+    expect(row).toMatchObject({ tp: before.tp, fp: before.fp, fn: before.fn, upstreamFindings: before.upstreamFindings, ownUnits: 1 });
+    // The original's divergence names asserts.py:5, so it explains nothing on the variant: holds-under-rename fails.
+    expect(row.renamed).toEqual({ units: 1, tp: 2, fp: 1, fn: 0, falsePositives: [{ path: "renamed/asserts.py", line: 5, column: 5 }], falseNegatives: [] });
+    expect(reportFailures(report)).toEqual([`assert-used (fixtures): 1 unexplained FP on rename variants, first {"path":"renamed/asserts.py","line":5,"column":5}`]);
+    expect(failingChecks(report)).toEqual(["holds-under-rename"]);
+  });
+
+  it("hold once a divergence explains the variant's disagreement", async () => {
+    addVariant();
+    writeDivergences([{ rule: "assert-used", source: "fixtures", path: "renamed/asserts.py", line: 5, kind: "upstream-wrong", evidence: "examplelint skips an assert nested in an if block; line 5 is one" }]);
+    const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(fixturesRow(report).renamed).toMatchObject({ tp: 2, fp: 0, fn: 0 });
+    expect(reportFailures(report)).toEqual([]);
+    expect(failingChecks(report)).toEqual([]);
   });
 });
 

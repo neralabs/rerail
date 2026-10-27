@@ -9,7 +9,7 @@ import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 
-import { readGatesManifest } from "../../../conformance/port-readiness/manifest.js";
+import { readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { composerRuntime, PHP_INI, pinnedPhp, RUNTIMES_DIRECTORY, uvRuntime } from "../../../conformance/recorders/port-readiness/runtimes.js";
 import { derivationEnvironment, type DeriveContext, type DeriveRecipe } from "../context.js";
 

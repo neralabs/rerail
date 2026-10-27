@@ -4,10 +4,11 @@ import { createHash } from "node:crypto";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 
 import { PACKAGE_ROOT } from "../../../../src/engine/index.js";
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { notebookCodeCells, upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../../../port-readiness/span-units/ruff.js";
-import type { Check, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import { notebookCodeCells, upstreamLicenseText } from "../recorded-adapter.js";
+import { diagnosticSpan, RUFF_SPAN_PARTS, ruffSpan } from "../span-units/ruff.js";
+import type { Check } from "../../../languages/checks/check.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../types.js";
 import { createPythonToolkit } from "../languages/python.js";
 import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals, type RustToken } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, uvRuntime, type PythonRuntime } from "../runtimes.js";

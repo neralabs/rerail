@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { bladeParserSpan, BLADE_PARSER_SPAN_PARTS, validationSpan } from "../../../port-readiness/span-units/blade-parser.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import { upstreamLicenseText } from "../recorded-adapter.js";
+import { bladeParserSpan, BLADE_PARSER_SPAN_PARTS, validationSpan } from "../span-units/blade-parser.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../types.js";
 import { createBladeToolkit } from "../languages/blade.js";
 import { phpRegex, type PhpLiterals } from "../languages/php.js";
 import { checkoutUpstream, filesUnder, treeDigest, withoutMachinePaths } from "../runtimes.js";

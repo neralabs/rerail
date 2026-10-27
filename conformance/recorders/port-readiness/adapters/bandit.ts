@@ -3,10 +3,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { decodeSource, upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { banditSpan, banditSpanParts, TROJANSOURCE_RELEASE, trojansourcePoint } from "../../../port-readiness/span-units/bandit.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import { decodeSource, upstreamLicenseText } from "../recorded-adapter.js";
+import { banditSpan, banditSpanParts, TROJANSOURCE_RELEASE, trojansourcePoint } from "../span-units/bandit.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../types.js";
 import { createPythonToolkit, pythonRegex } from "../languages/python.js";
 import { checkoutUpstream, filesUnder, treeDigest, uvRuntime } from "../runtimes.js";
 

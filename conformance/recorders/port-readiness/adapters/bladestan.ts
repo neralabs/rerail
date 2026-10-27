@@ -4,10 +4,10 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { bladestanSpan, templateLineSpan, BLADESTAN_SPAN_PARTS } from "../../../port-readiness/span-units/bladestan.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import { upstreamLicenseText } from "../recorded-adapter.js";
+import { bladestanSpan, templateLineSpan, BLADESTAN_SPAN_PARTS } from "../span-units/bladestan.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../types.js";
 import { createBladeToolkit } from "../languages/blade.js";
 import { phpRegex, type PhpLiterals } from "../languages/php.js";
 import { checkoutUpstream, composerRuntime, filesUnder, PHP_INI, treeDigest, withoutMachinePaths } from "../runtimes.js";

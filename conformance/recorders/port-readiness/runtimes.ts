@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import { parse as parseToml } from "smol-toml";
 
-import { runChecked, type CommandRunner } from "../../port-readiness/process.js";
+import { runChecked, type CommandRunner } from "../../process.js";
 import type { ResolvedRuntime } from "../../port-readiness/recording/diff.js";
-import { LICENSE_SPARSE_PATTERNS, upstreamCheckoutDirectory } from "../../port-readiness/recorded-adapter.js";
-import type { Check } from "../../port-readiness/types.js";
+import { LICENSE_SPARSE_PATTERNS, upstreamCheckoutDirectory } from "./recorded-adapter.js";
+import type { Check } from "../../languages/checks/check.js";
 
 /**
  * Pinned inputs an adapter runs upstream with: a sparse checkout of upstream's repository at the pinned commit, and

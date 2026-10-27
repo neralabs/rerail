@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../../conformance/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../../conformance/recorders/port-readiness/recorded-adapter.js";
 import {
   checkUpstreamReleases,
   eslintPackage,
@@ -118,10 +118,12 @@ upstream:
   recommended_configs:
     - default
   runtime: bandit-${version}
+  lints: [".py"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - a fake upstream
+rules: {}
 known_gaps: []
 `;
 }
@@ -142,10 +144,12 @@ upstream:
   recommended_configs:
     - default
   runtime: clippy-1.99.0
+  lints: [".py"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - a fake upstream
+rules: {}
 known_gaps: []
 `;
 

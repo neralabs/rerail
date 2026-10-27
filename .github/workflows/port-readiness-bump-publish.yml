@@ -349,7 +349,7 @@ jobs:
           # shellcheck disable=SC2016 # JavaScript template literals, not shell expansions
           node --import tsx --input-type=module -e '
             import { readFileSync } from "node:fs";
-            const { readGatesManifest } = await import("./conformance/port-readiness/manifest.ts");
+            const { readGatesManifest } = await import("./conformance/languages/manifest.ts");
             for (const line of readFileSync(0, "utf8").split("\n").filter((entry) => entry !== "")) {
               const [pack, tool] = line.split(" ");
               process.stdout.write(`${pack} ${tool} ${readGatesManifest(process.cwd(), pack, tool).rerail.project}\n`);

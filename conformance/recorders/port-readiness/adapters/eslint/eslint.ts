@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
-import { runChecked, type CommandRunner } from "../../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../../port-readiness/recorded-adapter.js";
-import { eslintSpan, eslintSpanParts, messageSpan } from "../../../../port-readiness/span-units/eslint.js";
-import type { Check, EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../../process.js";
+import { upstreamLicenseText } from "../../recorded-adapter.js";
+import { eslintSpan, eslintSpanParts, messageSpan } from "../../span-units/eslint.js";
+import type { Check } from "../../../../languages/checks/check.js";
+import type { EslintUpstream, FixtureTextSource, PackAdapter, PackManifest, Span, UpstreamCase, UpstreamRule } from "../../types.js";
 import {
   commentVocabulary, keywords, literalNames, literalRegexes, parserVerdicts, sourceWords, words,
   type BabelParser, type DocumentationNode, type TypeScript,

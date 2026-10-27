@@ -4,18 +4,18 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test, vi } from "vitest";
 
-import type * as Cache from "../../../conformance/port-readiness/cache.js";
+import type * as TrackedDigest from "../../../conformance/recorders/port-readiness/tracked-digest.js";
 import { packTree } from "../../../conformance/port-readiness/recording/archive.js";
-import { decodeSource, upstreamCheckoutDirectory } from "../../../conformance/port-readiness/recorded-adapter.js";
-import type { ParserVerdict, UpstreamCase } from "../../../conformance/port-readiness/types.js";
+import { decodeSource, upstreamCheckoutDirectory } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import type { ParserVerdict, UpstreamCase } from "../../../conformance/recorders/port-readiness/types.js";
 import { recordToolPack, type AdapterFactory } from "../../../conformance/recorders/port-readiness/record.js";
 import { demoToolPack, fakeAdapter, MANIFEST, nameRules, optionsFor, span } from "./support/demo-tool-pack.js";
 
 // The digest of an adapter's code (archive.ts's ADAPTER_SOURCES) is part of every config id and parsers id, and moves
 // with any edit to an adapter, which is its own reason to record again and no change to what the recorder writes. It is
 // one value here, so the pin below moves only with the recorder's format.
-vi.mock("../../../conformance/port-readiness/cache.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof Cache>()),
+vi.mock("../../../conformance/recorders/port-readiness/tracked-digest.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof TrackedDigest>()),
   trackedDigest: () => "0".repeat(64),
 }));
 
@@ -24,7 +24,7 @@ vi.mock("../../../conformance/port-readiness/cache.js", async (importOriginal) =
  * recorder writes a different tree for the same upstream output, or RECORDING_FORMAT moves (the config id is in every
  * path).
  */
-const PINNED_TREE = "f89b977a7e4ca11c22c153947c8fead0a580e4f223707a4048c7e53887e96c81";
+const PINNED_TREE = "15040211218dbba01827246700cf014e60db3038dc46b5b156f772d50ae4154b";
 
 const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const RUFF_FIXTURES = "crates/ruff_linter/resources/test/fixtures";

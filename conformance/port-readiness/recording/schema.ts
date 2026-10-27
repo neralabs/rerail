@@ -29,8 +29,8 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { ADAPTERS } from "../manifest.js";
-import type { ParserVerdict, Span } from "../types.js";
+import { ADAPTERS } from "../../languages/manifest.js";
+import type { ParserVerdict, Span } from "../../recorders/port-readiness/types.js";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 

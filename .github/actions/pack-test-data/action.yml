@@ -10,8 +10,8 @@ description: >-
   `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of job. The fetching job
   (`fetch: "true"`) only fills the cache: it looks the key up without restoring it and, on a miss, pulls the archives
   from S3 and saves them; it needs `id-token: write` and `contents: read` (a reusable workflow's caller must grant
-  them too), restores no cache entry and runs nothing but this commit's scripts/s3/pack-fixtures.mjs (the recordings
-  warm-up of port-readiness.yml's test-data job too), and runs only for pushes and same-repository pull requests, since
+  them too), restores no cache entry and runs nothing but this commit's scripts/s3/pack-fixtures.mjs, and runs only for
+  pushes and same-repository pull requests, since
   GitHub gives a fork's or Dependabot's pull request no OIDC token. The AWS credentials reach the pull step alone, never
   the job's environment. The consuming job (`fetch: "false"`) restores the cache entry the fetching job of the same
   workflow run saved, verifies each archive against its lock and extracts it; it holds no `id-token`, never assumes a

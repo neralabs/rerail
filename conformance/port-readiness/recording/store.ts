@@ -22,7 +22,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { toolPackDirectory } from "../manifest.js";
+import { toolPackDirectory } from "../../languages/manifest.js";
 import { RECORDING_ARCHIVE, RECORDING_ARCHIVE_FORMAT, type ArchivePin } from "./archive.js";
 
 /** The committed manifest's file name in a tool-pack's directory. */

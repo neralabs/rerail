@@ -25,9 +25,8 @@ import { parseArgs } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-import { readGatesManifest, type GatesManifest } from "../manifest.js";
-import { RUNTIMES_DIRECTORY } from "../recorded-adapter.js";
-import { gatedToolPacks } from "../run.js";
+import { gatedToolPacks, readGatesManifest, type GatesManifest } from "../../languages/manifest.js";
+import { RUNTIMES_DIRECTORY } from "../../recorders/port-readiness/recorded-adapter.js";
 
 /** The registries a gated tool-pack's runtime installs its upstream from. */
 export type PackageEcosystem = "npm" | "pypi" | "packagist";

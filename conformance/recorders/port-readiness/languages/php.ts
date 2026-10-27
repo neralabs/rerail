@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import type { ParserVerdict } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import type { ParserVerdict } from "../types.js";
 import { composerRuntime, PHP_INI, type PhpRuntime } from "../runtimes.js";
 
 /** The worker that reads PHP for the gates, run on the pinned interpreter with runtimes/php's vendor/ (nikic/php-parser). */

@@ -16,8 +16,8 @@
 import { z } from "zod";
 
 import { sha256 } from "../../../scripts/s3/test-data-archive.mjs";
-import { fileTypeOf } from "../engine.js";
-import type { ParserVerdict } from "../types.js";
+import { fileTypeOf } from "../../recorders/port-readiness/file-type.js";
+import type { ParserVerdict } from "../../recorders/port-readiness/types.js";
 import { canonicalText, cleanVerdicts, isCleanVerdict, parserVerdictSchema, type RecordedParser } from "./schema.js";
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);

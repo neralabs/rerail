@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 
-import { regexWords } from "../../../port-readiness/policy-literals.js";
-import type { ParserVerdict } from "../../../port-readiness/types.js";
+import { regexWords } from "../policy-literals.js";
+import type { ParserVerdict } from "../types.js";
 
 /**
  * How the gates read JavaScript and TypeScript, with the TypeScript compiler an adapter's pinned runtime installs:

@@ -28,8 +28,8 @@ import { dirname, join } from "node:path";
 
 import { extractRecordingTree, RECORDING_ARCHIVE, RECORDING_ARCHIVE_FORMAT, RECORDING_TREE_MARKER, RECORDING_TREE_ROOTS, recordingTreeReady, ROOT } from "../../../scripts/s3/pack-fixtures.mjs";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, readArchive, sha256, type ArchiveEntry } from "../../../scripts/s3/test-data-archive.mjs";
-import { trackedDigest } from "../cache.js";
-import type { GatesManifest } from "../manifest.js";
+import { trackedDigest } from "../../recorders/port-readiness/tracked-digest.js";
+import type { GatesManifest } from "../../languages/manifest.js";
 import { canonicalText, type RecordedParser } from "./schema.js";
 
 export { RECORDING_ARCHIVE, RECORDING_ARCHIVE_FORMAT };
@@ -50,7 +50,7 @@ export interface ArchivePin {
 export type RuntimeDigests = Record<string, Record<string, string>>;
 
 const RECORDERS = "conformance/recorders/port-readiness";
-const SPAN_UNITS = "conformance/port-readiness/span-units";
+const SPAN_UNITS = `${RECORDERS}/span-units`;
 /** The recorder's language toolkits, each with the worker it runs and the toolkits it builds on. */
 const PYTHON = [`${RECORDERS}/languages/python.ts`, `${RECORDERS}/languages/python_toolkit.py`];
 const PHP = [`${RECORDERS}/languages/php.ts`, `${RECORDERS}/languages/php_toolkit.php`];
@@ -71,7 +71,7 @@ const sources = (own: readonly string[], ...shared: string[]): readonly string[]
  * are covered.
  */
 export const ADAPTER_SOURCES: Record<GatesManifest["adapter"], readonly string[]> = {
-  bandit: sources(["bandit.ts", "bandit_driver.py"], ...PYTHON, `${SPAN_UNITS}/bandit.ts`, "conformance/port-readiness/recorded-adapter.ts"),
+  bandit: sources(["bandit.ts", "bandit_driver.py"], ...PYTHON, `${SPAN_UNITS}/bandit.ts`, `${RECORDERS}/recorded-adapter.ts`),
   ruff: sources(["ruff.ts", "ruff-tests.ts"], ...PYTHON, ...RUST, `${SPAN_UNITS}/ruff.ts`),
   eslint: sources(["eslint"], ...ECMASCRIPT, `${SPAN_UNITS}/eslint.ts`),
   phpcs: sources(["phpcs.ts", "phpcs_driver.php"], ...PHP, `${SPAN_UNITS}/phpcs.ts`),

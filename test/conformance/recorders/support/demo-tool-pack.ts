@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { recordingLockSchema } from "../../../../conformance/port-readiness/recording/store.js";
-import type { PackAdapter } from "../../../../conformance/port-readiness/types.js";
+import type { PackAdapter } from "../../../../conformance/recorders/port-readiness/types.js";
 import type { AdapterFactory, RecordOptions } from "../../../../conformance/recorders/port-readiness/record.js";
 
 export const MANIFEST = `adapter: bandit
@@ -23,10 +23,12 @@ upstream:
   recommended_configs:
     - default
   runtime: bandit-1.9.4
+  lints: [".py"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - a fake upstream
+rules: {}
 known_gaps: []
 `;
 

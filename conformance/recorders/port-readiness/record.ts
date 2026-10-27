@@ -14,9 +14,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { missingPackFixture, recordings as fetchRecordings } from "../../../scripts/s3/pack-fixtures.mjs";
 
-import { conformancePaths } from "../../port-readiness/corpus.js";
-import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "../../port-readiness/manifest.js";
-import type { CommandRunner } from "../../port-readiness/process.js";
+import { conformancePaths } from "./corpus.js";
+import { readGatesManifest, recordedRuntimes, toolPackDirectory, type GatesManifest } from "../../languages/manifest.js";
+import type { CommandRunner } from "../../process.js";
 import {
   answerConfig, cacheArchive, cachedTree, configId, configPath, memoryTree, notCopiedPrefixes, packTree, parsersId, RECORDING_ARCHIVE, treeConfigs, treeFiles, type PackedArchive,
 } from "../../port-readiness/recording/archive.js";
@@ -30,8 +30,8 @@ import { buildRecordingLock, readRecordingLock, RECORDING_LOCK, recordingLockSch
 import {
   loadRecording, loadRule, loadTool, nameSetPath, recordedRuleNames, RECORDS_PER_RULE, ruleDirectory, ruleFiles, textDigest, textPath, toolFiles, toolPath,
 } from "../../port-readiness/recording/tree.js";
-import { decodeSource, licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "../../port-readiness/recorded-adapter.js";
-import type { PackAdapter, PackManifest, ParserVerdict, Span, UpstreamCase } from "../../port-readiness/types.js";
+import { decodeSource, licenseFiles, rebuildFixtureTexts, upstreamCheckoutDirectory, type RecordedFixtureTexts } from "./recorded-adapter.js";
+import type { PackAdapter, PackManifest, ParserVerdict, Span, UpstreamCase } from "./types.js";
 import { createBanditAdapter } from "./adapters/bandit.js";
 import { createBladeParserAdapter } from "./adapters/blade-parser.js";
 import { createBladestanAdapter } from "./adapters/bladestan.js";

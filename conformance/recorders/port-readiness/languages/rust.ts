@@ -1,4 +1,4 @@
-import { regexWords } from "../../../port-readiness/policy-literals.js";
+import { regexWords } from "../policy-literals.js";
 
 /**
  * A narrow reader of Rust source for the gates: enough of Rust's lexical grammar to find the string literals, use

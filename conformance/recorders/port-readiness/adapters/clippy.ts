@@ -4,10 +4,10 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 
-import { runChecked, type CommandRunner } from "../../../port-readiness/process.js";
-import { upstreamLicenseText } from "../../../port-readiness/recorded-adapter.js";
-import { clippySpan, rustcSpan, type RustcSpan } from "../../../port-readiness/span-units/clippy.js";
-import type { FixtureTextSource, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamRule } from "../../../port-readiness/types.js";
+import { runChecked, type CommandRunner } from "../../../process.js";
+import { upstreamLicenseText } from "../recorded-adapter.js";
+import { clippySpan, rustcSpan, type RustcSpan } from "../span-units/clippy.js";
+import type { FixtureTextSource, PackAdapter, PackManifest, ParserVerdict, Span, SpanParts, UpstreamCase, UpstreamRule } from "../types.js";
 import { closingIndex, lexRust, rustLiterals, rustRegex, withoutTestItems, type RustLiterals } from "../languages/rust.js";
 import { checkoutUpstream, filesUnder, rustupRuntime } from "../runtimes.js";
 import { useTarget } from "./ruff.js";

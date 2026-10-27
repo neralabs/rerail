@@ -26,9 +26,9 @@ import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { fileTypeOf } from "../engine.js";
-import type { GatesManifest } from "../manifest.js";
-import { eslintSpanParts } from "../span-units/eslint.js";
+import { fileTypeOf } from "../../recorders/port-readiness/file-type.js";
+import type { GatesManifest } from "../../languages/manifest.js";
+import { eslintSpanParts } from "../../recorders/port-readiness/span-units/eslint.js";
 import { configPath, type RecordingTree } from "./archive.js";
 import { parseJson } from "./verdicts.js";
 import {

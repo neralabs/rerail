@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../../conformance/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../../conformance/recorders/port-readiness/recorded-adapter.js";
 import { applyBump, main, planBump, renderBump, type Sources } from "../../../../conformance/port-readiness/upstream/bump.js";
 import { upstreamPins, type Fetch } from "../../../../conformance/port-readiness/upstream/releases.js";
 
@@ -56,7 +56,7 @@ function lightweight(repository: string, tag: string, commit: string): Record<st
 }
 
 function popularity(): string {
-  return "popularity:\n  observed_on: 2026-10-06\n  evidence:\n    - a fake upstream\nknown_gaps: []\n";
+  return "popularity:\n  observed_on: 2026-10-06\n  evidence:\n    - a fake upstream\nrules: {}\nknown_gaps: []\n";
 }
 
 const BANDIT_COMMIT = "92ae8b82fb422a639f0ed8d99e96cea769594e08";
@@ -79,6 +79,7 @@ upstream:
   recommended_configs:
     - default
   runtime: bandit-1.9.4
+  lints: [".py"]
 ${popularity()}`,
     "packs/demo/upstream/bandit/generate.py": `"""Records Bandit 1.9.4 for the demo pack."""\nVERSION = "1.9.4"\nORIGIN = "https://github.com/PyCQA/bandit@${BANDIT_COMMIT}"\nPYYAML = "1.9.4.1"\n`,
     "packs/demo/upstream/bandit/recording.lock": '{"pins": {"version": "1.9.4"}}\n',
@@ -150,6 +151,7 @@ upstream:
   recommended_configs:
     - recommended
   runtime: ${options.runtime}
+  lints: [".py"]
 ${popularity()}eslint:
   plugin:
     package: "${options.installed.split("/").slice(0, 2).join("/")}"
@@ -289,6 +291,7 @@ upstream:
   recommended_configs:
     - default
   runtime: ${runtime}
+  lints: [".py"]
 ${popularity()}`;
   const root = checkout({
     "packs/blade/upstream/blade-parser/gates.yaml": gates("blade-parser", "blade-parser", "stillat/blade-parser", "23a962f99bca451f8738ed2475a70129fb33f07c", "2.1.0", "blade"),
@@ -378,10 +381,12 @@ upstream:
   recommended_configs:
     - default
   runtime: clippy-1.99.0
+  lints: [".py"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - a fake upstream
+rules: {}
 known_gaps: []
 `;
 
