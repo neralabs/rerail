@@ -207,7 +207,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Contract | S `cr/query/plan/contract.rs` | `findings/contract.rs` | Copy as-is (`FindingKey`, Complete/Unknown, `Truth`). Move consolidation (S `async_reference.rs` ~711–748) into the one SQL findings layer. |
 | Oracle | S `async_reference.rs`, `native_oracle.rs`, `tests.rs` | `findings/tests/` | Kept as test oracle only. |
 
-**Status (2026-10-27): copies done (`69371b1c`, `0689eb25`, `6c0e860e`, `8190c8fa`, `0e4a64c3`); adaptations outstanding. S's oracle lives in `query/plan/async_reference/{native_oracle.rs, tests.rs}`, not beside `async_reference.rs`.**
+**Status (2026-10-27): copies done (`69371b1c`, `0689eb25`, `6c0e860e`, `8190c8fa`, `0e4a64c3`); adaptations outstanding. S's oracle lives in `query/plan/async_reference/{native_oracle.rs, tests.rs}`, not beside `async_reference.rs`. Placed in the module tree with path changes only: rows 1 (`40ef4d49`, `facts::producers::python`), 3 (`4514b3f4`, `findings::shape`) and 4 (`be038523`, `findings::contract`). Row 5 (oracle) is blocked on S's matcher deltas, which no row copies (O15).**
 
 ### Phase 9: residency and the pinned GPU cache (§5; F3–F8, K1)
 
@@ -217,7 +217,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
 | Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
 
-**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding.**
+**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). Outside the tree: `metal.rs` (Tempo's `policy_dsl` Metal modules, with Phase 4 row 3), `census.rs` (P's typed projections) and `batch.rs` (D's sessions).**
 
 ### Phase 10: typing (§13; I1–I18)
 
@@ -227,7 +227,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Wavefront + digest cutoff | T `lattice/src/main.rs` (cross-file wavefront, interface-digest cutoff) | `typing/rounds.rs` | Bounded R1..Rk, with k = 2 (I11, X). |
 | Write new | — | `typing/terms.rs`, `typing/declare.rs`, `typing/deps.rs` | Interned type terms (I12), instantiation of generics (I13), `proven`/`possible` (I14), `rerail.types/v1` that fills gaps only (I4, I17), dependency summaries per (package version, module file) with magic-set demand (I18). There is no code in any branch; the design is in the Typing transcript, recorded in 03 §13. |
 
-**Status (2026-10-27): copies done (programs with Phase 6's `091b65fb`, wavefront `59cb33bf`); adaptations and the write-new row outstanding.**
+**Status (2026-10-27): copies done (programs with Phase 6's `091b65fb`, wavefront `59cb33bf`); adaptations and the write-new row outstanding. Placed: `typing::rounds` (`11d2d5ee`), every strategy equal to T's `workload` goldens on the planner fixture.**
 
 ### Phase 11: gate and tooling (throughout; M1–M4, L1, L2)
 
@@ -236,7 +236,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Data-layer gate | D `packs/data-layer/candidates/rules/*.json`, `conformance/data-layer/{suite.ts, replay.ts}`, `scripts/dsl/data_layer_suite_record.py`, `fixtures/host/data-layer-port/batch-0{1..6}-recording.json`, `scripts/profiling/process.py` | same paths | 10 of 60 rules carry SQL (`relational` stages). Rewrite them as named facts plus logic (B2) before they enter the gate. Gate on CPU (M1), RSS ≤ 500 MB, and finding-key sets. |
 | Profiling | D or P `cr/profile/{sql.rs, memory.rs, trace.rs}`, P `phase_clock.rs`, `budget.rs` | `cr/profile/` | Fixed stage names from 03. Construction is reported separately (M2). |
 
-**Status (2026-10-27): copies done (`8cb32ac5`, moved under `gate/data-layer/` by `d0c47184`; profiling `8dcf82a1`, from P, under `profile/copied/`); adaptations outstanding.**
+**Status (2026-10-27): copies done (`8cb32ac5`, moved under `gate/data-layer/` by `d0c47184`; profiling `8dcf82a1`, from P, under `profile/copied/`); adaptations outstanding. Profiling placed (`16bb6e48` copy of the rest of the unit, `5c77b049`; `8637fba8` `working_set`), tests passing with `code-rule-profile`.**
 
 ## Explicitly not copied
 
