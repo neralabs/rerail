@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "33 eslint-plugin-n rules ported to Rerail, 7 of them on and 26 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on real-code samples.",
+  "covers": "32 eslint-plugin-n rules ported to Rerail, 6 of them on and 26 off until turned on, each scored against eslint-plugin-n's own findings on its test cases and on real-code samples.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -259,12 +259,6 @@
       "id": "n-no-unsupported-features-es-builtins",
       "document": "rules/n-no-unsupported-features-es-builtins.json",
       "title": "eslint-plugin-n no-unsupported-features/es-builtins: disallow unsupported ECMAScript built-ins on the specified version",
-      "group": "eslint-plugin-n"
-    },
-    {
-      "id": "n-no-unsupported-features-es-syntax",
-      "document": "rules/n-no-unsupported-features-es-syntax.json",
-      "title": "eslint-plugin-n no-unsupported-features/es-syntax: disallow unsupported ECMAScript syntax on the specified version",
       "group": "eslint-plugin-n"
     },
     {

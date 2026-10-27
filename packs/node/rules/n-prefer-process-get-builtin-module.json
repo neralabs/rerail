@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-process-get-builtin-module",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Load Node.js built-in modules with process.getBuiltinModule() instead of require() or await import(), when the project's Node versions support it.",
   "scope": {
@@ -18,6 +18,282 @@
     "exclude": []
   },
   "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "has": {
+              "field": "arguments",
+              "has": {
+                "any": [
+                  {
+                    "value": {
+                      "regex": "^(?:_http_agent|_http_client|_http_common|_http_incoming|_http_outgoing|_http_server|_tls_common|_tls_wrap|assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|inspector/promises|module|net|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|node:_tls_common|node:_tls_wrap|node:assert|node:assert/strict|node:async_hooks|node:buffer|node:child_process|node:cluster|node:console|node:crypto|node:dgram|node:diagnostics_channel|node:dns|node:dns/promises|node:domain|node:events|node:fs|node:fs/promises|node:http|node:http2|node:https|node:inspector|node:inspector/promises|node:module|node:net|node:os|node:path|node:path/posix|node:path/win32|node:perf_hooks|node:process|node:punycode|node:querystring|node:readline|node:readline/promises|node:repl|node:sea|node:sqlite|node:stream|node:stream/consumers|node:stream/promises|node:stream/web|node:string_decoder|node:test|node:test/reporters|node:timers|node:timers/promises|node:tls|node:trace_events|node:tty|node:url|node:util|node:util/types|node:v8|node:vm|node:wasi|node:worker_threads|node:zlib|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "value": {
+                        "regex": "^(?:_http_agent|_http_client|_http_common|_http_incoming|_http_outgoing|_http_server|_tls_common|_tls_wrap|assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|inspector/promises|module|net|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|node:_tls_common|node:_tls_wrap|node:assert|node:assert/strict|node:async_hooks|node:buffer|node:child_process|node:cluster|node:console|node:crypto|node:dgram|node:diagnostics_channel|node:dns|node:dns/promises|node:domain|node:events|node:fs|node:fs/promises|node:http|node:http2|node:https|node:inspector|node:inspector/promises|node:module|node:net|node:os|node:path|node:path/posix|node:path/win32|node:perf_hooks|node:process|node:punycode|node:querystring|node:readline|node:readline/promises|node:repl|node:sea|node:sqlite|node:stream|node:stream/consumers|node:stream/promises|node:stream/web|node:string_decoder|node:test|node:test/reporters|node:timers|node:timers/promises|node:tls|node:trace_events|node:tty|node:url|node:util|node:util/types|node:v8|node:vm|node:wasi|node:worker_threads|node:zlib|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
+                      }
+                    },
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "nthChild": {
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  },
+                  "position": 1
+                }
+              },
+              "kind": "arguments",
+              "not": {
+                "has": {
+                  "nthChild": {
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    },
+                    "position": 2
+                  }
+                }
+              }
+            }
+          },
+          "c2": {
+            "inside": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "program"
+                    },
+                    {
+                      "kind": "statement_block"
+                    },
+                    {
+                      "kind": "class_body"
+                    }
+                  ],
+                  "has": {
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "kind": "lexical_declaration"
+                          },
+                          {
+                            "kind": "variable_declaration"
+                          }
+                        ],
+                        "has": {
+                          "matches": "c3"
+                        }
+                      },
+                      {
+                        "matches": "c3"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "program"
+                    },
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "method_definition"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    }
+                  ],
+                  "has": {
+                    "has": {
+                      "matches": "c3"
+                    },
+                    "kind": "variable_declaration",
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^process$"
+                      },
+                      {
+                        "matches": "c4"
+                      }
+                    ],
+                    "field": "parameter"
+                  },
+                  "kind": "catch_clause"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "function_expression"
+                    },
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "method_definition"
+                    },
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    }
+                  ],
+                  "has": {
+                    "field": "parameters",
+                    "has": {
+                      "kind": "identifier",
+                      "not": {
+                        "inside": {
+                          "field": "right",
+                          "kind": "assignment_pattern",
+                          "stopBy": "end"
+                        }
+                      },
+                      "regex": "^process$",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "parameter",
+                    "regex": "^process$"
+                  },
+                  "kind": "arrow_function"
+                }
+              ],
+              "stopBy": "end"
+            }
+          },
+          "c3": {
+            "any": [
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^process$"
+                    },
+                    {
+                      "matches": "c4"
+                    }
+                  ],
+                  "field": "name"
+                },
+                "kind": "variable_declarator"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "class_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "regex": "^process$"
+                }
+              },
+              {
+                "has": {
+                  "has": {
+                    "kind": "identifier",
+                    "not": {
+                      "inside": {
+                        "field": "name",
+                        "has": {
+                          "field": "alias",
+                          "kind": "identifier"
+                        },
+                        "kind": "import_specifier"
+                      }
+                    },
+                    "regex": "^process$",
+                    "stopBy": "end"
+                  },
+                  "kind": "import_clause"
+                },
+                "kind": "import_statement"
+              }
+            ]
+          },
+          "c4": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ],
+              "regex": "^process$",
+              "stopBy": "end"
+            }
+          }
+        }
+      }
+    },
     {
       "id": "require",
       "forbid": {
@@ -107,52 +383,7 @@
             },
             "all": [
               {
-                "has": {
-                  "field": "arguments",
-                  "kind": "arguments",
-                  "has": {
-                    "nthChild": {
-                      "position": 1,
-                      "ofRule": {
-                        "not": {
-                          "kind": "comment"
-                        }
-                      }
-                    },
-                    "any": [
-                      {
-                        "value": {
-                          "regex": "^(?:_http_agent|_http_client|_http_common|_http_incoming|_http_outgoing|_http_server|_tls_common|_tls_wrap|assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|inspector/promises|module|net|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|node:_tls_common|node:_tls_wrap|node:assert|node:assert/strict|node:async_hooks|node:buffer|node:child_process|node:cluster|node:console|node:crypto|node:dgram|node:diagnostics_channel|node:dns|node:dns/promises|node:domain|node:events|node:fs|node:fs/promises|node:http|node:http2|node:https|node:inspector|node:inspector/promises|node:module|node:net|node:os|node:path|node:path/posix|node:path/win32|node:perf_hooks|node:process|node:punycode|node:querystring|node:readline|node:readline/promises|node:repl|node:sea|node:sqlite|node:stream|node:stream/consumers|node:stream/promises|node:stream/web|node:string_decoder|node:test|node:test/reporters|node:timers|node:timers/promises|node:tls|node:trace_events|node:tty|node:url|node:util|node:util/types|node:v8|node:vm|node:wasi|node:worker_threads|node:zlib|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
-                        }
-                      },
-                      {
-                        "kind": "parenthesized_expression",
-                        "has": {
-                          "stopBy": {
-                            "not": {
-                              "kind": "parenthesized_expression"
-                            }
-                          },
-                          "value": {
-                            "regex": "^(?:_http_agent|_http_client|_http_common|_http_incoming|_http_outgoing|_http_server|_tls_common|_tls_wrap|assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|inspector/promises|module|net|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|node:_tls_common|node:_tls_wrap|node:assert|node:assert/strict|node:async_hooks|node:buffer|node:child_process|node:cluster|node:console|node:crypto|node:dgram|node:diagnostics_channel|node:dns|node:dns/promises|node:domain|node:events|node:fs|node:fs/promises|node:http|node:http2|node:https|node:inspector|node:inspector/promises|node:module|node:net|node:os|node:path|node:path/posix|node:path/win32|node:perf_hooks|node:process|node:punycode|node:querystring|node:readline|node:readline/promises|node:repl|node:sea|node:sqlite|node:stream|node:stream/consumers|node:stream/promises|node:stream/web|node:string_decoder|node:test|node:test/reporters|node:timers|node:timers/promises|node:tls|node:trace_events|node:tty|node:url|node:util|node:util/types|node:v8|node:vm|node:wasi|node:worker_threads|node:zlib|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
-                          }
-                        }
-                      }
-                    ]
-                  },
-                  "not": {
-                    "has": {
-                      "nthChild": {
-                        "position": 2,
-                        "ofRule": {
-                          "not": {
-                            "kind": "comment"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
+                "matches": "c1"
               },
               {
                 "not": {
@@ -163,353 +394,7 @@
               },
               {
                 "not": {
-                  "inside": {
-                    "stopBy": "end",
-                    "any": [
-                      {
-                        "any": [
-                          {
-                            "kind": "program"
-                          },
-                          {
-                            "kind": "statement_block"
-                          },
-                          {
-                            "kind": "class_body"
-                          }
-                        ],
-                        "has": {
-                          "any": [
-                            {
-                              "any": [
-                                {
-                                  "kind": "lexical_declaration"
-                                },
-                                {
-                                  "kind": "variable_declaration"
-                                }
-                              ],
-                              "has": {
-                                "any": [
-                                  {
-                                    "kind": "variable_declarator",
-                                    "has": {
-                                      "field": "name",
-                                      "any": [
-                                        {
-                                          "kind": "identifier",
-                                          "regex": "^process$"
-                                        },
-                                        {
-                                          "has": {
-                                            "stopBy": "end",
-                                            "any": [
-                                              {
-                                                "kind": "identifier"
-                                              },
-                                              {
-                                                "kind": "shorthand_property_identifier_pattern"
-                                              }
-                                            ],
-                                            "regex": "^process$"
-                                          }
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  {
-                                    "any": [
-                                      {
-                                        "kind": "function_declaration"
-                                      },
-                                      {
-                                        "kind": "class_declaration"
-                                      }
-                                    ],
-                                    "has": {
-                                      "field": "name",
-                                      "regex": "^process$"
-                                    }
-                                  },
-                                  {
-                                    "kind": "import_statement",
-                                    "has": {
-                                      "kind": "import_clause",
-                                      "has": {
-                                        "stopBy": "end",
-                                        "kind": "identifier",
-                                        "regex": "^process$",
-                                        "not": {
-                                          "inside": {
-                                            "field": "name",
-                                            "kind": "import_specifier",
-                                            "has": {
-                                              "field": "alias",
-                                              "kind": "identifier"
-                                            }
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "any": [
-                                {
-                                  "kind": "variable_declarator",
-                                  "has": {
-                                    "field": "name",
-                                    "any": [
-                                      {
-                                        "kind": "identifier",
-                                        "regex": "^process$"
-                                      },
-                                      {
-                                        "has": {
-                                          "stopBy": "end",
-                                          "any": [
-                                            {
-                                              "kind": "identifier"
-                                            },
-                                            {
-                                              "kind": "shorthand_property_identifier_pattern"
-                                            }
-                                          ],
-                                          "regex": "^process$"
-                                        }
-                                      }
-                                    ]
-                                  }
-                                },
-                                {
-                                  "any": [
-                                    {
-                                      "kind": "function_declaration"
-                                    },
-                                    {
-                                      "kind": "class_declaration"
-                                    }
-                                  ],
-                                  "has": {
-                                    "field": "name",
-                                    "regex": "^process$"
-                                  }
-                                },
-                                {
-                                  "kind": "import_statement",
-                                  "has": {
-                                    "kind": "import_clause",
-                                    "has": {
-                                      "stopBy": "end",
-                                      "kind": "identifier",
-                                      "regex": "^process$",
-                                      "not": {
-                                        "inside": {
-                                          "field": "name",
-                                          "kind": "import_specifier",
-                                          "has": {
-                                            "field": "alias",
-                                            "kind": "identifier"
-                                          }
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "any": [
-                          {
-                            "kind": "program"
-                          },
-                          {
-                            "kind": "function_declaration"
-                          },
-                          {
-                            "kind": "function_expression"
-                          },
-                          {
-                            "kind": "arrow_function"
-                          },
-                          {
-                            "kind": "method_definition"
-                          },
-                          {
-                            "kind": "generator_function"
-                          },
-                          {
-                            "kind": "generator_function_declaration"
-                          }
-                        ],
-                        "has": {
-                          "stopBy": {
-                            "any": [
-                              {
-                                "kind": "function_declaration"
-                              },
-                              {
-                                "kind": "function_expression"
-                              },
-                              {
-                                "kind": "arrow_function"
-                              },
-                              {
-                                "kind": "method_definition"
-                              },
-                              {
-                                "kind": "generator_function"
-                              },
-                              {
-                                "kind": "generator_function_declaration"
-                              }
-                            ]
-                          },
-                          "kind": "variable_declaration",
-                          "has": {
-                            "any": [
-                              {
-                                "kind": "variable_declarator",
-                                "has": {
-                                  "field": "name",
-                                  "any": [
-                                    {
-                                      "kind": "identifier",
-                                      "regex": "^process$"
-                                    },
-                                    {
-                                      "has": {
-                                        "stopBy": "end",
-                                        "any": [
-                                          {
-                                            "kind": "identifier"
-                                          },
-                                          {
-                                            "kind": "shorthand_property_identifier_pattern"
-                                          }
-                                        ],
-                                        "regex": "^process$"
-                                      }
-                                    }
-                                  ]
-                                }
-                              },
-                              {
-                                "any": [
-                                  {
-                                    "kind": "function_declaration"
-                                  },
-                                  {
-                                    "kind": "class_declaration"
-                                  }
-                                ],
-                                "has": {
-                                  "field": "name",
-                                  "regex": "^process$"
-                                }
-                              },
-                              {
-                                "kind": "import_statement",
-                                "has": {
-                                  "kind": "import_clause",
-                                  "has": {
-                                    "stopBy": "end",
-                                    "kind": "identifier",
-                                    "regex": "^process$",
-                                    "not": {
-                                      "inside": {
-                                        "field": "name",
-                                        "kind": "import_specifier",
-                                        "has": {
-                                          "field": "alias",
-                                          "kind": "identifier"
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      },
-                      {
-                        "kind": "catch_clause",
-                        "has": {
-                          "field": "parameter",
-                          "any": [
-                            {
-                              "kind": "identifier",
-                              "regex": "^process$"
-                            },
-                            {
-                              "has": {
-                                "stopBy": "end",
-                                "any": [
-                                  {
-                                    "kind": "identifier"
-                                  },
-                                  {
-                                    "kind": "shorthand_property_identifier_pattern"
-                                  }
-                                ],
-                                "regex": "^process$"
-                              }
-                            }
-                          ]
-                        }
-                      },
-                      {
-                        "any": [
-                          {
-                            "kind": "function_declaration"
-                          },
-                          {
-                            "kind": "function_expression"
-                          },
-                          {
-                            "kind": "arrow_function"
-                          },
-                          {
-                            "kind": "method_definition"
-                          },
-                          {
-                            "kind": "generator_function"
-                          },
-                          {
-                            "kind": "generator_function_declaration"
-                          }
-                        ],
-                        "has": {
-                          "field": "parameters",
-                          "has": {
-                            "stopBy": "end",
-                            "kind": "identifier",
-                            "regex": "^process$",
-                            "not": {
-                              "inside": {
-                                "stopBy": "end",
-                                "field": "right",
-                                "kind": "assignment_pattern"
-                              }
-                            }
-                          }
-                        }
-                      },
-                      {
-                        "kind": "arrow_function",
-                        "has": {
-                          "field": "parameter",
-                          "regex": "^process$"
-                        }
-                      }
-                    ]
-                  }
+                  "matches": "c2"
                 }
               }
             ]
@@ -554,403 +439,12 @@
               },
               "all": [
                 {
-                  "has": {
-                    "field": "arguments",
-                    "kind": "arguments",
-                    "has": {
-                      "nthChild": {
-                        "position": 1,
-                        "ofRule": {
-                          "not": {
-                            "kind": "comment"
-                          }
-                        }
-                      },
-                      "any": [
-                        {
-                          "value": {
-                            "regex": "^(?:_http_agent|_http_client|_http_common|_http_incoming|_http_outgoing|_http_server|_tls_common|_tls_wrap|assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|inspector/promises|module|net|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|node:_tls_common|node:_tls_wrap|node:assert|node:assert/strict|node:async_hooks|node:buffer|node:child_process|node:cluster|node:console|node:crypto|node:dgram|node:diagnostics_channel|node:dns|node:dns/promises|node:domain|node:events|node:fs|node:fs/promises|node:http|node:http2|node:https|node:inspector|node:inspector/promises|node:module|node:net|node:os|node:path|node:path/posix|node:path/win32|node:perf_hooks|node:process|node:punycode|node:querystring|node:readline|node:readline/promises|node:repl|node:sea|node:sqlite|node:stream|node:stream/consumers|node:stream/promises|node:stream/web|node:string_decoder|node:test|node:test/reporters|node:timers|node:timers/promises|node:tls|node:trace_events|node:tty|node:url|node:util|node:util/types|node:v8|node:vm|node:wasi|node:worker_threads|node:zlib|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
-                          }
-                        },
-                        {
-                          "kind": "parenthesized_expression",
-                          "has": {
-                            "stopBy": {
-                              "not": {
-                                "kind": "parenthesized_expression"
-                              }
-                            },
-                            "value": {
-                              "regex": "^(?:_http_agent|_http_client|_http_common|_http_incoming|_http_outgoing|_http_server|_tls_common|_tls_wrap|assert|assert/strict|async_hooks|buffer|child_process|cluster|console|constants|crypto|dgram|diagnostics_channel|dns|dns/promises|domain|events|fs|fs/promises|http|http2|https|inspector|inspector/promises|module|net|node:_http_agent|node:_http_client|node:_http_common|node:_http_incoming|node:_http_outgoing|node:_http_server|node:_stream_duplex|node:_stream_passthrough|node:_stream_readable|node:_stream_transform|node:_stream_wrap|node:_stream_writable|node:_tls_common|node:_tls_wrap|node:assert|node:assert/strict|node:async_hooks|node:buffer|node:child_process|node:cluster|node:console|node:crypto|node:dgram|node:diagnostics_channel|node:dns|node:dns/promises|node:domain|node:events|node:fs|node:fs/promises|node:http|node:http2|node:https|node:inspector|node:inspector/promises|node:module|node:net|node:os|node:path|node:path/posix|node:path/win32|node:perf_hooks|node:process|node:punycode|node:querystring|node:readline|node:readline/promises|node:repl|node:sea|node:sqlite|node:stream|node:stream/consumers|node:stream/promises|node:stream/web|node:string_decoder|node:test|node:test/reporters|node:timers|node:timers/promises|node:tls|node:trace_events|node:tty|node:url|node:util|node:util/types|node:v8|node:vm|node:wasi|node:worker_threads|node:zlib|os|path|path/posix|path/win32|perf_hooks|process|punycode|querystring|readline|readline/promises|repl|stream|stream/consumers|stream/promises|stream/web|string_decoder|sys|timers|timers/promises|tls|trace_events|tty|url|util|util/types|v8|vm|wasi|worker_threads|zlib)$"
-                            }
-                          }
-                        }
-                      ]
-                    },
-                    "not": {
-                      "has": {
-                        "nthChild": {
-                          "position": 2,
-                          "ofRule": {
-                            "not": {
-                              "kind": "comment"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
+                  "matches": "c1"
                 }
               ]
             },
             "not": {
-              "inside": {
-                "stopBy": "end",
-                "any": [
-                  {
-                    "any": [
-                      {
-                        "kind": "program"
-                      },
-                      {
-                        "kind": "statement_block"
-                      },
-                      {
-                        "kind": "class_body"
-                      }
-                    ],
-                    "has": {
-                      "any": [
-                        {
-                          "any": [
-                            {
-                              "kind": "lexical_declaration"
-                            },
-                            {
-                              "kind": "variable_declaration"
-                            }
-                          ],
-                          "has": {
-                            "any": [
-                              {
-                                "kind": "variable_declarator",
-                                "has": {
-                                  "field": "name",
-                                  "any": [
-                                    {
-                                      "kind": "identifier",
-                                      "regex": "^process$"
-                                    },
-                                    {
-                                      "has": {
-                                        "stopBy": "end",
-                                        "any": [
-                                          {
-                                            "kind": "identifier"
-                                          },
-                                          {
-                                            "kind": "shorthand_property_identifier_pattern"
-                                          }
-                                        ],
-                                        "regex": "^process$"
-                                      }
-                                    }
-                                  ]
-                                }
-                              },
-                              {
-                                "any": [
-                                  {
-                                    "kind": "function_declaration"
-                                  },
-                                  {
-                                    "kind": "class_declaration"
-                                  }
-                                ],
-                                "has": {
-                                  "field": "name",
-                                  "regex": "^process$"
-                                }
-                              },
-                              {
-                                "kind": "import_statement",
-                                "has": {
-                                  "kind": "import_clause",
-                                  "has": {
-                                    "stopBy": "end",
-                                    "kind": "identifier",
-                                    "regex": "^process$",
-                                    "not": {
-                                      "inside": {
-                                        "field": "name",
-                                        "kind": "import_specifier",
-                                        "has": {
-                                          "field": "alias",
-                                          "kind": "identifier"
-                                        }
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            ]
-                          }
-                        },
-                        {
-                          "any": [
-                            {
-                              "kind": "variable_declarator",
-                              "has": {
-                                "field": "name",
-                                "any": [
-                                  {
-                                    "kind": "identifier",
-                                    "regex": "^process$"
-                                  },
-                                  {
-                                    "has": {
-                                      "stopBy": "end",
-                                      "any": [
-                                        {
-                                          "kind": "identifier"
-                                        },
-                                        {
-                                          "kind": "shorthand_property_identifier_pattern"
-                                        }
-                                      ],
-                                      "regex": "^process$"
-                                    }
-                                  }
-                                ]
-                              }
-                            },
-                            {
-                              "any": [
-                                {
-                                  "kind": "function_declaration"
-                                },
-                                {
-                                  "kind": "class_declaration"
-                                }
-                              ],
-                              "has": {
-                                "field": "name",
-                                "regex": "^process$"
-                              }
-                            },
-                            {
-                              "kind": "import_statement",
-                              "has": {
-                                "kind": "import_clause",
-                                "has": {
-                                  "stopBy": "end",
-                                  "kind": "identifier",
-                                  "regex": "^process$",
-                                  "not": {
-                                    "inside": {
-                                      "field": "name",
-                                      "kind": "import_specifier",
-                                      "has": {
-                                        "field": "alias",
-                                        "kind": "identifier"
-                                      }
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "any": [
-                      {
-                        "kind": "program"
-                      },
-                      {
-                        "kind": "function_declaration"
-                      },
-                      {
-                        "kind": "function_expression"
-                      },
-                      {
-                        "kind": "arrow_function"
-                      },
-                      {
-                        "kind": "method_definition"
-                      },
-                      {
-                        "kind": "generator_function"
-                      },
-                      {
-                        "kind": "generator_function_declaration"
-                      }
-                    ],
-                    "has": {
-                      "stopBy": {
-                        "any": [
-                          {
-                            "kind": "function_declaration"
-                          },
-                          {
-                            "kind": "function_expression"
-                          },
-                          {
-                            "kind": "arrow_function"
-                          },
-                          {
-                            "kind": "method_definition"
-                          },
-                          {
-                            "kind": "generator_function"
-                          },
-                          {
-                            "kind": "generator_function_declaration"
-                          }
-                        ]
-                      },
-                      "kind": "variable_declaration",
-                      "has": {
-                        "any": [
-                          {
-                            "kind": "variable_declarator",
-                            "has": {
-                              "field": "name",
-                              "any": [
-                                {
-                                  "kind": "identifier",
-                                  "regex": "^process$"
-                                },
-                                {
-                                  "has": {
-                                    "stopBy": "end",
-                                    "any": [
-                                      {
-                                        "kind": "identifier"
-                                      },
-                                      {
-                                        "kind": "shorthand_property_identifier_pattern"
-                                      }
-                                    ],
-                                    "regex": "^process$"
-                                  }
-                                }
-                              ]
-                            }
-                          },
-                          {
-                            "any": [
-                              {
-                                "kind": "function_declaration"
-                              },
-                              {
-                                "kind": "class_declaration"
-                              }
-                            ],
-                            "has": {
-                              "field": "name",
-                              "regex": "^process$"
-                            }
-                          },
-                          {
-                            "kind": "import_statement",
-                            "has": {
-                              "kind": "import_clause",
-                              "has": {
-                                "stopBy": "end",
-                                "kind": "identifier",
-                                "regex": "^process$",
-                                "not": {
-                                  "inside": {
-                                    "field": "name",
-                                    "kind": "import_specifier",
-                                    "has": {
-                                      "field": "alias",
-                                      "kind": "identifier"
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        ]
-                      }
-                    }
-                  },
-                  {
-                    "kind": "catch_clause",
-                    "has": {
-                      "field": "parameter",
-                      "any": [
-                        {
-                          "kind": "identifier",
-                          "regex": "^process$"
-                        },
-                        {
-                          "has": {
-                            "stopBy": "end",
-                            "any": [
-                              {
-                                "kind": "identifier"
-                              },
-                              {
-                                "kind": "shorthand_property_identifier_pattern"
-                              }
-                            ],
-                            "regex": "^process$"
-                          }
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "any": [
-                      {
-                        "kind": "function_declaration"
-                      },
-                      {
-                        "kind": "function_expression"
-                      },
-                      {
-                        "kind": "arrow_function"
-                      },
-                      {
-                        "kind": "method_definition"
-                      },
-                      {
-                        "kind": "generator_function"
-                      },
-                      {
-                        "kind": "generator_function_declaration"
-                      }
-                    ],
-                    "has": {
-                      "field": "parameters",
-                      "has": {
-                        "stopBy": "end",
-                        "kind": "identifier",
-                        "regex": "^process$",
-                        "not": {
-                          "inside": {
-                            "stopBy": "end",
-                            "field": "right",
-                            "kind": "assignment_pattern"
-                          }
-                        }
-                      }
-                    }
-                  },
-                  {
-                    "kind": "arrow_function",
-                    "has": {
-                      "field": "parameter",
-                      "regex": "^process$"
-                    }
-                  }
-                ]
-              }
+              "matches": "c2"
             }
           }
         }

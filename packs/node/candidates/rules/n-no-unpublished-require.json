@@ -41,6 +41,45 @@
                 }
               }
             ]
+          },
+          "c1": {
+            "inside": {
+              "field": "arguments",
+              "has": {
+                "any": [
+                  {
+                    "matches": "require-callee"
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "object",
+                          "matches": "require-callee"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "property",
+                          "kind": "property_identifier",
+                          "regex": "^resolve$"
+                        }
+                      }
+                    ],
+                    "kind": "member_expression"
+                  }
+                ],
+                "field": "function"
+              },
+              "kind": "call_expression",
+              "not": {
+                "has": {
+                  "field": "arguments",
+                  "kind": "template_string"
+                }
+              }
+            },
+            "kind": "arguments"
           }
         }
       }
@@ -69,43 +108,7 @@
               }
             },
             "inside": {
-              "kind": "arguments",
-              "inside": {
-                "field": "arguments",
-                "kind": "call_expression",
-                "not": {
-                  "has": {
-                    "field": "arguments",
-                    "kind": "template_string"
-                  }
-                },
-                "has": {
-                  "field": "function",
-                  "any": [
-                    {
-                      "matches": "require-callee"
-                    },
-                    {
-                      "kind": "member_expression",
-                      "all": [
-                        {
-                          "has": {
-                            "field": "object",
-                            "matches": "require-callee"
-                          }
-                        },
-                        {
-                          "has": {
-                            "field": "property",
-                            "kind": "property_identifier",
-                            "regex": "^resolve$"
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
+              "matches": "c1"
             },
             "importTarget": {
               "via": "require",
@@ -152,43 +155,7 @@
               }
             },
             "inside": {
-              "kind": "arguments",
-              "inside": {
-                "field": "arguments",
-                "kind": "call_expression",
-                "not": {
-                  "has": {
-                    "field": "arguments",
-                    "kind": "template_string"
-                  }
-                },
-                "has": {
-                  "field": "function",
-                  "any": [
-                    {
-                      "matches": "require-callee"
-                    },
-                    {
-                      "kind": "member_expression",
-                      "all": [
-                        {
-                          "has": {
-                            "field": "object",
-                            "matches": "require-callee"
-                          }
-                        },
-                        {
-                          "has": {
-                            "field": "property",
-                            "kind": "property_identifier",
-                            "regex": "^resolve$"
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-              }
+              "matches": "c1"
             },
             "importTarget": {
               "via": "require",

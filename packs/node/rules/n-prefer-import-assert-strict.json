@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-import-assert-strict",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Import node:assert/strict instead of node:assert, so assertions use strict equality.",
   "scope": {
@@ -18,6 +18,179 @@
     "exclude": []
   },
   "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "inside": {
+              "field": "right",
+              "has": {
+                "any": [
+                  {
+                    "has": {
+                      "matches": "c6"
+                    },
+                    "kind": "object_pattern",
+                    "not": {
+                      "matches": "c5"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "matches": "c7"
+                      },
+                      {
+                        "matches": "c8"
+                      }
+                    ]
+                  }
+                ],
+                "field": "left"
+              },
+              "kind": "assignment_expression"
+            }
+          },
+          "c2": {
+            "inside": {
+              "field": "value",
+              "has": {
+                "field": "name",
+                "has": {
+                  "matches": "c6"
+                },
+                "kind": "object_pattern",
+                "not": {
+                  "matches": "c5"
+                }
+              },
+              "kind": "variable_declarator"
+            }
+          },
+          "c3": {
+            "inside": {
+              "any": [
+                {
+                  "matches": "c7"
+                },
+                {
+                  "matches": "c8"
+                }
+              ],
+              "field": "object"
+            }
+          },
+          "c4": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^strict$"
+                },
+                {
+                  "kind": "string",
+                  "value": {
+                    "regex": "^strict$"
+                  }
+                }
+              ],
+              "field": "name"
+            }
+          },
+          "c5": {
+            "has": {
+              "any": [
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                },
+                {
+                  "kind": "pair_pattern"
+                },
+                {
+                  "kind": "object_assignment_pattern"
+                },
+                {
+                  "kind": "rest_pattern"
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "kind": "shorthand_property_identifier_pattern",
+                    "regex": "^strict$"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^strict$"
+                        },
+                        {
+                          "has": {
+                            "kind": "string",
+                            "value": {
+                              "regex": "^strict$"
+                            }
+                          },
+                          "kind": "computed_property_name"
+                        }
+                      ],
+                      "field": "key"
+                    },
+                    "kind": "pair_pattern"
+                  },
+                  {
+                    "has": {
+                      "field": "left",
+                      "kind": "shorthand_property_identifier_pattern",
+                      "regex": "^strict$"
+                    },
+                    "kind": "object_assignment_pattern"
+                  }
+                ]
+              }
+            }
+          },
+          "c6": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              },
+              {
+                "kind": "pair_pattern"
+              },
+              {
+                "kind": "object_assignment_pattern"
+              },
+              {
+                "kind": "rest_pattern"
+              }
+            ]
+          },
+          "c7": {
+            "has": {
+              "field": "property",
+              "kind": "property_identifier",
+              "regex": "^strict$"
+            },
+            "kind": "member_expression"
+          },
+          "c8": {
+            "has": {
+              "field": "index",
+              "kind": "string",
+              "value": {
+                "regex": "^strict$"
+              }
+            },
+            "kind": "subscript_expression"
+          }
+        }
+      }
+    },
     {
       "id": "require",
       "forbid": {
@@ -51,217 +224,13 @@
                     {
                       "any": [
                         {
-                          "inside": {
-                            "field": "object",
-                            "any": [
-                              {
-                                "kind": "member_expression",
-                                "has": {
-                                  "field": "property",
-                                  "kind": "property_identifier",
-                                  "regex": "^strict$"
-                                }
-                              },
-                              {
-                                "kind": "subscript_expression",
-                                "has": {
-                                  "field": "index",
-                                  "kind": "string",
-                                  "value": {
-                                    "regex": "^strict$"
-                                  }
-                                }
-                              }
-                            ]
-                          }
+                          "matches": "c3"
                         },
                         {
-                          "inside": {
-                            "kind": "variable_declarator",
-                            "field": "value",
-                            "has": {
-                              "field": "name",
-                              "kind": "object_pattern",
-                              "has": {
-                                "any": [
-                                  {
-                                    "kind": "shorthand_property_identifier_pattern"
-                                  },
-                                  {
-                                    "kind": "pair_pattern"
-                                  },
-                                  {
-                                    "kind": "object_assignment_pattern"
-                                  },
-                                  {
-                                    "kind": "rest_pattern"
-                                  }
-                                ]
-                              },
-                              "not": {
-                                "has": {
-                                  "any": [
-                                    {
-                                      "kind": "shorthand_property_identifier_pattern"
-                                    },
-                                    {
-                                      "kind": "pair_pattern"
-                                    },
-                                    {
-                                      "kind": "object_assignment_pattern"
-                                    },
-                                    {
-                                      "kind": "rest_pattern"
-                                    }
-                                  ],
-                                  "not": {
-                                    "any": [
-                                      {
-                                        "kind": "shorthand_property_identifier_pattern",
-                                        "regex": "^strict$"
-                                      },
-                                      {
-                                        "kind": "pair_pattern",
-                                        "has": {
-                                          "field": "key",
-                                          "any": [
-                                            {
-                                              "kind": "property_identifier",
-                                              "regex": "^strict$"
-                                            },
-                                            {
-                                              "kind": "computed_property_name",
-                                              "has": {
-                                                "kind": "string",
-                                                "value": {
-                                                  "regex": "^strict$"
-                                                }
-                                              }
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      {
-                                        "kind": "object_assignment_pattern",
-                                        "has": {
-                                          "field": "left",
-                                          "kind": "shorthand_property_identifier_pattern",
-                                          "regex": "^strict$"
-                                        }
-                                      }
-                                    ]
-                                  }
-                                }
-                              }
-                            }
-                          }
+                          "matches": "c2"
                         },
                         {
-                          "inside": {
-                            "kind": "assignment_expression",
-                            "field": "right",
-                            "has": {
-                              "field": "left",
-                              "any": [
-                                {
-                                  "kind": "object_pattern",
-                                  "has": {
-                                    "any": [
-                                      {
-                                        "kind": "shorthand_property_identifier_pattern"
-                                      },
-                                      {
-                                        "kind": "pair_pattern"
-                                      },
-                                      {
-                                        "kind": "object_assignment_pattern"
-                                      },
-                                      {
-                                        "kind": "rest_pattern"
-                                      }
-                                    ]
-                                  },
-                                  "not": {
-                                    "has": {
-                                      "any": [
-                                        {
-                                          "kind": "shorthand_property_identifier_pattern"
-                                        },
-                                        {
-                                          "kind": "pair_pattern"
-                                        },
-                                        {
-                                          "kind": "object_assignment_pattern"
-                                        },
-                                        {
-                                          "kind": "rest_pattern"
-                                        }
-                                      ],
-                                      "not": {
-                                        "any": [
-                                          {
-                                            "kind": "shorthand_property_identifier_pattern",
-                                            "regex": "^strict$"
-                                          },
-                                          {
-                                            "kind": "pair_pattern",
-                                            "has": {
-                                              "field": "key",
-                                              "any": [
-                                                {
-                                                  "kind": "property_identifier",
-                                                  "regex": "^strict$"
-                                                },
-                                                {
-                                                  "kind": "computed_property_name",
-                                                  "has": {
-                                                    "kind": "string",
-                                                    "value": {
-                                                      "regex": "^strict$"
-                                                    }
-                                                  }
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          {
-                                            "kind": "object_assignment_pattern",
-                                            "has": {
-                                              "field": "left",
-                                              "kind": "shorthand_property_identifier_pattern",
-                                              "regex": "^strict$"
-                                            }
-                                          }
-                                        ]
-                                      }
-                                    }
-                                  }
-                                },
-                                {
-                                  "any": [
-                                    {
-                                      "kind": "member_expression",
-                                      "has": {
-                                        "field": "property",
-                                        "kind": "property_identifier",
-                                        "regex": "^strict$"
-                                      }
-                                    },
-                                    {
-                                      "kind": "subscript_expression",
-                                      "has": {
-                                        "field": "index",
-                                        "kind": "string",
-                                        "value": {
-                                          "regex": "^strict$"
-                                        }
-                                      }
-                                    }
-                                  ]
-                                }
-                              ]
-                            }
-                          }
+                          "matches": "c1"
                         }
                       ]
                     },
@@ -270,217 +239,13 @@
                         "kind": "parenthesized_expression",
                         "any": [
                           {
-                            "inside": {
-                              "field": "object",
-                              "any": [
-                                {
-                                  "kind": "member_expression",
-                                  "has": {
-                                    "field": "property",
-                                    "kind": "property_identifier",
-                                    "regex": "^strict$"
-                                  }
-                                },
-                                {
-                                  "kind": "subscript_expression",
-                                  "has": {
-                                    "field": "index",
-                                    "kind": "string",
-                                    "value": {
-                                      "regex": "^strict$"
-                                    }
-                                  }
-                                }
-                              ]
-                            }
+                            "matches": "c3"
                           },
                           {
-                            "inside": {
-                              "kind": "variable_declarator",
-                              "field": "value",
-                              "has": {
-                                "field": "name",
-                                "kind": "object_pattern",
-                                "has": {
-                                  "any": [
-                                    {
-                                      "kind": "shorthand_property_identifier_pattern"
-                                    },
-                                    {
-                                      "kind": "pair_pattern"
-                                    },
-                                    {
-                                      "kind": "object_assignment_pattern"
-                                    },
-                                    {
-                                      "kind": "rest_pattern"
-                                    }
-                                  ]
-                                },
-                                "not": {
-                                  "has": {
-                                    "any": [
-                                      {
-                                        "kind": "shorthand_property_identifier_pattern"
-                                      },
-                                      {
-                                        "kind": "pair_pattern"
-                                      },
-                                      {
-                                        "kind": "object_assignment_pattern"
-                                      },
-                                      {
-                                        "kind": "rest_pattern"
-                                      }
-                                    ],
-                                    "not": {
-                                      "any": [
-                                        {
-                                          "kind": "shorthand_property_identifier_pattern",
-                                          "regex": "^strict$"
-                                        },
-                                        {
-                                          "kind": "pair_pattern",
-                                          "has": {
-                                            "field": "key",
-                                            "any": [
-                                              {
-                                                "kind": "property_identifier",
-                                                "regex": "^strict$"
-                                              },
-                                              {
-                                                "kind": "computed_property_name",
-                                                "has": {
-                                                  "kind": "string",
-                                                  "value": {
-                                                    "regex": "^strict$"
-                                                  }
-                                                }
-                                              }
-                                            ]
-                                          }
-                                        },
-                                        {
-                                          "kind": "object_assignment_pattern",
-                                          "has": {
-                                            "field": "left",
-                                            "kind": "shorthand_property_identifier_pattern",
-                                            "regex": "^strict$"
-                                          }
-                                        }
-                                      ]
-                                    }
-                                  }
-                                }
-                              }
-                            }
+                            "matches": "c2"
                           },
                           {
-                            "inside": {
-                              "kind": "assignment_expression",
-                              "field": "right",
-                              "has": {
-                                "field": "left",
-                                "any": [
-                                  {
-                                    "kind": "object_pattern",
-                                    "has": {
-                                      "any": [
-                                        {
-                                          "kind": "shorthand_property_identifier_pattern"
-                                        },
-                                        {
-                                          "kind": "pair_pattern"
-                                        },
-                                        {
-                                          "kind": "object_assignment_pattern"
-                                        },
-                                        {
-                                          "kind": "rest_pattern"
-                                        }
-                                      ]
-                                    },
-                                    "not": {
-                                      "has": {
-                                        "any": [
-                                          {
-                                            "kind": "shorthand_property_identifier_pattern"
-                                          },
-                                          {
-                                            "kind": "pair_pattern"
-                                          },
-                                          {
-                                            "kind": "object_assignment_pattern"
-                                          },
-                                          {
-                                            "kind": "rest_pattern"
-                                          }
-                                        ],
-                                        "not": {
-                                          "any": [
-                                            {
-                                              "kind": "shorthand_property_identifier_pattern",
-                                              "regex": "^strict$"
-                                            },
-                                            {
-                                              "kind": "pair_pattern",
-                                              "has": {
-                                                "field": "key",
-                                                "any": [
-                                                  {
-                                                    "kind": "property_identifier",
-                                                    "regex": "^strict$"
-                                                  },
-                                                  {
-                                                    "kind": "computed_property_name",
-                                                    "has": {
-                                                      "kind": "string",
-                                                      "value": {
-                                                        "regex": "^strict$"
-                                                      }
-                                                    }
-                                                  }
-                                                ]
-                                              }
-                                            },
-                                            {
-                                              "kind": "object_assignment_pattern",
-                                              "has": {
-                                                "field": "left",
-                                                "kind": "shorthand_property_identifier_pattern",
-                                                "regex": "^strict$"
-                                              }
-                                            }
-                                          ]
-                                        }
-                                      }
-                                    }
-                                  },
-                                  {
-                                    "any": [
-                                      {
-                                        "kind": "member_expression",
-                                        "has": {
-                                          "field": "property",
-                                          "kind": "property_identifier",
-                                          "regex": "^strict$"
-                                        }
-                                      },
-                                      {
-                                        "kind": "subscript_expression",
-                                        "has": {
-                                          "field": "index",
-                                          "kind": "string",
-                                          "value": {
-                                            "regex": "^strict$"
-                                          }
-                                        }
-                                      }
-                                    ]
-                                  }
-                                ]
-                              }
-                            }
+                            "matches": "c1"
                           }
                         ]
                       }
@@ -542,21 +307,7 @@
                       "has": {
                         "kind": "import_specifier",
                         "not": {
-                          "has": {
-                            "field": "name",
-                            "any": [
-                              {
-                                "kind": "identifier",
-                                "regex": "^strict$"
-                              },
-                              {
-                                "kind": "string",
-                                "value": {
-                                  "regex": "^strict$"
-                                }
-                              }
-                            ]
-                          }
+                          "matches": "c4"
                         }
                       }
                     }
@@ -603,21 +354,7 @@
                     "has": {
                       "kind": "export_specifier",
                       "not": {
-                        "has": {
-                          "field": "name",
-                          "any": [
-                            {
-                              "kind": "identifier",
-                              "regex": "^strict$"
-                            },
-                            {
-                              "kind": "string",
-                              "value": {
-                                "regex": "^strict$"
-                              }
-                            }
-                          ]
-                        }
+                        "matches": "c4"
                       }
                     }
                   }

@@ -58,7 +58,7 @@ SHIPPED = {"n-callback-return", "n-exports-style", "n-no-path-concat", "n-prefer
            "n-prefer-global-url", "n-prefer-global-url-search-params", "n-prefer-node-protocol", "n-prefer-promises-dns",
            "n-prefer-promises-fs", "n-prefer-global-crypto", "n-prefer-global-timers", "n-prefer-import-assert-strict",
            "n-prefer-process-get-builtin-module", "n-no-unsupported-features-node-builtins", "n-no-unsupported-features-es-builtins",
-           "n-no-unsupported-features-es-syntax", "n-no-top-level-await", "n-no-unpublished-bin"}
+           "n-no-top-level-await", "n-no-unpublished-bin"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
 
@@ -184,7 +184,9 @@ def hoist_common(doc):
             text = json.dumps(body, sort_keys=True)
             bodies.setdefault(uid_, set()).add(text)
             counts[uid_] = counts.get(uid_, 0) + 1
-    shared = {u for u in counts if counts[u] >= 2 and len(bodies[u]) == 1}
+    existing = next((c for c in doc["clauses"] if "define" in c and c["define"].get("language") == "typescript" and "utils" in c["define"]), None)
+    known = set(existing["define"]["utils"]) if existing else set()
+    shared = {u for u in counts if counts[u] >= 2 and len(bodies[u]) == 1 and u not in known}
 
     def named(value):
         if isinstance(value, dict):
@@ -197,7 +199,7 @@ def hoist_common(doc):
 
     texts = {u: json.loads(next(iter(bodies[u]))) for u in shared}
     while True:
-        stay = {u for u in shared if any(n not in shared for n in named(texts[u]))}
+        stay = {u for u in shared if any(n not in shared and n not in known for n in named(texts[u]))}
         if not stay:
             break
         shared -= stay
@@ -210,8 +212,177 @@ def hoist_common(doc):
                 del utils[u]
             if not utils:
                 del check["forbid"]["ast"]["utils"]
+    if existing is not None:
+        existing["define"]["utils"].update({u: texts[u] for u in sorted(shared)})
+        return doc
     define = {"id": "shared", "define": {"language": "typescript", "utils": {u: texts[u] for u in sorted(shared)}}}
     doc["clauses"] = [define] + [c for c in doc["clauses"] if "forbid" not in c] + forbid
+    return doc
+
+
+RULE_RELATIONS = ("has", "inside", "follows", "precedes", "not")
+BINDING_RULES = ("site", "value", "occurrence")
+
+
+def rule_positions(rule):
+    """Yields (holder, key) for every AST rule nested in `rule` (relations, `any`/`all` items, a binding's sub-rules)."""
+    if not isinstance(rule, dict):
+        return
+    for key in RULE_RELATIONS:
+        if isinstance(rule.get(key), dict):
+            yield rule, key
+            yield from rule_positions(rule[key])
+    for key in ("any", "all"):
+        for index, item in enumerate(rule.get(key) or []):
+            if isinstance(item, dict):
+                yield rule[key], index
+                yield from rule_positions(item)
+    binding = (rule.get("resolves") or {}).get("binding") if isinstance(rule.get("resolves"), dict) else None
+    if isinstance(binding, dict):
+        for key in BINDING_RULES:
+            if isinstance(binding.get(key), dict):
+                yield binding, key
+                yield from rule_positions(binding[key])
+
+
+def direct_positions(rule):
+    """The AST rules directly inside `rule` (one level of `rule_positions`)."""
+    if not isinstance(rule, dict):
+        return
+    for key in RULE_RELATIONS:
+        if isinstance(rule.get(key), dict):
+            yield rule, key
+    for key in ("any", "all"):
+        for index, item in enumerate(rule.get(key) or []):
+            if isinstance(item, dict):
+                yield rule[key], index
+    binding = (rule.get("resolves") or {}).get("binding") if isinstance(rule.get("resolves"), dict) else None
+    if isinstance(binding, dict):
+        for key in BINDING_RULES:
+            if isinstance(binding.get(key), dict):
+                yield binding, key
+
+
+def references_of(value):
+    if isinstance(value, dict):
+        if isinstance(value.get("matches"), str):
+            yield value["matches"]
+        for item in value.values():
+            yield from references_of(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from references_of(item)
+
+
+def binds_captures(value):
+    if isinstance(value, dict):
+        return "pattern" in value or "compare" in value or any(binds_captures(item) for item in value.values())
+    if isinstance(value, list):
+        return any(binds_captures(item) for item in value)
+    return False
+
+
+def compact_doc(doc, minimum=64):
+    """Writes each AST sub-rule the document spells out more than once (64 canonical bytes or more, its own: no `field`
+    or `stopBy` of the relation holding it, no captures, naming only shared utilities) once, as a shared utility of the
+    document's TypeScript define that every copy calls (`matches`): the conformance check's compact gate counts a
+    subtree written out twice as expansion. Clause utilities that two or more clauses carry verbatim are shared first."""
+    # A copy: the generators share fragment objects (FIRST, NOT_TAGGED, …) between rules and documents.
+    doc = hoist_common(json.loads(json.dumps(doc)))
+    define = next((c for c in doc["clauses"] if "define" in c and c["define"].get("language") == "typescript" and "utils" in c["define"]), None)
+    if define is None:
+        define = {"id": "shared", "define": {"language": "typescript", "utils": {}}}
+        at = next((i for i, c in enumerate(doc["clauses"]) if "define" not in c), len(doc["clauses"]))
+        doc["clauses"].insert(at, define)
+    shared = define["define"]["utils"]
+
+    def canonical(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+    def eligible(value):
+        return not ("field" in value or "stopBy" in value or set(value) == {"matches"})
+
+    def roots():
+        for clause in doc["clauses"]:
+            ast = (clause.get("forbid") or {}).get("ast")
+            if ast is not None:
+                if isinstance(ast.get("rule"), dict):
+                    yield ast, "rule"
+                for name in list((ast.get("utils") or {}).keys()):
+                    yield ast["utils"], name
+        for name in list(shared.keys()):
+            yield shared, name
+
+    def positions():
+        for holder, key in roots():
+            yield holder, key, True
+            for inner_holder, inner_key in rule_positions(holder[key]):
+                yield inner_holder, inner_key, False
+
+    # A repeated nthChild or count term of a rule becomes a rule of its own (`{"nthChild": …}`), called from the rule's
+    # `all`, so the loop below can share it.
+    split = {}
+    for holder, key in list(roots()):
+        for h, k in [(holder, key)] + list(rule_positions(holder[key])):
+            for term in ("nthChild", "count"):
+                if isinstance(h[k], dict) and isinstance(h[k].get(term), dict):
+                    split.setdefault(canonical({term: h[k][term]}), []).append((h, k, term))
+    for text, places in split.items():
+        if len(places) < 2 or len(text) < minimum:
+            continue
+        for h, k, term in places:
+            rule = h[k]
+            value = rule.pop(term)
+            rule["all"] = [*rule.get("all", []), {term: value}]
+
+    serial = 0
+    while True:
+        # One pass: every eligible position's text, and whether a position above it (in the same root) is a repeat
+        # too, so only the outermost repeats are extracted this round (what they hold is extracted with them).
+        found = []
+        counts = {}
+        for holder, key in list(roots()):
+            # Walk depth-first, carrying the nearest eligible ancestor's index into `found`.
+            def walk(h, k, parent, skip_self):
+                value = h[k]
+                index = None
+                if not skip_self and eligible(value):
+                    text = canonical(value)
+                    if len(text) >= minimum:
+                        index = len(found)
+                        found.append((h, k, text, parent))
+                        counts[text] = counts.get(text, 0) + 1
+                for inner_holder, inner_key in direct_positions(value):
+                    walk(inner_holder, inner_key, index if index is not None else parent, False)
+            walk(holder, key, None, holder is shared)
+        repeated = {text for text, n in counts.items()
+                    if n >= 2 and not binds_captures(json.loads(text)) and all(name in shared for name in references_of(json.loads(text)))}
+
+        def nested(parent):
+            while parent is not None:
+                if found[parent][2] in repeated:
+                    return True
+                parent = found[parent][3]
+            return False
+
+        chosen = {}
+        for h, k, text, parent in found:
+            if text in repeated and not nested(parent):
+                chosen.setdefault(text, []).append((h, k))
+        chosen = {text: places for text, places in chosen.items() if len(places) >= 2}
+        if not chosen:
+            break
+        for text in sorted(chosen, key=lambda text: (-len(text), text)):
+            serial += 1
+            name = f"c{serial}"
+            while name in shared:
+                serial += 1
+                name = f"c{serial}"
+            shared[name] = json.loads(text)
+            for h, k in chosen[text]:
+                h[k] = {"matches": name}
+    if not shared:
+        doc["clauses"].remove(define)
     return doc
 
 
@@ -1271,7 +1442,9 @@ def write(root, relative, doc, compact=False, shipped=False, other=None):
 
 
 def write_port(root, doc, compact=False):
-    """Writes a port to packs/node/rules when SHIPPED lists it, else to packs/node/candidates/rules."""
+    """Writes a port to packs/node/rules when SHIPPED lists it, else to packs/node/candidates/rules, each repeated
+    sub-rule written once (`compact_doc`)."""
+    doc = compact_doc(doc)
     rules, candidates = os.path.join(PACK, "rules"), os.path.join(PACK, "candidates", "rules")
     if doc["id"] in SHIPPED:
         write(root, rules, doc, compact, shipped=True, other=candidates)

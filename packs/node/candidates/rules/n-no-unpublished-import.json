@@ -19,6 +19,69 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "number"
+              },
+              {
+                "kind": "true"
+              },
+              {
+                "kind": "false"
+              },
+              {
+                "kind": "null"
+              },
+              {
+                "kind": "regex"
+              }
+            ],
+            "inside": {
+              "inside": {
+                "field": "arguments",
+                "has": {
+                  "field": "function",
+                  "kind": "import"
+                },
+                "kind": "call_expression"
+              },
+              "kind": "arguments"
+            },
+            "nthChild": {
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              },
+              "position": 1
+            }
+          },
+          "c2": {
+            "inside": {
+              "any": [
+                {
+                  "kind": "import_statement"
+                },
+                {
+                  "kind": "export_statement"
+                }
+              ],
+              "field": "source"
+            },
+            "kind": "string"
+          }
+        }
+      }
+    },
+    {
       "id": "private-file",
       "forbid": {
         "ast": {
@@ -35,59 +98,10 @@
           "rule": {
             "any": [
               {
-                "kind": "string",
-                "inside": {
-                  "field": "source",
-                  "any": [
-                    {
-                      "kind": "import_statement"
-                    },
-                    {
-                      "kind": "export_statement"
-                    }
-                  ]
-                }
+                "matches": "c2"
               },
               {
-                "any": [
-                  {
-                    "kind": "string"
-                  },
-                  {
-                    "kind": "number"
-                  },
-                  {
-                    "kind": "true"
-                  },
-                  {
-                    "kind": "false"
-                  },
-                  {
-                    "kind": "null"
-                  },
-                  {
-                    "kind": "regex"
-                  }
-                ],
-                "nthChild": {
-                  "position": 1,
-                  "ofRule": {
-                    "not": {
-                      "kind": "comment"
-                    }
-                  }
-                },
-                "inside": {
-                  "kind": "arguments",
-                  "inside": {
-                    "field": "arguments",
-                    "kind": "call_expression",
-                    "has": {
-                      "field": "function",
-                      "kind": "import"
-                    }
-                  }
-                }
+                "matches": "c1"
               }
             ],
             "importTarget": {
@@ -128,59 +142,10 @@
           "rule": {
             "any": [
               {
-                "kind": "string",
-                "inside": {
-                  "field": "source",
-                  "any": [
-                    {
-                      "kind": "import_statement"
-                    },
-                    {
-                      "kind": "export_statement"
-                    }
-                  ]
-                }
+                "matches": "c2"
               },
               {
-                "any": [
-                  {
-                    "kind": "string"
-                  },
-                  {
-                    "kind": "number"
-                  },
-                  {
-                    "kind": "true"
-                  },
-                  {
-                    "kind": "false"
-                  },
-                  {
-                    "kind": "null"
-                  },
-                  {
-                    "kind": "regex"
-                  }
-                ],
-                "nthChild": {
-                  "position": 1,
-                  "ofRule": {
-                    "not": {
-                      "kind": "comment"
-                    }
-                  }
-                },
-                "inside": {
-                  "kind": "arguments",
-                  "inside": {
-                    "field": "arguments",
-                    "kind": "call_expression",
-                    "has": {
-                      "field": "function",
-                      "kind": "import"
-                    }
-                  }
-                }
+                "matches": "c1"
               }
             ],
             "importTarget": {

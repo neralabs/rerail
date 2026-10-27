@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-path-concat",
-  "revision": 3,
+  "revision": 5,
   "mode": "steer",
   "description": "Use path.join() or path.resolve() instead of concatenating __dirname, __filename or import.meta paths with strings; hand-built paths break across platforms.",
   "scope": {
@@ -103,12 +103,7 @@
                         "kind": "string"
                       },
                       {
-                        "kind": "template_string",
-                        "not": {
-                          "has": {
-                            "kind": "template_substitution"
-                          }
-                        }
+                        "matches": "c5"
                       }
                     ],
                     "value": {
@@ -166,14 +161,7 @@
                 "resolves": {
                   "binding": {
                     "occurrence": {
-                      "inside": {
-                        "kind": "assignment_expression",
-                        "field": "left",
-                        "has": {
-                          "field": "right",
-                          "matches": "module-value"
-                        }
-                      }
+                      "matches": "c6"
                     }
                   }
                 }
@@ -281,12 +269,7 @@
                               "kind": "string"
                             },
                             {
-                              "kind": "template_string",
-                              "not": {
-                                "has": {
-                                  "kind": "template_substitution"
-                                }
-                              }
+                              "matches": "c5"
                             }
                           ],
                           "value": {
@@ -325,39 +308,7 @@
                           "kind": "shorthand_property_identifier_pattern",
                           "regex": "^sep$",
                           "inside": {
-                            "kind": "object_pattern",
-                            "any": [
-                              {
-                                "inside": {
-                                  "kind": "variable_declarator",
-                                  "field": "name",
-                                  "has": {
-                                    "field": "value",
-                                    "matches": "module-value"
-                                  }
-                                }
-                              },
-                              {
-                                "inside": {
-                                  "kind": "assignment_expression",
-                                  "field": "left",
-                                  "has": {
-                                    "field": "right",
-                                    "matches": "module-value"
-                                  }
-                                }
-                              },
-                              {
-                                "inside": {
-                                  "kind": "assignment_pattern",
-                                  "field": "left",
-                                  "has": {
-                                    "field": "right",
-                                    "matches": "module-value"
-                                  }
-                                }
-                              }
-                            ]
+                            "matches": "c1"
                           }
                         },
                         {
@@ -373,80 +324,18 @@
                                   "regex": "^sep$"
                                 },
                                 {
-                                  "any": [
-                                    {
-                                      "kind": "string"
-                                    },
-                                    {
-                                      "kind": "template_string",
-                                      "not": {
-                                        "has": {
-                                          "kind": "template_substitution"
-                                        }
-                                      }
-                                    }
-                                  ],
-                                  "value": {
-                                    "regex": "^sep$"
-                                  }
+                                  "matches": "c4"
                                 },
                                 {
                                   "kind": "computed_property_name",
                                   "has": {
-                                    "any": [
-                                      {
-                                        "kind": "string"
-                                      },
-                                      {
-                                        "kind": "template_string",
-                                        "not": {
-                                          "has": {
-                                            "kind": "template_substitution"
-                                          }
-                                        }
-                                      }
-                                    ],
-                                    "value": {
-                                      "regex": "^sep$"
-                                    }
+                                    "matches": "c4"
                                   }
                                 }
                               ]
                             },
                             "inside": {
-                              "kind": "object_pattern",
-                              "any": [
-                                {
-                                  "inside": {
-                                    "kind": "variable_declarator",
-                                    "field": "name",
-                                    "has": {
-                                      "field": "value",
-                                      "matches": "module-value"
-                                    }
-                                  }
-                                },
-                                {
-                                  "inside": {
-                                    "kind": "assignment_expression",
-                                    "field": "left",
-                                    "has": {
-                                      "field": "right",
-                                      "matches": "module-value"
-                                    }
-                                  }
-                                },
-                                {
-                                  "inside": {
-                                    "kind": "assignment_pattern",
-                                    "field": "left",
-                                    "has": {
-                                      "field": "right",
-                                      "matches": "module-value"
-                                    }
-                                  }
-                                }
-                              ]
+                              "matches": "c1"
                             }
                           }
                         },
@@ -460,39 +349,7 @@
                               "regex": "^sep$"
                             },
                             "inside": {
-                              "kind": "object_pattern",
-                              "any": [
-                                {
-                                  "inside": {
-                                    "kind": "variable_declarator",
-                                    "field": "name",
-                                    "has": {
-                                      "field": "value",
-                                      "matches": "module-value"
-                                    }
-                                  }
-                                },
-                                {
-                                  "inside": {
-                                    "kind": "assignment_expression",
-                                    "field": "left",
-                                    "has": {
-                                      "field": "right",
-                                      "matches": "module-value"
-                                    }
-                                  }
-                                },
-                                {
-                                  "inside": {
-                                    "kind": "assignment_pattern",
-                                    "field": "left",
-                                    "has": {
-                                      "field": "right",
-                                      "matches": "module-value"
-                                    }
-                                  }
-                                }
-                              ]
+                              "matches": "c1"
                             }
                           }
                         }
@@ -572,12 +429,7 @@
                           "kind": "string"
                         },
                         {
-                          "kind": "template_string",
-                          "not": {
-                            "has": {
-                              "kind": "template_substitution"
-                            }
-                          }
+                          "matches": "c5"
                         }
                       ],
                       "value": {
@@ -597,12 +449,7 @@
                     "kind": "string"
                   },
                   {
-                    "kind": "template_string",
-                    "not": {
-                      "has": {
-                        "kind": "template_substitution"
-                      }
-                    }
+                    "matches": "c5"
                   }
                 ],
                 "value": {
@@ -686,27 +533,139 @@
                   "nthChild": 1,
                   "any": [
                     {
-                      "any": [
-                        {
-                          "kind": "string_fragment",
-                          "regex": "^/"
-                        },
-                        {
-                          "kind": "escape_sequence",
-                          "regex": "^\\\\/$"
-                        }
-                      ]
+                      "matches": "c7"
                     },
                     {
-                      "kind": "template_substitution",
-                      "has": {
-                        "matches": "first-slash"
-                      }
+                      "matches": "c8"
                     }
                   ]
                 }
               }
             ]
+          },
+          "c1": {
+            "any": [
+              {
+                "inside": {
+                  "field": "name",
+                  "has": {
+                    "field": "value",
+                    "matches": "module-value"
+                  },
+                  "kind": "variable_declarator"
+                }
+              },
+              {
+                "matches": "c6"
+              },
+              {
+                "inside": {
+                  "field": "left",
+                  "has": {
+                    "field": "right",
+                    "matches": "module-value"
+                  },
+                  "kind": "assignment_pattern"
+                }
+              }
+            ],
+            "kind": "object_pattern"
+          },
+          "c2": {
+            "has": {
+              "has": {
+                "matches": "path-source"
+              },
+              "kind": "template_substitution",
+              "precedes": {
+                "any": [
+                  {
+                    "matches": "c7"
+                  },
+                  {
+                    "matches": "c8"
+                  }
+                ]
+              }
+            },
+            "kind": "template_string"
+          },
+          "c3": {
+            "all": [
+              {
+                "has": {
+                  "field": "operator",
+                  "regex": "^\\+$"
+                }
+              },
+              {
+                "has": {
+                  "field": "left",
+                  "matches": "path-source"
+                }
+              },
+              {
+                "has": {
+                  "field": "right",
+                  "matches": "first-slash"
+                }
+              }
+            ],
+            "kind": "binary_expression"
+          },
+          "c4": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string",
+                "not": {
+                  "has": {
+                    "kind": "template_substitution"
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": "^sep$"
+            }
+          },
+          "c5": {
+            "kind": "template_string",
+            "not": {
+              "has": {
+                "kind": "template_substitution"
+              }
+            }
+          },
+          "c6": {
+            "inside": {
+              "field": "left",
+              "has": {
+                "field": "right",
+                "matches": "module-value"
+              },
+              "kind": "assignment_expression"
+            }
+          },
+          "c7": {
+            "any": [
+              {
+                "kind": "string_fragment",
+                "regex": "^/"
+              },
+              {
+                "kind": "escape_sequence",
+                "regex": "^\\\\/$"
+              }
+            ]
+          },
+          "c8": {
+            "has": {
+              "matches": "first-slash"
+            },
+            "kind": "template_substitution"
           }
         }
       }
@@ -729,27 +688,7 @@
             }
           },
           "rule": {
-            "kind": "binary_expression",
-            "all": [
-              {
-                "has": {
-                  "field": "operator",
-                  "regex": "^\\+$"
-                }
-              },
-              {
-                "has": {
-                  "field": "left",
-                  "matches": "path-source"
-                }
-              },
-              {
-                "has": {
-                  "field": "right",
-                  "matches": "first-slash"
-                }
-              }
-            ]
+            "matches": "c3"
           }
         }
       },
@@ -789,35 +728,7 @@
             }
           },
           "rule": {
-            "kind": "template_string",
-            "has": {
-              "kind": "template_substitution",
-              "has": {
-                "matches": "path-source"
-              },
-              "precedes": {
-                "any": [
-                  {
-                    "any": [
-                      {
-                        "kind": "string_fragment",
-                        "regex": "^/"
-                      },
-                      {
-                        "kind": "escape_sequence",
-                        "regex": "^\\\\/$"
-                      }
-                    ]
-                  },
-                  {
-                    "kind": "template_substitution",
-                    "has": {
-                      "matches": "first-slash"
-                    }
-                  }
-                ]
-              }
-            }
+            "matches": "c2"
           }
         }
       },
@@ -856,27 +767,7 @@
             }
           },
           "rule": {
-            "kind": "binary_expression",
-            "all": [
-              {
-                "has": {
-                  "field": "operator",
-                  "regex": "^\\+$"
-                }
-              },
-              {
-                "has": {
-                  "field": "left",
-                  "matches": "path-source"
-                }
-              },
-              {
-                "has": {
-                  "field": "right",
-                  "matches": "first-slash"
-                }
-              }
-            ]
+            "matches": "c3"
           }
         }
       },
@@ -915,35 +806,7 @@
             }
           },
           "rule": {
-            "kind": "template_string",
-            "has": {
-              "kind": "template_substitution",
-              "has": {
-                "matches": "path-source"
-              },
-              "precedes": {
-                "any": [
-                  {
-                    "any": [
-                      {
-                        "kind": "string_fragment",
-                        "regex": "^/"
-                      },
-                      {
-                        "kind": "escape_sequence",
-                        "regex": "^\\\\/$"
-                      }
-                    ]
-                  },
-                  {
-                    "kind": "template_substitution",
-                    "has": {
-                      "matches": "first-slash"
-                    }
-                  }
-                ]
-              }
-            }
+            "matches": "c2"
           }
         }
       },

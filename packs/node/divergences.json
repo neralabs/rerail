@@ -38,5 +38,13 @@
     "line": 1,
     "kind": "rerail-unknown",
     "evidence": "The case is `tag`\\unicode``: a tagged template whose escape is invalid, which ES2018 allows only in a tagged template (its cooked value is undefined), and the plugin reports it as `malformed-template-literals` (and `template-literals`). tree-sitter-javascript reads an invalid escape as a syntax error in every template, so the file has no tree and Rerail reports nothing in it; the engine reports the file as read with errors."
+  },
+  {
+    "rule": "n-no-unsupported-features-es-syntax",
+    "source": "fixtures",
+    "path": "renamed/no-unsupported-features/es-syntax/invalid-096/case.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The rename variant of invalid-096/case.js, the same tagged template with an invalid escape: `tag`\\unicode``: a tagged template whose escape is invalid, which ES2018 allows only in a tagged template (its cooked value is undefined), and the plugin reports it as `malformed-template-literals` (and `template-literals`). tree-sitter-javascript reads an invalid escape as a syntax error in every template, so the file has no tree and Rerail reports nothing in it; the engine reports the file as read with errors."
   }
 ]

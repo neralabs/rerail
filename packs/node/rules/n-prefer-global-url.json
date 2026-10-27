@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-global-url",
-  "revision": 3,
+  "revision": 5,
   "mode": "steer",
   "description": "Use the global URL instead of importing or requiring it from the url module; it is always available in Node.js.",
   "scope": {
@@ -103,12 +103,7 @@
                         "kind": "string"
                       },
                       {
-                        "kind": "template_string",
-                        "not": {
-                          "has": {
-                            "kind": "template_substitution"
-                          }
-                        }
+                        "matches": "c3"
                       }
                     ],
                     "value": {
@@ -166,14 +161,7 @@
                 "resolves": {
                   "binding": {
                     "occurrence": {
-                      "inside": {
-                        "kind": "assignment_expression",
-                        "field": "left",
-                        "has": {
-                          "field": "right",
-                          "matches": "module-value"
-                        }
-                      }
+                      "matches": "c2"
                     }
                   }
                 }
@@ -241,6 +229,42 @@
                 }
               }
             }
+          },
+          "c1": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string",
+                "not": {
+                  "has": {
+                    "kind": "template_substitution"
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": "^URL$"
+            }
+          },
+          "c2": {
+            "inside": {
+              "field": "left",
+              "has": {
+                "field": "right",
+                "matches": "module-value"
+              },
+              "kind": "assignment_expression"
+            }
+          },
+          "c3": {
+            "kind": "template_string",
+            "not": {
+              "has": {
+                "kind": "template_substitution"
+              }
+            }
           }
         }
       }
@@ -293,12 +317,7 @@
                           "kind": "string"
                         },
                         {
-                          "kind": "template_string",
-                          "not": {
-                            "has": {
-                              "kind": "template_substitution"
-                            }
-                          }
+                          "matches": "c3"
                         }
                       ],
                       "value": {
@@ -351,14 +370,7 @@
                   }
                 },
                 {
-                  "inside": {
-                    "kind": "assignment_expression",
-                    "field": "left",
-                    "has": {
-                      "field": "right",
-                      "matches": "module-value"
-                    }
-                  }
+                  "matches": "c2"
                 },
                 {
                   "inside": {
@@ -387,42 +399,12 @@
                       "regex": "^URL$"
                     },
                     {
-                      "any": [
-                        {
-                          "kind": "string"
-                        },
-                        {
-                          "kind": "template_string",
-                          "not": {
-                            "has": {
-                              "kind": "template_substitution"
-                            }
-                          }
-                        }
-                      ],
-                      "value": {
-                        "regex": "^URL$"
-                      }
+                      "matches": "c1"
                     },
                     {
                       "kind": "computed_property_name",
                       "has": {
-                        "any": [
-                          {
-                            "kind": "string"
-                          },
-                          {
-                            "kind": "template_string",
-                            "not": {
-                              "has": {
-                                "kind": "template_substitution"
-                              }
-                            }
-                          }
-                        ],
-                        "value": {
-                          "regex": "^URL$"
-                        }
+                        "matches": "c1"
                       }
                     }
                   ]

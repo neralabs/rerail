@@ -1,8 +1,8 @@
 # Rerail rule pack: Node.js
 
 42 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
-the pack's conformance check, and in `candidates/rules/` until then ([docs/port-readiness.md](../../docs/port-readiness.md),
-[conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
+the pack's conformance check, gates included (`upstream/eslint-plugin-n/gates.yaml`), and in `candidates/rules/`
+until then ([conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
 path, with every disagreement declared in `divergences.json` (`n-prefer-promises-fs` does not report `fs.watch`;
 `n-callback-return` does not report a final `callback?.()`; `n-no-unsupported-features-es-syntax` cannot read a tagged
 template with an invalid escape), against:
@@ -13,10 +13,12 @@ template with an invalid escape), against:
   commit that introduced a violation of one rule (about ten per rule), beside its nearest package.json, labelled with
   the plugin's findings for that rule, and 279 copies with those findings fixed by hand, clean for it.
 
-33 ports ship, 7 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
+32 ports ship, 6 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
 `n-no-deprecated-api`, `n-no-exports-assign`, `n-no-process-exit`, `n-no-unsupported-features-es-builtins`,
-`n-no-unsupported-features-es-syntax`, `n-no-unsupported-features-node-builtins`) and the other 26 off until a
-repository turns them on. The 9 candidates: `n-no-restricted-import` and `n-no-restricted-require` report nothing at
+`n-no-unsupported-features-node-builtins`) and the other 26 off until a repository turns them on. The 10 candidates:
+`n-no-unsupported-features-es-syntax` matches the plugin on both sources but fails the compact gate's
+no-written-out-repetition (a member chain over the global object reaches one node kind three times along a nesting
+path through its trace-map utilities); `n-no-restricted-import` and `n-no-restricted-require` report nothing at
 upstream's default options, so neither source shows them catching anything; the seven rules that read where a
 specifier resolves (`n-no-missing-import`/`-require`, `n-file-extension-in-import`, `n-no-unpublished-import`/`-require`,
 `n-no-extraneous-import`/`-require`) pass the plugin's tests, and no sample judges them yet: a sample carries its file

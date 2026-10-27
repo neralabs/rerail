@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-global-timers",
-  "revision": 1,
+  "revision": 3,
   "mode": "steer",
   "description": "Use the global timer functions, such as setTimeout, instead of reading them from the timers module.",
   "scope": {
@@ -103,12 +103,7 @@
                         "kind": "string"
                       },
                       {
-                        "kind": "template_string",
-                        "not": {
-                          "has": {
-                            "kind": "template_substitution"
-                          }
-                        }
+                        "matches": "c4"
                       }
                     ],
                     "value": {
@@ -166,14 +161,7 @@
                 "resolves": {
                   "binding": {
                     "occurrence": {
-                      "inside": {
-                        "kind": "assignment_expression",
-                        "field": "left",
-                        "has": {
-                          "field": "right",
-                          "matches": "module-value"
-                        }
-                      }
+                      "matches": "c3"
                     }
                   }
                 }
@@ -241,6 +229,54 @@
                 }
               }
             }
+          },
+          "c1": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "template_string",
+                "not": {
+                  "has": {
+                    "kind": "template_substitution"
+                  }
+                }
+              }
+            ],
+            "value": {
+              "regex": "^(?:clearImmediate|clearInterval|clearTimeout|setImmediate|setInterval|setTimeout)$"
+            }
+          },
+          "c2": {
+            "has": {
+              "field": "source",
+              "matches": "esm-source"
+            },
+            "kind": "export_statement",
+            "not": {
+              "has": {
+                "kind": "export_clause"
+              }
+            }
+          },
+          "c3": {
+            "inside": {
+              "field": "left",
+              "has": {
+                "field": "right",
+                "matches": "module-value"
+              },
+              "kind": "assignment_expression"
+            }
+          },
+          "c4": {
+            "kind": "template_string",
+            "not": {
+              "has": {
+                "kind": "template_substitution"
+              }
+            }
           }
         }
       }
@@ -293,12 +329,7 @@
                           "kind": "string"
                         },
                         {
-                          "kind": "template_string",
-                          "not": {
-                            "has": {
-                              "kind": "template_substitution"
-                            }
-                          }
+                          "matches": "c4"
                         }
                       ],
                       "value": {
@@ -351,14 +382,7 @@
                   }
                 },
                 {
-                  "inside": {
-                    "kind": "assignment_expression",
-                    "field": "left",
-                    "has": {
-                      "field": "right",
-                      "matches": "module-value"
-                    }
-                  }
+                  "matches": "c3"
                 },
                 {
                   "inside": {
@@ -387,42 +411,12 @@
                       "regex": "^(?:clearImmediate|clearInterval|clearTimeout|setImmediate|setInterval|setTimeout)$"
                     },
                     {
-                      "any": [
-                        {
-                          "kind": "string"
-                        },
-                        {
-                          "kind": "template_string",
-                          "not": {
-                            "has": {
-                              "kind": "template_substitution"
-                            }
-                          }
-                        }
-                      ],
-                      "value": {
-                        "regex": "^(?:clearImmediate|clearInterval|clearTimeout|setImmediate|setInterval|setTimeout)$"
-                      }
+                      "matches": "c1"
                     },
                     {
                       "kind": "computed_property_name",
                       "has": {
-                        "any": [
-                          {
-                            "kind": "string"
-                          },
-                          {
-                            "kind": "template_string",
-                            "not": {
-                              "has": {
-                                "kind": "template_substitution"
-                              }
-                            }
-                          }
-                        ],
-                        "value": {
-                          "regex": "^(?:clearImmediate|clearInterval|clearTimeout|setImmediate|setInterval|setTimeout)$"
-                        }
+                        "matches": "c1"
                       }
                     }
                   ]
@@ -525,16 +519,7 @@
             }
           },
           "rule": {
-            "kind": "export_statement",
-            "has": {
-              "field": "source",
-              "matches": "esm-source"
-            },
-            "not": {
-              "has": {
-                "kind": "export_clause"
-              }
-            }
+            "matches": "c2"
           }
         }
       },
@@ -563,16 +548,7 @@
             }
           },
           "rule": {
-            "kind": "export_statement",
-            "has": {
-              "field": "source",
-              "matches": "esm-source"
-            },
-            "not": {
-              "has": {
-                "kind": "export_clause"
-              }
-            }
+            "matches": "c2"
           }
         }
       },
@@ -601,16 +577,7 @@
             }
           },
           "rule": {
-            "kind": "export_statement",
-            "has": {
-              "field": "source",
-              "matches": "esm-source"
-            },
-            "not": {
-              "has": {
-                "kind": "export_clause"
-              }
-            }
+            "matches": "c2"
           }
         }
       },
@@ -639,16 +606,7 @@
             }
           },
           "rule": {
-            "kind": "export_statement",
-            "has": {
-              "field": "source",
-              "matches": "esm-source"
-            },
-            "not": {
-              "has": {
-                "kind": "export_clause"
-              }
-            }
+            "matches": "c2"
           }
         }
       },
@@ -677,16 +635,7 @@
             }
           },
           "rule": {
-            "kind": "export_statement",
-            "has": {
-              "field": "source",
-              "matches": "esm-source"
-            },
-            "not": {
-              "has": {
-                "kind": "export_clause"
-              }
-            }
+            "matches": "c2"
           }
         }
       },
@@ -715,16 +664,7 @@
             }
           },
           "rule": {
-            "kind": "export_statement",
-            "has": {
-              "field": "source",
-              "matches": "esm-source"
-            },
-            "not": {
-              "has": {
-                "kind": "export_clause"
-              }
-            }
+            "matches": "c2"
           }
         }
       },

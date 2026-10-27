@@ -474,7 +474,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/no-unsupported-features/es-syntax"
       },
-      "policy": "rules/n-no-unsupported-features-es-syntax.json",
+      "policy": "candidates/rules/n-no-unsupported-features-es-syntax.json",
       "capabilities": [
         "syntax",
         "scope",
