@@ -1033,12 +1033,17 @@ export const SPECS = [
     tool: R,
     upstream: "react/no-unescaped-entities",
     capabilities: ["syntax", "suppression"],
-    match: "line",
-    description: "Escape >, \", ' and } in JSX text as HTML entities or expressions; unescaped they are usually typos for a closing tag or brace.",
-    checks: [1, 2, 3, 4, 5, 6, 7, 8].map(count => ({
-      id: `entity-${count}`,
-      rule: { kind: "jsx_text", regex: `\\A(?:[^\\n>"'}]*[>"'}]){${count}}` },
-      message: "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
+    match: "line+column",
+    description: "Escape \" and ' in JSX text as HTML entities or string expressions; a stray quote there is often a leftover from a string or attribute.",
+    checks: [
+      ["double-quote", "\"", "&quot;", `{'"'}`],
+      ["single-quote", "'", "&apos;", `{"'"}`],
+    ].map(([id, character, entity, expression]) => ({
+      id,
+      rule: { kind: "jsx_text", regex: `(?<ENTITY>${character})` },
+      anchor: "capture.ENTITY",
+      each: "ENTITY",
+      message: `Write this ${character} in JSX text as ${entity} or wrap it in a ${expression} string expression.`,
     })),
   },
   {
@@ -1122,7 +1127,7 @@ export const SPECS = [
       {
         id: "effect-event-reference",
         rule: {
-          kind: "identifier",
+          any: [{ kind: "identifier" }, { kind: "shorthand_property_identifier" }],
           all: [
             {
               inside: {
@@ -1157,89 +1162,617 @@ export const SPECS = [
       },
     ],
   },
-  {
-    id: "react-hooks-exhaustive-deps",
-    candidate: true,
-    tool: H,
-    upstream: "react-hooks/exhaustive-deps",
-    capabilities: ["syntax", "scope", "compare", "suppression"],
-    match: "line+column",
-    description: "List every component value that an effect, useCallback or useMemo callback reads in its dependency array; a missing one leaves the callback reading stale values.",
-    checks: [
-      {
-        id: "missing-dependency",
-        rule: {
-          kind: "array",
-          pattern: "$DEPS",
-          all: [
-            { nthChild: 2, inside: { kind: "arguments", inside: { kind: "call_expression", pattern: "$CALL", matches: "deps-hook", all: [{ inside: { stopBy: { matches: "fn" }, matches: "fn", pattern: "$C" } }] } } },
-            {
-              follows: {
-                stopBy: "end",
-                any: [{ kind: "arrow_function" }, { kind: "function_expression" }],
-                pattern: "$CB",
-                nthChild: 1,
-                has: {
-                  stopBy: "end",
-                  kind: "identifier",
-                  pattern: "$R",
-                  all: [
-                    { not: { inside: { field: "name", kind: "variable_declarator" } } },
-                    {
-                      resolves: {
-                        binding: {
-                          site: {
-                            all: [
-                              { inside: { stopBy: "end", matches: "fn", pattern: "$SC", compare: { left: "SC", op: "eq", right: "C", text: "node" } } },
-                              { not: { inside: { stopBy: "end", pattern: "$SCB", compare: { left: "SCB", op: "eq", right: "CB", text: "node" } } } },
-                              { not: { matches: "stable-site" } },
-                            ],
-                          },
-                        },
-                      },
-                    },
-                    { not: { inside: { stopBy: "end", kind: "array", pattern: "$D2", compare: { left: "D2", op: "eq", right: "DEPS", text: "node" } } } },
+  // exhaustive-deps: every report of ExhaustiveDeps.ts, each its own clause (README "Rule details"). Captures thread
+  // the hook's context: CALL (the hook call), C (the function it runs in), CB (its callback), DEPS and DA (its
+  // dependencies, and the array they are), CSN (the scope the call runs in). Utilities are prefixed `ed-`.
+  (() => {
+    const callee = re => ({
+      any: [
+        { kind: "identifier", regex: re },
+        { kind: "member_expression", all: [{ has: { field: "object", kind: "identifier", regex: "^React$" } }, { has: { field: "property", kind: "property_identifier", regex: re } }] },
+      ],
+    });
+    const calling = re => ({ kind: "call_expression", has: { field: "function", ...callee(re) } });
+    const same = (left, right, text = "node") => ({ compare: { left, op: "eq", right, text } });
+    /** The same dependency path: by reference, or by name for a shorthand property (which ESTree reads as a name). */
+    const samePath = (left, right) => ({ any: [same(left, right, "reference"), same(left, right, "source")] });
+    /** `name` holds on the expression inside an `as` cast or parentheses (ESTree has neither). */
+    const unwrapped = name => ({ any: [{ kind: "as_expression" }, { kind: "parenthesized_expression" }], has: { nthChild: 1, matches: name } });
+    /** `rule` holds on the dependency array, written bare or cast with `as`. */
+    const onArray = rule => ({ any: [{ kind: "array", ...rule }, { kind: "as_expression", has: { kind: "array", ...rule } }] });
+    /** The `position`th argument, comments aside. */
+    const arg = position => ({ position, ofRule: { not: { kind: "comment" } } });
+    const FN = ["function_declaration", "generator_function_declaration", "function_expression", "generator_function", "arrow_function", "method_definition"].map(kind => ({ kind }));
+    const INLINE_FN = [{ kind: "arrow_function" }, { kind: "function_expression" }, { kind: "generator_function" }];
+    const DECLARED_FN = [{ kind: "function_declaration" }, { kind: "generator_function_declaration" }];
+    const REF = [{ kind: "identifier" }, { kind: "shorthand_property_identifier" }];
+    const ASSIGN = [{ kind: "assignment_expression" }, { kind: "augmented_assignment_expression" }];
+    const LITERAL = ["string", "number", "true", "false", "null", "regex"].map(kind => ({ kind }));
+    /** Utility `name`: at a callback slot whose callback (inline, or the function the name there declares) holds `target` in its body. */
+    const inCallback = (name, target) => ({
+      [name]: {
+        any: [
+          { any: INLINE_FN, has: { stopBy: "end", matches: target } },
+          unwrapped(name),
+          {
+            kind: "identifier",
+            resolves: {
+              binding: {
+                site: {
+                  any: [
+                    { any: DECLARED_FN, has: { stopBy: "end", matches: target } },
+                    { kind: "variable_declarator", has: { field: "value", any: INLINE_FN, has: { stopBy: "end", matches: target } } },
                   ],
                 },
               },
             },
-            { not: { has: { stopBy: "end", kind: "identifier", pattern: "$E", compare: { left: "E", op: "eq", right: "R" } } } },
+          },
+        ],
+      },
+    });
+    const U = {
+      "ed-fn": { any: FN },
+      "ed-scope-node": {
+        any: [
+          ...FN,
+          { kind: "program" },
+          { kind: "class_body" },
+          { kind: "statement_block", not: { inside: { field: "body", any: FN } } },
+          { kind: "for_statement" },
+          { kind: "for_in_statement" },
+          { kind: "catch_clause" },
+          { kind: "switch_statement" },
+        ],
+      },
+      "ed-index0-call": calling("^(?:useEffect|useLayoutEffect|useCallback|useMemo)$"),
+      "ed-imperative-call": calling("^useImperativeHandle$"),
+      "ed-effect-call": calling("^(?:useEffect|useLayoutEffect)$"),
+      "ed-memo-call": calling("^(?:useCallback|useMemo)$"),
+      "ed-hook-call": { any: [{ matches: "ed-index0-call" }, { matches: "ed-imperative-call" }] },
+      // The argument a hook's callback (index 0, useImperativeHandle's 1) or its dependencies (the next one) stand in.
+      "ed-cb-slot": {
+        not: { kind: "comment" },
+        any: [
+          { nthChild: arg(1), inside: { kind: "arguments", inside: { matches: "ed-index0-call" } } },
+          { nthChild: arg(2), inside: { kind: "arguments", inside: { matches: "ed-imperative-call" } } },
+        ],
+      },
+      "ed-deps-slot": {
+        not: { any: [{ regex: "^undefined$" }, { kind: "comment" }] },
+        any: [
+          { nthChild: arg(2), inside: { kind: "arguments", inside: { matches: "ed-index0-call" } } },
+          { nthChild: arg(3), inside: { kind: "arguments", inside: { matches: "ed-imperative-call" } } },
+        ],
+      },
+      "ed-has-deps": { has: { field: "arguments", has: { matches: "ed-deps-slot" } } },
+      "ed-effect-cb": {
+        any: [{ matches: "ed-cb-slot", inside: { kind: "arguments", inside: { matches: "ed-effect-call" } } }, { inside: { any: [{ kind: "as_expression" }, { kind: "parenthesized_expression" }], matches: "ed-effect-cb" } }],
+      },
+      "ed-param-site": {
+        any: [{ kind: "required_parameter" }, { kind: "optional_parameter" }, { inside: { kind: "formal_parameters" } }, { inside: { field: "parameter", kind: "arrow_function" } }],
+      },
+      // The site declares its name in the scope the hook call runs in (CSN).
+      "ed-call-scope-site": { inside: { stopBy: { matches: "ed-scope-node" }, matches: "ed-scope-node", pattern: "$SSN", ...same("SSN", "CSN") } },
+      // A callback passed by name: a name the dependencies are given and do not list, declared in the hook's scope.
+      "ed-named-cb": {
+        kind: "identifier",
+        pattern: "$CBN",
+        all: [
+          { inside: { stopBy: "end", kind: "arguments", has: { matches: "ed-deps-slot", not: onArray({ has: { kind: "identifier", pattern: "$CBD", ...same("CBD", "CBN", "name") } }) } } },
+          { resolves: { binding: { site: { matches: "ed-call-scope-site" } } } },
+        ],
+      },
+      // The callback at a slot: inline, through casts and parentheses, or the function the name passed declares. Binds CB.
+      "ed-cb": {
+        any: [
+          { any: INLINE_FN, pattern: "$CB" },
+          unwrapped("ed-cb"),
+          {
+            matches: "ed-named-cb",
+            resolves: {
+              binding: {
+                site: { any: [{ any: DECLARED_FN, pattern: "$CB" }, { kind: "variable_declarator", has: { field: "value", any: INLINE_FN, pattern: "$CB" } }] },
+              },
+            },
+          },
+        ],
+      },
+      // At an analysed hook call (an effect, or one given dependencies) inside a function: binds CALL, CSN, C and CB.
+      "ed-call-context": {
+        kind: "call_expression",
+        pattern: "$CALL",
+        all: [
+          { any: [{ matches: "ed-effect-call" }, { matches: "ed-imperative-call" }, { matches: "ed-memo-call" }] },
+          { any: [{ matches: "ed-effect-call" }, { matches: "ed-has-deps" }] },
+          { inside: { stopBy: { matches: "ed-scope-node" }, matches: "ed-scope-node", pattern: "$CSN" } },
+          { inside: { stopBy: { matches: "ed-fn" }, matches: "ed-fn", pattern: "$C" } },
+          { has: { field: "arguments", has: { matches: "ed-cb-slot", all: [{ matches: "ed-cb" }] } } },
+        ],
+      },
+      // ... whose callback assigns no value of C (that is reported first, and alone).
+      "ed-call-root": { all: [{ matches: "ed-call-context" }, { not: { has: { field: "arguments", has: { matches: "ed-cb-slot", all: [{ matches: "ed-cb-stale-write" }] } } } }] },
+      // At the dependencies of such a call: binds DEPS, and DA when they are an array.
+      "ed-deps-root": {
+        pattern: "$DEPS",
+        all: [
+          { matches: "ed-deps-slot" },
+          { inside: { kind: "arguments", inside: { matches: "ed-call-root" } } },
+          { any: [{ kind: "array", pattern: "$DA" }, { kind: "as_expression", has: { kind: "array", pattern: "$DA" } }, { regex: "^" }] },
+        ],
+      },
+      // A name the callback reads that is declared in C, outside the callback (a value of the render).
+      "ed-ref": {
+        any: REF,
+        not: {
+          any: [
+            { inside: { stopBy: "end", kind: "type_query" } },
+            { inside: { field: "name", any: [...INLINE_FN, ...DECLARED_FN, { kind: "class_declaration" }] } },
           ],
         },
-        utils: {
-          ...HOOKS_UTILS,
-          "deps-hook": {
-            has: {
-              field: "function",
-              any: [
-                { kind: "identifier", regex: "^(?:useEffect|useLayoutEffect|useInsertionEffect|useCallback|useMemo)$" },
-                {
-                  kind: "member_expression",
-                  all: [{ has: { field: "object", kind: "identifier", regex: "^React$" } }, { has: { field: "property", regex: "^(?:useEffect|useLayoutEffect|useInsertionEffect|useCallback|useMemo)$" } }],
-                },
+        resolves: {
+          binding: {
+            site: {
+              all: [
+                { inside: { stopBy: "end", matches: "ed-fn", pattern: "$RSC", ...same("RSC", "C") } },
+                { not: { inside: { stopBy: "end", pattern: "$RSCB", ...same("RSCB", "CB") } } },
+                { not: { has: { field: "value", pattern: "$RSV", ...same("RSV", "CALL") } } },
+                // A function expression's own name lives in a scope of its own, outside the render's.
+                { not: { any: [{ kind: "function_expression" }, { kind: "generator_function" }], pattern: "$RSS", ...same("RSS", "CB") } },
               ],
             },
           },
-          "stable-site": { any: [{ matches: "stable-hook-site" }, { matches: "literal-const-site" }] },
-          "literal-const-site": {
-            kind: "variable_declarator",
-            inside: { kind: "lexical_declaration", has: { regex: "^const$" } },
-            has: { field: "value", any: [{ kind: "string" }, { kind: "number" }, { kind: "true" }, { kind: "false" }, { kind: "null" }, { kind: "regex" }] },
-          },
-          "stable-hook-site": {
-            kind: "variable_declarator",
-            has: {
-              field: "value",
-              kind: "call_expression",
-              has: { field: "function", regex: "^(?:React\\.)?(?:useRef|useState|useReducer|useEffectEvent|useTransition|useActionState)$" },
-            },
-            not: { has: { field: "name", kind: "array_pattern" } },
+        },
+      },
+      "ed-unwrap-literal": { any: [{ kind: "string" }, { kind: "number" }, { kind: "null" }, unwrapped("ed-unwrap-literal")] },
+      "ed-unwrap-stable-call": { any: [calling("^(?:useRef|useEffectEvent)$"), unwrapped("ed-unwrap-stable-call")] },
+      "ed-unwrap-effect-event": { any: [calling("^useEffectEvent$"), unwrapped("ed-unwrap-effect-event")] },
+      "ed-unwrap-tuple-call": { any: [calling("^(?:useState|useReducer|useActionState|useTransition)$"), unwrapped("ed-unwrap-tuple-call")] },
+      "ed-unwrap-state-call": { any: [calling("^useState$"), unwrapped("ed-unwrap-state-call")] },
+      // A value React keeps stable, or a constant literal: useRef, useEffectEvent, const x = 'a' | 1 | null.
+      "ed-stable-site": {
+        kind: "variable_declarator",
+        any: [
+          { all: [{ has: { field: "name", kind: "identifier" } }, { has: { field: "value", matches: "ed-unwrap-stable-call" } }] },
+          { all: [{ inside: { kind: "lexical_declaration", has: { regex: "^const$" } } }, { has: { field: "value", matches: "ed-unwrap-literal" } }] },
+        ],
+      },
+      // The second of exactly two names a tuple is destructured into, the name SETR reads.
+      "ed-second-of-two": {
+        has: {
+          field: "name",
+          kind: "array_pattern",
+          has: {
+            kind: "identifier",
+            pattern: "$SETN",
+            ...same("SETN", "SETR", "source"),
+            follows: { stopBy: "neighbor", regex: "^,$", not: { follows: { stopBy: "end", regex: "^,$" } } },
+            not: { precedes: { stopBy: "end", not: { regex: "^[,\\]]$" } } },
           },
         },
-        message: "Add `$R` to this dependency array; the callback reads it, so without it the callback keeps a stale value.",
       },
-    ],
-  },
+      "ed-setter-site": { kind: "variable_declarator", all: [{ has: { field: "value", matches: "ed-unwrap-tuple-call" } }, { matches: "ed-second-of-two" }] },
+      "ed-state-setter-site": { kind: "variable_declarator", all: [{ has: { field: "value", matches: "ed-unwrap-state-call" } }, { matches: "ed-second-of-two" }] },
+      "ed-reassigned": { resolves: { binding: { occurrence: { inside: { field: "left", any: ASSIGN } } } } },
+      "ed-stable-hook-value": {
+        any: [
+          { resolves: { binding: { site: { matches: "ed-stable-site" } } } },
+          { pattern: "$SETR", not: { matches: "ed-reassigned" }, resolves: { binding: { site: { matches: "ed-setter-site" } } } },
+        ],
+      },
+      "ed-state-setter": { pattern: "$SETR", not: { matches: "ed-reassigned" }, resolves: { binding: { site: { matches: "ed-state-setter-site" } } } },
+      "ed-top-of-c": { inside: { kind: "statement_block", inside: { field: "body", pattern: "$TC", ...same("TC", "C") } } },
+      // A function declared at the top of C that reads no value of C but stable ones.
+      "ed-pure-fn-site": {
+        pattern: "$PFS",
+        any: [
+          { any: DECLARED_FN, matches: "ed-top-of-c" },
+          {
+            kind: "variable_declarator",
+            all: [
+              { has: { field: "name", kind: "identifier" } },
+              { has: { field: "value", any: INLINE_FN } },
+              { inside: { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], matches: "ed-top-of-c" } },
+            ],
+          },
+        ],
+        not: { has: { stopBy: "end", matches: "ed-captured-ref" } },
+      },
+      "ed-captured-ref": {
+        any: REF,
+        not: { matches: "ed-stable-hook-value" },
+        resolves: {
+          binding: {
+            site: {
+              all: [
+                { inside: { stopBy: "end", matches: "ed-fn", pattern: "$CRC", ...same("CRC", "C") } },
+                { not: { inside: { stopBy: "end", pattern: "$CRF", ...same("CRF", "PFS") } } },
+              ],
+            },
+          },
+        },
+      },
+      "ed-stable": { any: [{ matches: "ed-stable-hook-value" }, { resolves: { binding: { site: { matches: "ed-pure-fn-site" } } } }] },
+      // A dependency path: a name, or a non-computed member of one.
+      "ed-chain": {
+        any: [
+          { kind: "identifier" },
+          { kind: "undefined" },
+          {
+            kind: "member_expression",
+            all: [{ has: { field: "object", matches: "ed-chain" } }, { has: { field: "property", any: [{ kind: "property_identifier" }, { kind: "private_property_identifier" }] } }],
+          },
+        ],
+      },
+      // What ESTree reads as a declared path: also an optional chain ending in a computed member keyed by a path
+      // (`a?.[b.c]` reads as `a.b.c`), which never matches a value the callback reads.
+      "ed-declared-path": {
+        any: [
+          { matches: "ed-chain" },
+          {
+            kind: "subscript_expression",
+            all: [
+              { has: { field: "object", matches: "ed-chain" } },
+              { has: { field: "index", matches: "ed-chain" } },
+              { any: [{ has: { kind: "optional_chain" } }, { has: { field: "object", matches: "ed-optional" } }] },
+            ],
+          },
+        ],
+      },
+      "ed-optional": { kind: "member_expression", any: [{ has: { kind: "optional_chain" } }, { has: { field: "object", matches: "ed-optional" } }] },
+      // A member the dependency path of the name inside it stops before: `.current`, a callee, an assignment target.
+      "ed-chain-excluded": {
+        kind: "member_expression",
+        any: [{ has: { field: "property", regex: "^current$" } }, { inside: { field: "function", kind: "call_expression" } }, { inside: { field: "left", any: ASSIGN } }],
+      },
+      "ed-chain-stop": { any: [{ not: { kind: "member_expression" } }, { matches: "ed-chain-excluded" }] },
+      // The node's path is an element of the dependency array DA of CALL, which runs in C.
+      "ed-declared": {
+        params: ["CALL", "DA", "C"],
+        rule: {
+          pattern: "$X",
+          any: [
+            {
+              inside: {
+                stopBy: "end",
+                kind: "call_expression",
+                pattern: "$XCALL",
+                ...same("XCALL", "CALL"),
+                has: { field: "arguments", has: onArray({ pattern: "$XD", ...same("XD", "DA"), has: { pattern: "$XE", all: [samePath("XE", "X"), { matches: "ed-chain" }] } }) },
+              },
+            },
+            {
+              not: { inside: { stopBy: "end", pattern: "$XCALL", ...same("XCALL", "CALL") } },
+              inside: {
+                stopBy: "end",
+                pattern: "$XC",
+                ...same("XC", "C"),
+                has: { stopBy: "end", pattern: "$XD", ...same("XD", "DA"), has: { pattern: "$XE", all: [samePath("XE", "X"), { matches: "ed-chain" }] } },
+              },
+            },
+          ],
+        },
+      },
+      // A name whose dependency path DA declares, itself or a prefix of it.
+      "ed-covered": {
+        any: [
+          { matches: { "ed-declared": { CALL: "$CALL", DA: "$DA", C: "$C" } } },
+          {
+            inside: {
+              stopBy: { matches: "ed-chain-stop" },
+              kind: "member_expression",
+              not: { matches: "ed-chain-excluded" },
+              matches: { "ed-declared": { CALL: "$CALL", DA: "$DA", C: "$C" } },
+            },
+          },
+        ],
+      },
+      "ed-missing-ref": { pattern: "$MR", matches: "ed-ref", not: { any: [{ matches: "ed-stable" }, { matches: "ed-covered" }] } },
+      ...inCallback("ed-cb-missing", "ed-missing-ref"),
+      // A name whose dependency path is SE or extends it.
+      "ed-reaches": {
+        any: [
+          { pattern: "$SR", ...samePath("SR", "SE") },
+          { inside: { stopBy: { matches: "ed-chain-stop" }, kind: "member_expression", not: { matches: "ed-chain-excluded" }, pattern: "$SM", ...same("SM", "SE", "reference") } },
+        ],
+      },
+      "ed-ref-reaching": { all: [{ matches: "ed-reaches" }, { matches: "ed-ref" }] },
+      ...inCallback("ed-cb-reaching", "ed-ref-reaching"),
+      // An element SE of DA that a value the callback reads needs, and no shorter declared path covers.
+      "ed-satisfying": {
+        pattern: "$SE",
+        not: {
+          has: {
+            stopBy: "end",
+            any: [{ kind: "identifier" }, { kind: "member_expression" }],
+            pattern: "$PX",
+            inside: { stopBy: "end", kind: "array", pattern: "$PD", ...same("PD", "DA"), has: { matches: "ed-chain", pattern: "$PE", ...same("PE", "PX", "reference") } },
+          },
+        },
+        inside: { stopBy: "end", kind: "arguments", has: { matches: "ed-cb-slot", all: [{ matches: "ed-cb-reaching" }] } },
+      },
+      // A path rooted outside C: a global, or a name of an outer scope.
+      "ed-external": {
+        any: [
+          { kind: "undefined" },
+          { kind: "identifier", not: { resolves: { binding: { site: { inside: { stopBy: "end", matches: "ed-fn", pattern: "$XC", ...same("XC", "C") } } } } } },
+          { any: [{ kind: "member_expression" }, { kind: "subscript_expression" }], has: { field: "object", matches: "ed-external" } },
+        ],
+      },
+      "ed-ref-current": { kind: "member_expression", has: { field: "property", regex: "^current$" } },
+      // An assignment in the callback to a value of C: lost after the render.
+      "ed-stale-write": { any: ASSIGN, has: { field: "left", kind: "identifier", matches: "ed-ref" } },
+      ...inCallback("ed-cb-stale-write", "ed-stale-write"),
+      "ed-missing": { inside: { kind: "arguments", has: { matches: "ed-cb-slot", all: [{ matches: "ed-cb-missing" }] } } },
+      // An element no value the callback reads needs; an effect may list extra values, but not outer or `.current` ones.
+      "ed-unnecessary": {
+        any: [
+          { all: [{ inside: { kind: "arguments", inside: { not: { matches: "ed-effect-call" } } } }, onArray({ has: { matches: "ed-declared-path", pattern: "$UE", not: { matches: "ed-satisfying" } } })] },
+          onArray({ has: { matches: "ed-declared-path", pattern: "$UE", any: [{ matches: "ed-ref-current" }, { matches: "ed-external" }] } }),
+        ],
+      },
+      "ed-duplicate": onArray({
+        has: { matches: "ed-chain", pattern: "$DE", follows: { stopBy: "end", pattern: "$DE1", all: [same("DE1", "DE", "reference"), { matches: "ed-chain" }, { matches: "ed-satisfying-dup" }] } },
+      }),
+      "ed-satisfying-dup": { pattern: "$SE", matches: "ed-satisfying" },
+      // An element of an analysed dependency array.
+      "ed-element": { inside: { kind: "array", any: [{ matches: "ed-deps-root" }, { inside: { kind: "as_expression", matches: "ed-deps-root" } }] } },
+      "ed-problem": { any: [{ matches: "ed-missing" }, { matches: "ed-unnecessary" }, { matches: "ed-duplicate" }] },
+      "ed-settled-deps": { all: [{ matches: "ed-deps-root" }, { not: { matches: "ed-problem" } }] },
+      // A value each render builds anew: an object, array, function, class, element, `new`, regex, or a branch of one.
+      "ed-construction": {
+        any: [
+          ...["object", "array", "arrow_function", "function_expression", "generator_function", "class", "jsx_element", "jsx_self_closing_element", "new_expression", "regex"].map(kind => ({ kind })),
+          { kind: "ternary_expression", any: [{ has: { field: "consequence", matches: "ed-construction" } }, { has: { field: "alternative", matches: "ed-construction" } }] },
+          {
+            kind: "binary_expression",
+            has: { field: "operator", regex: "^(?:&&|\\|\\||\\?\\?)$" },
+            any: [{ has: { field: "left", matches: "ed-construction" } }, { has: { field: "right", matches: "ed-construction" } }],
+          },
+          { kind: "assignment_expression", has: { field: "right", matches: "ed-construction" } },
+          unwrapped("ed-construction"),
+        ],
+      },
+      // A top-level declaration of C whose value each render builds anew (KS).
+      "ed-construction-kind": {
+        any: [
+          { any: [...DECLARED_FN, { kind: "class_declaration" }] },
+          { kind: "variable_declarator", all: [{ has: { field: "name", kind: "identifier" } }, { has: { field: "value", matches: "ed-construction" } }] },
+        ],
+      },
+      "ed-construction-site": {
+        pattern: "$KS",
+        all: [
+          { matches: "ed-construction-kind" },
+          { any: [{ matches: "ed-top-of-c" }, { inside: { any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }], matches: "ed-top-of-c" } }] },
+        ],
+      },
+      // Inside the effect's cleanup: the function directly below the callback is the one it returns.
+      "ed-in-cleanup": {
+        inside: {
+          stopBy: "end",
+          matches: "ed-fn",
+          all: [{ inside: { kind: "return_statement" } }, { inside: { stopBy: { matches: "ed-fn" }, matches: "ed-fn", pattern: "$CUF", ...same("CUF", "CB") } }],
+        },
+      },
+      "ed-current-assigned": {
+        resolves: { binding: { occurrence: { inside: { kind: "member_expression", has: { field: "property", regex: "^current$" }, inside: { field: "left", any: ASSIGN } } } } },
+      },
+      "ed-cleanup-current-read": {
+        kind: "member_expression",
+        all: [{ has: { field: "property", regex: "^current$" } }, { has: { field: "object", kind: "identifier", matches: "ed-ref" } }, { matches: "ed-in-cleanup" }],
+      },
+      "ed-later-cleanup-read": {
+        kind: "member_expression",
+        all: [{ matches: "ed-cleanup-current-read" }, { has: { field: "object", kind: "identifier", pattern: "$LCR", ...same("LCR", "CCR", "name") } }],
+      },
+      // The `current` of the last `X.current` the cleanup reads, for an X no code assigns `.current` to (React's ref).
+      "ed-cleanup-current": {
+        kind: "property_identifier",
+        regex: "^current$",
+        pattern: "$CUR",
+        inside: {
+          field: "property",
+          matches: "ed-cleanup-current-read",
+          all: [
+            { has: { field: "object", pattern: "$CCR", not: { matches: "ed-current-assigned" } } },
+            {
+              not: {
+                any: [
+                  { precedes: { stopBy: "end", any: [{ matches: "ed-later-cleanup-read" }, { has: { stopBy: "end", matches: "ed-later-cleanup-read" } }] } },
+                  {
+                    inside: {
+                      stopBy: { any: [{ matches: "ed-cb-slot" }, ...DECLARED_FN] },
+                      precedes: { stopBy: "end", any: [{ matches: "ed-later-cleanup-read" }, { has: { stopBy: "end", matches: "ed-later-cleanup-read" } }] },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      ...inCallback("ed-cb-cleanup-current", "ed-cleanup-current"),
+      // A useState setter the effect reads itself, not from a function inside it.
+      "ed-direct-set-state": {
+        any: REF,
+        all: [{ matches: "ed-ref" }, { matches: "ed-state-setter" }, { inside: { stopBy: { matches: "ed-fn" }, matches: "ed-fn", pattern: "$SSF", ...same("SSF", "CB") } }],
+      },
+      ...inCallback("ed-cb-direct-set-state", "ed-direct-set-state"),
+      // The first assignment WA of each value of C in the callback, in the order the scopes are read: outer scopes first.
+      "ed-same-write": { any: ASSIGN, all: [{ has: { field: "left", kind: "identifier", pattern: "$WL2", ...same("WL2", "WL", "name") } }, { not: { pattern: "$WA2", ...same("WA2", "WA") } }] },
+      "ed-write-before": {
+        any: [
+          { precedes: { stopBy: "end", any: [{ pattern: "$WB", ...same("WB", "WA") }, { has: { stopBy: "end", pattern: "$WB", ...same("WB", "WA") } }] } },
+          { inside: { stopBy: "end", precedes: { stopBy: "end", any: [{ pattern: "$WB", ...same("WB", "WA") }, { has: { stopBy: "end", pattern: "$WB", ...same("WB", "WA") } }] } } },
+        ],
+      },
+      "ed-earlier-write": {
+        any: [
+          { inside: { stopBy: "end", matches: "ed-scope-node", inside: { stopBy: "end", matches: "ed-scope-node", has: { stopBy: { matches: "ed-scope-node" }, matches: "ed-same-write" } } } },
+          { inside: { stopBy: { matches: "ed-scope-node" }, matches: "ed-scope-node", has: { stopBy: { matches: "ed-scope-node" }, all: [{ matches: "ed-same-write" }, { matches: "ed-write-before" }] } } },
+        ],
+      },
+      "ed-first-stale-write": {
+        any: ASSIGN,
+        pattern: "$WA",
+        all: [{ has: { field: "left", kind: "identifier", pattern: "$WL", matches: "ed-ref" } }, { has: { field: "right", pattern: "$WR" } }, { not: { matches: "ed-earlier-write" } }],
+      },
+      ...inCallback("ed-cb-first-stale-write", "ed-first-stale-write"),
+      ...inCallback("ed-cb-reaching-ev", "ed-ref-ev"),
+      "ed-ref-ev": { pattern: "$EVR", ...same("EVR", "EV", "source"), matches: "ed-ref" },
+      // A callback whose dependencies cannot be read: neither a function nor a name, or a parameter's name.
+      "ed-unknown-cb": {
+        not: { kind: "comment" },
+        any: [
+          { not: { any: [...INLINE_FN, { kind: "identifier" }, { kind: "as_expression" }, { kind: "parenthesized_expression" }] } },
+          unwrapped("ed-unknown-cb"),
+          { matches: "ed-named-cb", resolves: { binding: { site: { matches: "ed-param-site" } } } },
+        ],
+      },
+      // A callback passed by a name that declares no function.
+      "ed-other-named-cb": {
+        any: [
+          unwrapped("ed-other-named-cb"),
+          {
+            matches: "ed-named-cb",
+            resolves: {
+              binding: {
+                site: { not: { any: [{ matches: "ed-param-site" }, ...DECLARED_FN, { kind: "variable_declarator", has: { field: "value", any: INLINE_FN } }] } },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const deps = (...extra) => ({ all: [{ matches: "ed-deps-root" }, ...extra] });
+    const atCallback = util => ({ has: { field: "arguments", has: { matches: "ed-cb-slot", all: [{ matches: util }] } } });
+    const analysedCall = extra => ({
+      kind: "call_expression",
+      pattern: "$CALL",
+      all: [
+        { any: [{ matches: "ed-effect-call" }, { matches: "ed-imperative-call" }, { matches: "ed-memo-call" }] },
+        { inside: { stopBy: { matches: "ed-scope-node" }, matches: "ed-scope-node", pattern: "$CSN" } },
+        ...extra,
+      ],
+    });
+    return {
+      id: "react-hooks-exhaustive-deps",
+      tool: H,
+      upstream: "react-hooks/exhaustive-deps",
+      capabilities: ["syntax", "scope", "compare", "suppression"],
+      match: "line+column",
+      description:
+        "List exactly the component values an effect, useCallback, useMemo or useImperativeHandle callback reads in its dependency array; a missing one leaves the callback reading stale values.",
+      shared: U,
+      checks: [
+        {
+          id: "missing-dependency",
+          rule: deps({ matches: "ed-missing" }),
+          message: "Add `$MR` to this dependency array; the callback reads it, so without it the callback keeps a stale value.",
+        },
+        {
+          id: "unnecessary-dependency",
+          rule: deps({ not: { matches: "ed-missing" } }, { matches: "ed-unnecessary" }),
+          message: "Remove `$UE` from this dependency array: the callback does not read it, or it is an outer or `.current` value whose change never re-renders the component.",
+        },
+        {
+          id: "duplicate-dependency",
+          rule: deps({ not: { matches: "ed-missing" } }, { not: { matches: "ed-unnecessary" } }, { matches: "ed-duplicate" }),
+          message: "Remove the repeated `$DE` from this dependency array.",
+        },
+        {
+          id: "dependencies-not-array",
+          rule: deps({ not: onArray({}) }),
+          message: "Pass the dependencies as an array literal written in place, so each value the callback reads can be checked against it.",
+        },
+        {
+          id: "spread-dependency",
+          rule: { kind: "spread_element", matches: "ed-element" },
+          message: "List the dependencies one by one instead of spreading another list into this array, so each one can be checked.",
+        },
+        {
+          id: "literal-dependency",
+          rule: { any: LITERAL, matches: "ed-element" },
+          message: "Remove this literal from the dependency array; it never changes. If you meant the variable it names, list that variable instead.",
+        },
+        {
+          id: "complex-dependency",
+          rule: { not: { any: [{ matches: "ed-declared-path" }, { kind: "spread_element" }, ...LITERAL, { kind: "comment" }, { regex: "^[\\[\\],]$" }] }, matches: "ed-element" },
+          message: "Move this expression into a variable declared before the hook and list that variable, so the dependency can be checked.",
+        },
+        {
+          id: "effect-event-dependency",
+          rule: {
+            kind: "identifier",
+            pattern: "$EV",
+            all: [
+              { matches: "ed-element" },
+              { resolves: { binding: { site: { kind: "variable_declarator", all: [{ has: { field: "name", kind: "identifier" } }, { has: { field: "value", matches: "ed-unwrap-effect-event" } }] } } } },
+              { inside: { stopBy: "end", kind: "arguments", has: { matches: "ed-cb-slot", all: [{ matches: "ed-cb-reaching-ev" }] } } },
+            ],
+          },
+          message: "Remove `$EV` from this dependency array; call a useEffectEvent function from the effect without listing it, since it is not a reactive value.",
+        },
+        {
+          id: "stale-assignment",
+          rule: { all: [{ matches: "ed-call-context" }, atCallback("ed-cb-first-stale-write")] },
+          anchor: "capture.WR",
+          each: "WR",
+          message: "Keep `$WL` in a useRef and assign its `.current` instead, or declare it inside the callback; this assignment is lost after each render.",
+        },
+        {
+          id: "ref-current-in-cleanup",
+          rule: { all: [{ matches: "ed-call-context" }, { matches: "ed-effect-call" }, atCallback("ed-cb-cleanup-current")] },
+          anchor: "capture.CUR",
+          each: "CUR",
+          message: "Copy `$CCR.current` to a variable inside the effect and use that variable in the cleanup; by the time the cleanup runs the ref may point elsewhere.",
+        },
+        {
+          id: "set-state-without-dependencies",
+          rule: { all: [{ matches: "ed-call-root" }, { not: { matches: "ed-has-deps" } }, atCallback("ed-cb-direct-set-state")] },
+          message: "Pass a dependency array to this effect; it sets state on every run without one, which can re-render in an endless loop.",
+        },
+        {
+          id: "changes-every-render",
+          rule: {
+            kind: "identifier",
+            all: [
+              { resolves: { binding: { site: { matches: "ed-construction-kind" } } } },
+              { inside: { kind: "array", any: [{ matches: "ed-settled-deps" }, { inside: { kind: "as_expression", matches: "ed-settled-deps" } }] } },
+              { resolves: { binding: { site: { matches: "ed-construction-site" } } } },
+            ],
+          },
+          anchor: "capture.KS",
+          message: "Wrap this value in its own useMemo or useCallback, or move it inside the hook that lists it; built anew each render, it reruns that hook every time.",
+        },
+        {
+          id: "async-effect",
+          rule: { any: INLINE_FN, all: [{ has: { regex: "^async$", not: { kind: "identifier" } } }, { matches: "ed-effect-cb" }] },
+          message: "Make this effect callback synchronous and call an async function from inside it; an async callback returns a promise where React expects a cleanup.",
+        },
+        {
+          id: "missing-callback",
+          rule: { all: [{ matches: "ed-hook-call" }, { not: { has: { field: "arguments", has: { matches: "ed-cb-slot" } } } }] },
+          message: "Pass a callback to this hook; without one React throws when it runs.",
+        },
+        {
+          id: "memo-without-dependencies",
+          rule: { all: [{ matches: "ed-memo-call" }, { has: { field: "arguments", has: { matches: "ed-cb-slot" } } }, { not: { matches: "ed-has-deps" } }] },
+          message: "Pass a dependency array to this hook; with only a callback it recomputes on every render and memoizes nothing.",
+        },
+        {
+          id: "unknown-dependencies",
+          rule: analysedCall([{ any: [{ matches: "ed-effect-call" }, { matches: "ed-has-deps" }] }, atCallback("ed-unknown-cb")]),
+          message: "Pass an inline function to this hook, so the values it reads can be checked against its dependencies.",
+        },
+        {
+          id: "callback-not-function",
+          rule: analysedCall([{ matches: "ed-has-deps" }, atCallback("ed-other-named-cb")]),
+          message: "Add `$CBN` to this hook's dependency array, or pass an inline function; the value passed as its callback can change between renders.",
+        },
+      ],
+    };
+  })(),
 ];
 
 /** Ports whose policy is written by hand, not from a spec: listed in conformance.json as they are. */
@@ -1247,8 +1780,148 @@ export const HAND_WRITTEN = [
   {
     id: "react-no-array-index-key",
     upstream: { tool: R, rule: "react/no-array-index-key" },
-    policy: "candidates/rules/react-no-array-index-key.json",
+    policy: "rules/react-no-array-index-key.json",
+    capabilities: ["syntax", "scope", "value", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-iframe-missing-sandbox",
+    upstream: { tool: R, rule: "react/iframe-missing-sandbox" },
+    policy: "rules/react-iframe-missing-sandbox.json",
+    capabilities: ["syntax", "scope", "value", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-jsx-no-constructed-context-values",
+    upstream: { tool: R, rule: "react/jsx-no-constructed-context-values" },
+    policy: "rules/react-jsx-no-constructed-context-values.json",
+    capabilities: ["syntax", "scope", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-jsx-no-leaked-render",
+    upstream: { tool: R, rule: "react/jsx-no-leaked-render" },
+    policy: "rules/react-jsx-no-leaked-render.json",
+    capabilities: ["syntax", "scope", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-jsx-no-script-url",
+    upstream: { tool: R, rule: "react/jsx-no-script-url" },
+    policy: "rules/react-jsx-no-script-url.json",
+    capabilities: ["syntax", "value", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-access-state-in-setstate",
+    upstream: { tool: R, rule: "react/no-access-state-in-setstate" },
+    policy: "rules/react-no-access-state-in-setstate.json",
+    capabilities: ["syntax", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-deprecated",
+    upstream: { tool: R, rule: "react/no-deprecated" },
+    policy: "rules/react-no-deprecated.json",
+    capabilities: ["syntax", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-did-mount-set-state",
+    upstream: { tool: R, rule: "react/no-did-mount-set-state" },
+    policy: "rules/react-no-did-mount-set-state.json",
     capabilities: ["syntax", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-did-update-set-state",
+    upstream: { tool: R, rule: "react/no-did-update-set-state" },
+    policy: "rules/react-no-did-update-set-state.json",
+    capabilities: ["syntax", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-object-type-as-default-prop",
+    upstream: { tool: R, rule: "react/no-object-type-as-default-prop" },
+    policy: "rules/react-no-object-type-as-default-prop.json",
+    capabilities: ["syntax", "scope", "value", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-unknown-property",
+    upstream: { tool: R, rule: "react/no-unknown-property" },
+    policy: "rules/react-no-unknown-property.json",
+    capabilities: ["syntax", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-unsafe",
+    upstream: { tool: R, rule: "react/no-unsafe" },
+    policy: "rules/react-no-unsafe.json",
+    capabilities: ["syntax", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-no-unstable-nested-components",
+    upstream: { tool: R, rule: "react/no-unstable-nested-components" },
+    policy: "rules/react-no-unstable-nested-components.json",
+    capabilities: ["syntax", "scope", "value", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-error-boundaries",
+    upstream: { tool: H, rule: "react-hooks/error-boundaries" },
+    policy: "rules/react-hooks-error-boundaries.json",
+    capabilities: ["syntax", "scope", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-globals",
+    upstream: { tool: H, rule: "react-hooks/globals" },
+    policy: "rules/react-hooks-globals.json",
+    capabilities: ["syntax", "scope", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-immutability",
+    upstream: { tool: H, rule: "react-hooks/immutability" },
+    policy: "candidates/rules/react-hooks-immutability.json",
+    capabilities: ["syntax", "scope", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-purity",
+    upstream: { tool: H, rule: "react-hooks/purity" },
+    policy: "rules/react-hooks-purity.json",
+    capabilities: ["syntax", "scope", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-refs",
+    upstream: { tool: H, rule: "react-hooks/refs" },
+    policy: "candidates/rules/react-hooks-refs.json",
+    capabilities: ["syntax", "scope", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-set-state-in-effect",
+    upstream: { tool: H, rule: "react-hooks/set-state-in-effect" },
+    policy: "rules/react-hooks-set-state-in-effect.json",
+    capabilities: ["syntax", "scope", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-set-state-in-render",
+    upstream: { tool: H, rule: "react-hooks/set-state-in-render" },
+    policy: "rules/react-hooks-set-state-in-render.json",
+    capabilities: ["syntax", "scope", "value", "compare", "suppression"],
+    match: "line+column",
+  },
+  {
+    id: "react-hooks-static-components",
+    upstream: { tool: H, rule: "react-hooks/static-components" },
+    policy: "rules/react-hooks-static-components.json",
+    capabilities: ["syntax", "scope", "compare", "suppression"],
     match: "line+column",
   },
 ];

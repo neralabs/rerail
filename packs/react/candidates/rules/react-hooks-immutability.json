@@ -1,0 +1,3449 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-hooks-immutability",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid mutating props, state, hook results and outer values in React components and hooks, reassigning their locals after render, or reading variables before they are declared.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "hook-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^use[A-Z0-9]"
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^[A-Z]"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^use[A-Z0-9]"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "hook-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "matches": "hook-callee"
+            }
+          },
+          "jsx-node": {
+            "any": [
+              {
+                "kind": "jsx_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              }
+            ]
+          },
+          "own-hooks-or-jsx": {
+            "has": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "matches": "jsx-node"
+                },
+                {
+                  "matches": "hook-call"
+                }
+              ]
+            }
+          },
+          "bad-props-annotation": {
+            "kind": "type_annotation",
+            "has": {
+              "any": [
+                {
+                  "kind": "array_type"
+                },
+                {
+                  "kind": "constructor_type"
+                },
+                {
+                  "kind": "function_type"
+                },
+                {
+                  "kind": "literal_type"
+                },
+                {
+                  "kind": "tuple_type"
+                },
+                {
+                  "kind": "predefined_type",
+                  "regex": "^(?:boolean|number|string|symbol|bigint|never)$"
+                }
+              ]
+            }
+          },
+          "param": {
+            "any": [
+              {
+                "kind": "required_parameter"
+              },
+              {
+                "kind": "optional_parameter"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "object_pattern"
+                  },
+                  {
+                    "kind": "array_pattern"
+                  },
+                  {
+                    "kind": "assignment_pattern"
+                  },
+                  {
+                    "kind": "rest_pattern"
+                  }
+                ],
+                "inside": {
+                  "kind": "formal_parameters"
+                }
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "field": "parameter",
+                  "kind": "arrow_function"
+                }
+              }
+            ]
+          },
+          "rest-param": {
+            "matches": "param",
+            "any": [
+              {
+                "kind": "rest_pattern"
+              },
+              {
+                "has": {
+                  "field": "pattern",
+                  "kind": "rest_pattern"
+                }
+              }
+            ]
+          },
+          "valid-params": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "parameter",
+                  "kind": "identifier"
+                }
+              },
+              {
+                "has": {
+                  "field": "parameters",
+                  "kind": "formal_parameters",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "matches": "param",
+                          "nthChild": {
+                            "position": 3,
+                            "ofRule": {
+                              "matches": "param"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "matches": "param",
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "matches": "param"
+                            }
+                          },
+                          "any": [
+                            {
+                              "matches": "rest-param"
+                            },
+                            {
+                              "has": {
+                                "field": "type",
+                                "matches": "bad-props-annotation"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "has": {
+                              "matches": "param",
+                              "nthChild": {
+                                "position": 2,
+                                "ofRule": {
+                                  "matches": "param"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "param",
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "matches": "param"
+                              }
+                            },
+                            "any": [
+                              {
+                                "kind": "identifier",
+                                "regex": "ref|Ref"
+                              },
+                              {
+                                "has": {
+                                  "field": "pattern",
+                                  "kind": "identifier",
+                                  "regex": "ref|Ref"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "non-node": {
+            "any": [
+              {
+                "kind": "object"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "class"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "number",
+                "regex": "n$"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "non-node"
+                }
+              }
+            ]
+          },
+          "returns-non-node": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "body",
+                  "matches": "non-node"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "kind": "return_statement",
+                  "has": {
+                    "matches": "non-node"
+                  }
+                }
+              }
+            ]
+          },
+          "fn-expr": {
+            "any": [
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "arrow_function"
+              }
+            ]
+          },
+          "memo-callback": {
+            "matches": "fn-expr",
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(?:forwardRef|memo)$"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^React$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "regex": "^(?:forwardRef|memo)$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "named-component": {
+            "any": [
+              {
+                "kind": "function_declaration",
+                "has": {
+                  "field": "name",
+                  "regex": "^[A-Z]"
+                }
+              },
+              {
+                "matches": "fn-expr",
+                "any": [
+                  {
+                    "inside": {
+                      "field": "value",
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^[A-Z]"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "right",
+                      "kind": "assignment_expression",
+                      "has": {
+                        "field": "left",
+                        "kind": "identifier",
+                        "regex": "^[A-Z]"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "value",
+                      "kind": "pair",
+                      "has": {
+                        "field": "key",
+                        "kind": "property_identifier",
+                        "regex": "^[A-Z]"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "named-hook": {
+            "any": [
+              {
+                "kind": "function_declaration",
+                "has": {
+                  "field": "name",
+                  "regex": "^use[A-Z0-9]"
+                }
+              },
+              {
+                "matches": "fn-expr",
+                "any": [
+                  {
+                    "inside": {
+                      "field": "value",
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^use[A-Z0-9]"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "right",
+                      "kind": "assignment_expression",
+                      "has": {
+                        "field": "left",
+                        "kind": "identifier",
+                        "regex": "^use[A-Z0-9]"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "value",
+                      "kind": "pair",
+                      "has": {
+                        "field": "key",
+                        "kind": "property_identifier",
+                        "regex": "^use[A-Z0-9]"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "compiled-fn-core": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "matches": "named-component"
+                  },
+                  {
+                    "matches": "own-hooks-or-jsx"
+                  },
+                  {
+                    "matches": "valid-params"
+                  },
+                  {
+                    "not": {
+                      "matches": "returns-non-node"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "named-hook"
+                  },
+                  {
+                    "matches": "own-hooks-or-jsx"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "matches": "memo-callback"
+                  },
+                  {
+                    "matches": "own-hooks-or-jsx"
+                  }
+                ]
+              }
+            ]
+          },
+          "compiled-fn": {
+            "matches": "compiled-fn-core",
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "matches": "compiled-fn-core"
+                  }
+                ]
+              }
+            }
+          },
+          "react-file": {
+            "kind": "program",
+            "has": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:[A-Z]|use[A-Z0-9])"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "lexical_declaration"
+                        },
+                        {
+                          "kind": "variable_declaration"
+                        }
+                      ],
+                      "has": {
+                        "kind": "variable_declarator",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "regex": "^(?:[A-Z]|use[A-Z0-9])"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "value",
+                              "matches": "fn-expr"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "export_statement",
+                  "has": {
+                    "field": "declaration",
+                    "any": [
+                      {
+                        "kind": "function_declaration",
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:[A-Z]|use[A-Z0-9])"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "lexical_declaration"
+                          },
+                          {
+                            "kind": "variable_declaration"
+                          }
+                        ],
+                        "has": {
+                          "kind": "variable_declarator",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier",
+                                "regex": "^(?:[A-Z]|use[A-Z0-9])"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "matches": "fn-expr"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "export_statement",
+                  "has": {
+                    "field": "value",
+                    "matches": "fn-expr"
+                  }
+                },
+                {
+                  "kind": "export_statement",
+                  "has": {
+                    "field": "declaration",
+                    "kind": "function_declaration",
+                    "not": {
+                      "has": {
+                        "field": "name",
+                        "regex": "."
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "in-react-file": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "react-file"
+            }
+          },
+          "store-target": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "kind": "subscript_expression"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "field": "left",
+                      "any": [
+                        {
+                          "kind": "assignment_expression"
+                        },
+                        {
+                          "kind": "augmented_assignment_expression",
+                          "not": {
+                            "has": {
+                              "field": "operator",
+                              "regex": "^(?:\\|\\||&&|\\?\\?)=$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "argument",
+                      "kind": "update_expression"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "argument",
+                      "kind": "unary_expression",
+                      "has": {
+                        "field": "operator",
+                        "regex": "^delete$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "store-object": {
+            "any": [
+              {
+                "inside": {
+                  "field": "object",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "member_expression"
+                        },
+                        {
+                          "kind": "subscript_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "matches": "store-target"
+                        },
+                        {
+                          "matches": "store-object"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "non_null_expression"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "as_expression"
+                    },
+                    {
+                      "kind": "satisfies_expression"
+                    }
+                  ],
+                  "matches": "store-object"
+                }
+              }
+            ]
+          },
+          "mutation-root": {
+            "kind": "identifier",
+            "matches": "store-object",
+            "not": {
+              "regex": "^ref$|Ref$"
+            }
+          },
+          "pattern-node": {
+            "any": [
+              {
+                "kind": "array_pattern"
+              },
+              {
+                "kind": "object_pattern"
+              },
+              {
+                "kind": "pair_pattern"
+              },
+              {
+                "kind": "assignment_pattern"
+              },
+              {
+                "kind": "object_assignment_pattern"
+              },
+              {
+                "kind": "rest_pattern"
+              }
+            ]
+          },
+          "write-name": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier_pattern"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "field": "left",
+                      "any": [
+                        {
+                          "kind": "assignment_expression"
+                        },
+                        {
+                          "kind": "augmented_assignment_expression"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "field": "argument",
+                      "kind": "update_expression"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "array_pattern"
+                            },
+                            {
+                              "kind": "object_pattern"
+                            },
+                            {
+                              "kind": "pair_pattern"
+                            },
+                            {
+                              "kind": "assignment_pattern"
+                            },
+                            {
+                              "kind": "object_assignment_pattern"
+                            },
+                            {
+                              "kind": "rest_pattern"
+                            }
+                          ]
+                        }
+                      },
+                      "matches": "pattern-node",
+                      "inside": {
+                        "field": "left",
+                        "kind": "assignment_expression"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "rest-name": {
+            "inside": {
+              "kind": "rest_pattern"
+            }
+          },
+          "own-fn-is-compiled": {
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ]
+              },
+              "matches": "fn",
+              "all": [
+                {
+                  "matches": "compiled-fn"
+                }
+              ]
+            }
+          },
+          "frozen-param-site": {
+            "matches": "param",
+            "any": [
+              {
+                "inside": {
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "matches": "compiled-fn",
+                    "all": [
+                      {
+                        "matches": "named-hook"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "matches": "param"
+                  }
+                },
+                "inside": {
+                  "kind": "formal_parameters",
+                  "inside": {
+                    "matches": "compiled-fn",
+                    "not": {
+                      "matches": "named-hook"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "ref-hook-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^useRef$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "property",
+                    "regex": "^useRef$"
+                  }
+                }
+              ]
+            }
+          },
+          "frozen-value": {
+            "any": [
+              {
+                "matches": "hook-call",
+                "not": {
+                  "matches": "ref-hook-call"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "non_null_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  }
+                ],
+                "has": {
+                  "matches": "frozen-value"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
+                  },
+                  {
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "frozen-value"
+                }
+              },
+              {
+                "matches": "frozen-ident"
+              }
+            ]
+          },
+          "frozen-declarator": {
+            "kind": "variable_declarator",
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "matches": "frozen-value"
+                }
+              },
+              {
+                "matches": "own-fn-is-compiled"
+              }
+            ]
+          },
+          "frozen-ident": {
+            "kind": "identifier",
+            "not": {
+              "regex": "^ref$|Ref$"
+            },
+            "all": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "matches": "frozen-param-site"
+                        },
+                        {
+                          "matches": "frozen-declarator"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "any": [
+                          {
+                            "matches": "write-name"
+                          },
+                          {
+                            "matches": "rest-name"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "reassign-name": {
+            "matches": "write-name",
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "argument",
+                    "kind": "update_expression"
+                  }
+                },
+                {
+                  "inside": {
+                    "field": "left",
+                    "kind": "augmented_assignment_expression",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(?:\\|\\||&&|\\?\\?)=$"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "captured-frozen-param": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              }
+            ],
+            "all": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "frozen-param-site"
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "inside": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            },
+                            {
+                              "kind": "function_expression"
+                            },
+                            {
+                              "kind": "generator_function"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "method_definition"
+                            }
+                          ]
+                        },
+                        "matches": "fn",
+                        "not": {
+                          "matches": "compiled-fn"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "component-body": {
+            "kind": "statement_block",
+            "inside": {
+              "matches": "compiled-fn"
+            }
+          },
+          "used-fn": {
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "value",
+                    "kind": "variable_declarator",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "binds": {
+                        "used": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "function_declaration",
+                  "has": {
+                    "field": "name",
+                    "binds": {
+                      "used": false
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "fn-body-stop": {
+            "any": [
+              {
+                "matches": "fn"
+              },
+              {
+                "kind": "statement_block",
+                "inside": {
+                  "matches": "fn"
+                }
+              }
+            ]
+          },
+          "manual-memo-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^use(?:Callback|Memo)$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^use(?:Callback|Memo)$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "callback-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^useCallback$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^useCallback$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "memo-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^useMemo$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^useMemo$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "frozen-closure": {
+            "matches": "fn",
+            "any": [
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "hook-call",
+                    "not": {
+                      "matches": "memo-call"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "jsx_expression",
+                  "any": [
+                    {
+                      "inside": {
+                        "kind": "jsx_attribute"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "jsx_element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "declaration-statement": {
+            "any": [
+              {
+                "kind": "lexical_declaration"
+              },
+              {
+                "kind": "variable_declaration"
+              },
+              {
+                "kind": "function_declaration"
+              }
+            ]
+          },
+          "body-declaration-site": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "inside": {
+                  "matches": "declaration-statement",
+                  "inside": {
+                    "matches": "component-body"
+                  }
+                },
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "value",
+                        "matches": "ref-hook-call"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "name",
+                        "regex": "^ref$|Ref$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "function_declaration",
+                "inside": {
+                  "matches": "component-body"
+                }
+              }
+            ]
+          },
+          "same-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "pattern": "$N2",
+            "all": [
+              {
+                "compare": {
+                  "left": "N2",
+                  "op": "eq",
+                  "right": "N",
+                  "text": "name"
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "pattern": "$SITE2",
+                      "compare": {
+                        "left": "SITE2",
+                        "op": "eq",
+                        "right": "SITE",
+                        "text": "node"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "capturing-ref": {
+            "matches": "same-ref",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "member_expression"
+                        },
+                        {
+                          "kind": "subscript_expression"
+                        },
+                        {
+                          "kind": "non_null_expression"
+                        }
+                      ]
+                    }
+                  },
+                  "any": [
+                    {
+                      "kind": "arguments"
+                    },
+                    {
+                      "kind": "return_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "field": "function",
+                  "kind": "call_expression"
+                }
+              },
+              {
+                "inside": {
+                  "field": "object",
+                  "kind": "member_expression",
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression"
+                  }
+                }
+              }
+            ]
+          },
+          "has-same-ref": {
+            "any": [
+              {
+                "matches": "same-ref"
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "same-ref"
+                }
+              }
+            ]
+          },
+          "deps-array": {
+            "kind": "array",
+            "nthChild": 2,
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "matches": "manual-memo-call"
+              }
+            }
+          },
+          "first-ref": {
+            "not": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "has-same-ref"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "has-same-ref"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "before-declaration": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "inside": {
+                    "matches": "component-body"
+                  },
+                  "precedes": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "pattern": "$D",
+                        "compare": {
+                          "left": "D",
+                          "op": "eq",
+                          "right": "SITE",
+                          "text": "node"
+                        }
+                      },
+                      {
+                        "has": {
+                          "kind": "variable_declarator",
+                          "pattern": "$D",
+                          "compare": {
+                            "left": "D",
+                            "op": "eq",
+                            "right": "SITE",
+                            "text": "node"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "variable_declarator",
+                  "pattern": "$D",
+                  "compare": {
+                    "left": "D",
+                    "op": "eq",
+                    "right": "SITE",
+                    "text": "node"
+                  }
+                }
+              }
+            ]
+          },
+          "depth1-fn": {
+            "matches": "fn",
+            "all": [
+              {
+                "not": {
+                  "matches": "compiled-fn"
+                }
+              },
+              {
+                "matches": "own-fn-is-compiled"
+              }
+            ]
+          },
+          "local-declarator": {
+            "kind": "variable_declarator",
+            "all": [
+              {
+                "matches": "own-fn-is-compiled"
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "value",
+                    "matches": "ref-hook-call"
+                  }
+                }
+              }
+            ]
+          },
+          "let-declarator": {
+            "matches": "local-declarator",
+            "any": [
+              {
+                "inside": {
+                  "kind": "lexical_declaration",
+                  "has": {
+                    "field": "kind",
+                    "regex": "^let$"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "variable_declaration"
+                }
+              }
+            ]
+          },
+          "mutable-init": {
+            "any": [
+              {
+                "kind": "object"
+              },
+              {
+                "kind": "array"
+              },
+              {
+                "kind": "new_expression"
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "not": {
+                    "regex": "^(?:use[A-Z0-9]|[A-Z])"
+                  }
+                }
+              }
+            ]
+          },
+          "freezing-position": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "hook-call",
+                    "not": {
+                      "matches": "memo-call"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "jsx_expression",
+                  "any": [
+                    {
+                      "inside": {
+                        "kind": "jsx_attribute"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "jsx_element"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "handed-on": {
+            "resolves": {
+              "binding": {
+                "occurrence": {
+                  "any": [
+                    {
+                      "matches": "freezing-position"
+                    },
+                    {
+                      "inside": {
+                        "kind": "array",
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "matches": "hook-call",
+                            "not": {
+                              "regex": "^(?:React\\.)?use(?:Effect|LayoutEffect|InsertionEffect|Callback|Memo)\\b"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "local-reassign": {
+            "all": [
+              {
+                "matches": "reassign-name"
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "let-declarator"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "local-store": {
+            "all": [
+              {
+                "matches": "local-store-root"
+              },
+              {
+                "matches": "local-store-variable"
+              }
+            ]
+          },
+          "local-store-root": {
+            "any": [
+              {
+                "matches": "mutation-root"
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "kind": "member_expression",
+                  "field": "object",
+                  "has": {
+                    "field": "property",
+                    "regex": "^(?:push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin|set|add|delete|clear)$"
+                  },
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression"
+                  }
+                }
+              }
+            ]
+          },
+          "local-store-variable": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "matches": "local-declarator",
+                              "has": {
+                                "field": "value",
+                                "matches": "mutable-init"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "matches": "handed-on"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "matches": "local-declarator",
+                              "pattern": "$LSITE"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "matches": "before-local-declaration"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "before-local-declaration": {
+            "inside": {
+              "stopBy": "end",
+              "inside": {
+                "matches": "component-body"
+              },
+              "precedes": {
+                "stopBy": "end",
+                "has": {
+                  "kind": "variable_declarator",
+                  "pattern": "$LD",
+                  "compare": {
+                    "left": "LD",
+                    "op": "eq",
+                    "right": "LSITE",
+                    "text": "node"
+                  }
+                }
+              }
+            }
+          },
+          "local-mutation": {
+            "any": [
+              {
+                "matches": "local-reassign"
+              },
+              {
+                "matches": "local-store"
+              }
+            ]
+          },
+          "frozen-depth1-fn": {
+            "matches": "depth1-fn",
+            "any": [
+              {
+                "matches": "frozen-closure"
+              },
+              {
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "matches": "frozen-name"
+                  }
+                }
+              }
+            ]
+          },
+          "frozen-name": {
+            "kind": "identifier",
+            "binds": {
+              "occurrence": {
+                "matches": "freezing-position"
+              }
+            }
+          },
+          "shared-with-other-fn": {
+            "resolves": {
+              "binding": {
+                "occurrence": {
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            },
+                            {
+                              "kind": "function_expression"
+                            },
+                            {
+                              "kind": "generator_function"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "method_definition"
+                            }
+                          ]
+                        },
+                        "any": [
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          }
+                        ],
+                        "not": {
+                          "matches": "compiled-fn"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "inside": {
+                          "stopBy": "end",
+                          "pattern": "$F3",
+                          "compare": {
+                            "left": "F3",
+                            "op": "eq",
+                            "right": "F",
+                            "text": "node"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "mutating-fn": {
+            "matches": "depth1-fn",
+            "pattern": "$F",
+            "has": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ]
+              },
+              "all": [
+                {
+                  "matches": "local-mutation"
+                },
+                {
+                  "not": {
+                    "matches": "shared-with-other-fn"
+                  }
+                }
+              ]
+            }
+          },
+          "mutating-fn-name": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "matches": "own-fn-is-compiled",
+                  "has": {
+                    "field": "value",
+                    "matches": "mutating-fn"
+                  },
+                  "pattern": "$SITE"
+                }
+              }
+            }
+          },
+          "reassigning-fn": {
+            "matches": "depth1-fn",
+            "has": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ]
+              },
+              "matches": "local-reassign"
+            }
+          },
+          "async-fn": {
+            "matches": "fn",
+            "has": {
+              "regex": "^async$"
+            }
+          },
+          "outer-ident": {
+            "kind": "identifier",
+            "any": [
+              {
+                "not": {
+                  "resolves": {
+                    "binding": {}
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "scope": [
+                      "module",
+                      "global"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "non-hook-call": {
+            "kind": "call_expression",
+            "not": {
+              "matches": "hook-call"
+            }
+          },
+          "called-fn-name": {
+            "kind": "identifier",
+            "binds": {
+              "occurrence": {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "field": "function",
+                          "kind": "call_expression"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "matches": "non-hook-call"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "own-fn-is-compiled"
+                  }
+                ]
+              }
+            }
+          },
+          "render-fn": {
+            "matches": "depth1-fn",
+            "any": [
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "any": [
+                      {
+                        "matches": "non-hook-call"
+                      },
+                      {
+                        "matches": "memo-call"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "matches": "called-fn-name"
+                  }
+                }
+              },
+              {
+                "kind": "function_declaration",
+                "has": {
+                  "field": "name",
+                  "matches": "called-fn-name"
+                }
+              }
+            ]
+          },
+          "memo-callback-fn": {
+            "matches": "depth1-fn",
+            "nthChild": 1,
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "matches": "memo-call"
+              }
+            }
+          },
+          "memo-body": {
+            "kind": "statement_block",
+            "inside": {
+              "matches": "memo-callback-fn"
+            }
+          },
+          "memo-let-declarator": {
+            "kind": "variable_declarator",
+            "inside": {
+              "kind": "lexical_declaration",
+              "has": {
+                "field": "kind",
+                "regex": "^let$"
+              },
+              "inside": {
+                "matches": "memo-body"
+              }
+            }
+          },
+          "memo-local-reassign": {
+            "all": [
+              {
+                "matches": "reassign-name"
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "matches": "let-declarator"
+                        },
+                        {
+                          "matches": "memo-let-declarator"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memo-result-last-name": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier"
+              },
+              {
+                "kind": "pair",
+                "has": {
+                  "field": "value",
+                  "kind": "identifier",
+                  "pattern": "$LAST"
+                }
+              }
+            ],
+            "nthChild": {
+              "position": 1,
+              "reverse": true,
+              "ofRule": {
+                "any": [
+                  {
+                    "kind": "pair"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier"
+                  },
+                  {
+                    "kind": "spread_element"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "frozen-mutation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$V",
+            "all": [
+              {
+                "matches": "mutation-root"
+              },
+              {
+                "matches": "frozen-ident"
+              },
+              {
+                "matches": "in-react-file"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "own-fn-is-compiled"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_declaration"
+                          },
+                          {
+                            "kind": "generator_function_declaration"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          },
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "method_definition"
+                          }
+                        ]
+                      },
+                      "matches": "fn",
+                      "all": [
+                        {
+                          "not": {
+                            "matches": "compiled-fn"
+                          }
+                        },
+                        {
+                          "matches": "own-fn-is-compiled"
+                        },
+                        {
+                          "matches": "used-fn"
+                        }
+                      ]
+                    },
+                    "not": {
+                      "inside": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            },
+                            {
+                              "kind": "function_expression"
+                            },
+                            {
+                              "kind": "generator_function"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "method_definition"
+                            },
+                            {
+                              "kind": "statement_block",
+                              "inside": {
+                                "any": [
+                                  {
+                                    "kind": "function_declaration"
+                                  },
+                                  {
+                                    "kind": "generator_function_declaration"
+                                  },
+                                  {
+                                    "kind": "function_expression"
+                                  },
+                                  {
+                                    "kind": "generator_function"
+                                  },
+                                  {
+                                    "kind": "arrow_function"
+                                  },
+                                  {
+                                    "kind": "method_definition"
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "follows": {
+                          "stopBy": "end",
+                          "has": {
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                },
+                                {
+                                  "kind": "generator_function"
+                                },
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "method_definition"
+                                }
+                              ]
+                            },
+                            "matches": "mutation-root",
+                            "pattern": "$W",
+                            "compare": {
+                              "left": "W",
+                              "op": "eq",
+                              "right": "V",
+                              "text": "name"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Copy `$V` into a new local value and change the copy; props, state, context and hook results must not be mutated.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "param-reassign",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "$P",
+            "all": [
+              {
+                "matches": "reassign-name"
+              },
+              {
+                "matches": "captured-frozen-param"
+              },
+              {
+                "matches": "own-fn-is-compiled"
+              },
+              {
+                "matches": "in-react-file"
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "component-body",
+                  "has": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        }
+                      ]
+                    },
+                    "pattern": "$FIRST",
+                    "all": [
+                      {
+                        "matches": "reassign-name"
+                      },
+                      {
+                        "compare": {
+                          "left": "FIRST",
+                          "op": "eq",
+                          "right": "P",
+                          "text": "name"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.FIRST",
+        "code": "react-hooks/immutability",
+        "message": "Assign the new value to a new local variable instead of reassigning the parameter `$P`; a component's props and a hook's arguments must not be modified.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "param-reassign-closure",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "$P",
+            "all": [
+              {
+                "matches": "reassign-name"
+              },
+              {
+                "matches": "captured-frozen-param"
+              },
+              {
+                "matches": "in-react-file"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "matches": "fn",
+                  "all": [
+                    {
+                      "not": {
+                        "matches": "compiled-fn"
+                      }
+                    },
+                    {
+                      "matches": "own-fn-is-compiled"
+                    },
+                    {
+                      "matches": "used-fn"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        },
+                        {
+                          "kind": "statement_block",
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "kind": "method_definition"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            },
+                            {
+                              "kind": "function_expression"
+                            },
+                            {
+                              "kind": "generator_function"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "method_definition"
+                            }
+                          ]
+                        },
+                        "pattern": "$W",
+                        "all": [
+                          {
+                            "matches": "reassign-name"
+                          },
+                          {
+                            "compare": {
+                              "left": "W",
+                              "op": "eq",
+                              "right": "P",
+                              "text": "name"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Assign the new value to a new local variable instead of reassigning the parameter `$P`; a component's props and a hook's arguments must not be modified.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "read-before-declaration",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "pattern": "$N",
+            "all": [
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "matches": "body-declaration-site",
+                      "pattern": "$SITE"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "unary_expression",
+                    "has": {
+                      "field": "operator",
+                      "regex": "^typeof$"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "matches": "fn",
+                          "all": [
+                            {
+                              "matches": "frozen-closure"
+                            },
+                            {
+                              "matches": "own-fn-is-compiled"
+                            },
+                            {
+                              "has": {
+                                "stopBy": "end",
+                                "matches": "capturing-ref"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "matches": "before-declaration"
+                      },
+                      {
+                        "not": {
+                          "inside": {
+                            "stopBy": "end",
+                            "matches": "fn",
+                            "inside": {
+                              "kind": "arguments",
+                              "inside": {
+                                "matches": "manual-memo-call",
+                                "has": {
+                                  "field": "arguments",
+                                  "has": {
+                                    "matches": "deps-array",
+                                    "has": {
+                                      "matches": "same-ref"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "matches": "first-ref"
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "inside": {
+                          "kind": "array",
+                          "matches": "deps-array",
+                          "inside": {
+                            "kind": "arguments",
+                            "inside": {
+                              "matches": "callback-call"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "matches": "before-declaration"
+                      },
+                      {
+                        "inside": {
+                          "kind": "array",
+                          "inside": {
+                            "kind": "arguments",
+                            "has": {
+                              "nthChild": 1,
+                              "matches": "fn",
+                              "has": {
+                                "stopBy": "end",
+                                "matches": "same-ref"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "matches": "has-same-ref"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "array",
+                          "inside": {
+                            "kind": "arguments",
+                            "inside": {
+                              "matches": "first-ref"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "in-react-file"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Move the declaration of `$N` above the code that reads it; a function the component passes on reads it before it is declared.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "mutating-function-handed-on",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "frozen-closure"
+              },
+              {
+                "matches": "mutating-fn"
+              },
+              {
+                "matches": "in-react-file"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Keep this value in state or a ref instead of a local variable; this function changes a local variable after render, which the next render does not see.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "mutating-function-name-handed-on",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "$N",
+            "all": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "matches": "freezing-position"
+              },
+              {
+                "matches": "mutating-fn-name"
+              },
+              {
+                "matches": "in-react-file"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": "same-ref",
+                        "all": [
+                          {
+                            "matches": "freezing-position"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Keep this value in state or a ref instead of a local variable; this function changes a local variable after render, which the next render does not see.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reassign-after-render",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "$X",
+            "all": [
+              {
+                "matches": "local-reassign"
+              },
+              {
+                "matches": "in-react-file"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "matches": "reassigning-fn",
+                  "pattern": "$F",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "matches": "frozen-depth1-fn"
+                        },
+                        {
+                          "matches": "async-fn"
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "inside": {
+                          "stopBy": "end",
+                          "matches": "component-body",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "reassigning-fn",
+                            "pattern": "$G",
+                            "compare": {
+                              "left": "G",
+                              "op": "ne",
+                              "right": "F",
+                              "text": "node"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        },
+                        {
+                          "kind": "statement_block",
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "kind": "method_definition"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "local-reassign"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                },
+                                {
+                                  "kind": "generator_function"
+                                },
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "method_definition"
+                                }
+                              ]
+                            },
+                            "matches": "local-reassign"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Keep `$X` in state or a ref instead of a local variable; reassigning it after render is lost on the next render.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "outer-mutation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$G",
+            "all": [
+              {
+                "matches": "mutation-root"
+              },
+              {
+                "matches": "outer-ident"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "any": [
+                    {
+                      "matches": "compiled-fn"
+                    },
+                    {
+                      "matches": "render-fn"
+                    }
+                  ]
+                }
+              },
+              {
+                "matches": "in-react-file"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Move this change to `$G` into an effect or a handler passed straight to JSX; code that may run during render must not change values defined outside the component.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reassign-in-memo-result",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "$X",
+            "all": [
+              {
+                "matches": "memo-local-reassign"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "any": [
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "function_expression"
+                    }
+                  ],
+                  "inside": {
+                    "field": "value",
+                    "kind": "variable_declarator",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "pattern": "$G"
+                    },
+                    "inside": {
+                      "kind": "lexical_declaration",
+                      "inside": {
+                        "matches": "memo-body",
+                        "has": {
+                          "kind": "return_statement",
+                          "has": {
+                            "any": [
+                              {
+                                "kind": "object"
+                              },
+                              {
+                                "kind": "parenthesized_expression",
+                                "has": {
+                                  "kind": "object"
+                                }
+                              }
+                            ],
+                            "has": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "object"
+                                }
+                              },
+                              "all": [
+                                {
+                                  "matches": "memo-result-last-name"
+                                },
+                                {
+                                  "any": [
+                                    {
+                                      "kind": "shorthand_property_identifier",
+                                      "pattern": "$LAST2",
+                                      "compare": {
+                                        "left": "LAST2",
+                                        "op": "eq",
+                                        "right": "G",
+                                        "text": "name"
+                                      }
+                                    },
+                                    {
+                                      "compare": {
+                                        "left": "LAST",
+                                        "op": "eq",
+                                        "right": "G",
+                                        "text": "name"
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        },
+                        {
+                          "kind": "statement_block",
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "kind": "method_definition"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "memo-local-reassign"
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                },
+                                {
+                                  "kind": "generator_function"
+                                },
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "method_definition"
+                                }
+                              ]
+                            },
+                            "matches": "memo-local-reassign"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "component-body",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "reassigning-fn"
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "in-react-file"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Keep `$X` in state or a ref instead of a local variable; reassigning it after render is lost on the next render.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

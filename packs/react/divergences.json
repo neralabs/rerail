@@ -30,5 +30,69 @@
   "line": 5,
   "kind": "not-comparable",
   "evidence": "The file's package.json depends on vue and on no React library, and `useId` is Vue's (`import { useId } from 'vue'`), not a React Hook. eslint-plugin-react-hooks treats every `use*` call as a React Hook on every file the generator's config enables it on; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and a Vue-only package's is another library's."
+ },
+ {
+  "rule": "react-no-danger",
+  "source": "samples",
+  "path": "polar-clients-apps-web-src-app-layout.tsx-6042465bb26a/clients/apps/web/src/app/layout.tsx",
+  "line": 60,
+  "kind": "not-comparable",
+  "evidence": "The line before carries `// oxlint-disable-next-line react/no-danger`. ESLint reads no `oxlint-disable` comment and reports the `dangerouslySetInnerHTML`; the port carries `suppress.oxlint` `no-danger` (Oxlint 1.88.0 implements react/no-danger and matches a directive name with a `/` by its part after the last `/`), so the comment silences it as it silences Oxlint, by design (docs/pack-format.md, check 4)."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "primitives-packages-react-avatar-src-avatar.tsx-eccd085891f5/packages/react/avatar/src/avatar.tsx",
+  "line": 198,
+  "kind": "not-comparable",
+  "evidence": "Lines 195-223 sit between `// oxlint-disable react-hooks/rules-of-hooks` (line 194) and `// oxlint-enable react-hooks/rules-of-hooks` (line 224). ESLint reads no `oxlint-disable` comment and reports the conditional Hook call; the port carries `suppress.oxlint` `rules-of-hooks` (Oxlint 1.88.0 implements react-hooks/rules-of-hooks and matches a directive name with a `/` by its part after the last `/`), so the block silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). With the two comments renamed the port reports all four lines."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "primitives-packages-react-avatar-src-avatar.tsx-eccd085891f5/packages/react/avatar/src/avatar.tsx",
+  "line": 200,
+  "kind": "not-comparable",
+  "evidence": "Lines 195-223 sit between `// oxlint-disable react-hooks/rules-of-hooks` (line 194) and `// oxlint-enable react-hooks/rules-of-hooks` (line 224). ESLint reads no `oxlint-disable` comment and reports the conditional Hook call; the port carries `suppress.oxlint` `rules-of-hooks` (Oxlint 1.88.0 implements react-hooks/rules-of-hooks and matches a directive name with a `/` by its part after the last `/`), so the block silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). With the two comments renamed the port reports all four lines."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "primitives-packages-react-avatar-src-avatar.tsx-eccd085891f5/packages/react/avatar/src/avatar.tsx",
+  "line": 201,
+  "kind": "not-comparable",
+  "evidence": "Lines 195-223 sit between `// oxlint-disable react-hooks/rules-of-hooks` (line 194) and `// oxlint-enable react-hooks/rules-of-hooks` (line 224). ESLint reads no `oxlint-disable` comment and reports the conditional Hook call; the port carries `suppress.oxlint` `rules-of-hooks` (Oxlint 1.88.0 implements react-hooks/rules-of-hooks and matches a directive name with a `/` by its part after the last `/`), so the block silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). With the two comments renamed the port reports all four lines."
+ },
+ {
+  "rule": "react-hooks-rules-of-hooks",
+  "source": "samples",
+  "path": "primitives-packages-react-avatar-src-avatar.tsx-eccd085891f5/packages/react/avatar/src/avatar.tsx",
+  "line": 216,
+  "kind": "not-comparable",
+  "evidence": "Lines 195-223 sit between `// oxlint-disable react-hooks/rules-of-hooks` (line 194) and `// oxlint-enable react-hooks/rules-of-hooks` (line 224). ESLint reads no `oxlint-disable` comment and reports the conditional Hook call; the port carries `suppress.oxlint` `rules-of-hooks` (Oxlint 1.88.0 implements react-hooks/rules-of-hooks and matches a directive name with a `/` by its part after the last `/`), so the block silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). With the two comments renamed the port reports all four lines."
+ },
+ {
+  "rule": "react-no-array-index-key",
+  "source": "samples",
+  "path": "streamlit-frontend-lib-src-components-widgets-dateinput-reorderedsegments.tsx-ab7f6c2959b5/frontend/lib/src/components/widgets/DateInput/ReorderedSegments.tsx",
+  "line": 85,
+  "kind": "not-comparable",
+  "evidence": "The line before carries `// eslint-disable-next-line @eslint-react/no-array-index-key`, which names another plugin's rule, so ESLint reports the index in the key. The port carries `suppress.oxlint` `no-array-index-key` (Oxlint 1.88.0 implements react/no-array-index-key, reads `eslint-disable` comments and matches a directive name with a `/` by its part after the last `/`), so the comment silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). Without `suppress.oxlint` the port reports 85:33, as ESLint does."
+ },
+ {
+  "rule": "react-hooks-exhaustive-deps",
+  "source": "samples",
+  "path": "react-spectrum-packages-react-spectrum-ai-src-usevoiceinput.ts-91549941c384/packages/@react-spectrum/ai/src/useVoiceInput.ts",
+  "line": 294,
+  "kind": "not-comparable",
+  "evidence": "The line before carries `// oxlint-disable-next-line react-hooks/exhaustive-deps`. ESLint reads no `oxlint-disable` comment and reports the two useEffectEvent functions in the dependency array; the port carries `suppress.oxlint` `exhaustive-deps` (Oxlint 1.88.0 implements react-hooks/exhaustive-deps and matches a directive name with a `/` by its part after the last `/`), so the comment silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). Without `suppress.oxlint` the port reports 294:19 and 294:32, as ESLint does."
+ },
+ {
+  "rule": "react-hooks-set-state-in-effect",
+  "source": "samples",
+  "path": "polar-clients-apps-web-src-components-benefit-benefitgrant.tsx-47f93513c55e/clients/apps/web/src/components/Benefit/BenefitGrant.tsx",
+  "line": 134,
+  "kind": "not-comparable",
+  "evidence": "Line 113 carries the block comment `/* oxlint-disable react-hooks/set-state-in-effect -- initializes countdown then starts interval */`, which disables the rule for the rest of the file. ESLint reads no `oxlint-disable` comment and reports `setRetryCountdown(remaining)`; the port carries `suppress.oxlint` `set-state-in-effect` (Oxlint 1.88.0 implements react-hooks/set-state-in-effect and matches a directive name with a `/` by its part after the last `/`), so the comment silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). With the comment renamed the port reports 134:5, as ESLint does."
  }
 ]

@@ -1807,7 +1807,14 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "kind": "identifier",
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
             "all": [
               {
                 "inside": {

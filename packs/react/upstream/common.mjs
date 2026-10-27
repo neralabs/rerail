@@ -20,30 +20,57 @@ export const PINS = {
   typescript: "5.9.3",
 };
 
-/** The chosen upstream rules, per tool (the pack's `tools[].name`). Every expected-findings run enables all of them. */
+/**
+ * The chosen upstream rules, per tool (the pack's `tools[].name`). Every expected-findings run enables all of them. The hooks
+ * plugin's React Compiler rules have no RuleTester cases of their own here (upstream tests them through the compiler's
+ * fixtures), so their answers come from the hooks rules' cases, and the real-code samples.
+ */
 export const RULES = {
   "eslint-plugin-react": [
     "react/button-has-type",
+    "react/iframe-missing-sandbox",
     "react/jsx-key",
     "react/jsx-no-comment-textnodes",
+    "react/jsx-no-constructed-context-values",
     "react/jsx-no-duplicate-props",
+    "react/jsx-no-leaked-render",
+    "react/jsx-no-script-url",
     "react/jsx-no-target-blank",
     "react/jsx-no-undef",
+    "react/no-access-state-in-setstate",
     "react/no-array-index-key",
     "react/no-children-prop",
     "react/no-danger",
     "react/no-danger-with-children",
+    "react/no-deprecated",
+    "react/no-did-mount-set-state",
+    "react/no-did-update-set-state",
     "react/no-direct-mutation-state",
     "react/no-find-dom-node",
     "react/no-is-mounted",
+    "react/no-object-type-as-default-prop",
     "react/no-render-return-value",
     "react/no-string-refs",
     "react/no-unescaped-entities",
+    "react/no-unknown-property",
+    "react/no-unsafe",
+    "react/no-unstable-nested-components",
     "react/react-in-jsx-scope",
     "react/self-closing-comp",
     "react/void-dom-elements-no-children",
   ],
-  "eslint-plugin-react-hooks": ["react-hooks/rules-of-hooks", "react-hooks/exhaustive-deps"],
+  "eslint-plugin-react-hooks": [
+    "react-hooks/rules-of-hooks",
+    "react-hooks/exhaustive-deps",
+    "react-hooks/error-boundaries",
+    "react-hooks/globals",
+    "react-hooks/immutability",
+    "react-hooks/purity",
+    "react-hooks/refs",
+    "react-hooks/set-state-in-effect",
+    "react-hooks/set-state-in-render",
+    "react-hooks/static-components",
+  ],
 };
 export const ALL_RULES = Object.values(RULES).flat();
 

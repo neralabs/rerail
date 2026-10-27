@@ -32,21 +32,36 @@ rules:
   "react/button-has-type":
     deprecated: null
     recommended: null
+  "react/iframe-missing-sandbox":
+    deprecated: null
+    recommended: null
   "react/jsx-key":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
   "react/jsx-no-comment-textnodes":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
+  "react/jsx-no-constructed-context-values":
+    deprecated: null
+    recommended: null
   "react/jsx-no-duplicate-props":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
+  "react/jsx-no-leaked-render":
+    deprecated: null
+    recommended: null
+  "react/jsx-no-script-url":
+    deprecated: null
+    recommended: null
   "react/jsx-no-target-blank":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
   "react/jsx-no-undef":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
+  "react/no-access-state-in-setstate":
+    deprecated: null
+    recommended: null
   "react/no-array-index-key":
     deprecated: null
     recommended: null
@@ -59,6 +74,15 @@ rules:
   "react/no-danger-with-children":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
+  "react/no-deprecated":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-did-mount-set-state":
+    deprecated: null
+    recommended: null
+  "react/no-did-update-set-state":
+    deprecated: null
+    recommended: null
   "react/no-direct-mutation-state":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
@@ -68,6 +92,9 @@ rules:
   "react/no-is-mounted":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
+  "react/no-object-type-as-default-prop":
+    deprecated: null
+    recommended: null
   "react/no-render-return-value":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
@@ -77,6 +104,15 @@ rules:
   "react/no-unescaped-entities":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
+  "react/no-unknown-property":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-unsafe":
+    deprecated: null
+    recommended: null
+  "react/no-unstable-nested-components":
+    deprecated: null
+    recommended: null
   "react/react-in-jsx-scope":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
