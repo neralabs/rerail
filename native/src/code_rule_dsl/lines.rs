@@ -99,6 +99,11 @@ impl LineTable {
         Self { starts, ends }
     }
 
+    /// Byte offset of each line's first byte.
+    pub(crate) fn starts(&self) -> &[usize] {
+        &self.starts
+    }
+
     /// The 0-based line holding `byte`; a terminator's bytes belong to the line they end.
     pub(crate) fn line(&self, byte: usize) -> usize {
         self.starts.partition_point(|start| *start <= byte) - 1

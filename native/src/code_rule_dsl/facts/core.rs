@@ -212,5 +212,67 @@ impl Facts {
     }
 }
 
+/// The columns a resident tape carries beside it (03 §5; PIAT spec §20 sidecars): `par`, `cidx`
+/// and `cidx_named` (a node's position among its parent's children, all and named only; the
+/// root's is 0) and line starts. They are a function of the tape, so they are keyed by its digest
+/// and rebuilt on demand, never stored as rows. `tid` and text hashes join them with the
+/// vocabulary (Phase 3).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Sidecars {
+    pub par: Box<[u32]>,
+    pub cidx: Box<[u32]>,
+    pub cidx_named: Box<[u32]>,
+    pub line_starts: Box<[u32]>,
+}
+
+impl Sidecars {
+    pub(crate) fn of(f: &Facts) -> Self {
+        let mut cidx = vec![0; f.len()];
+        let mut cidx_named = vec![0; f.len()];
+        for parent in 0..f.len() as u32 {
+            let mut named = 0;
+            for (position, &child) in f.children(parent).iter().enumerate() {
+                cidx[child as usize] = position as u32;
+                cidx_named[child as usize] = named;
+                named += u32::from(f.named(child));
+            }
+        }
+        Self {
+            par: f.parent.clone().into(),
+            cidx: cidx.into(),
+            cidx_named: cidx_named.into(),
+            line_starts: f.lines.starts().iter().map(|&start| start as u32).collect(),
+        }
+    }
+
+    pub(crate) fn bytes(&self) -> usize {
+        4 * (self.par.len() + self.cidx.len() + self.cidx_named.len() + self.line_starts.len())
+    }
+}
+
+/// The digest of a file's core facts: every column a reader can see, and the source their spans
+/// read text from, so equal digests mean equal facts (the core derivation's output, `families`).
+/// Cutoff on an edit happens in the narrower families that read these, not here.
+pub(crate) fn digest(f: &Facts) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.core-facts/v1\0");
+    hash.update((f.source.len() as u64).to_le_bytes());
+    hash.update(f.source.as_bytes());
+    hash.update((f.len() as u64).to_le_bytes());
+    for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
+        hash.update((column.len() as u64).to_le_bytes());
+        for value in column.iter() {
+            hash.update(value.to_le_bytes());
+        }
+    }
+    hash.update(&f.flags);
+    for field in &f.field {
+        hash.update(field.to_le_bytes());
+    }
+    hash.update([u8::from(f.syntax_errors)]);
+    hash.finalize().into()
+}
+
 #[cfg(test)]
 mod tests;

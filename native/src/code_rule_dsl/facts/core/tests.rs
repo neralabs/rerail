@@ -58,3 +58,33 @@ fn every_dialect_reads_its_own_grammar_and_kinds_never_collide() {
     assert_ne!(p, t);
     assert!(python.kind.iter().all(|kind| kind / KIND_STRIDE == p));
 }
+
+#[test]
+fn sidecars_give_each_node_its_parent_and_position_among_siblings() {
+    let f = facts("a.py", "python", "f(a, b)\ng()\n");
+    let sidecars = Sidecars::of(&f);
+    assert_eq!(&*sidecars.par, &f.parent[..]);
+    assert_eq!(&*sidecars.line_starts, [0, 8, 12]);
+    for parent in 0..f.len() as u32 {
+        let named = f.children(parent).iter().filter(|&&child| f.named(child)).copied().collect::<Vec<_>>();
+        for (position, &child) in f.children(parent).iter().enumerate() {
+            assert_eq!(sidecars.cidx[child as usize] as usize, position);
+        }
+        for (position, &child) in named.iter().enumerate() {
+            assert_eq!(sidecars.cidx_named[child as usize] as usize, position);
+        }
+    }
+    let b = f.of_kind(atom("python", "identifier")).iter().copied().find(|&id| f.text(id) == "b").unwrap();
+    // `(`, `a`, `,`, `b`: b is the fourth child and the second named one.
+    assert_eq!((sidecars.cidx[b as usize], sidecars.cidx_named[b as usize]), (3, 1));
+    assert_eq!(sidecars.bytes(), 4 * (3 * f.len() + 3));
+}
+
+#[test]
+fn the_digest_is_of_the_content_not_the_path() {
+    let a = digest(&facts("a.py", "python", "x = 1\n"));
+    assert_eq!(a, digest(&facts("b.py", "python", "x = 1\n")));
+    assert_ne!(a, digest(&facts("a.py", "python", "x  = 1\n")));
+    // Same kinds and spans, other text: a reader of `text` sees the difference, so the digest does.
+    assert_ne!(a, digest(&facts("a.py", "python", "y = 2\n")));
+}
