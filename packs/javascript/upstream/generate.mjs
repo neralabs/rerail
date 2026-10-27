@@ -80,7 +80,7 @@ function optionsModule(cwd, rules, languages) {
   writeFileSync(
     path,
     `import tsParser from ${from("@typescript-eslint/parser")};
-const { rules, languages } = JSON.parse(process.env.RERAIL_JAVASCRIPT_PACK_RECORDING);
+const { rules, languages } = JSON.parse(process.env.RERAIL_JAVASCRIPT_PACK_EXPECTED);
 export default {
   cwd: ${JSON.stringify(cwd)},
   overrideConfigFile: true,
@@ -99,7 +99,7 @@ export default {
 };
 `,
   );
-  process.env.RERAIL_JAVASCRIPT_PACK_RECORDING = JSON.stringify({ rules, languages });
+  process.env.RERAIL_JAVASCRIPT_PACK_EXPECTED = JSON.stringify({ rules, languages });
   return pathToFileURL(path);
 }
 
