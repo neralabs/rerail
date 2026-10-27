@@ -642,7 +642,7 @@ jobs:
     needs: tools
     if: >-
       ${{
-        always() && needs.tools.result != 'skipped' && github.event_name == 'pull_request' &&
+        always() && needs.tools.result != 'skipped' && needs.tools.result != 'cancelled' && github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
       }}
     runs-on: ubuntu-24.04
