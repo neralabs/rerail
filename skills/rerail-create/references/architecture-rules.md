@@ -1,39 +1,20 @@
 # Architecture rules
 
-An architecture rule says where code belongs and which way dependencies run. Examples: "the shared package imports nothing above
-it", "hosts don't decide what a mode allows; core does", "route handlers delegate; parse headers in a dependency". This page
-covers where that intent is written, the shapes of it that a code rule can check, how to write the message, and how to prove
-the rule against the repo's own history.
+An architecture rule says where code belongs or which way dependencies run: "shared imports nothing above it", "hosts don't
+decide what a mode allows; core does", "routes delegate; parse headers in a dependency". Score a candidate by the rework a
+reviewer would ask for when it is broken, not by how often it will fire.
 
-## Why they are worth it
+## Find the intent
 
-Rerail measured architecture rules written from two repos' docs and maintainers' review comments. It replayed pull requests
-whose first design the maintainers sent back, and ordinary merged pull requests in the same areas.
+Read these as well as the `standards[]` files:
 
-- **They fix the design when the agent heads for the rejected one.** Across four models, agents without rules shipped the
-  rejected design in about 6 runs of 10. With the rules on, it was about 2 in 100. Code that matched the maintainers' design
-  rose from about a quarter of runs to more than eight in ten.
-- **They stay quiet otherwise.** On 48 ordinary merged pull requests, the rules steered once, correctly.
-- **The steer beats the same guidance written into the prompt, for some models.** Given the guideline "keep route handlers
-  thin" in its prompt, one model still parsed a header inside the route in 2 of 3 runs, and its contexts were short. With the
-  rule on, it got one steer naming the line and where the code goes, and fixed it every time.
-- **They cost little.** Cost per run moved by −3% to +5% for the strongest model, and rose by up to about a third for models
-  that needed more steers.
+- `ARCHITECTURE.md`, `docs/architecture*`, `docs/adr/`, `docs/decisions/` and other design docs
+- package and folder READMEs, and the docstring or comment at a package's root
+- `CODEOWNERS`: folders with different owners are boundaries
+- each package's dependency manifest in a monorepo: what depends on what is the layering
 
-The value is concentrated: most edits never touch a boundary. Judge a candidate by how costly the wrong design is when it
-happens, not by how often the rule will fire.
-
-## Where the intent is written
-
-Read these in addition to the `standards[]` files from `rerail rules evidence`:
-
-- `ARCHITECTURE.md`, `docs/architecture*`, `docs/adr/` or `docs/decisions/`, and design docs under `docs/`
-- package and folder READMEs (`packages/*/README.md`, `src/*/README.md`) and the module docstring at a package's root
-- `CODEOWNERS`, which shows which folders have different owners and so where the boundaries are
-- the dependency manifests of each package in a monorepo: which package depends on which is the layering, written down
-
-**Maintainers' review comments are the strongest evidence.** A pull request whose first design was sent back and reworked before
-merge shows the wrong design, the right one, and the maintainer's words. Find them with the GitHub CLI, read-only:
+Maintainers' review comments are the best evidence: a pull request whose design was sent back and reworked before merge gives
+the wrong design, the right one, and the reason. Read them with the GitHub CLI, read-only:
 
 ```sh
 gh pr list --state merged --limit 100 --json number,title,files
@@ -41,59 +22,48 @@ gh api repos/<owner>/<repo>/pulls/<n>/reviews
 gh api repos/<owner>/<repo>/pulls/<n>/comments
 ```
 
-- **Look for redirects:** "this belongs in core", "move this to", "should live in", "we already have", "don't reach into",
-  "every host would need to". A comment on style or naming is not architecture.
-- **Filter AI review tools by what they say, not who posted them.** About a third of review text in public repos comes from AI
-  review tools, often posted from a maintainer's account. Long, generic, bulleted feedback is a tool; a terse redirect that the
-  author then acted on is a person.
-- **Check the author acted on it.** The merged code must follow the comment, or it is not the repo's intent.
-- **Never comment, review or push.** This is read-only.
+- Look for redirects: "this belongs in", "move this to", "should live in", "we already have", "don't reach into".
+- Skip AI review tools, which often post from maintainers' accounts. Long, generic, bulleted feedback is a tool; a short
+  redirect the author acted on is a person.
+- Keep it only if the merged code follows the comment.
+- Never comment, review or push.
 
-**Ask the person** when nothing is written: "Which design do you keep sending back in review?" Most candidates that fail do so
-because the intent exists only in someone's head. A maintainer's review comment counts as written.
+If nothing is written, ask: "Which design do you keep sending back in review?"
 
 ## Shapes a code rule can check
 
-| Shape | The intent, in the repo's words | How to match | Scope |
+| Shape | Example | Match | Scope |
 |---|---|---|---|
-| Dependency direction | "shared sits at the bottom: it imports nothing above it" | `regex` on import lines naming a higher layer, as in [code-rules.md](code-rules.md#an-import-boundary-regex) | the lower layer |
-| Layer purity | "the agent loop is stateless: no filesystem, process or environment" | `ast` pattern for the forbidden API (`fs.$F($$$A)`, `process.env`) | the pure layer |
-| A construct in the wrong place | "routes delegate; parse headers in a dependency" | `ast` with `inside` the construct that must stay thin (a decorated route, a component) | the files that hold it |
-| A cross-cutting change in a shared seam | "add headers or tracing with an interceptor, not by changing the shared transport" | `regex` on what such a change writes into the shared file | the shared file only |
-| A policy decided in the wrong layer | "hosts don't turn the mode into a tool restriction; core enforces it" | `regex` on the expression that makes the decision (`blocked = mode === "plan"`) | the layers that must not decide |
-| One home per thing | "one connector package per provider, beside its definition" | `regex` on that thing's identifiers or imports outside its home | everything but its home |
+| Dependency direction | "shared imports nothing above it" | `regex` on imports of a higher layer, as in [code-rules.md](code-rules.md#an-import-boundary-regex) | the lower layer |
+| Layer purity | "the agent loop has no filesystem, process or environment access" | `ast` pattern for the forbidden API | the pure layer |
+| A construct in the wrong place | "routes delegate; parse headers in a dependency" | `ast` with `inside` the construct that must stay thin | files that hold it |
+| A cross-cutting change in a shared seam | "add tracing with an interceptor, not by editing the shared transport" | `regex` on what such a change writes | the shared file only |
+| A policy decided in the wrong layer | "hosts don't turn the mode into a tool restriction" | `regex` on the deciding expression | layers that must not decide |
+| One home per thing | "one connector package per provider" | `regex` on its identifiers or imports outside its home | everything but its home |
 
-**What a code rule cannot check:** "core should own this" in general, "don't duplicate behaviour", "this is the wrong
-abstraction". These need judgement, and code rules cannot call a model. Narrow them to one of the shapes above, for the
-construct the review comment named, or say "I can't check this reliably" and add nothing.
+"Core should own this", "don't duplicate behaviour" and "wrong abstraction" need judgement. Narrow them to one of these shapes
+for the construct the review named, or say "I can't check this reliably" and add nothing.
 
-## Writing the rule
+## Write it
 
-1. **Write the rule for the design, not for one pull request.** Use the folders, base classes and helpers the repo uses
-   everywhere, not the names one pull request happened to use. A rule written from one pull request's identifiers missed the
-   same mistake in the next one.
-2. **Match what the wrong design writes.** Rerail reports what an edit adds; a match already in the file before the edit is not
-   reported. A rule about where a file lives must therefore match something the file's lines hold, not only its path.
-3. **Cover every way to write the wrong design.** Agents route around a narrow matcher. A rule that caught a parameter typed
-   `Request` missed one typed `Request[State]`. List the spellings: the raw object, the helper that reads from it, the import of
-   it, and add each one as a caught case.
-4. **The message names where the code goes and how.** Name the construct to use, where it goes, and the helper or seam that
-   already exists: "Read this header in a FastAPI dependency and inject the resolved value, instead of declaring and parsing it
-   in the route." A principle ("keep routes thin") is what the prompt already said; the line and the destination are what the
-   steer adds.
-5. **Give the reason in a clause** when it isn't obvious: "…enforce mode limits in core, where the session's tools are built,
-   so hosts that bring their own tools get them too." The agent fixes a boundary more readily when it knows what crossing it
-   breaks.
-6. **Exclude what may cross the boundary:** tests, examples, scripts, migrations, generated code, and the layer that owns the
-   thing.
+1. **Write it for the design, not one pull request.** Use the folders, base classes and helpers the repo uses everywhere, not
+   the names one change happened to use.
+2. **Match what the wrong design writes.** Rerail reports what an edit adds, not what was in the file before. A rule about where
+   code lives must match the code's lines, not only the file's path.
+3. **Cover every spelling of the wrong design.** The raw object, the helper that reads from it, a subscripted or aliased type,
+   the import. Make each one a caught case.
+4. **The message says where the code goes and how:** "Read this header in a FastAPI dependency and inject the resolved value,
+   instead of declaring and parsing it in the route." Restating the principle ("keep routes thin") is not enough.
+5. **Add the reason in a clause** when it isn't obvious: "…enforce mode limits in core, where the session's tools are built, so
+   every host gets them."
+6. **Exclude what may cross the boundary:** tests, examples, scripts, migrations, generated code, and the owning layer.
 
-## Proving it against history
+## Check it against history
 
-Architecture rules have a test that other rules don't: the repo's history holds both the wrong design and the right one. Run it
-after the cases pass, as part of the gates in [rule-quality.md](rule-quality.md#gates).
+Run this after the cases pass.
 
-1. **For each pull request the rule came from, count matches at three commits:** the base, the first draft the maintainers
-   sent back, and the merge. Check each commit out into a temporary worktree outside the repository and run the draft there:
+1. **For each pull request the rule came from**, count matches at its base, the first draft the maintainers sent back, and the
+   merge:
 
    ```sh
    git worktree add --detach <tmp>/<sha> <sha>
@@ -101,27 +71,23 @@ after the cases pass, as part of the gates in [rule-quality.md](rule-quality.md#
    git worktree remove <tmp>/<sha>
    ```
 
-   The rule fits when the first draft has more matches than the base, and the merge has no more than the base. A rule that
-   misses the first draft does not catch what the maintainer asked for. A rule that matches the merge would steer against the
-   design the maintainer accepted.
-2. **Check it stays quiet on ordinary work.** Take 10 to 20 recent merged pull requests that touch the rule's scope, and run
-   the draft at each one's merge commit and its parent. A rule whose matches rise in a pull request the maintainers merged
-   without comment is wrong for that code: narrow it and add that code as a passed case.
-3. **With no rejected first draft** (the intent is only in the docs), write the wrong design as caught cases in the repo's real
-   files and code style, and say so in the read-back.
+   It passes when the first draft has more matches than the base and the merge has no more than the base. Missing the first
+   draft means it doesn't catch what was asked for; matching the merge means it steers against the accepted design.
+2. **Check it stays quiet.** Run it at the merge commit and parent of 10 to 20 recent merged pull requests that touch its scope.
+   Matches that rise in one of them are false positives: narrow the rule and add that code as a passed case.
+3. **With no rejected draft** (intent from docs only), write the wrong design as caught cases in the repo's real files and style,
+   and say so in the read-back.
 
-Put the result above the read-back card, in one line: `Checked against history: caught the first draft of #8335; quiet on its
-merge and on 15 recent merged PRs.`
+Put the result above the read-back card: `Checked against history: caught the first draft of #123; quiet on its merge and on 15
+recent merged PRs.`
 
 ## Steer or Log
 
-- **Steer** when the history check fits and the repo pass matches only places that are real violations.
-- **Log** when the repo pass matches code the maintainers merged and kept, or when the matcher cannot tell an allowed case from
-  the wrong design. Show the person two of those matches and let them choose.
+- **Steer** when the history check passes and the repo pass matches only real violations.
+- **Log** when it matches code the maintainers merged and kept, or can't tell an allowed case from the wrong design. Show the
+  person two matches and let them choose.
 
 ## Example: a header parsed in the route
-
-The repo's routes delegate to handler modules, and maintainers asked for request parsing to move into FastAPI dependencies.
 
 ```json draft
 {
@@ -191,6 +157,5 @@ The repo's routes delegate to handler modules, and maintainers asked for request
 }
 ```
 
-The second caught case is the spelling an agent used to get past a first draft of this rule, which matched `^Request$` only.
-The near miss is the private helper in the router file that takes `Request` but is not a route. The dependency in
-`app/dependencies.py` passes because it is outside the scope, which is where the steer sends the code.
+The near miss is the private helper that takes `Request` but isn't a route. `app/dependencies.py` is outside the scope; it's
+where the steer sends the code.

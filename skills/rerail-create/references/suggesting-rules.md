@@ -53,10 +53,6 @@ the results:
   0.87, and cost rose 54%.
 - **Cheap rules pay.** A defect that is fixed on the first steer pays for itself, for example an `async` function that never
   awaits.
-- **Architecture rules pay where the design is at stake.** On pull requests whose first design the maintainers sent back,
-  agents without rules shipped the rejected design in about 6 runs of 10, and about 2 in 100 with the rules on. On ordinary
-  pull requests the same rules stayed quiet. Score their harm prevented by the cost of the rework a reviewer would ask for (2 or
-  3), not by how often they will fire. See [architecture-rules.md](architecture-rules.md).
 - **Rules the agent fights cost the most.** Steered in 8 or more runs and fixed in fewer than 40% of them: one such rule took a
   fifth of all fixing spend, and 62% of its steers were repeats.
 
@@ -83,6 +79,8 @@ Score each one and keep the best five at most.
 - **High:** strong evidence, harm prevented of 2 or more, matches only a handful of places in the repo, and safe to obey.
 - **Medium:** one weak dimension, which you name on the card's Risk line.
 - A written standard counts as strong evidence, even with no sessions.
+- An architecture rule's harm prevented is the rework a reviewer would ask for (2 or 3), however rarely it fires. See
+  [architecture-rules.md](architecture-rules.md).
 - **Skip:** any of the following.
   - It needs judgement.
   - It is formatting.
