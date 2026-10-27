@@ -1,8 +1,8 @@
 /**
- * The nightly upstream-release check (scripts/upstream/releases.ts): each registry's answer read as
- * its latest stable release; each tool-pack's gap to it (Rust's on major.minor only) reported and listed for the bump;
- * and a breaking gap, pins that disagree, or a registry that cannot be read failing the run. The registry answers are
- * trimmed copies of real ones, recorded on 2026-10-21; nothing reaches the network.
+ * The nightly upstream-release check (scripts/upstream/releases.ts): each registry's answer read as its latest stable
+ * release; each tool-pack's gap to it (Rust's on major.minor only) reported and listed for the bump; and every finding,
+ * a breaking gap, pins that disagree or a registry that cannot be read, a warning that never fails the run. The registry
+ * answers are trimmed copies of real ones, recorded on 2026-10-21; nothing reaches the network.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -277,14 +277,14 @@ test("a current pin passes and writes the step summary", async () => {
   assert.deepEqual(behind, []);
 });
 
-test("a patch or minor release upstream is reported and listed for the bump, but does not fail", async () => {
+test("a patch or minor release upstream is reported and listed for the bump as a warning", async () => {
   const root = checkout(BANDIT_1_9_4);
   roots.push(root);
 
   const patch = await nightly(root, releasing(root, { "demo/bandit": "1.9.5" }));
   assert.equal(patch.code, 0, patch.stdout);
   assert.match(patch.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.5 \| patch \| behind \|$/mu);
-  assert.match(patch.summary, /^1 of 2 upstreams are behind by a release that is not breaking, which does not fail the check:$/mu);
+  assert.match(patch.summary, /^1 of 2 upstreams are behind their latest stable release; the nightly's bump pull request moves them:$/mu);
   assert.match(patch.summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.9\.5, a patch release: npm run port-readiness:bump -- --pack demo --tool bandit, /mu);
   assert.match(patch.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: patch\): /mu);
   assert.doesNotMatch(patch.stdout, /::error/u);
@@ -298,23 +298,24 @@ test("a patch or minor release upstream is reported and listed for the bump, but
   assert.deepEqual(minor.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "1.10.0", gap: "minor", breaking: false }]);
 });
 
-test("a major release upstream, or a minor release of a 0.x pin, is breaking and fails", async () => {
+test("a major release upstream, or a minor release of a 0.x pin, is breaking, and still only a warning", async () => {
   const root = checkout(BANDIT_1_9_4);
   roots.push(root);
   const major = await nightly(root, releasing(root, { "demo/bandit": "2.0.0" }));
-  assert.equal(major.code, 1);
+  assert.equal(major.code, 0, major.stdout);
   assert.match(major.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 2\.0\.0 \| major \(breaking\) \| behind \|$/mu);
   assert.match(major.summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 2\.0\.0, a major release, which is breaking: /mu);
-  assert.match(major.stdout, /^::error title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: major \(breaking\)\): /mu);
+  assert.match(major.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: major \(breaking\)\): /mu);
+  assert.doesNotMatch(major.stdout, /::error/u);
   assert.doesNotMatch(major.stdout, /::(?:error|warning) title=Upstream release \(rust\/clippy\)/u);
   assert.deepEqual(major.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "2.0.0", gap: "major", breaking: true }]);
 
   const zero = checkout(banditRuntime("0.9.4"), "0.9.4");
   roots.push(zero);
   const zeroMinor = await nightly(zero, releasing(zero, { "demo/bandit": "0.10.0" }));
-  assert.equal(zeroMinor.code, 1);
+  assert.equal(zeroMinor.code, 0, zeroMinor.stdout);
   assert.match(zeroMinor.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 0\.9\.4 \| 0\.10\.0 \| breaking-minor \(breaking\) \| behind \|$/mu);
-  assert.match(zeroMinor.stdout, /^::error title=Upstream release \(demo\/bandit\)::/mu);
+  assert.match(zeroMinor.stdout, /^::warning title=Upstream release \(demo\/bandit\)::/mu);
   assert.deepEqual(zeroMinor.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "0.9.4", latest: "0.10.0", gap: "breaking-minor", breaking: true }]);
 
   // A patch release of a 0.x pin is not breaking.
@@ -343,48 +344,50 @@ test("--behind lists every tool-pack behind upstream, breaking or not, sorted, a
   const root = checkout(BANDIT_1_9_4);
   roots.push(root);
   const both = await nightly(root, releasing(root, { "demo/bandit": "2.0.0", "rust/clippy": "1.100.0" }));
-  assert.equal(both.code, 1);
+  assert.equal(both.code, 0, both.stdout);
   assert.deepEqual(both.behind, [
     { pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "2.0.0", gap: "major", breaking: true },
     { pack: "rust", tool: "clippy", toolPack: "rust/clippy", pinned: "1.99.0", latest: "1.100.0", gap: "minor", breaking: false },
   ]);
-  assert.match(both.stdout, /^::error title=Upstream release \(demo\/bandit\)::/mu);
+  assert.match(both.stdout, /^::warning title=Upstream release \(demo\/bandit\)::/mu);
   assert.match(both.stdout, /^::warning title=Upstream release \(rust\/clippy\)::/mu);
 
-  // A failing check whose pins are not behind upstream (here they disagree) lists nothing to bump.
+  // A tool-pack whose pins are not behind upstream (here they disagree) lists nothing to bump.
   const disagreeing = checkout(banditRuntime("1.9.3"));
   roots.push(disagreeing);
   assert.deepEqual((await nightly(disagreeing, releasing(disagreeing, {}))).behind, []);
 });
 
-test("gates.yaml and the runtime disagreeing about the pin fails, as does a runtime that pins no release of upstream", async () => {
+test("gates.yaml and the runtime disagreeing about the pin is reported, as is a runtime that pins no release of upstream", async () => {
   const root = checkout(banditRuntime("1.9.3"));
   roots.push(root);
   const { code, stdout } = await nightly(root, releasing(root, {}));
-  assert.equal(code, 1);
+  assert.equal(code, 0, stdout);
   assert.match(stdout, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.4 \| current \| pins disagree \|$/mu);
   assert.match(stdout, /gates\.yaml upstream\.version is 1\.9\.4 but conformance\/recorders\/port-readiness\/runtimes\/bandit-1\.9\.4\/pyproject\.toml pins bandit 1\.9\.3/u);
-  assert.match(stdout, /^::error title=Upstream release \(demo\/bandit\)::demo\/bandit pins disagree/mu);
+  assert.match(stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit pins disagree/mu);
+  assert.match(stdout, /^1 of 2 upstreams need a maintainer \(pins that disagree, or a registry that cannot be read\):$/mu);
 
-  // Pins that disagree fail even when upstream is ahead by a release that is not breaking.
+  // Pins that disagree need a maintainer even when upstream is ahead by a release the bump could take.
   const behind = await nightly(root, releasing(root, { "demo/bandit": "1.9.5" }));
-  assert.equal(behind.code, 1);
-  assert.match(behind.stdout, /^::error title=Upstream release \(demo\/bandit\)::demo\/bandit pins disagree, behind \(gap: patch\): /mu);
+  assert.equal(behind.code, 0, behind.stdout);
+  assert.match(behind.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit pins disagree, behind \(gap: patch\): /mu);
 
   const missing = checkout(null);
   roots.push(missing);
   const unread = await nightly(missing, releasing(missing, {}));
-  assert.equal(unread.code, 1);
+  assert.equal(unread.code, 0, unread.stdout);
   assert.match(unread.stdout, /`demo\/bandit`: conformance\/recorders\/port-readiness\/runtimes\/bandit-1\.9\.4\/pyproject\.toml cannot be read/u);
 });
 
-test("a registry that cannot be read fails rather than passing", async () => {
+test("a registry that cannot be read is a warning, not a pass", async () => {
   const root = checkout(BANDIT_1_9_4);
   roots.push(root);
   const pins = upstreamPins(root);
   const unavailable: Fetch = async (url) => (url.startsWith("https://pypi.org/") ? { ok: false, status: 503, text: async () => "" } : await fakeFetch(pins, (pin) => pin.version)(url, { headers: {} }));
   const answered = await nightly(root, unavailable);
-  assert.equal(answered.code, 1);
+  assert.equal(answered.code, 0, answered.stdout);
+  assert.match(answered.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit registry error/mu);
   assert.match(answered.stdout, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| unknown \| unknown \| registry error \|$/mu);
   assert.match(answered.stdout, /`demo\/bandit`: https:\/\/pypi\.org\/pypi\/bandit\/json: HTTP 503/u);
 

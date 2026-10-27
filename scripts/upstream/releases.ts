@@ -1,7 +1,7 @@
 /**
- * `npm run port-readiness:upstream-releases`: whether every upstream a tool-pack ports is still pinned at its latest
- * stable release. The nightly runs it on main, so a release upstream publishes after the pin shows up in its summary,
- * and a breaking one as a red job, rather than as rules quietly ported from an old version.
+ * `npm run upstream:releases`: whether every upstream a tool-pack ports is still pinned at its latest stable release.
+ * The nightly (upstream-releases.yml) runs it on main, so a release upstream publishes after the pin shows up in its
+ * summary and in the night's bump pull request, rather than as rules quietly ported from an old version.
  *
  * Each gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream twice: `upstream.version` in
  * gates.yaml, and the package its runtime installs (`conformance/recorders/port-readiness/runtimes/<upstream.runtime>/`:
@@ -11,12 +11,11 @@
  * `runtimes/clippy-<release>/rust-toolchain.toml`), held to the latest stable Rust's major.minor (clippyPin, releaseGap).
  *
  * Each tool-pack's gap to upstream is `current`, `patch`, `minor`, `major` or `breaking-minor` (a minor release of a 0.x
- * version); `major` and `breaking-minor` are breaking. Exit 1 when a tool-pack's gap is breaking, its pins disagree, or
- * its registry could not be read (a check that cannot see upstream's releases must not pass); a patch or minor gap is
- * reported but does not fail. Exit 2 on an exception. With GITHUB_STEP_SUMMARY set, the table is appended to it too;
- * under GitHub Actions each failing tool-pack is also an `::error::` annotation and each tool-pack behind by a
- * non-breaking release a `::warning::`. `--behind <file>` writes every tool-pack behind upstream, breaking or not, there
- * as JSON, for the nightly to bump in its one bump pull request (upstream/bump.ts).
+ * version); `major` and `breaking-minor` are breaking. It reports and never fails on what upstream published: a gap of
+ * any kind, pins that disagree, and a registry that could not be read are each a row of the table and, under GitHub
+ * Actions, a `::warning::` annotation. Exit 0 whatever it found, 2 on an exception. With GITHUB_STEP_SUMMARY set, the
+ * table is appended to it too. `--behind <file>` writes every tool-pack behind upstream, breaking or not, there as JSON,
+ * for the nightly to bump in its one bump pull request (scripts/upstream/bump.ts).
  */
 import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -366,9 +365,9 @@ export async function checkUpstreamReleases(pins: UpstreamPin[], fetch: Fetch): 
   }));
 }
 
-/** Whether a check fails the run: its gap is breaking, its pins disagree, or its registry could not be read. */
-export function failsCheck(check: ReleaseCheck): boolean {
-  return check.breaking || check.statuses.some((status) => status === "pins disagree" || status === "registry error");
+/** Whether a check needs a maintainer rather than a bump: its pins disagree, or its registry could not be read. */
+export function needsAttention(check: ReleaseCheck): boolean {
+  return check.statuses.some((status) => status === "pins disagree" || status === "registry error");
 }
 
 /** How a check's gap reads in the table: its kind, marked when breaking, or unknown. */
@@ -377,10 +376,10 @@ function gapCell(check: ReleaseCheck): string {
   return check.breaking ? `${check.gap} (breaking)` : check.gap;
 }
 
-/** The checks as Markdown: one table row per tool-pack, then the failing tool-packs' problems, then the others behind. */
+/** The checks as Markdown: one table row per tool-pack, then the ones needing attention, then the others behind. */
 export function renderMarkdown(checks: ReleaseCheck[]): string {
-  const failing = checks.filter(failsCheck);
-  const behind = checks.filter((check) => !failsCheck(check) && check.problems.length > 0);
+  const attention = checks.filter(needsAttention);
+  const behind = checks.filter((check) => !needsAttention(check) && check.problems.length > 0);
   const lines = [
     "## Upstream releases",
     "",
@@ -389,14 +388,14 @@ export function renderMarkdown(checks: ReleaseCheck[]): string {
     ...checks.map((check) => `| \`${check.toolPack}\` | ${ECOSYSTEM_NAMES[check.ecosystem]} | \`${check.package}\` | ${check.version} | ${check.latest ?? "unknown"} | ${gapCell(check)} | ${check.statuses.join(", ")} |`),
     "",
   ];
-  if (failing.length === 0 && behind.length === 0) lines.push(`Every one of the ${checks.length} upstreams is pinned at its latest stable release.`);
-  if (failing.length > 0) {
-    lines.push(`${failing.length} of ${checks.length} upstreams fail the check (a breaking release, pins that disagree, or a registry that cannot be read):`);
-    lines.push(...failing.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)));
+  if (attention.length === 0 && behind.length === 0) lines.push(`Every one of the ${checks.length} upstreams is pinned at its latest stable release.`);
+  if (attention.length > 0) {
+    lines.push(`${attention.length} of ${checks.length} upstreams need a maintainer (pins that disagree, or a registry that cannot be read):`);
+    lines.push(...attention.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)));
   }
   if (behind.length > 0) {
-    if (failing.length > 0) lines.push("");
-    lines.push(`${behind.length} of ${checks.length} upstreams are behind by a release that is not breaking, which does not fail the check:`);
+    if (attention.length > 0) lines.push("");
+    lines.push(`${behind.length} of ${checks.length} upstreams are behind their latest stable release; the nightly's bump pull request moves them:`);
     lines.push(...behind.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)));
   }
   return `${lines.join("\n")}\n`;
@@ -425,9 +424,8 @@ export function behindToolPacks(checks: ReleaseCheck[]): Behind[] {
 }
 
 /**
- * Run the check over this checkout and report it; the exit code, 1 when any tool-pack fails (failsCheck). With
- * `behind`, every tool-pack behind upstream is written there as JSON (behindToolPacks) before the exit code is
- * returned, so the nightly can bump them.
+ * Run the check over this checkout and report it; the exit code, 0 whatever it found (the report is the result). With
+ * `behind`, every tool-pack behind upstream is written there as JSON (behindToolPacks), so the nightly can bump them.
  */
 export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env, options: { behind?: string } = {}): Promise<number> {
   const checks = await checkUpstreamReleases(upstreamPins(root), fetch);
@@ -436,15 +434,14 @@ export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = 
   const step = env.GITHUB_STEP_SUMMARY;
   if (step !== undefined && step !== "") appendFileSync(step, markdown);
   if (options.behind !== undefined) writeFileSync(options.behind, `${JSON.stringify(behindToolPacks(checks))}\n`);
-  const failing = checks.filter(failsCheck);
   if (env.GITHUB_ACTIONS === "true") {
-    // A failing tool-pack is an error, one behind by a release that is not breaking a warning. A workflow command's data escapes `%`, CR and LF.
+    // One warning per tool-pack with anything to report. A workflow command's data escapes `%`, CR and LF.
     for (const check of checks.filter((entry) => entry.problems.length > 0)) {
       const data = `${check.toolPack} ${check.statuses.join(", ")} (gap: ${gapCell(check)}): ${check.problems.join("; ")}`;
-      process.stdout.write(`::${failsCheck(check) ? "error" : "warning"} title=Upstream release (${check.toolPack})::${data.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A")}\n`);
+      process.stdout.write(`::warning title=Upstream release (${check.toolPack})::${data.replace(/%/gu, "%25").replace(/\r/gu, "%0D").replace(/\n/gu, "%0A")}\n`);
     }
   }
-  return failing.length === 0 ? 0 : 1;
+  return 0;
 }
 
 // Imported by its tests, run as a script by the nightly: only the second checks.
