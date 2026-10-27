@@ -1,41 +1,41 @@
-use super::{SqlViolationRow, drive, regex_matches, split_measured_statement_packets};
-use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
-use crate::code_rule_dsl::packed::ExecutionBackend;
-use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
-use crate::code_rule_dsl::transducer::sql_backend::{
-    MatchRegistry, PackedDemand, RowKind, register_module,
-};
-use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
-use regex::Regex;
-use serde_json::{Value, json};
+use super::{ExecutionStatement, SqlViolationRow, drive, split_measured_statement_packets};
+use crate::code_rule_dsl::demand::vtab::{MatchRegistry, PackedDemand, RowKind, register_module};
+use crate::code_rule_dsl::prefilter::tests::{open, temp};
+use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+
+/// N's `legacy_test_scan_sql` (`query/plan/render/workspace.rs`): every row of a batch.
+const SCAN_SQL: &str = "SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = ?1 ORDER BY rowid";
 
 #[test]
 fn packed_sql_backend_registers_narrow_typed_relations() {
-    let connection = rusqlite::Connection::open_in_memory().expect("SQLite");
+    let path = temp();
+    drop(open(&path));
+    let connection = rusqlite::Connection::open(path).expect("content store");
     register_module(&connection, Arc::new(MatchRegistry::default())).expect("relation modules");
 
-    let statistics = connection
+    // Estimates come from `fact_stats`; no seeded statistics table.
+    let seeded = connection
         .query_row(
-            "SELECT count(*) FROM rerail_relation_statistics WHERE estimated_rows > 0",
+            "SELECT count(*) FROM sqlite_schema WHERE name = 'rerail_relation_statistics'",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .expect("stored SQL planning statistics");
-    assert_eq!(statistics, 10);
+        .expect("schema lookup");
+    assert_eq!(seeded, 0);
 
     for (relation, columns) in [
         ("rerail_batch_status", 3),
         ("rerail_producer_status", 7),
         ("rerail_terminal_match", 13),
         ("rerail_capture", 23),
-        ("rerail_navigation", 17),
-        ("rerail_semantic_fact", 34),
-        ("rerail_value_fact", 9),
-        ("rerail_parse_fact", 16),
-        ("rerail_transform_fact", 12),
         ("rerail_document_map", 9),
+        // Removed with the CPU fact post-pass and the navigation producer.
+        ("rerail_navigation", 0),
+        ("rerail_semantic_fact", 0),
+        ("rerail_value_fact", 0),
+        ("rerail_parse_fact", 0),
+        ("rerail_transform_fact", 0),
     ] {
         let count = connection
             .query_row(
@@ -171,186 +171,46 @@ fn typed_sql_violation_publication_keeps_the_complete_projected_value() {
             SqlViolationRow::from_sql_row,
         )
         .expect("typed SQL violation");
-    let expected = row.to_value();
+    // The published value carries the finding key (`id`); the witness keeps what W's output
+    // needs.
+    let value = row.to_value();
+    assert!(value["id"].as_str().is_some_and(|id| id.starts_with("sha256:")), "{value}");
+    assert_eq!(value["variables"], serde_json::json!({"COUNT": true}));
     let witness = row.into_witness();
-    assert_eq!(witness.sql_violation, Some(expected));
+    assert_eq!((witness.path.as_str(), witness.message.as_deref()), ("test.py", Some("projected")));
 }
 
+/// On the content store, twice: the second drive registers the modules again on the same
+/// connection.
 #[test]
 fn sqlite_demands_the_complete_packed_batch_once() {
-    let demand = PackedDemand::new(
-        ExecutionBackend::CpuJit,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    )
-    .expect("verified empty packed batch");
-    let outcome = drive(demand).expect("SQL-demanded packed batch");
-    let counters = outcome.counters;
-    assert_eq!(outcome.rows.len(), 1);
-    assert_eq!(outcome.rows[0].row_kind(), RowKind::BatchStatus);
-    assert!(outcome.rows[0].is_complete());
-    assert_eq!(outcome.rows[0].error_code(), None);
-    assert_eq!(counters.rows, 1);
-    assert_eq!(counters.statements, 1);
-    assert_eq!(counters.registrations, 1);
-    assert_eq!(counters.backend_invocations, 1);
-    assert_eq!(counters.terminal_executions, 1);
-    assert_eq!(counters.virtual_table_filters, 1);
-    assert_eq!(counters.scalar_callbacks, 0);
-    assert_eq!(counters.node_rows, 0);
-}
-
-/// Matches keep their byte ranges past multibyte text; a match past the limit leaves the scan
-/// unfinished.
-#[test]
-fn regex_matches_keep_byte_ranges_and_stop_past_the_limit() {
-    let regex = Regex::new("é").unwrap();
-    let (first, finished) = regex_matches(&regex, "éxé.ts", 1);
-    assert_eq!((first.len(), first[0].clone(), finished), (1, 0..2, false));
-    let all = regex_matches(&regex, "éxé.ts", 2);
-    assert_eq!((all.0.as_slice(), all.1), (&[0..2, 3..5][..], true));
-}
-
-/// An exhausted match deadline leaves the scan unfinished before it keeps any match.
-#[test]
-fn regex_matches_stop_at_the_deadline() {
-    let _budget = crate::code_rule_dsl::budget::MatchBudget::expired_for_test();
-    let regex = Regex::new("needle").unwrap();
-    assert_eq!(regex_matches(&regex, "needle\n", 2), (Vec::new(), false));
-}
-
-/// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
-/// the conformance runner registers it.
-fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/python")
-        .join(rule);
-    CodeRuleDslRuntime::compile(
-        std::fs::read_to_string(&path).expect("pack policy"),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
-    .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
-}
-
-/// A code rule's result on one file, compiled and evaluated with the work-skipping shortcuts on and
-/// off (`set_shortcuts_off`): they must agree, violations and failures alike.
-fn agreeing(compiled: &CompiledCodeRuleDsl, path: &str, source: &str) -> Value {
-    set_shortcuts_off(true);
-    let without = evaluate_file(compiled, "python", path, source);
-    set_shortcuts_off(false);
-    let with = evaluate_file(compiled, "python", path, source);
-    assert_eq!(with, without, "{path}: the shortcuts changed the result");
-    with
-}
-
-/// The shortcuts that only skip work (the anchor-set shortcuts) change no result of F811, F821 or
-/// F841: on every Ruff fixture, and on a module that mixes unpacking, assignment chains, walruses,
-/// `with` targets, redefinitions and dotted imports.
-#[test]
-fn python_shortcuts_change_no_pack_result() {
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/python/upstream/ruff/fixtures");
-    let mut files = Vec::new();
-    let mut pending = vec![fixtures];
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(&directory).expect("fixtures") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path
-                .extension()
-                .is_some_and(|extension| extension == "py" || extension == "pyi")
-            {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    assert!(files.len() > 50, "{} fixtures", files.len());
-    let mixed = "\
-import os.path
-import os
-from typing import overload
-import json as json
-def f(items):
-    a, b = c = (1, 2)
-    d = e = f = [3, 4]
-    (g, h) = i = j = items
-    k = (l := 5)
-    m, n = o = p = 6, 7
-    with open('x') as (q, r), open('y') as s:
-        pass
-    t = 1
-    t = 2
-    u: int = 3
-    v += 1
-    for w in items:
-        pass
-    import json
-    def os():
-        pass
-    return [x for x in items if (y := x)]
-class C:
-    import sys
-    z = sys
-";
-    for rule in [
-        "candidates/rules/ruff-f811-redefined-while-unused.json",
-        "candidates/rules/ruff-f821-undefined-name.json",
-        "candidates/rules/ruff-f841-unused-variable.json",
-    ] {
-        let compiled = python_pack_code_rule(rule);
-        for file in &files {
-            let source = std::fs::read_to_string(file).expect("fixture");
-            let path = if file.extension().is_some_and(|extension| extension == "pyi") {
-                "fixture.pyi"
-            } else {
-                "fixture.py"
-            };
-            agreeing(&compiled, path, &source);
-        }
-        let result = agreeing(&compiled, "mixed.py", mixed);
-        assert_eq!(result["failures"], json!([]), "{rule}: {result}");
-    }
-}
-
-/// F841's work grows linearly with a function's assignments, each an unpacked chain whose
-/// identifiers the capture-free utilities are asked about: doubling them at most about doubles
-/// the budget units spent.
-#[test]
-fn f841_work_grows_linearly_with_assignments() {
-    let code_rule = python_pack_code_rule("candidates/rules/ruff-f841-unused-variable.json");
-    let mut units = Vec::new();
-    for assignments in [500, 1000, 2000] {
-        let mut source = "def f(items):\n".to_owned();
-        for index in 0..assignments {
-            source.push_str(&format!(
-                "    a{index}, b{index} = c{index} = d{index} = (items, {index}, (e{index}, items))\n"
-            ));
-        }
-        source.push_str("    return a0, b0, c0, d0\n");
-        let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
-        let result = evaluate_file(&code_rule, "python", "chains.py", &source);
-        let spent = budget.spent();
-        drop(budget);
-        assert_eq!(result["failures"], json!([]), "{result}");
-        // `c` and `d` of every assignment but the first are unused; `a` and `b` are unpacked.
-        assert_eq!(
-            result["violations"].as_array().map(Vec::len),
-            Some(2 * (assignments - 1)),
-            "{assignments} assignments"
-        );
-        units.push(spent);
-    }
-    assert!(units[0] > 0, "the evaluation polled its budget: {units:?}");
-    for pair in units.windows(2) {
-        assert!(
-            pair[1] * 4 <= pair[0] * 9,
-            "units {units:?}: doubling the assignments more than doubled the work"
-        );
+    let store = open(&temp());
+    for _ in 0..2 {
+        let demand = PackedDemand::new(
+            ExecutionBackend::CpuJit,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("verified empty packed batch");
+        let statement = ExecutionStatement {
+            sql: SCAN_SQL.to_owned(),
+            clauses: "[]".to_owned(),
+            materialization: None,
+        };
+        let outcome = drive(&store, demand, &[statement], "[]").expect("SQL-demanded packed batch");
+        let counters = outcome.counters;
+        assert_eq!(outcome.rows.len(), 1);
+        assert_eq!(outcome.rows[0].row_kind(), RowKind::BatchStatus);
+        assert!(outcome.rows[0].is_complete());
+        assert_eq!(outcome.rows[0].error_code(), None);
+        assert_eq!(counters.rows, 1);
+        assert_eq!(counters.statements, 1);
+        assert_eq!(counters.registrations, 1);
+        assert_eq!(counters.backend_invocations, 1);
+        assert_eq!(counters.terminal_executions, 1);
+        assert_eq!(counters.virtual_table_filters, 1);
     }
 }

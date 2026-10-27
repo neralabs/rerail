@@ -72,7 +72,7 @@ pub(crate) fn violation_from_witness(
     violation
 }
 
-pub(super) fn violation_id(
+pub(in crate::code_rule_dsl) fn violation_id(
     code_rule: &str,
     clause: &str,
     code: &str,

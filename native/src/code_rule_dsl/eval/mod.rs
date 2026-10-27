@@ -14,7 +14,7 @@ use super::package_manifest::{Manifest, manifest_directory, manifest_in};
 use napi::Result;
 pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
-    violation_ids,
+    violation_id, violation_ids,
 };
 pub(super) use query::{
     WitnessError, document_matcher, evaluate_query, file_language, file_tape, grammar_matcher,
