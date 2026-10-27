@@ -113,6 +113,20 @@ impl Statistics {
             .expect("nonempty pattern requirements")
     }
 
+    /// Every estimate read, as `stats::plans` keys statistics: `rows:<lang>:<kind>[:<term>]`.
+    pub fn reads(&self) -> BTreeMap<String, u64> {
+        self.0
+            .iter()
+            .map(|(Key(lang, required), estimate)| {
+                let key = match required {
+                    Required::Kind(kind) => format!("rows:{lang}:{kind}"),
+                    Required::Terminal(kind, term) => format!("rows:{lang}:{kind}:{term}"),
+                };
+                (key, estimate.rows)
+            })
+            .collect()
+    }
+
     pub fn decisions(&self, language: u32, plans: &[&AnchorPlan]) -> Vec<usize> {
         let mut decisions = Vec::new();
         let mut seen = HashSet::new();

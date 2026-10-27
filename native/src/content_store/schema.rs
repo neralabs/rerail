@@ -387,6 +387,31 @@ CREATE TABLE IF NOT EXISTS fact_stats (
     sqd INTEGER NOT NULL,
     PRIMARY KEY (tbl, col)
 ) STRICT, WITHOUT ROWID;
+-- Compiled plans (stats/plans.rs): decisions and programs under the plan's identity, each
+-- statistic a decision read with the interval over which the decision stays valid, and the
+-- observed selectivity and cost per root of each plan per backend.
+CREATE TABLE IF NOT EXISTS compiled_plans (
+    plan BLOB PRIMARY KEY CHECK(length(plan) = 32),
+    compiler INTEGER NOT NULL,
+    decisions TEXT NOT NULL,
+    program BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS compiled_plan_reads (
+    plan BLOB NOT NULL REFERENCES compiled_plans(plan) ON DELETE CASCADE,
+    stat TEXT NOT NULL,
+    lo INTEGER NOT NULL,
+    hi INTEGER NOT NULL,
+    PRIMARY KEY (plan, stat)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS plan_feedback (
+    plan BLOB NOT NULL,
+    backend TEXT NOT NULL,
+    selectivity REAL NOT NULL,
+    ns_per_root REAL NOT NULL,
+    samples INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (plan, backend)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS fact_value_stats (
     tbl TEXT NOT NULL,
     col TEXT NOT NULL,
