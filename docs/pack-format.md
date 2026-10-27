@@ -39,9 +39,11 @@ packs/<id>/
 ├── conformance.json    the conformance pack schema of conformance/languages/pack.ts, as today
 ├── divergences.json    declared disagreements with the tools, as today
 ├── upstream/
-│   └── <tool>/         the tool's copied tests (fixtures/), its recordings (*.expected.json), the recorder, and
-│                       UPSTREAM.md when Rerail wrote files for the tool to score (an authored corpus); the copied
-│                       tests and recordings are pack test data, derived from the pins, not in git (below)
+│   └── <tool>/         the tool's copied tests (fixtures/, rename variants under fixtures/renamed/), its expected
+│                       findings (*.expected.json), the generator, gates.yaml, and UPSTREAM.md when Rerail wrote
+│                       files for the tool to score (an authored corpus); the copied tests and expected findings are
+│                       pack test data, derived from the pins, not in git (below); publish/ while a pull request
+│                       publishes new data
 └── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
 ```
 
@@ -108,39 +110,53 @@ that two documents in any packs share.
 ### conformance.json, divergences.json, upstream/
 
 Today's schemas from `conformance/languages/pack.ts`, moved next to the rules they validate. The runner reads a pack's
-recordings from `upstream/` unless `conformance.json` sets `oracles`:
+expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 
 - `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
   evidence), the pinned tools, and for each ported rule the upstream tool and rule it reproduces,
   how findings compare (`line` or `line+column`) and the capabilities it exercises. `suppressionExemptions` lists the
   ports, by `id`, whose documents need not carry their tool's suppression comment yet, each with its `reason` (check
   4). A port whose document is under `candidates/` is scored and reported but never fails a check; it is scored on the
-  fixtures, whose recording must cover it. A port may
+  fixtures, whose expected findings must cover it. A port may
   set `fixtures`, `path.matchesGlob` patterns over the tool's fixture paths: it is then evaluated and scored only on
   the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
   with several option sets is scored: one document per option set, each on its own tests.
-- `upstream/<tool>/fixtures.expected.json`: what the tool reported on its own tests, produced by the recorder in the
-  same directory. `npm run fixtures:derive` runs the recorders against the pinned tool versions (each tool-pack's
-  recipe in `scripts/pack-data/recipes/`); tools live under `.rerail/` (gitignored). Where a tool's tests state their
-  expected findings (as markup in the test files), the recorder reads them instead of running the tool: the tool's
-  own test suite requires it to report exactly those.
+- `upstream/<tool>/fixtures.expected.json`: the expected findings, what the tool reported on its own tests, written by
+  the generator in the same directory. `npm run fixtures:derive` runs the generators against the pinned tool versions
+  (each tool-pack's recipe in `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`); tools live
+  under `.rerail/` (gitignored). Where a tool's tests state their expected findings (as markup in the test files), the
+  generator reads them instead of running the tool: the tool's own test suite requires it to report exactly those.
+  The ESLint-based generators share `scripts/pack-data/eslint-expected.mjs`. Its `source` block names the upstream
+  `origin` (repository `@` commit), the `rules` the run reported, the `files` (units: a path, or a list of paths for a
+  multi-file unit), and `units`, each unit's upstream origin by its key (its path, or its first path): `rules`, the
+  upstream rules whose tests the unit was written from. A unit without an entry (Rerail's probes, or one whose origin
+  is unknown) is scored but is no rule's own evidence for `stays-silent`.
+- Rename variants (the ECMA tool-packs): the generator writes a renamed copy of every upstream unit under
+  `fixtures/renamed/<the original's path>`, its identifiers and string and number literal contents renamed by
+  `scripts/pack-data/rename/ecmascript.ts` (same length and shape, one bijective map per file, keywords, the standard
+  library and common host names protected), and lints it with upstream like any unit. Its `source.units` entry adds
+  `renamedFrom`, the key of the original unit, which must be an original with an origin. The conformance check scores
+  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names or literals rather
+  than the construct fails. A family without variants takes its overfit evidence from its samples alone.
 - Pack test data: the tool's test cases (`fixtures/`, `tests/`, case lists such as `cases.json` and `*.cases.json`,
-  `fixtures.upstream-check.json`, `lizard-*.tsv`), its recordings (`*.expected.json`) and `authored/` are not in git;
-  the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to score
-  (the files the tool's `UPSTREAM.md` lists as Rerail's, and `authored/`) is authored; everything else is derived,
-  which a maintainer regenerates from the pins with `npm run fixtures:derive`. Both are one archive per tool-pack in
-  S3, which `upstream/<tool>/test-data.lock` names by sha256 and `npm run fixtures:pull` fetches; a pull request that
-  adds or changes data checks it in with `git add -f`, removes an authored file by removing its `UPSTREAM.md` row, and
-  a maintainer archives it before merge from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`;
-  [CONTRIBUTING.md](../CONTRIBUTING.md#merging-maintainers), which also names the CI checks a changed lock must pass).
-  Every consumer (checks 4 and 6, the conformance runner, the recorders, the Rust tests) says to pull when it is
-  absent. `gates.yaml`, `recording.lock`, `samples.lock`, `SAMPLES.md`, `test-data.lock`, `UPSTREAM.md` and the
-  recorders stay in git.
+  `fixtures.upstream-check.json`, `lizard-*.tsv`), its expected findings (`*.expected.json`) and `authored/` are not in
+  git; the patterns are `PACK_FIXTURE_PATTERNS` (`scripts/s3/pack-fixtures.mjs`). What Rerail wrote for the tool to
+  score (the files the tool's `UPSTREAM.md` lists as Rerail's, and `authored/`) is authored; everything else is
+  derived, which a maintainer regenerates from the pins with `npm run fixtures:derive`. Both are one archive per
+  tool-pack in S3, which `upstream/<tool>/test-data.lock` names by sha256 and `npm run fixtures:pull` fetches. A pull
+  request that adds or changes data stages it into the tracked `upstream/<tool>/publish/` (`npm run fixtures:stage`)
+  and removes an authored file by removing its `UPSTREAM.md` row; the publish workflow puts it in S3 and commits the
+  new lock ([docs/upstream.md](upstream.md#publishing-pack-data), [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)).
+  Every consumer (checks 4 and 6, the conformance runner, the generators, the Rust tests) says to pull when it is
+  absent. `gates.yaml`, `samples.lock`, `SAMPLES.md`, `test-data.lock`, `UPSTREAM.md` and the generators stay in git.
+- `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
+  file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
+  ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
 - `upstream/<tool>/samples.lock` and `SAMPLES.md` (optional): the tool-pack's real-code samples, real files labelled
   per rule with the lines it should report or as clean for it, one archive in S3 the lock names by sha256, which
   `npm run fixtures:pull` fetches and the conformance runner scores (`--samples`, and in `--check`); `SAMPLES.md` lists
   the sources and their licences. They are never published, and checks 1 to 8 do not read them
-  ([port readiness, "Samples"](port-readiness.md#samples)).
+  ([docs/upstream.md, "Samples"](upstream.md#samples)).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
   `rerail-unknown`) and the evidence checked.
 
@@ -217,25 +233,26 @@ checks 1 to 8 over one pack and returns each check's failures and each rule's st
 the validator's own tests over the fixture packs in `fixtures/packs/`. `npm test` runs it with the local core.
 Running it against the newest published core inside each pack's range is for pack CI, which does not exist yet.
 
-The contract is the floor every pack meets. A ported rule must also pass the [port readiness gates](port-readiness.md) to ship:
-they compare it with its upstream on start and end positions, on real code, and for overfitting and size; they block
-CI for shipped rules and only report candidates.
+The contract is the floor every pack meets. A ported rule must also pass the [conformance check's gate](../conformance/README.md#the-gate)
+to ship: it judges the rule on upstream's cases and their rename variants (no unexplained false positive or miss), on
+real code, for size, and for silence where it should be silent; it blocks CI for shipped rules and only reports
+candidates.
 
 ```sh
 npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 8, each rule's status
 npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
 ```
 
-Check 4 scores ported rules on the tools' fixtures. The real-code samples are scored by the conformance check
-(`npm run test:conformance`) and the port readiness gates, not here. To see every false positive and false
-negative of one ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`.
+Check 4 scores ported rules on the tools' fixtures. The rename variants and the real-code samples are scored by the
+conformance check (`npm run test:conformance`), not here. To see every false positive and false negative of one
+ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule <rule> --fixtures`.
 
 | # | Check | Fails when |
 |---|---|---|
 | 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
-| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's recordings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
+| 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's expected findings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `restricted`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
 | 6 | Licences | A copied file is missing from an `UPSTREAM.md`, or is copied from an upstream path its `UPSTREAM.md` lists as not copied; `reuse lint` or the licence allowlist fails |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
@@ -258,7 +275,7 @@ Precisely:
    violation counts when its code is one of the rule's clauses' codes.
 4. The fixture tier of the conformance runner (`conformance/languages/runner.ts`, the `language-conformance` test's),
    over the production workspace path: an unexplained false positive fails on every source, an unexplained false
-   negative on the fixtures only, as do engine failures, recording errors and stale divergences or exemptions.
+   negative on the fixtures only, as do engine failures, expected-findings errors and stale divergences or exemptions.
    Ports in `conformance.json` that `pack.json` does not list (candidates) are scored too; their false positives,
    false negatives and engine failures are reported and fail nothing.
 
@@ -277,7 +294,7 @@ Precisely:
    | `phpcs` | `phpcs:ignore <sniff>` | `phpcs.sniffs`: the sniff or one of its message codes, `<sniff>.<code>` |
 
    A port whose document does not model the comment is listed in `conformance.json` `suppressionExemptions`, as
-   `{ "rule": <port id>, "reason": … }`: one whose recording ran with the comments ignored (Bandit's `--ignore-nosec`),
+   `{ "rule": <port id>, "reason": … }`: one whose expected findings were made with the comments ignored (Bandit's `--ignore-nosec`),
    or one with a clause the engine cannot suppress (it refuses `suppress` on a `regex` query). An exemption for a port
    that carries the suppression on every violation, or whose tool honours no comment, fails as stale.
 
@@ -300,7 +317,7 @@ Precisely:
    licence each `licenses/<project>/UPSTREAM.md` records on its `License: <SPDX id>` line.
 6. Each `licenses/<project>/` holds the upstream licence text and an `UPSTREAM.md` whose table rows start with a
    pack-relative path in backticks. Every file in a subdirectory of `upstream/<tool>/` (the tool's copied tests:
-   `fixtures/`, `tests/`) must be listed; files directly in `upstream/` or `upstream/<tool>/` (recordings, recorders)
+   `fixtures/`, `tests/`) must be listed; files directly in `upstream/` or `upstream/<tool>/` (expected findings, generators)
    are Rerail's. A file Rerail wrote for the tool to score (an authored corpus, such as `packs/complexity/`'s lizard
    corpus) is listed instead in the tool's own `upstream/<tool>/UPSTREAM.md`, with the same table rows: it is Rerail's,
    so it adds no licence to `licenses/` or to the package's `license`. That record may list only files under its own
@@ -341,14 +358,14 @@ table:
 
 | Change | Version bump from 1.0.0 |
 |---|---|
-| A false positive or false negative fixed; wording, examples or recordings changed | patch |
+| A false positive or false negative fixed; wording, examples or expected findings changed | patch |
 | A rule added; the core range widened | minor |
 | A rule removed or renamed; a default mode made stricter; the core range narrowed | major |
 
 Pack versions are managed with [changesets](https://github.com/changesets/changesets): a pull request that changes a
 pack adds a changeset (`npx changeset`) naming the pack's package and its bump, with a one-line summary for users.
 A change counts when it touches what the pack publishes: its `package.json` or a path its `files` lists (`pack.json`,
-`rules/`, `licenses/`, `LICENSE`, `NOTICE`, `README.md`); recordings, candidates and `CHANGELOG.md` do not. The
+`rules/`, `licenses/`, `LICENSE`, `NOTICE`, `README.md`); expected findings, candidates and `CHANGELOG.md` do not. The
 **Changesets** job of `release-packs.yml` fails a pull request that changes what a pack publishes with no changeset
 of its own naming that pack (`missingChangesets` in `scripts/release/packs.mjs`); the Release pull request is exempt.
 `npm test` refuses a pending changeset that gives a pack below 1.0.0 a `minor` or `major` bump
@@ -423,15 +440,15 @@ repository allowlist are accepted.
 |---|---|
 | Core's shipped complexity rules and their documents | `packs/complexity/pack.json` and `rules/`, published on their own; core ships no packs |
 | `conformance/languages/<lang>/pack.json`, `rules/`, `divergences.json` | `packs/<lang>/conformance.json`, `rules/` or `candidates/`, `divergences.json`, plus a `pack.json` |
-| `fixtures/<family>/rules/<tool>/` recordings, copied tests and recorders | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
+| `fixtures/<family>/rules/<tool>/` expected findings, copied tests and generators | `packs/<lang>/upstream/<tool>/`; for a language without rules yet, `fixtures/<family>/upstream/<tool>/` |
 | `fixtures/<family>/{candidates,probes,policies}/` | `packs/<lang>/candidates/` |
 | `fixtures/<family>/licenses/<project>/` for rule tools | `packs/<lang>/licenses/<project>/`, keeping only the rule tests' rows; rows for engine oracles stay in `fixtures/` |
 | `conformance/languages/` runner and scorer | Test support in core that the pack tests call: `conformance/pack-validation.ts` |
 | Everything else under `fixtures/` (parsing, scope, values, calls oracles) | Stays: engine tests, not pack validation |
 
 Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `sql` and `rust`, each from `conformance/languages/<id>/`,
-`fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint recorder they
-share is `conformance/recorders/eslint-record.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
+`fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint expected-findings
+helper they share is `scripts/pack-data/eslint-expected.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
 The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
 parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. `vue` moved from `fixtures/vue/upstream/`, its
 draft `rules.json` becoming `packs/vue/conformance.json`.

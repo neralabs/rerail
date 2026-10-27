@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { recordingSchema } from "../../conformance/languages/pack.js";
+import { expectedFindingsSchema } from "../../conformance/languages/pack.js";
 // @ts-expect-error: a JavaScript module without declarations, run by the generators.
-import { withOrigins, writeRenameVariants, writeVariantRows } from "../../conformance/recorders/eslint-record.mjs";
+import { withOrigins, writeRenameVariants, writeVariantRows } from "../../scripts/pack-data/eslint-expected.mjs";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -22,7 +22,7 @@ function fixtures(files: Record<string, string>): string {
   return directory;
 }
 
-const recording = (files: unknown[], units: unknown) => ({
+const expectedFindings = (files: unknown[], units: unknown) => ({
   tool: "t",
   version: "1",
   source: { kind: "fixtures", origin: "https://example.test@0", rules: ["r1", "r2"], files, units },
@@ -52,22 +52,22 @@ describe("rename variants and unit origins", () => {
 
     const findings = [{ rule: "r1", path: "renamed/r1/001.js", line: 1, column: 7 }];
     const unparsed = new Set(["renamed/r1/001.js"]);
-    const recorded = withOrigins(directory, units, origins, variants, unparsed, findings);
-    expect(recorded.files).toEqual([...units, ["renamed/r2/001.js", "renamed/r2/package.json"]]);
-    expect(recorded.units).toEqual({
+    const written = withOrigins(directory, units, origins, variants, unparsed, findings);
+    expect(written.files).toEqual([...units, ["renamed/r2/001.js", "renamed/r2/package.json"]]);
+    expect(written.units).toEqual({
       "r1/001.js": { rules: ["r1"] },
       "r1/002.js": { rules: ["r1"] },
       "r2/001.js": { rules: ["r2"] },
       "renamed/r2/001.js": { rules: ["r2"], renamedFrom: "r2/001.js" },
     });
-    expect(recorded.findings).toEqual([]);
+    expect(written.findings).toEqual([]);
     expect(existsSync(join(directory, "renamed/r1/001.js"))).toBe(false);
-    expect(recordingSchema.safeParse(recording(recorded.files, recorded.units)).success).toBe(true);
+    expect(expectedFindingsSchema.safeParse(expectedFindings(written.files, written.units)).success).toBe(true);
   });
 
-  it("refuses an origin for a unit the recording does not list, and a variant of no original", () => {
-    expect(recordingSchema.safeParse(recording(["a.js"], { "b.js": { rules: ["r1"] } })).success).toBe(false);
-    expect(recordingSchema.safeParse(recording(["a.js", "renamed/a.js"], { "renamed/a.js": { rules: ["r1"], renamedFrom: "a.js" } })).success).toBe(false);
+  it("refuses an origin for a unit the expected findings do not list, and a variant of no original", () => {
+    expect(expectedFindingsSchema.safeParse(expectedFindings(["a.js"], { "b.js": { rules: ["r1"] } })).success).toBe(false);
+    expect(expectedFindingsSchema.safeParse(expectedFindings(["a.js", "renamed/a.js"], { "renamed/a.js": { rules: ["r1"], renamedFrom: "a.js" } })).success).toBe(false);
   });
 
   it("lists each kept variant in the licence table as derived from its original's upstream test file, and no stale one", () => {

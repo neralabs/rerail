@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "7 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 5 of them on and 2 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "7 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 5 of them on and 2 off until turned on, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches Blade templates",
   "match": {
     "any": [

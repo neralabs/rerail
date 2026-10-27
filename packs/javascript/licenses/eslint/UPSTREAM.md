@@ -6,16 +6,13 @@ The files listed below contain material copied from ESLint and remain under its 
 pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of ESLint's
 rules (and, for `candidates/rules/unicorn-*.json`, of eslint-plugin-unicorn's, from which no file is copied), published
 under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the
-Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json` recordings
+Apache License 2.0 (the pack's `LICENSE`): the generator `upstream/generate.mjs`, and the `*.expected.json` expected findings
 it writes by running ESLint.
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written by
 `upstream/generate.mjs`: cases with a custom parser or type information, and performance stress cases over 64 KiB, are
-left out, and identical code in the same language is written once. The port readiness gates' recorder (`npm run port-readiness:record`)
-reuses those files and writes every other case the gates read, the same verbatim `code`, as
-`upstream/eslint/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.tar.zst`, which
-`upstream/eslint/recording.lock` names by its sha256; it is an object in S3, not committed) also holds the `code` of every RuleTester case of
-ESLint's rule tests, verbatim, as the words `not-overfit` reads.
+left out, and identical code in the same language is written once. Each file under `upstream/eslint/fixtures/renamed/`
+is derived from the copied file of the same path below `fixtures/`, with its names and literals renamed.
 
 Paths are relative to the pack directory, `packs/javascript/`.
 
@@ -19883,10 +19880,3 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint/fixtures/renamed/yoda/144.js` | `tests/lib/rules/yoda.js` | derived (`fixtures/yoda/144.js` with its names and literals renamed) |
 | `upstream/eslint/fixtures/renamed/yoda/145.js` | `tests/lib/rules/yoda.js` | derived (`fixtures/yoda/145.js` with its names and literals renamed) |
 | `upstream/eslint/fixtures/renamed/yoda/146.js` | `tests/lib/rules/yoda.js` | derived (`fixtures/yoda/146.js` with its names and literals renamed) |
-
-> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
-> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`tests/lib/rules/*.js`: the `code` of each
-> RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file
-> is this upstream's own, at the pinned commit.
-

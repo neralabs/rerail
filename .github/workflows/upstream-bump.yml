@@ -1,6 +1,6 @@
 name: Upstream bump
 
-# The producer of the night's bump pull request (docs/port-readiness.md, "Bump pull requests"). The nightly
+# The producer of the night's bump pull request (docs/upstream.md, "Bump pull requests"). The nightly
 # (upstream-releases.yml) lists the tool-packs behind their upstream's latest stable release, points the work branch
 # auto/bump-run/upstream at main's commit and dispatches this workflow on it once, with that list. Here each listed
 # tool-pack's pins move to its release (upstream:bump) in a leg of its own, and every tool-pack the bump made stale is

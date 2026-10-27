@@ -1,5 +1,5 @@
-"""Shared by the upstream/<tool>/generate.py recorders: the recording format `rerail/conformance/languages/pack.ts`
-reads (`recordingSchema`), and the pins every recorder refuses any other than.
+"""Shared by the upstream/<tool>/generate.py generators: the expected-findings format `rerail/conformance/languages/pack.ts`
+reads (`expectedFindingsSchema`), and the pins every generator refuses any other than.
 
 Run under CPython 3.14."""
 
@@ -38,7 +38,7 @@ def write(path: pathlib.Path, tool: str, version: str, source: dict, findings: l
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": tool, "version": version, "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
-    pack_fixtures.recording_written(path, source)
+    pack_fixtures.expected_findings_written(path, source)
 
 
 def origins(files_by_rule: dict[str, list[str]]) -> dict[str, dict]:
@@ -83,7 +83,7 @@ def write_authored(target: pathlib.Path, cases: dict[str, str]) -> list[str]:
 
 
 def write_record(tool: str, title: str, files: list[str], holders: str) -> None:
-    """upstream/<tool>/UPSTREAM.md: the fixtures Rerail wrote, which the tool's recording scores."""
+    """upstream/<tool>/UPSTREAM.md: the fixtures Rerail wrote, which the tool's expected findings score."""
     rows = "".join(f"| `upstream/{tool}/fixtures/{file}` | written by Rerail |\n" for file in files)
     (HERE / tool / "UPSTREAM.md").write_text(
         f"# {title}: cases Rerail wrote\n\n"

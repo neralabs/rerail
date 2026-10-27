@@ -13,7 +13,7 @@ template where PHP renders it (`view('name', [...])`) with the data the call pas
 compiled template at its template file and line.
 
 `fixtures` runs every fixture of BladeRuleTest::provideData() and requires its errors to be the test's expectation
-(message and caller line, every one), so the recording is the upstream test's. It copies the test's templates
+(message and caller line, every one), so the expected findings are the upstream test's. It copies the test's templates
 (tests/skeleton/resources) to fixtures/skeleton/resources (the pack's licenses/bladestan/UPSTREAM.md lists them), one analysis
 unit each.
 A finding is the identifier, the template and the template line. Where a template is analysed more than once (each
@@ -94,7 +94,7 @@ def record(checkout: pathlib.Path, request: dict) -> list[dict]:
 def merge(errors: list[dict], relative) -> list[dict]:
     """The ported findings: per template, each (identifier, line) as often as the render reporting it most often
     reports it. A render is a `view(...)` call: the caller and its line, where Bladestan reports the call's errors.
-    `relative` maps a template's path to the recording's, or None for a template outside it."""
+    `relative` maps a template's path to the expected findings', or None for a template outside it."""
     per_render: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
     for error in errors:
         if error["template"] is None or not ported(error):

@@ -2,11 +2,12 @@
 
 24 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
 options. 11 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
-experimental. Each is scored against the tool's own findings on the tool's test fixtures, and against the labelled
-lines of the tool's real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the
-engine's production workspace path, with every disagreement declared in `divergences.json`: 2 today, both
-`rerail-unknown`, each an upstream fixture the grammar reads with a syntax error. ESLint's core rules are in the
-[JavaScript pack](../javascript/README.md).
+experimental. Each is scored against the tool's own findings on the tool's test fixtures and on their rename variants
+(`holds-under-rename`), and against the labelled lines of the tool's real-code samples
+([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
+disagreement declared in `divergences.json`: 2 today, both `rerail-unknown`, each an upstream fixture the grammar reads
+with a syntax error. The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the
+shipped rules. ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
 
 Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only. On JavaScript a port steers CommonJS
 files away from
@@ -22,21 +23,21 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recording (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the recorder holds and records like the copied ones |
-| `upstream/generate.mjs` | typescript-eslint's recorder; `upstream/eslint-plugin-vitest/generate.mjs` records @vitest/eslint-plugin |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a rule gate ([docs/port-readiness.md](../../docs/port-readiness.md)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the generator holds and lints like the copied ones |
+| `upstream/generate.mjs` | typescript-eslint's generator; `upstream/eslint-plugin-vitest/generate.mjs` is @vitest/eslint-plugin's |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the expected findings do not have) and `no-explicit-any` (the expected findings do not cover it yet) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/typescript.ts`) runs each tool's recorder against the pinned tool versions and the upstream
-checkouts (the recorder's header lists them). The fixtures Rerail wrote (`fixtures/*/rerail-*`)
-are authored: a change to them goes in your pull request with `git add -f`.
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/typescript.ts`) runs each tool's generator
+against the pinned tool versions and the upstream checkouts (the generator's header lists them). The fixtures Rerail
+wrote (`fixtures/*/rerail-*`) are authored: a change to them is staged into `publish/` with the derived data.
 
 ```sh
 npm run fixtures:derive -- --pack typescript                                # every tool
 npm run fixtures:derive -- --pack typescript --tool eslint-plugin-vitest    # one
-npm run fixtures:push -- --pack typescript --tool eslint-plugin-vitest      # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack typescript --tool eslint-plugin-vitest     # copy what changed into upstream/eslint-plugin-vitest/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -61,9 +62,10 @@ no approved typescript-eslint configuration turns it on, so it would start off i
 
 typescript-eslint declares `'always'` as `init-declarations`' default. Its wrapper around ESLint's core rule has no
 `meta.defaultOptions`, so with no options ESLint 10 passes the core rule no mode, and it reports nothing. Every upstream
-test that expects a finding sets the option, so upstream's own tests never notice. `matches-upstream-tests` runs each case at the rule's
-default options, sees no upstream finding at all, and fails the rule whatever its document says. The candidate ports
-the declared default, `'always'`. With that option set, it agrees with typescript-eslint on every upstream test case.
+test that expects a finding sets the option, so upstream's own tests never notice. The generator lints each case at the
+rule's default options and leaves out the cases that set options, so the expected findings hold no upstream finding of
+the rule at all, whatever its document says. The candidate ports the declared default, `'always'`. With that option
+set, it agrees with typescript-eslint on every upstream test case.
 
 ## Rule details
 

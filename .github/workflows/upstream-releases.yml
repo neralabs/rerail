@@ -3,7 +3,7 @@ name: Upstream releases
 # Once a day, and on demand: reports every gated tool-pack whose upstream has published a stable release newer than its
 # pin (npm run upstream:releases), and starts the night's one bump of all of them. It never fails on what upstream
 # published: a release ahead of a pin, breaking or not, pins that disagree, and a registry it cannot read are each a
-# warning and a row of the job summary, and the bump is the fix (docs/port-readiness.md, "Upstream releases").
+# warning and a row of the job summary, and the bump is the fix (docs/upstream.md, "Upstream releases").
 # bump-dispatch points the work branch auto/bump-run/upstream at this commit and dispatches upstream-bump.yml there
 # once, with the list, which in a leg per tool-pack moves the pins and, holding no credential, derives on Linux the
 # test data of every tool-pack the bump made stale; upstream-bump-publish.yml, on main, then checks each leg's result,
@@ -27,7 +27,7 @@ jobs:
   # Reports, never fails on upstream: gates.yaml's version and the runtime's pin under scripts/pack-data/runtimes/,
   # against npm, PyPI, Packagist and the Rust channel (Clippy, pinned by packs/rust/upstream/common.py, compared on
   # major.minor: a Rust patch release is not behind). Every tool-pack behind, breaking or not, goes to bump-dispatch:
-  # the night's bump pull request is the fix (docs/port-readiness.md, "Upstream releases").
+  # the night's bump pull request is the fix (docs/upstream.md, "Upstream releases").
   upstream-releases:
     name: Upstream releases
     # Main's pins; forks that turn scheduled workflows back on skip it.

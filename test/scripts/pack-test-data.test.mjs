@@ -228,7 +228,7 @@ describe("authored and derived", () => {
     expect(packFixtureKind("packs/p/upstream/t/gates.yaml", authored)).toBeUndefined();
   });
 
-  it("tells a contributor to stage what a recorder wrote into its tool-pack's publish/, once per tool-pack", () => {
+  it("tells a contributor to stage what a generator wrote into its tool-pack's publish/, once per tool-pack", () => {
     const { root, write } = setUp();
     write("packs/a/upstream/t/fixtures/p [x].js", "mine\n");
     write("packs/a/upstream/t/fixtures/upstream.js", "theirs\n");

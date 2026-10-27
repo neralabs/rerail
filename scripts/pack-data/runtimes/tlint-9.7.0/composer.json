@@ -1,6 +1,6 @@
 {
   "name": "rerail/port-readiness-upstream-tlint",
-  "description": "tlint as the port readiness gates run it: the release the Blade pack's ported lints name, with the PHP-Parser its preset's PHP linters parse every file with (a file one of them cannot parse is the only answer tlint gives on it).",
+  "description": "tlint as the conformance gates run it: the release the Blade pack's ported lints name, with the PHP-Parser its preset's PHP linters parse every file with (a file one of them cannot parse is the only answer tlint gives on it).",
   "license": "Apache-2.0",
   "require": {
     "nikic/php-parser": "5.9.0",

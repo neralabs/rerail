@@ -8,7 +8,7 @@ with PHP 8.5.11:
 fixtures/<Standard>/<Category>/<file>.php (the runner reads `.php`; the pack's licenses/php_codesniffer/UPSTREAM.md lists them),
 runs PHP_CodeSniffer with every ported sniff (ruleset.xml: the sniffs alone, with their default properties) over every
 copy, and requires its reports on a sniff's own files to be,
-line by line, the counts its test's getErrorList() and getWarningList() expect: so the recording on a sniff's own
+line by line, the counts its test's getErrorList() and getWarningList() expect: so the expected findings on a sniff's own
 files is the upstream test's expectation, and on the other sniffs' files the tool's output. Each finding is the
 sniff (`Standard.Category.Sniff`), path, line and column (PHP_CodeSniffer's, in characters, tab width 0).
 `source.units` names each copy's origin: the sniff whose test it is."""

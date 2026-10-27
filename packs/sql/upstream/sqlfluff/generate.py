@@ -11,10 +11,10 @@ noted) and its SQL holds no Jinja (Rerail reads raw SQL; the cases run here with
 `pass_str` or `fail_str` becomes `fixtures/<dialect>/<CODE>/<case>.sql` (licenses/sqlfluff/UPSTREAM.md lists
 them). SQLFluff then lints every copy with every chosen rule, and the run is required to reproduce the upstream test
 on a rule's own cases: no finding of the rule on a `pass_str`, at least one on a `fail_str`, and exactly the
-`violations` positions (or `line_numbers`) where the case lists them. So the recording on a rule's own cases is the
+`violations` positions (or `line_numbers`) where the case lists them. So the expected findings on a rule's own cases are the
 upstream test's expectation, and on the other rules' cases the tool's output. `source.units` names each upstream copy's
 origin: the rule whose YAML test file it came from (Rerail's own cases have none). `fixtures.cases.json` keeps per case
-what the standard recording has no field for: the upstream expectation, the reference parser's verdict on the copy
+what the standard expected findings have no field for: the upstream expectation, the reference parser's verdict on the copy
 (PostgreSQL 18.6 for ansi and postgres cases, SQLite 3.50.4 for sqlite ones) and, for ansi cases, whether SQLFluff's
 postgres dialect reports the same findings (a pack without an ansi dialect reads them as PostgreSQL).
 
@@ -205,11 +205,11 @@ def check_case(case: dict, findings: list[dict]) -> None:
         assert [line for line, _ in own] == case["lineNumbers"], (where, own, case["lineNumbers"])
 
 
-def write_recording(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
+def write_expected_findings(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": TOOL, "version": common.TOOLS["sqlfluff"], "source": source,
                                 "findings": findings}, indent=1, ensure_ascii=False) + "\n")
-    pack_fixtures.recording_written(path, source)
+    pack_fixtures.expected_findings_written(path, source)
 
 
 def fixtures() -> None:
@@ -248,7 +248,7 @@ def fixtures() -> None:
                 units[relative] = {"rules": [code]}
             findings += [{"rule": f["rule"], "path": relative, "line": f["line"], "column": f["column"]}
                          for f in found]
-    write_recording(HERE / "fixtures.expected.json",
+    write_expected_findings(HERE / "fixtures.expected.json",
                     {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files,
                      "units": dict(sorted(units.items()))}, findings)
     (HERE / "fixtures.cases.json").write_text(json.dumps(

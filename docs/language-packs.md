@@ -393,15 +393,19 @@ A pack whose rules reproduce another tool's rules adds the validation material, 
    its `id` (the rule's own id) and `policy` (the same `rules/<id>.json` as the rule's `document`), how findings
    compare (`line` or `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's
    code. Every declared capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
-2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, what the pinned tool
-   reported on them (`recordingSchema` in `conformance/languages/pack.ts`), written by a recorder you keep beside it
-   (`packs/python/upstream/ruff/generate.py` is one). These are derived pack test data, never in git: add the
-   tool-pack's recipe under `scripts/pack-data/recipes/` (one module per pack, listed in its `index.ts`), so `npm run fixtures:derive -- --pack <id>` makes them from the pins.
-   Cases you wrote for the tool (listed in its `UPSTREAM.md`) or a corpus with its ground truth under
-   `upstream/<tool>/authored/` are authored: check them into your pull request with `git add -f`. Before merge a
-   maintainer archives the tool-pack's data from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`),
-   which writes its `upstream/<tool>/test-data.lock` for the pull request to commit
-   ([CONTRIBUTING.md](../CONTRIBUTING.md#merging-maintainers)). Get the other packs' with `npm run fixtures:pull`.
+2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, the expected findings
+   the pinned tool reported on them (`expectedFindingsSchema` in `conformance/languages/pack.ts`, with each unit's
+   upstream origin in `source.units`), written by a generator you keep beside it
+   (`packs/python/upstream/ruff/generate.py` is one; the ESLint-based ones share `scripts/pack-data/eslint-expected.mjs`,
+   which also writes the rename variants under `fixtures/renamed/`). These are derived pack test data, never in git
+   in that layout: add the tool-pack's recipe under `scripts/pack-data/recipes/` (one module per pack, listed in its
+   `index.ts`), so `npm run fixtures:derive -- --pack <id>` makes them from the pins. Cases you wrote for the tool
+   (listed in its `UPSTREAM.md`) or a corpus with its ground truth under `upstream/<tool>/authored/` are authored.
+   Stage the data into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and commit
+   that; the publish workflow puts it in S3 once a code owner approves, and commits the tool-pack's
+   `upstream/<tool>/test-data.lock` ([docs/upstream.md](upstream.md#publishing-pack-data)). Get the other packs' with
+   `npm run fixtures:pull`. A gated tool-pack also needs its `gates.yaml`
+   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
 3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX id>` line and a table
    listing every copied file by its pack-relative path. Add the tool's licence to `package.json`'s `license`
    (`Apache-2.0 AND MIT` for an MIT tool), and annotate the copied files in `REUSE.toml`.

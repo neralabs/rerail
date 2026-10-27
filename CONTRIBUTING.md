@@ -186,10 +186,11 @@ CI uses the same host. `npm run test:integration:built` skips the build step whe
 in `model/manifest.json`.
 
 `npm run conformance:languages -- --pack <pack>` scores a language pack's ported linter rules (`packs/<pack>/`) through
-the production workspace against the tool's recordings in the pack's `upstream/` and, with `--samples`, on the
-tool-packs' labelled real-code samples (`samples.lock`, [docs/port-readiness.md](docs/port-readiness.md#samples));
-`--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the gate over the fixtures
-and the samples; it runs offline in `npm run test:conformance`, part of `test:all` in CI.
+the production workspace against the tool's expected findings in the pack's `upstream/` and, with `--samples`, on the
+tool-packs' labelled real-code samples (`samples.lock`, [docs/upstream.md](docs/upstream.md#samples));
+`--write` saves the report under `.rerail/reports/`. `npm run conformance:languages:check` is the gate over the fixtures,
+their rename variants and the samples ([conformance/README.md](conformance/README.md#the-gate)); it runs offline in
+`npm run test:conformance`, part of `test:all` in CI.
 
 ### Operational commands (`just`)
 
@@ -324,20 +325,20 @@ For a change that spans components, changes the rule-file format or the API, or 
 
 A rule pack's test data is not in git. Under each `packs/<id>/upstream/<tool>/` it is the tool's test cases
 (`fixtures/`, `tests/`, the case lists `cases.json` and `*.cases.json`, `fixtures.upstream-check.json`, the
-complexity pack's `lizard-*.tsv`), the tool's recorded answers on them (`*.expected.json`), and `authored/`. The
+complexity pack's `lizard-*.tsv`), the expected findings on them (`*.expected.json`), and `authored/`. The
 patterns are `PACK_FIXTURE_PATTERNS` in [scripts/s3/pack-fixtures.mjs](scripts/s3/pack-fixtures.mjs); everything
-else under `upstream/<tool>/` (`gates.yaml`, the generators and recorders, `UPSTREAM.md`, `recording.lock`,
-`samples.lock`, `SAMPLES.md`, `test-data.lock`) stays in git. The data is of two kinds:
+else under `upstream/<tool>/` (`gates.yaml`, the generators, `UPSTREAM.md`, `samples.lock`, `SAMPLES.md`,
+`test-data.lock`) stays in git. The data is of two kinds:
 
 - **Authored**: what Rerail wrote for the tool to score, which nothing can regenerate: the files the tool's own
   `upstream/<tool>/UPSTREAM.md` lists as Rerail's (pack check 6 reads the same list), and everything under
   `upstream/<tool>/authored/`, the place for a contributor's code corpus and its ground truth when the corpus is no
   public repository a pin can name.
-- **Derived**: everything else, upstream's tests copied or derived and the tool's recorded answers on them.
-  `npm run fixtures:derive` makes it from the tool-pack's pins, running the pack's generator and then writing the case
-  sources the port readiness recorder names (recipes in [scripts/pack-data/recipes/](scripts/pack-data/recipes/)). A
-  maintainer runs it, and so does the nightly's bump workflow for an upstream release; pull request CI runs it only to
-  check that a changed lock's archive is what the pins derive (below).
+- **Derived**: everything else, upstream's tests copied or derived (with the ECMA tool-packs' rename variants under
+  `fixtures/renamed/`) and the expected findings on them. `npm run fixtures:derive` makes it from the tool-pack's
+  pins, running the pack's generator (recipes in [scripts/pack-data/recipes/](scripts/pack-data/recipes/)). A
+  maintainer runs it, and so does the bump workflow for an upstream release or a re-snapshot; pull request CI never
+  runs it ([docs/upstream.md](docs/upstream.md#take-a-new-snapshot)).
 
 Both kinds of one tool-pack (one `packs/<pack>/upstream/<tool>/`) are one archive in S3: the canonical tar of its
 files (sorted, with fixed modes, owners and times; [scripts/s3/test-data-archive.mjs](scripts/s3/test-data-archive.mjs)),
@@ -361,12 +362,12 @@ what publishing it would make. It deletes the derived files on disk that neither
 which are stale, and keeps authored ones, saying so. It never writes or reads through a symbolic link: when `packs/`,
 a tool directory, its `publish/` or a directory an archive's file goes into is one, it stops before writing anything
 and says to make it a directory. `.gitignore` covers the patterns, so pulled data does not show in `git status`.
-Without the data, the pack tests (`npm test`, `npm run test:conformance`, `cargo test`) and the recorders fail saying
-to pull.
+Without the data, the pack tests (`npm test`, `npm run test:conformance`, `cargo test`) and the generators fail saying
+to pull. To replay any commit, check it out and pull: its locks name the exact archives its CI judged.
 
 A tool-pack with a `samples.lock` also has real-code samples: real files from open-source repositories, labelled per
-rule with the lines it should report or as clean for it, which the conformance check and the port readiness gates
-judge the rules on ([docs/port-readiness.md](docs/port-readiness.md#samples)). They are one archive in S3 too
+rule with the lines it should report or as clean for it, which the conformance check judges the rules on
+([docs/upstream.md](docs/upstream.md#samples)). They are one archive in S3 too
 (`s3://nera-test-fixtures/rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst`), which `samples.lock` names in
 `test-data.lock`'s format and `SAMPLES.md` describes (sources, licences, commits). `fixtures:pull` fetches and
 verifies it with the test data and extracts it under `.rerail/pack-data/samples/`, never into the tool directory
@@ -381,19 +382,16 @@ cache`) without restoring it and, on a miss, downloads the archives from S3 unde
 and saves them; it runs nothing but this commit's `scripts/s3/pack-fixtures.mjs`. A consuming job (`fetch: "false"`),
 which holds no OIDC token, restores that entry, verifies each archive against its lock and extracts it, and fails on a
 miss. Every job that reads pack test data consumes, after a fetching job of the same run: a job that can mint a token
-never extracts a cache entry, and a job that runs upstream's code (a port readiness gate leg, the nightly's drift
-check, the bump, the reproduction check below) has no token to mint. The fetching jobs run for pushes and
-same-repository pull requests only: GitHub gives a fork's or Dependabot's pull request no OIDC token.
+never extracts a cache entry, and a job that runs upstream's code (the bump) has no token to mint. The fetching jobs
+run for pushes and same-repository pull requests only: GitHub gives a fork's or Dependabot's pull request no OIDC
+token.
 
-Two more checks guard the data. **Pack test data is in S3** runs `node scripts/s3/pack-fixtures.mjs check` under the
-read role: a `head-object` for every archive a `test-data.lock` names and every recording a `recording.lock` names,
-downloading nothing, failing with each missing key, its lock and its remedy. Main's runs read only S3
-and never record, so a pull request cannot merge until S3 holds what its locks name. **Test data reproduces from the
-pins** derives each tool-pack whose `test-data.lock` the pull request changes again, with no credentials, and compares
-it byte for byte with the data the new archive holds (`npm run fixtures:derive -- --pack <id> --tool <tool> --compare
-<copy of the pulled data>`, without `--update`, so the tracked files must come out unchanged too). The required check
-is **CI result**, which fails when any CI job failed or was cancelled, since GitHub counts a job skipped after a
-failed dependency as passing ([docs/port-readiness.md](docs/port-readiness.md#ci)).
+**Pack test data is in S3** runs `node scripts/s3/pack-fixtures.mjs check` under the read role: a `head-object` for
+every archive a `test-data.lock` or `samples.lock` names, downloading nothing, failing with each missing key, its lock
+and its remedy. Main's runs read only S3, so a pull request cannot merge until S3 holds what its locks name. CI
+verifies the data by sha256 only: it never derives it again or asks upstream. The required check is **CI result**,
+which fails when any CI job failed or was cancelled, since GitHub counts a job skipped after a failed dependency as
+passing ([docs/upstream.md](docs/upstream.md#ci)).
 
 Structure metric #3 (`npm run check`) fails while any pack test data is tracked in the pulled layout, a tool directory
 lacks a `test-data.lock`, a lock is malformed, or a `publish/` is tracked ("Pack data waiting to publish"), so a pull
@@ -408,7 +406,7 @@ request. `publish/<path>` becomes the test data archive's file `<path>` (`publis
 
 1. Make the data in the usual, ignored layout: `npm run fixtures:derive -- --pack <id> --tool <tool> [--update]` or
    the pack's generator for derived data, your own cases for authored data (listed in the tool's `UPSTREAM.md`, or a
-   code corpus with its ground truth under `upstream/<tool>/authored/`). The generators and recorders say so when they
+   code corpus with its ground truth under `upstream/<tool>/authored/`). The generators say so when they
    write data.
 2. Stage it: `npm run fixtures:stage -- --pack <id> --tool <tool>` copies every file on disk that the locked archive
    lacks or holds differently into `publish/`. A file deleted on disk cannot be expressed that way: `--all` copies
@@ -466,26 +464,16 @@ A maintainer with write credentials may still archive a tool-pack's data as it i
 their `gh` login, with `npm run fixtures:push -- --pack <id> --tool <tool>` (`--dry-run` shows what it would archive);
 the publish workflow is the routine path.
 
-The pull request is then checked by **Pack test data is in S3**, which stays red until S3 holds every archive and
-recording its locks name, and, when it changes a `test-data.lock`, by **Test data reproduces from the pins**, which
-derives the tool-pack again in CI and must find the new archive's data byte for byte.
+The pull request is then checked by **Pack test data is in S3**, which stays red until S3 holds every archive its
+locks name, and by the conformance check on the published data.
 
-A pull request that changes a `recording.lock` needs the recordings it names. A same-repository pull request's port
-readiness legs record every tool-pack whose `recording.lock` it changes, never reading the recordings the new lock
-names from S3 or the cache, so what they upload is what CI's recorder made from the pinned upstream; a leg also records
-an unchanged lock's recordings that neither holds. The legs upload the two as the artifact `recordings-<pack>--<tool>`
-of its CI run, kept for 7 days; `<run-id>` is that run's (`gh run list --workflow ci.yml --branch <branch>`), and the
-port readiness comment shows the per-rule summary of what upstream answers differently. That is also how
-`rust/clippy`'s recordings are made on Linux. The downloaded files are data: `fixtures:push` reads only the ones the
-lock names and checks each against its sha256. A fork's pull request has no such run: record it in a sandbox as below.
-
-When a pull request changes a pin, a generator or a recipe, the derived data must be made again, and so must the
-recording of a gated tool-pack. `fixtures:derive` and `port-readiness:record` run the pull request's own generators,
-recipes and recorder, and the upstream code they fetch, so a maintainer reviews that code first and then runs it in a
-sandbox: a clone of its own, in a container or VM that can reach no AWS or GitHub credentials (no `AWS_*` variables,
-no `~/.aws` or `gh` login), on Linux for `rust/clippy`, whose answers are Linux's (Clippy lints only the code rustc
-compiles for the host). The sandbox stages the whole derived set into `publish/` and hands the commit over as a git
-bundle, which is data:
+When a pull request changes a pin, a generator or a recipe, the derived data must be made again. `fixtures:derive`
+runs the pull request's own generators and recipes, and the upstream code they fetch, so a maintainer reviews that
+code first and then runs it in a sandbox: a clone of its own, in a container or VM that can reach no AWS or GitHub
+credentials (no `AWS_*` variables, no `~/.aws` or `gh` login), on Linux for `rust/clippy`, whose answers are Linux's
+(Clippy lints only the code rustc compiles for the host). For a change already on main, the bump workflow's
+`resnapshot` input does this in CI ([docs/upstream.md](docs/upstream.md#take-a-new-snapshot)). The sandbox stages the
+whole derived set into `publish/` and hands the commit over as a git bundle, which is data:
 
 ```sh
 # 1. In a checkout with read access: the archive the pull request's test-data.lock names (main's, unless it changes it).
@@ -500,12 +488,10 @@ cp <path to>/<samples sha256>.tar.zst .rerail/pack-data/archives/samples/<id>/<t
 npm ci
 npm run fixtures:pull -- --pack <id> --tool <tool>               # extracts the copied archive; reads no S3
 npm run fixtures:derive -- --pack <id> --tool <tool> --update    # the derived data, from the pins
-npm run port-readiness:record -- --pack <id> --tool <tool>       # a gated tool-pack (gates.yaml) only
 npm run fixtures:stage -- --pack <id> --tool <tool> --all        # the whole set, for a replace publish
 git add -- packs/<id>/upstream/<tool>/publish packs/<id>/licenses
 git commit -m "Derive <id>/<tool>"
 git bundle create pr-<n>-derived.bundle HEAD
-# Copy out pr-<n>-derived.bundle and .rerail/port-readiness/recordings/*.tar.zst.
 
 # 3. In a fresh checkout of the pull request's branch:
 git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
@@ -517,46 +503,23 @@ gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> -f replace=tr
 ```
 
 `fixtures:derive` needs the network (the pinned upstreams and their packages), `uv`, and for the PHP and Blade packs
-the pinned PHP (`conformance/recorders/port-readiness/runtimes/php/build.sh`) and Composer, for the Rust pack
+the pinned PHP (`scripts/pack-data/runtimes/php/build.sh`) and Composer, for the Rust pack
 `rustup`; it installs everything else under `.rerail/pack-data/`. It fails when a derivation changes a tracked file or
-an authored one; `--update` (a pin change) keeps the tracked files it changes (a licence table) for the commit instead,
-and `--compare <dir>` compares the result with another copy of the data byte for byte.
+an authored one; `--update` (a pin change) keeps the tracked files it changes (a licence table) for the commit instead.
 
-An upstream release needs nobody to start it: the nightly (`port-readiness-nightly.yml`) goes red when an upstream has
-published a breaking release (a major one, or a minor one of a `0.x` pin), reports minor and patch releases without
-failing, and each night starts one bump of every tool-pack behind on a work branch (`port-readiness-bump.yml`), a leg
-per tool-pack, which derives and records the new test data with no OIDC token or write token and outside main's cache
-scope, since it runs upstream's unreviewed code. A workflow on main (`port-readiness-bump-publish.yml`) then checks
-each leg's result (it runs the bump itself and refuses a patch that differs from its own anywhere but the locks,
-`UPSTREAM.md` and licence files), uploads the archives and recordings, and opens one pull request on
-`auto/bump-upstream` with a commit per tool-pack, each carrying its new pins, `test-data.lock` and `recording.lock`
-together. That pull request's CI derives each changed tool-pack again and checks its recording against every answer
-upstream gives again, so neither the archives nor the answers are taken on the bump run's word. A maintainer reviews
-and merges it like any pull request; nothing merges itself. When one tool-pack's gates fail, merge the others without
-its commit; closing the pull request unmerged
-declines the releases it carried until newer ones appear ([docs/port-readiness.md](docs/port-readiness.md#bump-pull-requests)).
-The port readiness recordings are not pack test data and not in its archives: each tool-pack's is an object of its own
-in S3, written once — every answer upstream gave the recorder on its own tests, one file per answer, as one canonical archive at `s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/<sha256>.tar.zst`
-— which `recording.lock` names by its tar's sha256, and the Actions cache holds copies for CI.
-`node scripts/s3/pack-fixtures.mjs recordings [--pack <id> [--tool <tool>]]` fetches the ones the checkout's locks name
-into `.rerail/port-readiness/recordings/` and extracts each archive's tree beside it
-([docs/port-readiness.md](docs/port-readiness.md#the-recordings-are-not-in-the-tree)).
-
-An answer is filed under the upstream configuration and what it depends on, so a record asks upstream only for what
-the archive lacks, and nothing when it lacks nothing: adding a port records that rule's answers (all the tool-pack's,
-for an adapter whose answers depend on the rules recorded together) and leaves every other answer valid.
-`npm run port-readiness:record -- --pack <id> --tool <tool>` records what is missing, `--full` everything from nothing,
-and `--prune` drops what no recorded rule names ([docs/port-readiness.md](docs/port-readiness.md#the-recording)). A pull request's CI asks upstream for everything again
-(`--check`) and accepts whichever of these the lock was recorded with: an incremental record over the base's archive,
-`--full` or `--prune`. An answer the archive holds is never asked again by a record, so when the nightly `--check`
-finds upstream now answers otherwise, record with `--full`, as it says. A lock from before the one archive (v2 or v3,
-naming `recording.json`) is refused: delete it and record the tool-pack again.
-
-A tool-pack's config id moves with its adapter's code (`ADAPTER_SOURCES` in
-`conformance/port-readiness/recording/archive.ts`), so a fix to an adapter asks every answer again. The rest of the
-recorder (`record.ts`, `recording/tree.ts`, `recording/schema.ts`) moves it only through `RECORDING_FORMAT` in
-the same file: a refactor or a comment there asks nothing again, and a change to the tree it writes for the same upstream output fails `test/conformance/recorders/recording-format.test.ts` until you bump
-`RECORDING_FORMAT` and update the test's pin, after which every tool-pack records again.
+An upstream release needs nobody to start it: each night `upstream-releases.yml` reports every tool-pack whose upstream
+has published a newer stable release (without failing) and starts one bump of all of them on a work branch
+(`upstream-bump.yml`), a leg per tool-pack, which moves the pins and derives the new test data into each stale
+tool-pack's `publish/` with no OIDC token or write token and outside main's cache scope, since it runs upstream's
+unreviewed code. A workflow on main (`upstream-bump-publish.yml`) then checks each leg's result (it runs the pin edits
+itself and refuses a patch that differs from its own anywhere but the files deriving and staging write), opens one
+pull request on `auto/bump-upstream` with a commit per tool-pack, and dispatches **Publish pack data** for it with
+replace, whose upload a code owner approves like any other. A maintainer reviews the pin diffs, the data and the
+`gates.yaml` `rules` facts, and merges it like any pull request; nothing merges itself. When one tool-pack fails the
+conformance check, merge the others without its commit; closing the pull request unmerged declines the releases it
+carried until newer ones appear ([docs/upstream.md](docs/upstream.md#bump-pull-requests)). To derive tool-packs again
+at their current pins, point `auto/bump-run/upstream` at main's head and dispatch `upstream-bump.yml` there with
+`resnapshot` on.
 
 ## Licence of contributions
 

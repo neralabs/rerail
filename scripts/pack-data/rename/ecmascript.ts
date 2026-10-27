@@ -1,6 +1,6 @@
 /**
  * The ECMA rename for upstream-labelled rename variants: a generator writes a renamed copy of each upstream test unit
- * (`writeRenameVariants`, conformance/recorders/eslint-record.mjs) and upstream lints the copy like any unit, so a port
+ * (`writeRenameVariants`, scripts/pack-data/eslint-expected.mjs) and upstream lints the copy like any unit, so a port
  * that matches the tests' own names and values (`foo`, `MyClass`, `"bar"`, `42`) instead of the construct the rule is
  * about fails on the copy. Reads the source with TypeScript's parser as TypeScript would by its extension (JavaScript
  * with JSX, JSX, TS or TSX). Node's type stripping runs this file from the generators, so it imports nothing but

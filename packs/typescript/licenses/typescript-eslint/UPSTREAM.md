@@ -6,14 +6,14 @@ The files listed below contain material copied from typescript-eslint and remain
 pack is Rerail's. The rule documents in `rules/` and `candidates/` are Rerail's re-implementations of
 typescript-eslint's rules (and, in `candidates/rules/vitest-*.json`, of three @vitest/eslint-plugin 1.6.27 rules,
 which are MIT too), under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest
-is under the Apache License 2.0 (the pack's `LICENSE`): the recorder `upstream/generate.mjs`, and the `*.expected.json`
-recordings it writes by running typescript-eslint on ESLint.
+is under the Apache License 2.0 (the pack's `LICENSE`): the generator `upstream/generate.mjs`, and the `*.expected.json`
+expected findings it writes by running typescript-eslint on ESLint.
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written
 by `upstream/generate.mjs`: cases with rule options, a custom parser, or type information for a rule that requires
-type checking are left out, and identical code is written once. The files named by a 12-character sha256 prefix
-(`fixtures/<test file>/<sha256 prefix>.<ext>`) are the code of the other cases, which the port readiness gates read: the gates
-recorder (`npm run port-readiness:record`) copies each one that no file of the pack already holds, verbatim, once per code.
+type checking are left out, and identical code is written once. Each file under
+`upstream/typescript-eslint/fixtures/renamed/` is derived from the copied file of the same path below `fixtures/`, with
+its names and literals renamed.
 
 Paths are relative to the pack directory, `packs/typescript/`.
 
@@ -4267,11 +4267,3 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/typescript-eslint/fixtures/renamed/unified-signatures/084.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived (`fixtures/unified-signatures/084.ts` with its names and literals renamed) |
 | `upstream/typescript-eslint/fixtures/renamed/unified-signatures/085.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived (`fixtures/unified-signatures/085.ts` with its names and literals renamed) |
 | `upstream/typescript-eslint/fixtures/renamed/unified-signatures/086.ts` | `packages/eslint-plugin/tests/rules/unified-signatures.test.ts` | derived (`fixtures/unified-signatures/086.ts` with its names and literals renamed) |
-
-> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
-> git (docs/port-readiness.md). It carries excerpts of this upstream's tests
-> (`packages/eslint-plugin/tests/rules/**/*.test.ts`: the `code` of each RuleTester case), redistributed under the
-> licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned
-> commit.
-

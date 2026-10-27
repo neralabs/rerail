@@ -1,22 +1,25 @@
 # Rerail rule pack: Vue
 
 Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. 19 ship, each
-passing every blocking port readiness gate ([docs/port-readiness.md](../../docs/port-readiness.md)), judged against
-`upstream/eslint-plugin-vue/gates.yaml`'s recording of eslint-plugin-vue's own RuleTester cases and against the tool's
-labelled real-code samples: 18 on, as `flat/recommended` turns them on, and `no-setup-props-reactivity-loss` off until turned on (no
-recommended configuration of eslint-plugin-vue turns it on). The ports cover `.vue` files only (`rerail.in_scope`), so
-each upstream case it lints as a bare script is recorded as the component that holds it, wrapped in `<script>` as
-`generate.mjs` writes its fixtures, and scored on upstream's answer there. The other 5 are candidates under `candidates/rules/`,
-scored and reported but never gating a check, until they pass the gates: 3 stop at `matches-upstream-tests` on cases
-no single-file, type-free read can answer as upstream does (a prop type imported from another file, a switch the
-TypeScript checker finds exhaustive, a type the checker infers, a TypeScript `<script setup>` without `lang`), 1 at
-`compact` (`no-dupe-v-else-if`) and 1 at `not-overfit` (`no-unused-refs`). Each
+passing the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)), judged against
+eslint-plugin-vue's own findings on its RuleTester cases (`upstream/eslint-plugin-vue/fixtures.expected.json`) and
+against the tool's labelled real-code samples: 18 on, as `flat/recommended` turns them on, and
+`no-setup-props-reactivity-loss` off until turned on (no recommended configuration of eslint-plugin-vue turns it on).
+The ports cover `.vue` files only (`rerail.in_scope`), so each upstream case it lints as a bare script is written as
+the component that holds it, wrapped in `<script>` as `generate.mjs` writes its fixtures, and scored on upstream's
+answer there. The other 5 are candidates under `candidates/rules/`, scored and reported but never gating a check,
+until they pass: 3 differ from upstream on cases no single-file, type-free read can answer as upstream does (a prop
+type imported from another file, a switch the TypeScript checker finds exhaustive, a type the checker infers, a
+TypeScript `<script setup>` without `lang`), 1 fails `compact` (`no-dupe-v-else-if`) and 1 names words found in
+upstream's tests but not its code (`no-unused-refs`). The Vue family has no rename variants (`holds-under-rename`
+covers the ECMAScript packs), so the real-code samples are the pack's only evidence that a port is not fitted to its
+tests. Each
 reads the component's two documents: its tree-sitter-vue tree, and the ECMAScript program its scripts and template
 expressions make (the `script-block` program a clause reads with `ast.embedded`, or reaches from a template node with
 `embedded`; `host` leads back from a program node to the template node it stands for). Each port
 is scored against eslint-plugin-vue's own findings on its RuleTester cases and on cases Rerail wrote for inputs a port
 once misread (`fixtures/<rule>/rerail-*.vue`, listed in `upstream/eslint-plugin-vue/UPSTREAM.md`), and against the
-labelled lines of real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the
+labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the
 engine's production workspace path. Every port agrees with eslint-plugin-vue on every fixture case: 1,106 findings on
 the 773 fixture files, with no false positive or false negative and no declared divergence.
 
@@ -25,7 +28,7 @@ It is checked by:
 ```sh
 node --import tsx conformance/languages/cli.ts --pack vue
 npx vitest run test/engine/catalog/packs.test.ts -t "pack vue"
-npm run port-readiness -- --pack vue --tool eslint-plugin-vue
+npm run test:conformance
 ```
 
 ([pack structure and validation contract](../../docs/pack-format.md)).
@@ -37,7 +40,7 @@ npm run port-readiness -- --pack vue --tool eslint-plugin-vue
 | `candidates/rules/` | The 5 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Each port's upstream rule, how findings compare, and the capabilities it exercises; the pinned parser stack |
 | `divergences.json` | Declared disagreements with eslint-plugin-vue (none) |
-| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`: `generate.mjs`'s `<valid\|invalid>-<n>.vue`, and the port readiness recorder's `<sha256 prefix>.<ext>`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`), the conformance recording (`fixtures.expected.json`), the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`), and the port readiness manifest and lock (`gates.yaml`, `recording.lock`). The cases, `cases.json` and the recording are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches with the samples; a maintainer derives them from the pins (`npm run fixtures:derive`, `scripts/pack-data/recipes/vue.ts`) |
+| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`: `generate.mjs`'s `<valid\|invalid>-<n>.vue`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`), the expected findings (`fixtures.expected.json`), the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`), and the upstream manifest (`gates.yaml`: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports). The cases, `cases.json` and the expected findings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches with the samples; a maintainer derives them from the pins (`npm run fixtures:derive`, `scripts/pack-data/recipes/vue.ts`) and publishes them through `upstream/eslint-plugin-vue/publish/` ([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)) |
 | `licenses/eslint-plugin-vue/` | eslint-plugin-vue's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Rule details

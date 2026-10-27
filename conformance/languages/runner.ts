@@ -21,8 +21,8 @@ import {
 import { capabilitiesJson, INFORMATIONAL_FAILURE_CODES } from "../engine.js";
 import {
   fixturesDirectory,
-  fixturesRecordingPath,
-  loadRecording,
+  fixturesExpectedPath,
+  loadExpectedFindings,
   coversFixture,
   documentPath,
   isCandidate,
@@ -30,10 +30,10 @@ import {
   RERAIL_ROOT,
   unitKey,
   type Divergence,
-  type FixtureRecording,
+  type FixtureExpectedFindings,
   type LoadedPack,
   type PackRule,
-  type Recording,
+  type ExpectedFindings,
   type UnitOrigin,
   type UpstreamFinding,
 } from "./pack.js";
@@ -298,9 +298,9 @@ interface FixturesRun {
   actual: Map<string, RuleActual>;
   /** Per pack rule id, over the rename variants (`source.units[key].renamedFrom`), scored apart from the originals. */
   renamedActual: Map<string, RuleActual>;
-  /** Per tool: its recording, or the reason there is none. */
-  recordings: Map<string, Recording | string>;
-  /** `tool\0path` of every file evaluated; a recording lists every file it ran on. */
+  /** Per tool: its expected findings, or the reason there are none. */
+  expectedByTool: Map<string, ExpectedFindings | string>;
+  /** `tool\0path` of every file evaluated; the expected findings list every file upstream ran on. */
   scored: ReadonlySet<string>;
   /** Per tool, every unit evaluated, rename variants included. */
   units: Map<string, ScoredUnit[]>;
@@ -373,21 +373,21 @@ function readCaseSource(path: string): string {
   return readFileSync(isPackFixture(path) ? requirePackFixture(path) : path, "utf8");
 }
 
-/** The recording at `path`, checked against the pack's pins, or why it cannot be used. */
-function pinnedRecording(loaded: LoadedPack, tool: string, path: string): Recording | string {
+/** The expected findings at `path`, checked against the pack's pins, or why it cannot be used. */
+function pinnedExpectedFindings(loaded: LoadedPack, tool: string, path: string): ExpectedFindings | string {
   const where = relative(RERAIL_ROOT, path);
-  if (!existsSync(path)) return packFixtureAbsence(path) ?? `no recording at ${where}`;
-  let recording: Recording;
+  if (!existsSync(path)) return packFixtureAbsence(path) ?? `no expected findings at ${where}`;
+  let findingsFile: ExpectedFindings;
   try {
-    recording = loadRecording(path);
+    findingsFile = loadExpectedFindings(path);
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
   const version = loaded.pack.tools.find(entry => entry.name === tool)?.version;
-  if (recording.tool !== tool) return `${where} records ${recording.tool}, not ${tool}`;
-  if (recording.version !== version) return `${where} records ${tool} ${recording.version}; the pack pins ${version}`;
-  if (recording.source.kind !== "fixtures") return `${where} is not a fixtures recording`;
-  return recording;
+  if (findingsFile.tool !== tool) return `${where} records ${findingsFile.tool}, not ${tool}`;
+  if (findingsFile.version !== version) return `${where} records ${tool} ${findingsFile.version}; the pack pins ${version}`;
+  if (findingsFile.source.kind !== "fixtures") return `${where} does not hold fixtures expected findings`;
+  return findingsFile;
 }
 
 /**
@@ -406,15 +406,15 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   const languages = familyLanguages(loaded);
   const actual: FixturesRun["actual"] = new Map();
   const renamedActual: FixturesRun["renamedActual"] = new Map();
-  const recordings: FixturesRun["recordings"] = new Map();
+  const expectedByTool: FixturesRun["expectedByTool"] = new Map();
   const scored = new Set<string>();
   const units: FixturesRun["units"] = new Map();
   const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
   for (const tool of toolsOf(compiled)) {
-    const recording = pinnedRecording(loaded, tool, fixturesRecordingPath(loaded, tool));
-    recordings.set(tool, recording);
-    if (typeof recording === "string") continue;
-    const source = (recording as FixtureRecording).source;
+    const toolExpected = pinnedExpectedFindings(loaded, tool, fixturesExpectedPath(loaded, tool));
+    expectedByTool.set(tool, toolExpected);
+    if (typeof toolExpected === "string") continue;
+    const source = (toolExpected as FixtureExpectedFindings).source;
     const rules = compiled.filter(entry => entry.rule.upstream.tool === tool);
     const toolUnits: ScoredUnit[] = [];
     units.set(tool, toolUnits);
@@ -457,7 +457,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   }
   summary.evaluationMs = Math.round(summary.evaluationMs);
   summary.syntaxErrorFiles = syntaxErrorSummary(actual);
-  return { actual, renamedActual, recordings, scored, units, summary };
+  return { actual, renamedActual, expectedByTool, scored, units, summary };
 }
 
 /** The tools of `compiled`'s rules, each once, in order. */
@@ -547,7 +547,7 @@ function readSamples(loaded: LoadedPack, tool: string, directory: string, errors
  * rule is evaluated alone over the samples labelled for it, their context files riding along first as a fixture unit's
  * manifests do: a file's AST work budget is shared by the rules beside it, so a rule's verdict never depends on which
  * other rules a sample is labelled for. A tree that cannot be had fails the rules of its tool alone, since a
- * port-readiness leg restores only its own tool-pack's data.
+ * conformance leg restores only its own tool-pack's data.
  */
 async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[], directoryOf: (tool: string) => string | undefined, errors: string[]): Promise<SamplesRun> {
   const languages = familyLanguages(loaded);
@@ -699,25 +699,25 @@ function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, score
 function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, used: Set<Divergence>, errors: string[]): RuleRow | undefined {
   const { rule } = entry;
   const { tool } = rule.upstream;
-  const recording = run.recordings.get(tool);
-  if (recording === undefined) return undefined;
-  if (typeof recording === "string") {
-    errors.push(`${rule.id} (fixtures): ${recording}`);
+  const toolExpected = run.expectedByTool.get(tool);
+  if (toolExpected === undefined) return undefined;
+  if (typeof toolExpected === "string") {
+    errors.push(`${rule.id} (fixtures): ${toolExpected}`);
     return undefined;
   }
-  if (!recording.source.rules.includes(rule.upstream.rule)) {
-    errors.push(`${rule.id} (fixtures): the ${tool} recording does not cover ${rule.upstream.rule}`);
+  if (!toolExpected.source.rules.includes(rule.upstream.rule)) {
+    errors.push(`${rule.id} (fixtures): the ${tool} expected findings do not cover ${rule.upstream.rule}`);
     return undefined;
   }
   // A rule scoped to part of the fixtures (`fixtures`) is scored only there; other units ran another configuration.
-  const findings = recording.findings.filter(finding => finding.rule === rule.upstream.rule && coversFixture(rule, finding.path));
+  const findings = toolExpected.findings.filter(finding => finding.rule === rule.upstream.rule && coversFixture(rule, finding.path));
   const units = run.units.get(tool) ?? [];
   const variantPaths = new Set(units.filter(unit => unit.origin?.renamedFrom !== undefined).flatMap(unit => unit.paths));
   const expected: Point[] = [];
   const expectedRenamed: Point[] = [];
   for (const finding of findings) {
     if (!run.scored.has(`${tool}\0${finding.path}`)) {
-      errors.push(`${rule.id} (fixtures): ${finding.path} is not among the recording's files`);
+      errors.push(`${rule.id} (fixtures): ${finding.path} is not among the expected findings' files`);
       continue;
     }
     if (rule.match === "line+column" && finding.column === undefined) {

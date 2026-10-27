@@ -994,7 +994,7 @@ path = [
   "packs/vue/upstream/eslint-plugin-vue/publish/fixtures/require-valid-default-prop/valid-014.vue",
   "packs/vue/upstream/eslint-plugin-vue/fixtures/return-in-computed-property/**",
   "packs/vue/upstream/eslint-plugin-vue/publish/fixtures/return-in-computed-property/**",
-  # The port readiness recorder's copies of RuleTester cases (`<sha256 prefix>.vue`, a script case wrapped in `<script>`).
+  # The eslint-plugin-vue generator's copies of RuleTester cases (`<sha256 prefix>.vue`, a script case wrapped in `<script>`).
   "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/01ce634462cf.vue",
   "packs/vue/upstream/eslint-plugin-vue/publish/fixtures/no-async-in-computed-properties/01ce634462cf.vue",
   "packs/vue/upstream/eslint-plugin-vue/fixtures/no-async-in-computed-properties/26196b417c25.vue",

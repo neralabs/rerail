@@ -10,7 +10,7 @@ providers is read (all are constant expressions, none asks for a PHP version abo
 case is copied to fixtures/<Test>/<provider>/<case>.php (the pack's licenses/psalm/UPSTREAM.md lists them) and analysed alone, as
 the upstream test analyses it: as src/somefile.php of its own project, at error level 1 with unused variables found
 (UnusedVariableTest's reportUnusedVariables(); not unused code), the case's ignored_issues suppressed, for its
-php_version (the tests' default 7.4; 8.0 for a `PHP80-` case, 8.1 for a valid `PHP81-` one). The recording is
+php_version (the tests' default 7.4; 8.0 for a `PHP80-` case, 8.1 for a valid `PHP81-` one). The expected findings are
 Psalm's UnusedVariable and ForbiddenCode reports. As the upstream tests do, an invalid case must report its
 error_message (an issue type, optionally ` - src/somefile.php:<line>:<column> - <message>`), and a valid case must
 report neither issue; `SKIPPED-` cases, which the tests skip as known Psalm bugs, are recorded without that check.

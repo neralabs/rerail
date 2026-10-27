@@ -4,15 +4,13 @@ Upstream: [eslint-plugin-unicorn 76.0.0](https://github.com/sindresorhus/eslint-
 
 The files listed below contain material copied from eslint-plugin-unicorn and remain under its license. The rule documents in
 `candidates/rules/unicorn-*.json` are Rerail's re-implementations of four of the plugin's rules, under the pack's
-licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The recorder `upstream/eslint-plugin-unicorn/generate.mjs` and
-the `fixtures.expected.json` recording it writes by running the plugin are Rerail's, under the Apache License 2.0 (the pack's `LICENSE`).
+licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The generator `upstream/eslint-plugin-unicorn/generate.mjs` and
+the expected findings it writes by running the plugin (`fixtures.expected.json`) are Rerail's, under the Apache License 2.0 (the pack's `LICENSE`).
 
 Each copied file is the `code` of one of the rule's own `valid` or `invalid` test cases, verbatim, written by the
-recorder: cases for another parser or file type are left out, and identical cases are written once. The port readiness gates'
-recorder (`npm run port-readiness:record`) reuses those files and writes every other case the gates read, the same verbatim
-`code`, as `upstream/eslint-plugin-unicorn/fixtures/<rule>/<sha256 prefix>.<ext>`. Its recording (`recording.tar.zst`,
-which `upstream/eslint-plugin-unicorn/recording.lock` names by its sha256; it is an object in S3, not committed) also holds the `code` of every
-test case of the plugin's rule tests, verbatim, as the words `not-overfit` reads.
+generator: cases for another parser or file type are left out, and identical cases are written once. Each file under
+`upstream/eslint-plugin-unicorn/fixtures/renamed/` is derived from the copied file of the same path below `fixtures/`,
+with its names and literals renamed.
 
 Paths are relative to the pack directory, `packs/javascript/`.
 
@@ -405,10 +403,3 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/063.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/063.ts` with its names and literals renamed) |
 | `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/064.ts` with its names and literals renamed) |
 | `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/065.ts` with its names and literals renamed) |
-
-> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
-> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`test/*.js`: the `code` of each RuleTester
-> case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file is this
-> upstream's own, at the pinned commit.
-

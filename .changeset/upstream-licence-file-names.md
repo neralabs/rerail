@@ -6,4 +6,4 @@
 "@neralabs/rerail-pack-typescript": patch
 ---
 
-The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+Each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.

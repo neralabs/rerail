@@ -218,11 +218,11 @@ describe("samples divergences", () => {
   });
 });
 
-/** Sets examplelint's fixture units' origins (`source.units`), and adds `findings` to its recording. */
+/** Sets examplelint's fixture units' origins (`source.units`), and adds `findings` to its expected findings. */
 const setUnits = (units: Record<string, { rules: string[]; renamedFrom?: string }>, files: string[] = [], findings: unknown[] = []): void =>
-  editJson(join(directory, "upstream", "examplelint", "fixtures.expected.json"), recording => {
-    const source = recording.source as Record<string, unknown>;
-    return { ...recording, source: { ...source, files: [...(source.files as string[]), ...files], units }, findings: [...(recording.findings as unknown[]), ...findings] };
+  editJson(join(directory, "upstream", "examplelint", "fixtures.expected.json"), expected => {
+    const source = expected.source as Record<string, unknown>;
+    return { ...expected, source: { ...source, files: [...(source.files as string[]), ...files], units }, findings: [...(expected.findings as unknown[]), ...findings] };
   });
 
 describe("stays-silent", () => {

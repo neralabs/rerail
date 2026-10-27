@@ -121,7 +121,7 @@ export function changesetBumpFailures(changesets, packs) {
 
 /**
  * Each pack a pull request changes what it publishes of, with no changeset of that pull request naming it. A pack
- * publishes its `package.json` and what its `files` list (a file, or everything under a directory); its recordings,
+ * publishes its `package.json` and what its `files` list (a file, or everything under a directory); its expected findings,
  * candidates and `CHANGELOG.md` are not published, and changing them needs no changeset. `changed` lists the pull
  * request's changed paths (old and new paths of a rename both), `changesets` the changesets it adds or edits, and
  * `packs` each pack's `{ id, name, files }`.

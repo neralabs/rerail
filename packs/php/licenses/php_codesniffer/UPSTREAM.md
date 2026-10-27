@@ -5,8 +5,8 @@ Upstream: [PHPCSStandards/PHP_CodeSniffer](https://github.com/PHPCSStandards/PHP
 The files listed below are the unit-test fixtures of the sniffs the PHP pack ports (the pack's `conformance.json`) and remain under PHP_CodeSniffer's license. Every other file in this
 pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's and
 Psalm's rules, published under the pack's licence expression, `Apache-2.0 AND BSD-3-Clause AND MIT`, as `REUSE.toml`
-annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py`
-and `upstream/phpcs/generate.py`, `upstream/phpcs/error_lists.php`, `upstream/phpcs/ruleset.xml` and the recordings
+annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the generators `upstream/common.py`
+and `upstream/phpcs/generate.py`, `upstream/phpcs/error_lists.php`, `upstream/phpcs/ruleset.xml` and the expected findings
 they write by running PHP_CodeSniffer.
 
 Paths are relative to the pack directory, `packs/php/`.

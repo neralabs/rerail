@@ -16,7 +16,7 @@ description: >-
   the job's environment. The consuming job (`fetch: "false"`) restores the cache entry the fetching job of the same
   workflow run saved, verifies each archive against its lock and extracts it; it holds no `id-token`, never assumes a
   role and never saves, and a miss fails. So a job with `id-token: write` never extracts a cache entry, whoever wrote
-  it, and a job that extracts one, or runs upstream's code (the recorder, the generators), holds no token to mint.
+  it, and a job that extracts one, or runs upstream's code (the generators), holds no token to mint.
   Consumers verify what they restore.
 
 inputs:

@@ -23,7 +23,7 @@ import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, assertPortableCase, isVariantPath, lint, pinnedRequire, withOrigins, writeRecording, writeRenameVariants } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, isVariantPath, lint, pinnedRequire, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
 import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -81,7 +81,7 @@ const RULE_IDS = RULES.map(rule => `@next/next/${rule}`);
 
 /**
  * Ours: cases Rerail wrote for the plugin to score beside the upstream tests, each an input the engine once misread.
- * `errors` is how many findings the case's own rule must report, checked against the recording as a test's count is.
+ * `errors` is how many findings the case's own rule must report, checked against the expected findings as a test's count is.
  */
 const AUTHORED = [
   // A bare `&` in a JSX attribute string is text; the vendored TSX grammar once read it as a parse error.
@@ -201,7 +201,7 @@ function writeFixtures(cases) {
         const name = `${kind}-${String(index).padStart(3, "0")}`;
         const path = test.filename === undefined ? `${rule}/${name}.js` : `${rule}/${name}/${caseFilename(test.filename)}`;
         if (test.options !== undefined || test.settings !== undefined || test.languageOptions !== undefined)
-          throw new Error(`${rule} ${name}: case options/settings/languageOptions are not supported by this recorder`);
+          throw new Error(`${rule} ${name}: case options/settings/languageOptions are not supported by this generator`);
         assertPortableCase(path, test.code);
         mkdirSync(dirname(join(fixturesDirectory, path)), { recursive: true });
         writeFileSync(join(fixturesDirectory, path), test.code);
@@ -218,7 +218,7 @@ function writeFixtures(cases) {
   return written;
 }
 
-/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not Next.js's. */
+/** UPSTREAM.md beside this generator: the fixtures Rerail wrote, which are Rerail's, not Next.js's. */
 function writeAuthoredRecord(kept) {
   const rows = kept.filter(entry => entry.kind === "authored").map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | written by Rerail |`);
   const text = `# ${TOOL} ${PLUGIN_VERSION}: cases Rerail wrote
@@ -247,7 +247,7 @@ async function recordFixtures() {
   const recorded = withOrigins(fixturesDirectory, kept.map(entry => entry.path).sort(), origins, variants, dropped, linted.findings);
   const findings = recorded.findings;
   writeAuthoredRecord(kept);
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, findings);
+  writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, findings);
   // Sanity check: the case's own rule under the pack config vs the test's expected error count.
   const mismatches = [];
   for (const entry of kept) {
@@ -286,7 +286,7 @@ function writeLicenses() {
 
 Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${PLUGIN_VERSION}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
 
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin.
+The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the generator \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` expected findings written by running the pinned plugin.
 
 Paths are relative to the pack directory, \`packs/next/\`.
 

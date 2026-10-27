@@ -2,9 +2,11 @@
 
 72 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
 22 start on; 50 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
-Each shipped rule is scored against ESLint's own findings on ESLint's test cases, and against the labelled lines of
-real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the engine's production
-workspace path, with every disagreement declared in `divergences.json` (none today).
+Each shipped rule is scored against ESLint's own findings on ESLint's test cases and on their rename variants (each
+case with its identifiers and literal contents renamed, labelled by ESLint again: `holds-under-rename`), and against the
+labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
+production workspace path, with every disagreement declared in `divergences.json`. The conformance check
+([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules and reports the candidates.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack javascript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).
@@ -15,10 +17,10 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's (and candidate's) upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with ESLint |
-| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`), its recording (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
-| `upstream/generate.mjs` | ESLint's recorder |
-| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording, its recorder (`generate.mjs`), and its real-code samples' `samples.lock` and `SAMPLES.md` |
-| `upstream/<tool>/gates.yaml`, `recording.lock` | The port readiness gates' manifest for the tool and the lock naming its recording (one archive, `recording.tar.zst`, kept out of git, by sha256) ([docs/port-readiness.md](../../docs/port-readiness.md)) |
+| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `upstream/generate.mjs` | ESLint's generator |
+| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases with their rename variants, its expected findings, its generator (`generate.mjs`), and its real-code samples' `samples.lock` and `SAMPLES.md` |
+| `upstream/<tool>/gates.yaml` | The tool's upstream manifest: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports ([docs/upstream.md](../../docs/upstream.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
@@ -33,15 +35,15 @@ TypeScript they report overloads, declaration merges and type names, and with bo
 port would report the same violation again. `no-loss-of-precision` and `prefer-spread`, which typescript-eslint leaves
 to the core rule on TypeScript, run on every ECMA file.
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/javascript.ts`) runs each tool's recorder against the pinned tool versions and upstream
-commit (the recorder's header lists them):
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/javascript.ts`) runs each tool's generator
+against the pinned tool versions and upstream commit (the generator's header lists them):
 
 ```sh
 npm run fixtures:derive -- --pack javascript                                 # every tool
 npm run fixtures:derive -- --pack javascript --tool eslint-plugin-unicorn    # one
-npm run fixtures:push -- --pack javascript --tool eslint-plugin-unicorn      # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack javascript --tool eslint-plugin-unicorn     # copy what changed into upstream/eslint-plugin-unicorn/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -240,7 +242,7 @@ Port of ESLint no-iterator. Member accesses whose static property name (getStati
 
 ### `eslint-no-labels`
 
-Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-lonely-if`
 
@@ -248,7 +250,7 @@ Port of ESLint no-lonely-if. Only when the else block's braces are not necessary
 
 ### `eslint-no-loss-of-precision`
 
-Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it reports 28 decimal literals of 2^63 (`9223372036854775808`), which a double stores exactly and ESLint does not report, because their digits differ from `String(v)`'s.
+Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span. A candidate: on the real-code samples (`docs/upstream.md#samples`) it reports 28 decimal literals of 2^63 (`9223372036854775808`), which a double stores exactly and ESLint does not report, because their digits differ from `String(v)`'s.
 
 ### `eslint-no-magic-numbers`
 
@@ -296,7 +298,7 @@ Matches member accesses whose static property name (ESLint getStaticPropertyName
 
 ### `eslint-no-prototype-builtins`
 
-Port of ESLint no-prototype-builtins. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Port of ESLint no-prototype-builtins. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-redeclare`
 
@@ -312,7 +314,7 @@ Matches string literals and untagged, substitution-free template literals whose 
 
 ### `eslint-no-self-assign`
 
-Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the real-code samples (`docs/port-readiness.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-self-compare`
 

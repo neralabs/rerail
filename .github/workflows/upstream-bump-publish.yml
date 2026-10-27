@@ -1,6 +1,6 @@
 name: Upstream bump (publish)
 
-# Publishes what an upstream-bump.yml run produced (docs/port-readiness.md, "Bump pull requests"): each of its legs'
+# Publishes what an upstream-bump.yml run produced (docs/upstream.md, "Bump pull requests"): each of its legs'
 # patches is checked on its own, the verified ones are composed into one commit per tool-pack on main's head, and the
 # commits are proposed as one pull request, which carries each stale tool-pack's derived data in its publish/ directory;
 # then pack-data-publish.yml is dispatched for that pull request with replace, the one path pack data reaches S3 by:
@@ -675,7 +675,7 @@ jobs:
           BUMP_URL: ${{ github.event.workflow_run.html_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PUBLISH_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/pack-data-publish.yml
-          DOCS_URL: ${{ github.server_url }}/${{ github.repository }}/blob/main/docs/port-readiness.md#bump-pull-requests
+          DOCS_URL: ${{ github.server_url }}/${{ github.repository }}/blob/main/docs/upstream.md#bump-pull-requests
         run: |
           set -euo pipefail
           parts="$RUNNER_TEMP/body"

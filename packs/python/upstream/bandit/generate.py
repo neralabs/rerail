@@ -28,7 +28,7 @@ ORIGIN = "https://github.com/PyCQA/bandit@92ae8b82fb422a639f0ed8d99e96cea769594e
 
 # Each ported test, shipped or candidate, and the examples it fires in when `# nosec` is ignored (bare `bandit
 # --ignore-nosec` over every file of examples/): its examples include the lines `# nosec` suppresses, which the
-# recording, run as bare `bandit` honouring `# nosec`, keeps without a finding.
+# expected findings, run as bare `bandit` honouring `# nosec`, keeps without a finding.
 TESTS: dict[str, list[str]] = {
     "B101": ["assert.py"],
     "B102": ["exec.py"],

@@ -1,4 +1,4 @@
-// Recorder for the React pack's eslint-plugin-react rules (rerail/packs/react/conformance.json).
+// Generator for the React pack's eslint-plugin-react rules (rerail/packs/react/conformance.json).
 //
 // Pins: eslint 9.39.5, eslint-plugin-react 7.37.5, @typescript-eslint/parser 8.70.1, typescript 5.9.3 (refuses any
 // other); upstream jsx-eslint/eslint-plugin-react v7.37.5 = 2c98b83c451a4297edf1787d9a616e50687e27e8.
@@ -17,7 +17,7 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertCommit } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit } from "../../../../scripts/pack-data/eslint-expected.mjs";
 import { execute, finishFixtures, options, RULES, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react";

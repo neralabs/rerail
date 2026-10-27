@@ -1,8 +1,7 @@
 // Records @vitest/eslint-plugin for the TypeScript pack's vitest ports (packs/typescript/conformance.json), in the
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-vitest/fixtures.expected.json (the rules' own
 // RuleTester cases).
-// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
-// test-data.lock reproduces):
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --vitest <checkout>
 // <dir> holds node_modules with the runtime nera-rule-validation pins for @vitest/eslint-plugin 1.6.27
 // (validation/upstream/vitest-eslint-plugin-1.6.27): eslint 10.0.0, @vitest/eslint-plugin 1.6.27,
@@ -12,14 +11,14 @@
 //
 // Fixtures: each rule's test file is loaded with a stub RuleTester that records its cases instead of linting. Every
 // case is linted with every pack rule of the plugin on at its default options (a case's own options are ignored, as
-// the V1 gates' upstream-tests gate ignores them) under typescript-eslint's parser, as the plugin's RuleTester
+// the pack's ports ignore them) under typescript-eslint's parser, as the plugin's RuleTester
 // (@typescript-eslint/rule-tester) parses every case, plus the case's own parserOptions; its globals and settings are
 // left out. A case with another parser is left out. A case's code is written to a test file, fixtures/<rule>/<n>.test.ts
 // (.test.tsx with JSX, or the TypeScript-family extension of its filename after `.test`). Code that does not parse is left out. Each kept file is
 // one analysis unit. Rerail's own cases (AUTHORED, below) are written beside them as fixtures/<rule>/rerail-<name>.test.ts,
-// linted the same way, and listed as Rerail's in UPSTREAM.md beside this recorder. `source.units` names each upstream
+// linted the same way, and listed as Rerail's in UPSTREAM.md beside this generator. `source.units` names each upstream
 // case's origin, the rule whose test file it came from (Rerail's cases have none); each such case also gets a rename
-// variant under fixtures/renamed/ (conformance/recorders/eslint-record.mjs `writeRenameVariants`), linted in the
+// variant under fixtures/renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted in the
 // original's language and marked `renamedFrom` it.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
@@ -32,10 +31,10 @@ import {
   lint,
   pinnedRequire,
   withOrigins,
-  writeRecording,
+  writeExpectedFindings,
   writeRenameVariants,
   writeVariantRows,
-} from "../../../../conformance/recorders/eslint-record.mjs";
+} from "../../../../scripts/pack-data/eslint-expected.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -51,8 +50,8 @@ const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
  * Vitest's by its name alone). Each is linted with every pack rule, like the plugin's own cases. Upstream classifies a
  * call by its head's binding (`resolveVitestFn` in src/utils/parse-vitest-fn-call.ts): a global; a named import, or a
  * key destructured from `require`/`await import`, of `vitest`; a `.extend` of a test function so bound; or a test
- * context. `reports` is what the plugin reports on each, by rule (none when absent); the recorder fails when the
- * recording differs, so a case cannot silently stop proving what it was written for.
+ * context. `reports` is what the plugin reports on each, by rule (none when absent); the generator fails when the
+ * expected findings differ, so a case cannot silently stop proving what it was written for.
  */
 const AUTHORED = [
   // Not Vitest's: another runner's import, a local, a parameter, or a binding of `vitest` that is not a test function.
@@ -755,7 +754,7 @@ function extractFixtures() {
   return { fixtures, files, authored, languages: [...languages].map(([group, members]) => ({ files: members, languageOptions: { parserOptions: JSON.parse(group) } })), counts };
 }
 
-/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
+/** UPSTREAM.md beside this generator: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
 function writeAuthoredRecord(authored) {
   const rows = authored.map(({ file }) => `| \`upstream/${TOOL}/fixtures/${file}\` | written by Rerail |`);
   const text = `# ${TOOL} ${VERSION}: cases Rerail wrote
@@ -805,7 +804,7 @@ async function recordFixtures() {
   const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
   writeVariantRows(join(HERE, "..", "..", "licenses", TOOL, "UPSTREAM.md"), TOOL, units);
   writeAuthoredRecord([...authored].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)));
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
+  writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
   console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }

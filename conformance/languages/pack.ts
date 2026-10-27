@@ -82,7 +82,7 @@ export const packSchema = z
     suppressionExemptions: z.array(suppressionExemptionSchema).default([]),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
-    /** Recordings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
+    /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
   .superRefine((pack, context) => {
@@ -165,14 +165,14 @@ const fixtureSourceSchema = z
     }
   });
 
-export const recordingSchema = z.strictObject({
+export const expectedFindingsSchema = z.strictObject({
   tool: nonEmpty,
   version: nonEmpty,
   source: fixtureSourceSchema,
   findings: z.array(findingSchema),
 });
-export type Recording = z.infer<typeof recordingSchema>;
-export type FixtureRecording = Recording & { source: z.infer<typeof fixtureSourceSchema> };
+export type ExpectedFindings = z.infer<typeof expectedFindingsSchema>;
+export type FixtureExpectedFindings = ExpectedFindings & { source: z.infer<typeof fixtureSourceSchema> };
 
 export const DIVERGENCE_KINDS = ["upstream-wrong", "not-comparable", "rerail-unknown"] as const;
 const divergenceSchema = z.strictObject({
@@ -198,7 +198,7 @@ const rulePackExamplesSchema = z.object({ rules: z.array(z.object({ document: no
 export interface LoadedPack {
   pack: Pack;
   directory: string;
-  /** Root of the per-tool recordings: `<oracles>/<tool>/fixtures.expected.json`. */
+  /** Root of the per-tool expected findings: `<oracles>/<tool>/fixtures.expected.json`. */
   oraclesDirectory: string;
   divergences: Divergence[];
   /**
@@ -219,7 +219,7 @@ function parseJson<T>(path: string, schema: z.ZodType<T>): T {
   return parsed.data;
 }
 
-/** The conformance pack in `directory` (its conformance.json; recordings under `upstream/` unless it sets `oracles`). */
+/** The conformance pack in `directory` (its conformance.json; expected findings under `upstream/` unless it sets `oracles`). */
 export function loadPack(directory: string): LoadedPack {
   const pack = parseJson(join(directory, CONFORMANCE_FILE), packSchema);
   const divergencesPath = join(directory, "divergences.json");
@@ -248,7 +248,7 @@ export function listPortedPacks(): string[] {
     .sort(compareDeterministicStrings);
 }
 
-export function fixturesRecordingPath(loaded: LoadedPack, tool: string): string {
+export function fixturesExpectedPath(loaded: LoadedPack, tool: string): string {
   return join(loaded.oraclesDirectory, tool, "fixtures.expected.json");
 }
 
@@ -256,6 +256,6 @@ export function fixturesDirectory(loaded: LoadedPack, tool: string): string {
   return join(loaded.oraclesDirectory, tool, "fixtures");
 }
 
-export function loadRecording(path: string): Recording {
-  return parseJson(path, recordingSchema);
+export function loadExpectedFindings(path: string): ExpectedFindings {
+  return parseJson(path, expectedFindingsSchema);
 }

@@ -1,4 +1,4 @@
-"""Pack test data for the Python recorders (packs/<id>/upstream/common.py and the generate.py beside them): the messages
+"""Pack test data for the Python generators (packs/<id>/upstream/common.py and the generate.py beside them): the messages
 scripts/s3/pack-fixtures.mjs gives. The data (a tool's test cases under packs/<id>/upstream/<tool>/ and its recorded
 answers on them) is not in git: each tool-pack's is one archive in S3, which the tool directory's test-data.lock pins by
 sha256. New or changed data is staged into the tool-pack's publish/ and published by the publish workflow
@@ -24,14 +24,14 @@ def _repository_path(path: os.PathLike | str) -> str:
 
 
 def require(path: pathlib.Path) -> pathlib.Path:
-    """`path` when it exists; otherwise stops the recorder with the instruction to pull and derive."""
+    """`path` when it exists; otherwise stops the generator with the instruction to pull and derive."""
     if not path.exists():
         raise SystemExit(f"{_repository_path(path)} is missing: {PULL_INSTRUCTION}")
     return path
 
 
 def written(*paths: pathlib.Path) -> None:
-    """Tells the contributor how the pack test data a recorder wrote (files or directories) is published (pack-fixtures.mjs's packFixturesWritten)."""
+    """Tells the contributor how the pack test data a generator wrote (files or directories) is published (pack-fixtures.mjs's packFixturesWritten)."""
     files = sorted({_repository_path(file) for path in paths if path.exists()
                     for file in ([path] if path.is_file() else [entry for entry in path.rglob("*") if entry.is_file()])})
     counts: dict[tuple[str, str], int] = {}
@@ -48,7 +48,7 @@ def written(*paths: pathlib.Path) -> None:
               '(CONTRIBUTING.md, "Pack test data").', file=sys.stderr)
 
 
-def recording_written(path: pathlib.Path, source: dict) -> None:
-    """`written` for a recording: a fixtures recording names the case sources beside it too."""
+def expected_findings_written(path: pathlib.Path, source: dict) -> None:
+    """`written` for expected findings: fixtures expected findings name the case sources beside them too."""
     cases = [path.parent / "fixtures", path.parent / "tests"] if source.get("kind") == "fixtures" else []
     written(path, *cases)

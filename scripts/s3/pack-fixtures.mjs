@@ -53,9 +53,9 @@
 // cache carries it) and extracts it outside the tool directory as a verified tree (extractTree); the conformance
 // runner reads the tree through samplesTree.
 //
-// The consumers (the conformance runner, pack validation, the recorders and generators, the Rust tests) report a
+// The consumers (the conformance runner, pack validation, the generators, the Rust tests) report a
 // missing file with missingPackFixture, so a checkout without the data says to pull instead of failing on ENOENT.
-// packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, recorders, UPSTREAM.md,
+// packs/<id>/upstream/<tool>/ keeps the rest in git: gates.yaml, generators, UPSTREAM.md,
 // samples.lock, test-data.lock, and, while a pull request publishes data, publish/.
 
 import { spawnSync } from "node:child_process";
@@ -255,7 +255,7 @@ function filesAt(path) {
 const shellQuoted = (path) => (/^[\w./@+-]+$/u.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`);
 
 /**
- * What a recorder or generator says after writing pack test data at `paths` (files or directories, in the checkout at
+ * What a generator says after writing pack test data at `paths` (files or directories, in the checkout at
  * `root`): git ignores it, so new or changed data reaches S3 only staged into its tool-pack's publish/ and published.
  */
 export function packFixturesWritten(paths, root = ROOT) {
@@ -273,8 +273,8 @@ export function packFixturesWritten(paths, root = ROOT) {
     .join("\n");
 }
 
-/** packFixturesWritten for a recording at `path`: a fixtures recording names the case sources beside it too. */
-export function recordingWritten(path, kind) {
+/** packFixturesWritten for expected findings at `path`: fixtures expected findings name the case sources beside them too. */
+export function expectedFindingsWritten(path, kind) {
   const cases = kind === "fixtures" ? ["fixtures", "tests"].map((name) => join(dirname(path), name)) : [];
   return packFixturesWritten([path, ...cases.filter((directory) => existsSync(directory))]);
 }

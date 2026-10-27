@@ -12,8 +12,9 @@ The convention:
   generator listed here. JSON and binary files carry no header: their `.generated.` name, or this table, marks them.
 - Generators pin the tools they read (a version check that refuses any other) and run offline, never in CI; CI only
   checks that the committed output is current where a test can (the language registry, the schema SQL).
-- Fixture oracles are the exception: their recorders sit beside their recordings under `fixtures/<family>/<feature>/`
-  and `packs/<id>/upstream/<tool>/` (see [fixtures/README.md](../../fixtures/README.md)), and are not listed here.
+- Fixture oracles are the exception: their generators sit beside the expected output they write under
+  `fixtures/<family>/<feature>/` and `packs/<id>/upstream/<tool>/` (see [fixtures/README.md](../../fixtures/README.md)),
+  and are not listed here.
 
 `<tools>` below is a directory with the pinned npm packages installed (`npm install --prefix <tools> <package>@<version>`),
 and `<landing>` a checkout of nera-landing, whose design tokens the UI files project.

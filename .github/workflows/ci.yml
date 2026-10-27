@@ -179,8 +179,8 @@ jobs:
 
   # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
   # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
-  # fails here until a maintainer has pushed what it names (the error says how), so it cannot merge with data that only
-  # its own cache scope holds: main's runs read S3 and never record. Nothing needs this job, so the others still report.
+  # fails here until the publish workflow (pack-data-publish.yml) has put what it names, so it cannot merge with data
+  # that only its own cache scope holds: main's runs read S3. Nothing needs this job, so the others still report.
   # It runs this commit's script alone, under the read role, where the test-data job does.
   test-data-in-s3:
     name: Pack test data is in S3
@@ -222,7 +222,7 @@ jobs:
           output-credentials: true
           output-env-credentials: false
 
-      - name: Check S3 holds every locked archive and recording
+      - name: Check S3 holds every locked archive
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
@@ -274,7 +274,7 @@ jobs:
       - uses: ./.github/actions/lfs
 
       # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
-      # SQLFluff's recordings and fixtures, and eslint-plugin-vue's fixtures.
+      # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
       - if: matrix.task == 'test'
         uses: ./.github/actions/pack-test-data
         with:

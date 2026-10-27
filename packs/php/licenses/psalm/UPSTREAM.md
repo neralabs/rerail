@@ -5,8 +5,8 @@ Upstream: [vimeo/psalm](https://github.com/vimeo/psalm/tree/e2ca44251c1f1aa2e354
 The files listed below contain material copied from vimeo/psalm and remain under its license. Every other file in
 this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of PHP_CodeSniffer's, PHPStan's
 and Psalm's rules, published under the pack's licence expression, `Apache-2.0 AND BSD-3-Clause AND MIT`, as
-`REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders
-`upstream/common.py` and `upstream/psalm/generate.py`, `upstream/psalm/read_tests.php` and the recordings they
+`REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the generators
+`upstream/common.py` and `upstream/psalm/generate.py`, `upstream/psalm/read_tests.php` and the expected findings they
 make by running Psalm 6.19.1.
 
 Paths are relative to the pack directory, `packs/php/`. Each fixture is the `code` string of one case of a test's
@@ -314,9 +314,3 @@ Paths are relative to the pack directory, `packs/php/`. Each fixture is the `cod
 | `upstream/psalm/fixtures/UnusedVariableTest/valid/varUsedInloop.php` | `tests/UnusedVariableTest.php` | the `code` of providerValidCodeParse() case `varUsedInloop` |
 | `upstream/psalm/fixtures/UnusedVariableTest/valid/variableUsedIndirectly.php` | `tests/UnusedVariableTest.php` | the `code` of providerValidCodeParse() case `variableUsedIndirectly` |
 | `upstream/psalm/fixtures/UnusedVariableTest/valid/whileLoopVarUpdatedInWhileLoop.php` | `tests/UnusedVariableTest.php` | the `code` of providerValidCodeParse() case `whileLoopVarUpdatedInWhileLoop` |
-
-> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
-> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`tests/**/*.php`: the `code` of each
-> providerValidCodeParse() and providerInvalidCodeParse() case), redistributed under the licence above, together with
-> Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned commit.

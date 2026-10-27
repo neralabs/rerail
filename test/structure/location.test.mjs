@@ -71,7 +71,7 @@ describe("#3 fixture data location", () => {
   const unpinned = (pack, tool) =>
     `the tool-pack's test data archive is unpinned: stage its data into packs/${pack}/upstream/${tool}/publish/ (${stage(pack, tool)}) and run the publish workflow (${workflow}), which writes the lock`;
 
-  it("flags recordings outside fixtures/ and packs/<id>/upstream/", () => {
+  it("flags expected findings outside fixtures/ and packs/<id>/upstream/", () => {
     const result = fixtureDataLocation(
       memoryRepo({
         "fixtures/php/scope/a.expected.json": "{}",
@@ -273,7 +273,7 @@ describe("#5 test roots", () => {
 });
 
 describe("#6 generator locations", () => {
-  it("allows scripts/generate/, fixtures/ and pack recorders; flags generators in the engine source", () => {
+  it("allows scripts/generate/, fixtures/ and pack generators; flags generators in the engine source", () => {
     const result = generatorLocations(
       memoryRepo({
         "scripts/generate/value/ecma-builtins.mjs": "",
@@ -314,17 +314,17 @@ describe("#6 generator locations", () => {
       {
         path: "scripts/generate/README.md",
         line: 3,
-        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)",
+        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)",
       },
       {
         path: "src/engine/storage/schema-sql.generated.ts",
         line: 1,
-        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)",
+        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)",
       },
       {
         path: "src/hosts/omp/tokens.ts",
         line: 1,
-        message: "names generator src/hosts/omp/tokens.mjs, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)",
+        message: "names generator src/hosts/omp/tokens.mjs, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)",
       },
     ]);
     expect(result.actual).toBe("2");

@@ -15,7 +15,7 @@ const target = new URL("lizard-1.24.0.tsv", import.meta.url);
 
 /** lizard's CSV over the corpus; `-m` is its modified count, where a whole switch or match adds 1 instead of 1 per case. */
 function lizard(...flags) {
-  const run = spawnSync("uvx", ["--from", LIZARD, "lizard", ...flags, "--csv", corpus], { encoding: "utf8" }); // NOSONAR - a manual recorder that runs uvx from PATH
+  const run = spawnSync("uvx", ["--from", LIZARD, "lizard", ...flags, "--csv", corpus], { encoding: "utf8" }); // NOSONAR - a manual generator that runs uvx from PATH
   if (run.error !== undefined) throw new Error(`uvx not found on PATH (${run.error.message}); install uv to record lizard scores`);
   if (run.status !== 0) throw new Error(`lizard failed with status ${run.status}: ${run.stderr}`);
   return run.stdout;

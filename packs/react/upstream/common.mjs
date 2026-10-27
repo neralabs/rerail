@@ -1,16 +1,16 @@
-// Shared by the React pack's recorders (eslint-plugin-react/generate.mjs, eslint-plugin-react-hooks/generate.mjs):
-// the pins, the one ESLint configuration every recording is made with, fixture extraction from the upstream rule
-// tests (a stub RuleTester captures `run(name, rule, { valid, invalid })`), and the recording runs.
+// Shared by the React pack's generators (eslint-plugin-react/generate.mjs, eslint-plugin-react-hooks/generate.mjs):
+// the pins, the one ESLint configuration every expected-findings run is made with, fixture extraction from the upstream rule
+// tests (a stub RuleTester captures `run(name, rule, { valid, invalid })`), and the expected-findings runs.
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
 // pull request CI).
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertPortableCase, isVariantPath, lint, pinnedRequire, REPOSITORY, withOrigins, writeRecording, writeRenameVariants } from "../../../conformance/recorders/eslint-record.mjs";
+import { assertPortableCase, isVariantPath, lint, pinnedRequire, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
-/** Exact versions every recording is made with (`.rerail/tools/react/package.json`). */
+/** Exact versions every expected-findings run is made with (`.rerail/tools/react/package.json`). */
 export const PINS = {
   eslint: "9.39.5",
   "eslint-plugin-react": "7.37.5",
@@ -19,7 +19,7 @@ export const PINS = {
   typescript: "5.9.3",
 };
 
-/** The chosen upstream rules, per tool (the pack's `tools[].name`). Every recording enables all of them. */
+/** The chosen upstream rules, per tool (the pack's `tools[].name`). Every expected-findings run enables all of them. */
 export const RULES = {
   "eslint-plugin-react": [
     "react/button-has-type",
@@ -214,7 +214,7 @@ export function resetDirectory(path) {
  * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, filename?, extension?, drop? }`)
  * and `tool`'s AUTHORED cases under `<directory>/fixtures/`, a rename variant of each extracted case under
  * `fixtures/renamed/` (`writeRenameVariants`), records the pack configuration over them (every chosen rule on every
- * source; the recording holds `tool`'s rules, over the files ESLint parses, and each extracted case's origin, its
+ * source; the expected findings hold `tool`'s rules, over the files ESLint parses, and each extracted case's origin, its
  * rule), lists the authored files in `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count
  * under the pack configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`. The kept
  * entries it returns hold the kept variants too (kind `renamed`, `of` the original's path).
@@ -249,7 +249,7 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
   const recorded = withOrigins(fixtures, kept.map(entry => entry.unit ?? entry.path), origins, variants, new Set(unparsable.keys()), linted.findings);
   const findings = recorded.findings;
   const upstream = UPSTREAM[tool];
-  writeRecording(
+  writeExpectedFindings(
     join(directory, "fixtures.expected.json"),
     tool,
     PINS[tool],
@@ -280,7 +280,7 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
   return { kept: [...kept, ...renamed], report };
 }
 
-/** UPSTREAM.md beside the recorder: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
+/** UPSTREAM.md beside the generator: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
 function writeAuthoredRecord(tool, directory, kept) {
   const rows = kept.filter(entry => entry.kind === "authored").flatMap(entry => [entry.unit].flat().map(path => `| \`upstream/${tool}/fixtures/${path}\` | written by Rerail |`));
   const text = `# ${UPSTREAM[tool].title}: cases Rerail wrote
@@ -312,7 +312,7 @@ export function writeLicense(tool, upstream, copied, kept) {
 
 Upstream: [${meta.repository.replace("https://github.com/", "")}](${meta.repository}/tree/${meta.commit}) at ${meta.reference} (commit \`${meta.commit}\`). License: ${meta.license}; [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that commit.
 
-The files listed below are the upstream tests of the rules the React pack records (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the recordings they write by running the pinned plugin. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them.
+The files listed below are the upstream tests of the rules the React pack ports (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the expected findings they write by running the pinned plugin. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them.
 
 Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`. A \`derived\` row is a rename variant of the extracted case it names.
 

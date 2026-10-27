@@ -56,8 +56,8 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const setUnits = (units: Record<string, { rules: string[] }>): void => {
   const path = join(pack, "upstream", "examplelint", "fixtures.expected.json");
-  const recording = JSON.parse(readFileSync(path, "utf8")) as { source: Record<string, unknown> };
-  writeFileSync(path, JSON.stringify({ ...recording, source: { ...recording.source, units } }));
+  const expected = JSON.parse(readFileSync(path, "utf8")) as { source: Record<string, unknown> };
+  writeFileSync(path, JSON.stringify({ ...expected, source: { ...expected.source, units } }));
 };
 
 async function judge() {

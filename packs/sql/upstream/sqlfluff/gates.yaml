@@ -6,7 +6,7 @@ rerail:
 upstream:
   name: sqlfluff/sqlfluff
   repository: https://github.com/sqlfluff/sqlfluff
-  # The release rerail's sql pack records for every SQLFluff document (packs/sql/licenses/sqlfluff/UPSTREAM.md:
+  # The release rerail's sql pack ports for every SQLFluff document (packs/sql/licenses/sqlfluff/UPSTREAM.md:
   # SQLFluff 4.4.0); tag 4.4.0.
   commit: 0348222a3bcdb0226563f7349c5a39beb0641955
   version: 4.4.0
@@ -19,16 +19,12 @@ upstream:
   # default (False) on its own cases where `force_enable = True` reports something is held off by default: PG01 and
   # PG02, which are not `recommended` and ship off.
   #
-  # The dialect (a decision for the team): the engine reads every .sql file as PostgreSQL, and the gates do not read
-  # divergences.json, so upstream runs as `dialect: postgres`, `templater: raw`, with the port's rule configuration
-  # (PG01 and PG02 `force_enable = True`, every other rule at its defaults), on every case. A
-  # YAML case written for another dialect is still linted as PostgreSQL, and its `violations` are not upstream's
-  # written expectation (`markup` is null); a case SQLFluff's postgres dialect cannot read whole, a Jinja case and a
-  # case configured otherwise are skipped, with the reason. So a rule SQLFluff leaves silent under postgres (AM02,
-  # whose UNION check is for the dialects where a bare UNION is ambiguous) cannot pass `fires`.
+  # The dialect: the engine reads every .sql file as PostgreSQL. upstream/sqlfluff/generate.py lints each fixture in
+  # its own dialect and each ANSI one again with `--dialect postgres` (fixtures.cases.json), and where a port follows
+  # PostgreSQL and the fixture's dialect reads otherwise, the case is a `not-comparable` divergence.
   recommended_configs:
     - default
-  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  # The file types upstream lints with its approved configuration at the pins (declared; reviewed at each bump).
   lints: [".sql"]
 popularity:
   observed_on: 2026-10-19
@@ -36,7 +32,7 @@ popularity:
     - "PyPI: 2,391,178 downloads of sqlfluff in the last week and 9,355,581 in the last month, without mirrors (pypistats.org/api/packages/sqlfluff/recent, 2026-10-19)"
     - "GitHub: sqlfluff/sqlfluff has 9,984 stars and 1,238 forks and is not archived (gh api repos/sqlfluff/sqlfluff, 2026-10-19)"
 # Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
-# configuration that turns it on (seeded from the recording; reviewed at each bump).
+# configuration that turns it on (declared; reviewed at each bump).
 rules:
   "AL04":
     deprecated: null

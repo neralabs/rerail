@@ -1,8 +1,7 @@
 // Records where ESLint 10.11.0 reports the JavaScript pack's ported rules (rerail/packs/javascript/conformance.json),
 // in the format rerail/conformance/languages/pack.ts reads: eslint/fixtures.expected.json (the rules' own RuleTester
 // cases).
-// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
-// test-data.lock reproduces):
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --eslint <checkout>
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser@8.70.1 and typescript@6.0.3 (the
 // runtime nera-rule-validation pins for ESLint 10.11.0, validation/upstream/eslint-10.11.0). The checkout is
@@ -10,17 +9,17 @@
 //
 // Each rule's test file is loaded with a stub RuleTester that records its cases instead of linting. Every case's code
 // is written to eslint/fixtures/<rule>/<n>.<ext> and linted with every pack rule on at its default options (the pack's
-// ports are the rules as eslint:recommended turns them on; a case's own rule options are ignored, as the V1 gates'
-// upstream-tests gate ignores them), under ESLint's defaults plus the case's own
+// ports are the rules as eslint:recommended turns them on; a case's own rule options are ignored, as the pack's
+// ports ignore them), under ESLint's defaults plus the case's own
 // language: its ecmaVersion, sourceType and parserOptions (`with`, octal literals and `delete x` only parse as a
 // script), and typescript-eslint's parser where the case names it. The case's globals and settings are left out, as
-// a repository without them would lint the code. So the recording is the linter's answer, not the case's own
+// a repository without them would lint the code. So the expected findings are the linter's answer, not the case's own
 // expectation. A case's extension is its parser's: .ts (.tsx with JSX) for typescript-eslint's parser, .js (.jsx) for
 // espree, or the TypeScript-family extension of its filename. Code that does not parse is left out, and so is code
 // over MAX_CASE_BYTES: ESLint's performance stress cases (prefer-template's 1 MB string literal), which exhaust the
 // engine's per-file AST work budget once every pack rule runs on the file. Each kept file is one analysis unit. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 // `source.units` names each file's origin, the rule whose test file it came from. Each such file also gets a rename
-// variant, renamed/<rule>/<n>.<ext> (conformance/recorders/eslint-record.mjs `writeRenameVariants`): its identifiers
+// variant, renamed/<rule>/<n>.<ext> (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`): its identifiers
 // and string and number literal contents renamed, in the original's language, linted like any file, and marked
 // `renamedFrom` the original.
 import { execFileSync } from "node:child_process";
@@ -28,8 +27,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, withOrigins, writeRenameVariants, writeVariantRows } from "../../../conformance/recorders/eslint-record.mjs";
-import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
+import { isVariantPath, withOrigins, writeRenameVariants, writeVariantRows } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
@@ -144,7 +143,7 @@ async function lint(cwd, files, rules, languages) {
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-  console.log(recordingWritten(path, value.source.kind));
+  console.log(expectedFindingsWritten(path, value.source.kind));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

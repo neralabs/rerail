@@ -1,6 +1,6 @@
-// Shared by the ESLint-based packs' recorders (packs/<id>/upstream/<tool>/generate.mjs): pins, the guard that keeps
-// the recording machine out of fixtures, each unit's upstream origin and the ECMA rename variants, and
-// ESLint's findings in the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
+// Shared by the ESLint-based packs' generators (packs/<id>/upstream/<tool>/generate.mjs): pins, the guard that keeps
+// the generating machine out of fixtures, each unit's upstream origin and the ECMA rename variants, and
+// ESLint's findings in the expected-findings format `rerail/conformance/languages/pack.ts` reads (`expectedFindingsSchema`).
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
 // pull request CI).
 import { execFileSync } from "node:child_process";
@@ -9,22 +9,22 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { recordingWritten } from "../../scripts/s3/pack-fixtures.mjs";
-import { renameVariant } from "../../scripts/pack-data/rename/ecmascript.ts";
+import { expectedFindingsWritten } from "../s3/pack-fixtures.mjs";
+import { renameVariant } from "./rename/ecmascript.ts";
 
 export const REPOSITORY = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 
-/** The working directory upstream tests see while they declare their cases (`withRecordingCwd`): the same everywhere. */
-export const RECORDING_CWD = "/work/project";
+/** The working directory upstream tests see while they declare their cases (`withUpstreamTestCwd`): the same everywhere. */
+export const UPSTREAM_TEST_CWD = "/work/project";
 
 /**
- * Runs `declare` (importing an upstream test file) with process.cwd() answering RECORDING_CWD, so a test that builds a
+ * Runs `declare` (importing an upstream test file) with process.cwd() answering UPSTREAM_TEST_CWD, so a test that builds a
  * case's `filename` from the working directory (unicorn's filename-case: `path.join(cwd, …)`) names the same file on
  * every machine.
  */
-export async function withRecordingCwd(declare) {
+export async function withUpstreamTestCwd(declare) {
   const realCwd = process.cwd;
-  process.cwd = () => RECORDING_CWD;
+  process.cwd = () => UPSTREAM_TEST_CWD;
   try {
     return await declare();
   } finally {
@@ -58,9 +58,9 @@ const escape = text => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
 /**
  * Throws when a case about to be written would carry this machine's directories, in its fixture path or its code: an
- * upstream test that named its file from the recorder's working directory, home or temp folder (#31's filename-case
+ * upstream test that named its file from the generator's working directory, home or temp folder (#31's filename-case
  * fixtures held `/private/tmp/claude-501/…`), which breaks Windows checkouts and leaks the maintainer's machine.
- * Pin the working directory with `withRecordingCwd`, or keep only the name below the test's own fixture directory.
+ * Pin the working directory with `withUpstreamTestCwd`, or keep only the name below the test's own fixture directory.
  * `directories` are `machineDirectories()`' form; a match is whole segments, so `/Users/jeff` never matches `/Users/jeffrey`.
  */
 export function assertPortableCase(path, code = "", directories = machineDirectories()) {
@@ -75,7 +75,7 @@ export function assertPortableCase(path, code = "", directories = machineDirecto
 }
 
 /**
- * Throws when an authored case's expected findings (`reports`, rule name to count) name a rule the recording does not
+ * Throws when an authored case's expected findings (`reports`, rule name to count) name a rule the expected findings do not
  * run: a misspelled rule would read as no finding and pass whatever the tool reports on the case.
  */
 export function assertKnownReportRules(name, reports, rules) {
@@ -89,7 +89,7 @@ export function pinnedRequire(tools, pins) {
   const require = createRequire(join(tools, "package.json"));
   for (const [name, version] of Object.entries(pins)) {
     const found = JSON.parse(readFileSync(join(tools, "node_modules", name, "package.json"), "utf8")).version;
-    if (found !== version) throw new Error(`${name} ${found} under ${tools}; this recorder pins ${version}`);
+    if (found !== version) throw new Error(`${name} ${found} under ${tools}; this generator pins ${version}`);
   }
   return require;
 }
@@ -125,19 +125,19 @@ export function findingsOf(result, text, path, rules) {
   return { fatal: undefined, findings };
 }
 
-/** Writes a recording as packs/php/upstream/common.py does: findings sorted, one-space indent. */
-export function writeRecording(path, tool, version, source, findings) {
+/** Writes expected findings as packs/php/upstream/common.py does: findings sorted, one-space indent. */
+export function writeExpectedFindings(path, tool, version, source, findings) {
   const sorted = [...findings].sort(
     (a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || (a.column ?? 0) - (b.column ?? 0),
   );
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ tool, version, source, findings: sorted }, null, 1)}\n`);
-  console.log(recordingWritten(path, source.kind));
+  console.log(expectedFindingsWritten(path, source.kind));
 }
 
 /**
  * Lints `files` (relative to `cwd`) with exactly `config` (a flat config array; no config file is read) and returns
- * the recording's findings for `rules` plus the files ESLint could not parse.
+ * the expected findings for `rules` plus the files ESLint could not parse.
  */
 export async function lint(ESLint, cwd, config, files, rules) {
   const eslint = new ESLint({ cwd, overrideConfigFile: true, overrideConfig: config, ignore: false, warnIgnored: false, errorOnUnmatchedPattern: false });
@@ -209,7 +209,7 @@ export function writeRenameVariants(fixtures, units, origins) {
 }
 
 /**
- * The recording's `files` and `units` once ESLint has run, and its findings. `kept` are the original units that
+ * The expected findings' `files` and `units` once ESLint has run, and its findings. `kept` are the original units that
  * parsed; a variant is kept when its original is and none of its files is in `unparsed`. A dropped variant's files
  * are deleted and its findings dropped.
  */
@@ -239,7 +239,7 @@ const UPSTREAM_ROW = /^\| `([^`]+)` \| `([^`]+)` \|/u;
 
 /**
  * Rewrites `licence` (the tool's licenses/<project>/UPSTREAM.md) so its file table lists each rename variant file the
- * recording keeps (`units`, its `files`) as derived from the upstream test file its original's row names, and no other
+ * expected findings keep (`units`, their `files`) as derived from the upstream test file its original's row names, and no other
  * file under `fixtures/renamed/`. The originals' rows, the table's order and the rest of the file stay as they are;
  * the variant rows follow them, sorted. An original the table does not list is an error: its variant would have no
  * source.

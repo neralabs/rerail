@@ -147,7 +147,7 @@ export const t4ReportSchema = headerSchema.extend({
   rules: z.array(ruleRowSchema),
   /** Divergences whose every source was scored and that explained nothing. */
   staleDivergences: z.array(z.object({ rule: z.string(), source: z.string().optional(), path: z.string(), line: z.number(), kind: z.string() })),
-  /** Configuration errors (missing or mismatched recordings, code rules that do not compile, …); each fails the run. */
+  /** Configuration errors (missing or mismatched expected findings, code rules that do not compile, …); each fails the run. */
   errors: z.array(z.string()),
   /**
    * No unexplained FP, no unexplained FN, no engine failure, no stale divergence, no error. On samples, a file read in

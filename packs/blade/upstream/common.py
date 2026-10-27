@@ -1,5 +1,5 @@
-"""Shared by the upstream/<tool>/generate.py recorders: the recording format `rerail/conformance/languages/pack.ts`
-reads (`recordingSchema`)."""
+"""Shared by the upstream/<tool>/generate.py generators: the expected-findings format `rerail/conformance/languages/pack.ts`
+reads (`expectedFindingsSchema`)."""
 
 from __future__ import annotations
 
@@ -16,4 +16,4 @@ def write(path: pathlib.Path, tool: str, version: str, source: dict, findings: l
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": tool, "version": version, "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
-    pack_fixtures.recording_written(path, source)
+    pack_fixtures.expected_findings_written(path, source)

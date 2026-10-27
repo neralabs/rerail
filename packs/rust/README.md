@@ -1,26 +1,27 @@
 # Rerail rule pack: Rust
 
-Ports of 34 Clippy 0.1.99 lints. Eighteen pass the [port readiness gates](../../docs/port-readiness.md) and ship in `rules/` and `pack.json`: `clippy-builtin-type-shadow`, `clippy-inconsistent-digit-grouping`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names` and `needless_raw_string_hashes` (pedantic) and `partial_pub_fields` and `precedence_bits` (restriction) off, so they ship off (`"on": false`). The other 16 are candidates in `candidates/rules/`, judged by the same gates without blocking; the four that port a non-default `clippy.toml` (`-threshold`, `-no-fractions`, `-one-allowed`) stay candidates whatever they score, since the gates judge them against Clippy's defaults. Each port is scored against Clippy's recorded findings on its UI tests, and against the labelled lines of Clippy's real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the engine's production workspace path, with its disagreements declared in `divergences.json`, each with its evidence; the candidate `clippy-option-env-unwrap`'s two on `tests/ui/option_env_unwrap.rs` (an `external!` proc macro that rewrites its tokens' spans, which syntax alone cannot tell from a span-keeping macro) are the only ones left undeclared.
+Ports of 34 Clippy 0.1.99 lints. Eighteen pass the [conformance check](../../conformance/README.md#the-gate) and ship in `rules/` and `pack.json`: `clippy-builtin-type-shadow`, `clippy-inconsistent-digit-grouping`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names` and `needless_raw_string_hashes` (pedantic) and `partial_pub_fields` and `precedence_bits` (restriction) off, so they ship off (`"on": false`). The other 16 are candidates in `candidates/rules/`, judged by the same checks without blocking; the four that port a non-default `clippy.toml` (`-threshold`, `-no-fractions`, `-one-allowed`) stay candidates whatever they score, since their expected findings are Clippy's at its defaults. Each port is scored against Clippy's own findings on its UI tests, and against the labelled lines of Clippy's real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with its disagreements declared in `divergences.json`, each with its evidence; the candidate `clippy-option-env-unwrap`'s two on `tests/ui/option_env_unwrap.rs` (an `external!` proc macro that rewrites its tokens' spans, which syntax alone cannot tell from a span-keeping macro) are the only ones left undeclared.
 
 This pack follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
 | Path | What |
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and each shipped rule's document, title, group and whether it is on |
-| `rules/` | The code-rule documents (`rerail.policy/v1`) of the ports that pass the port readiness gates |
+| `rules/` | The code-rule documents (`rerail.policy/v1`) of the ports that pass the conformance check |
 | `candidates/rules/` | The code-rule documents of the other ports, scored and judged but never shipped |
 | `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool |
 | `divergences.json` | Declared disagreements with Clippy |
-| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), the recording and recorder (`generate.py`, sharing `upstream/common.py`); the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); the port readiness gates' `gates.yaml` and `recording.lock` |
+| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), the expected findings and their generator (`generate.py`, sharing `upstream/common.py`); the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); the upstream manifest `gates.yaml` (its pins, approved configurations, the file types it lints and the facts of every lint the pack ports) |
 | `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Scores
 
 Every port, shipped or candidate, is scored against Clippy's findings on the fixtures, and against the labelled lines of
-Clippy's real-code samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)). The fixture scores below
+Clippy's real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)). The fixture scores below
 come from `node --import tsx conformance/languages/cli.ts --pack rust --fixtures` (Clippy 0.1.99, Rust 1.99.0). FP and
 FN count unexplained points only; an explained point is one a divergence names, and recall counts an explained FN
-against the pack.
+against the pack. Rust has no rename variants (`holds-under-rename` covers the ECMAScript packs), so the real-code
+samples are the pack's only evidence that a port is not fitted to Clippy's UI tests.
 
 | Source | Rules | TP | FP | FN | Explained FP | Explained FN |
 |---|---|---|---|---|---|---|
@@ -70,35 +71,23 @@ Per rule on the fixtures (TP / FP / FN, explained points in parentheses):
 | `clippy-allow-attributes` | 25 / 0 / 0 (1) |
 | `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) |
 
-## Recording and scoring
+## Deriving and scoring
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/rust.ts`) runs `upstream/clippy/generate.py` against Clippy 0.1.99 and Rust 1.99.0
-(installed with `rustup`) over the fixtures. The port readiness recordings are recorded on Linux: a pull request's CI
-legs record them and upload them as the artifact `recordings-rust--clippy`
-([CONTRIBUTING.md](../../CONTRIBUTING.md#merging-maintainers)).
-The probes Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request with
-`git add -f`.
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/clippy/publish/`. The recipe (`scripts/pack-data/recipes/rust.ts`) runs `upstream/clippy/generate.py`
+against Clippy 0.1.99 and Rust 1.99.0 (installed with `rustup`) over the fixtures. The probes Rerail wrote
+(`fixtures/rerail/`) are authored: a change to them is staged into `publish/` with the derived data.
 
 ```sh
 npm run fixtures:derive -- --pack rust
-npm run fixtures:push -- --pack rust     # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack rust    # copy what changed into upstream/clippy/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack rust --rule clippy-precedence --fixtures
-```
-
-The port readiness gates judge every port against their own recording of Clippy (`upstream/clippy/recording.lock`;
-the recorder runs the rustup toolchain `conformance/recorders/port-readiness/runtimes/clippy-1.99.0/` pins, on the
-same UI tests as `generate.py` does):
-
-```sh
-npm run port-readiness:record -- --pack rust --tool clippy   # needs rustup, git and the network
-npm run port-readiness -- --pack rust --tool clippy
 ```
 
 ## Rule details
@@ -163,11 +152,11 @@ Port of Clippy 0.1.99's needless_else lint: reports an empty else block after an
 
 ### `clippy-needless-raw-string-hashes`
 
-Port of Clippy 0.1.99's needless_raw_string_hashes: reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). A raw literal holding neither is needless_raw_strings', which the recording enables and which then takes it.
+Port of Clippy 0.1.99's needless_raw_string_hashes: reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
 
 ### `clippy-needless-raw-string-hashes-one-allowed`
 
-Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the recording enables and which then takes it.
+Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
 
 ### `clippy-needless-raw-strings`
 

@@ -17,8 +17,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `generate/`: generators of committed engine and host data and the DSL reference page (manifest: `generate/README.md`).
 - `host/`: real-host runs: OMP install, host smoke, lifecycle and auth checks, the Windows install smoke.
 - `pack-data/`: the derivation of the packs' derived test data from their pins (`derive.ts`, `npm run fixtures:derive`),
-  with one recipe per pack in `recipes/`; a maintainer and the bump workflow run it to make the data, and pull request
-  CI runs it only to check that a changed `test-data.lock` reproduces (CONTRIBUTING.md, "Pack test data").
+  with one recipe per pack in `recipes/`, the runtimes it installs (`runtimes/`, `runtimes.ts`), the ESLint
+  expected-findings helper the ESLint-based generators share (`eslint-expected.mjs`) and the renamer that writes the
+  ECMA rename variants (`rename/`); a maintainer and the bump workflow run it to make the data, never pull request CI
+  (CONTRIBUTING.md, "Pack test data"; docs/upstream.md).
 - `release/`: the release. The Release pull request (`.github/workflows/release-pr.yml`): every package's version,
   core's when what it ships changed, and core's tag on merge. The rule packs' release
   (`.github/workflows/release-packs.yml`): which packs to publish, the publish gate and packing, publishing under
@@ -30,6 +32,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   (`samples.ts`, `pack.ts`), the clean-sample relevance selection (`relevance.ts`), the ESLint test set's conversion
   (`convert-eslint-test-set.ts`), and the sources' licences with the `LICENSES.md` and `SAMPLES.md` they write
   (`licences.ts`).
-- `s3/`: the packs' test data archives in S3 (`pack-fixtures.mjs`, `npm run fixtures:pull` and `fixtures:push`; the
+- `s3/`: the packs' test data archives in S3 (`pack-fixtures.mjs`: `npm run fixtures:pull`, `fixtures:stage` and
+  `fixtures:push`, and the `pack`, `upload` and `confirm` steps of `.github/workflows/pack-data-publish.yml`; the
   canonical tar and `test-data.lock` in `test-data-archive.mjs`; CONTRIBUTING.md, "Pack test data"), with the messages
   its consumers give in Python (`pack_fixtures.py`).
+- `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
+  `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).

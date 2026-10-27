@@ -5,14 +5,14 @@ Upstream: [Ruff 0.16.9](https://github.com/astral-sh/ruff/tree/0.16.9). License:
 The files listed below contain material copied from Ruff and remain under its license. Every other file in this pack
 is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of Bandit's and
 Ruff's rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The
-rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and
-`upstream/ruff/generate.py`, and the `*.expected.json` outputs recorded by running Ruff.
+rest is under the Apache License 2.0 (the pack's `LICENSE`): the generators `upstream/common.py` and
+`upstream/ruff/generate.py`, and the `*.expected.json` expected findings written by running Ruff.
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice.
 
 Some of Ruff's rules are ports of plugins under copyleft licences, and Ruff's fixtures for them carry those plugins' test
-code. Nothing under these upstream paths is copied, so their rules are not recorded, and no port readiness recording
-holds their text (`upstream/ruff/generate.py`, the port readiness recorder and the pack check all read this list):
+code. Nothing under these upstream paths is copied, so their rules have no expected findings, and no pack test data
+holds their text (`upstream/ruff/generate.py` and the pack check both read this list):
 
 - Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_builtins/` — flake8-builtins, GPL-2.0
 - Not copied: `crates/ruff_linter/resources/test/fixtures/flake8_django/` — flake8-django, GPL-3.0-or-later
@@ -346,10 +346,3 @@ Paths are relative to the pack directory, `packs/python/`.
 | `upstream/ruff/fixtures/syntax_errors/late_future_import.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/late_future_import.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/return_outside_function.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/return_outside_function.py` | verbatim |
 | `upstream/ruff/fixtures/syntax_errors/yield_scope.py` | `crates/ruff_linter/resources/test/fixtures/syntax_errors/yield_scope.py` | verbatim |
-
-> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
-> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`crates/ruff_linter/src/rules/*/mod.rs`,
-> `crates/ruff_linter/src/linter.rs`: their test modules' string literals), redistributed under the licence above,
-> together with Rerail's Apache-2.0; `LICENSE` beside this file is this upstream's own, at the pinned commit.
-

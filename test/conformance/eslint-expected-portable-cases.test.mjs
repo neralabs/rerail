@@ -1,27 +1,27 @@
 /**
- * What the ESLint-based recorders share to keep the recording machine out of fixtures
- * (conformance/recorders/eslint-record.mjs): the working directory upstream tests see while they declare their cases,
- * and the guard every case-writing recorder calls before it writes a fixture; and the check that an authored case's
- * expected findings name only rules the recording runs.
+ * What the ESLint-based generators share to keep the generating machine out of fixtures
+ * (scripts/pack-data/eslint-expected.mjs): the working directory upstream tests see while they declare their cases,
+ * and the guard every case-writing generator calls before it writes a fixture; and the check that an authored case's
+ * expected findings name only rules the expected findings cover.
  */
 import { describe, expect, it } from "vitest";
-import { assertKnownReportRules, assertPortableCase, RECORDING_CWD, withRecordingCwd } from "../../conformance/recorders/eslint-record.mjs";
+import { assertKnownReportRules, assertPortableCase, UPSTREAM_TEST_CWD, withUpstreamTestCwd } from "../../scripts/pack-data/eslint-expected.mjs";
 
-/** The scratch directory #31's unicorn recording ran in, in `machineDirectories()`' form. */
+/** The scratch directory #31's unicorn generator ran in, in `machineDirectories()`' form. */
 const SCRATCH = "private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/javascript";
 
-describe("withRecordingCwd", () => {
-  it("answers RECORDING_CWD while upstream tests declare their cases, and the real directory again afterwards, even when they throw", async () => {
+describe("withUpstreamTestCwd", () => {
+  it("answers UPSTREAM_TEST_CWD while upstream tests declare their cases, and the real directory again afterwards, even when they throw", async () => {
     const real = process.cwd();
-    expect(await withRecordingCwd(async () => process.cwd())).toBe(RECORDING_CWD);
+    expect(await withUpstreamTestCwd(async () => process.cwd())).toBe(UPSTREAM_TEST_CWD);
     expect(process.cwd()).toBe(real);
-    await expect(withRecordingCwd(() => Promise.reject(new Error("upstream test failed")))).rejects.toThrow("upstream test failed");
+    await expect(withUpstreamTestCwd(() => Promise.reject(new Error("upstream test failed")))).rejects.toThrow("upstream test failed");
     expect(process.cwd()).toBe(real);
   });
 });
 
 describe("assertPortableCase", () => {
-  it("refuses a case whose fixture path or code carries the recording machine's directory, as #31's filename-case did", () => {
+  it("refuses a case whose fixture path or code carries the generating machine's directory, as #31's filename-case did", () => {
     const parent = SCRATCH.slice(0, SCRATCH.lastIndexOf("/"));
     expect(() => assertPortableCase(`filename-case/112/${parent}/Src/fooBar.js`, "", [SCRATCH, parent])).toThrow(/fixture path .* carries this machine's directory/u);
     expect(() => assertPortableCase("filename-case/143/work/project/src/FooBar/file.js", `/* Filename: /${SCRATCH}/src/FooBar/file.js */`, [SCRATCH])).toThrow(
@@ -42,13 +42,13 @@ describe("assertPortableCase", () => {
 describe("assertKnownReportRules", () => {
   const rules = ["expect-expect", "no-disabled-tests", "no-focused-tests"];
 
-  it("refuses expected findings for a rule the recording does not run, such as a misspelled one that would read as 0", () => {
+  it("refuses expected findings for a rule the expected findings do not cover, such as a misspelled one that would read as 0", () => {
     expect(() => assertKnownReportRules("unchecked-heads", { "no-disabled-test": 2 }, rules)).toThrow(
       "AUTHORED unchecked-heads: reports names no-disabled-test, which is not a pack rule",
     );
   });
 
-  it("accepts expected findings for the recording's rules, and none at all", () => {
+  it("accepts expected findings for the expected findings' rules, and none at all", () => {
     expect(() => assertKnownReportRules("vitest-import", { "expect-expect": 2, "no-focused-tests": 1 }, rules)).not.toThrow();
     expect(() => assertKnownReportRules("node-test", {}, rules)).not.toThrow();
   });

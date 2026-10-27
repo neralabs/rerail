@@ -1,7 +1,7 @@
 """Shared by packs/rust/upstream/clippy/generate.py and fixtures/rust/suppress/generate_corpus.py: the
 pinned toolchain, the Rust pack's clippy lints (packs/rust/conformance.json), the pinned corpora and the
-`cargo clippy` corpus run fixtures/rust/suppress records, and the recording format
-`rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
+`cargo clippy` corpus run fixtures/rust/suppress records, and the expected-findings format
+`rerail/conformance/languages/pack.ts` reads (`expectedFindingsSchema`).
 
 Pins (each generator refuses anything else):
 - Rust toolchain 1.99.0: `rustc 1.99.0 (b940084d7 2026-09-28)`, `clippy 0.1.99 (b940084d7e 2026-09-28)`, invoked as
@@ -41,7 +41,7 @@ CORPORA = {
 }
 # Corpora that commit no Cargo.lock: `cargo +1.99.0 generate-lockfile --publish-time <time>` resolves their
 # dependencies to what crates.io held then (unstable in cargo 1.99, so RUSTC_BOOTSTRAP=1 and -Zunstable-options),
-# the lock the recordings were made with.
+# the lock the expected findings were made with.
 CORPUS_LOCK_PUBLISH_TIMES = {
     "tokio": "2026-10-04T00:00:00Z",
 }
@@ -53,7 +53,7 @@ def pack() -> dict:
 
 
 def tool_version() -> str:
-    """The clippy version the pack pins (`tools[].version`), which every recording carries."""
+    """The clippy version the pack pins (`tools[].version`), which every expected-findings file carries."""
     for entry in pack()["tools"]:
         if entry["name"] == TOOL:
             return entry["version"]
@@ -232,4 +232,4 @@ def write(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
                       key=lambda f: (f["rule"], f["path"], f["line"], f["column"]))
     path.write_text(json.dumps({"tool": TOOL, "version": tool_version(), "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
-    pack_fixtures.recording_written(path, source)
+    pack_fixtures.expected_findings_written(path, source)

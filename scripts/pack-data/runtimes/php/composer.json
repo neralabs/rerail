@@ -1,6 +1,6 @@
 {
   "name": "rerail/port-readiness-php-toolkit",
-  "description": "The PHP-Parser (an independent parser beside the PHP interpreter's own `php -l`) the port readiness gates read PHP with.",
+  "description": "The PHP-Parser (an independent parser beside the PHP interpreter's own `php -l`) the conformance gates read PHP with.",
   "license": "Apache-2.0",
   "require": {
     "nikic/php-parser": "5.9.0"

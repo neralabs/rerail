@@ -1,6 +1,6 @@
 {
   "name": "rerail/port-readiness-upstream-psalm",
-  "description": "Psalm as the port readiness gates run it: the release the PHP pack's ported issues name, with the parsers its analysis reads source and docblocks with pinned too.",
+  "description": "Psalm as the conformance gates run it: the release the PHP pack's ported issues name, with the parsers its analysis reads source and docblocks with pinned too.",
   "license": "Apache-2.0",
   "require": {
     "vimeo/psalm": "6.19.1",

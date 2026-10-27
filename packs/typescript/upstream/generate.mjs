@@ -1,8 +1,7 @@
 // Records where typescript-eslint 8.70.1 (on ESLint 10.11.0) reports the TypeScript pack's T4 rules
 // (rerail/packs/typescript/conformance.json), in the format rerail/conformance/languages/pack.ts reads:
 //   typescript-eslint/fixtures.expected.json    (the rules' own RuleTester cases)
-// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
-// test-data.lock reproduces):
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --typescript-eslint <checkout>
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser and
 // @typescript-eslint/eslint-plugin @8.70.1, typescript@5.9.3 and tsx (to load typescript-eslint's .ts tests).
@@ -12,7 +11,7 @@
 // A case with rule options is left out (the pack's port is the rule with its default options). Every other case's
 // code is written to <tool>/fixtures/<rule>/<n>.<ext> and linted, with every pack rule of the tool on, under the
 // tool's configuration (optionsModule below: ESLint's defaults, with typescript-eslint's parser for every file, as
-// typescript-eslint's approved `base` configuration sets it), so the recording is the linter's answer under the configuration the ports
+// typescript-eslint's approved `base` configuration sets it), so the expected findings are the linter's answer under the configuration the ports
 // read, not the case's own expectation. A case that asks for type information is left out when its rule requires
 // type checking; for any other rule its code is kept, since the rule reads no types (typescript-eslint runs some
 // rules' whole test files with types on, as no-dynamic-delete's).
@@ -20,7 +19,7 @@
 // or the TypeScript-family extension of its filename (.d.ts, .tsx, .mts, .cts). Code the configuration cannot
 // parse is left out. Each kept file is one analysis unit. `source.units` names each file's origin, the rule whose test
 // file it came from; each such file also gets a rename variant under <tool>/fixtures/renamed/
-// (conformance/recorders/eslint-record.mjs `writeRenameVariants`), linted like any file and marked `renamedFrom` it.
+// (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted like any file and marked `renamedFrom` it.
 //
 // Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
@@ -28,8 +27,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, withOrigins, writeRenameVariants, writeVariantRows } from "../../../conformance/recorders/eslint-record.mjs";
-import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
+import { isVariantPath, withOrigins, writeRenameVariants, writeVariantRows } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8"));
@@ -69,7 +68,7 @@ const PLUGIN_PREFIX = "@typescript-eslint/";
 
 /**
  * The pack's typescript-eslint rules, by tool: `upstream.rule` is the rule id ESLint reports
- * (`@typescript-eslint/no-namespace`). The vitest ports have their own recorder, eslint-plugin-vitest/generate.mjs.
+ * (`@typescript-eslint/no-namespace`). The vitest ports have their own generator, eslint-plugin-vitest/generate.mjs.
  */
 const RULES = new Map();
 for (const rule of PACK.rules.filter(entry => entry.upstream.tool === "typescript-eslint")) {
@@ -158,7 +157,7 @@ async function lint(cwd, files, rules) {
 function writeJson(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-  console.log(recordingWritten(path, value.source.kind));
+  console.log(expectedFindingsWritten(path, value.source.kind));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

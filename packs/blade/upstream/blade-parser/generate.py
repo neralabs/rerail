@@ -11,7 +11,7 @@ read from the running parser, e.g. CoreDirectiveRetriever's debug directive name
 makes is checked against the validator's output on it. Each distinct template of a test file is written to
 fixtures/<X>Test/<n>.blade.php (n counts them in Pest's order; the pack's licenses/blade-parser/UPSTREAM.md lists them, and
 license.md is copied beside it). run.php then runs every ported validator over every copy, as the tests run one, and
-the recording on a validator's own copy is required to be the test's expectation: exactly the count of errors its
+the expected findings on a validator's own copy are required to be the test's expectation: exactly the count of errors its
 `toHaveCount()` expects, with every message its `toBe()` expects. Each finding is the validator's class name, the path
 and the start line of the node the validation error reports (its BladeError position). `source.units` names each copy's
 origin: the validator whose test hands it the parser. Validators are constructed as
@@ -132,7 +132,7 @@ def write_licenses(checkout: pathlib.Path, copies: list[tuple]) -> None:
 
 Upstream: [stillat/blade-parser](https://github.com/stillat/blade-parser/tree/{COMMIT}) at tag `v{VERSION}` (commit `{COMMIT}`). License: MIT (Copyright (c) Johnathon Koster); [`license.md`](license.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py`, `upstream/blade_capture.php` and `upstream/blade-parser/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running stillat/blade-parser {VERSION}.
+The files listed below are the templates the tests of the validators the Blade pack ports (the pack's `conformance.json`) hand the parser, and remain under stillat/blade-parser's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the generators `upstream/common.py`, `upstream/blade_capture.php` and `upstream/blade-parser/` (`generate.py`, `read_tests.php`, `run.php`), and the expected findings they write by running stillat/blade-parser {VERSION}.
 
 Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/blade-parser/generate.py fixtures`, which runs the test with the template captured as the parser receives it; a template several dataset rows of a test file build alike is written once, under the first.
 

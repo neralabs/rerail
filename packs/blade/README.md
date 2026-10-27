@@ -5,12 +5,14 @@ tlint 9.7.0 (5 lints) and stillat/blade-parser 2.1.0 (4 validators). 7 ship: tli
 `DebugDirectiveValidator`, `ForElseStructureValidator` and `ComponentShorthandVariableParameterValidator`, and
 Bladestan's `if.alwaysTrue` and `identical.alwaysTrue`. The two Bladestan rules start off (`"on": false`): PHPStan
 registers them at level 4 and Bladestan's recommended level is 0, so they are experimental. A port starts in
-`candidates/rules/` and moves to `rules/` and `pack.json` once it passes every blocking port readiness gate
-([docs/port-readiness.md](../../docs/port-readiness.md)); each of the pack's three tools is gated. Every port is scored
-against the tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code
-samples ([docs/port-readiness.md](../../docs/port-readiness.md#samples)), through the engine's production workspace
+`candidates/rules/` and moves to `rules/` and `pack.json` once it passes the conformance check
+([conformance/README.md](../../conformance/README.md#the-gate)); each of the pack's three tools is gated. Every port is
+scored against the tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's
+real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace
 path, with every disagreement declared in `divergences.json`. The conformance check (`--check`, run in CI) scores the
-fixtures and the samples: it gates the ports in `rules/` and reports the candidates without gating them.
+fixtures and the samples: it gates the ports in `rules/` and reports the candidates without gating them. None of the
+three tools is ECMAScript, so the fixtures carry no rename variants (`holds-under-rename`); the real-code samples are
+the pack's only evidence that a port is not fitted to its tests.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack blade"` ([pack structure and validation
 contract](../../docs/pack-format.md)).
@@ -22,14 +24,14 @@ contract](../../docs/pack-format.md)).
 | `candidates/rules/` | The candidates' code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the `calls` exemption with its evidence |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recording (`fixtures.expected.json`; pack test data, derived from the pins and archived in S3: `npm run fixtures:pull`), the recorder (`generate.py` with its PHP helpers, sharing `upstream/common.py`; the template capture tlint's and stillat/blade-parser's test readers run, and stillat/blade-parser's reader itself, are the port readiness recorder's, under `conformance/recorders/port-readiness/adapters/`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
-| `upstream/<tool>/gates.yaml`, `recording.lock` | The port readiness gates' manifest for the tool and the lock naming its recordings (kept out of git, by sha256) ([docs/port-readiness.md](../../docs/port-readiness.md)) |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its expected findings (`fixtures.expected.json`; pack test data, derived from the pins and archived in S3: `npm run fixtures:pull`), the generator (`generate.py` with its PHP helpers, sharing `upstream/common.py` and the template capture tlint's and stillat/blade-parser's test readers run, `upstream/blade_capture.php`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `upstream/<tool>/gates.yaml` | The tool's upstream manifest: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports ([docs/upstream.md](../../docs/upstream.md)) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
 
 ## Candidates
 
-Ten ports stay candidates: seven fail `matches-upstream-tests`, a blocking port readiness gate, and three tlint lints
-miss findings on real templates. The title is what
+Ten ports stay candidates: seven have no upstream evidence or a template the engine reads only in part, and three
+tlint lints miss findings on real templates. The title is what
 `pack.json` lists for a candidate once it ships; its group is the tool the title names.
 
 | Candidate | Title |
@@ -45,7 +47,7 @@ miss findings on real templates. The title is what
 | `tlint-space-after-blade-directives` | tlint SpaceAfterBladeDirectives: Space after control structure directives |
 | `tlint-spaces-around-blade-render-content` | tlint SpacesAroundBladeRenderContent: One space inside echo delimiters |
 
-The six Bladestan candidates fail `matches-upstream-tests` with `fires`: Bladestan's own test templates hold none of
+The six Bladestan candidates have nothing to match: Bladestan's own test templates hold none of
 their findings (`variable.undefined`'s appear only when a template is rendered with its caller's data), so nothing
 upstream wrote proves them. `blade-parser-duplicate-condition-expressions` is
 `source-incomplete` on two of blade-parser's `DebugDirectiveTest` templates, a malformed `@forelse` and `@foreach` that
@@ -218,15 +220,16 @@ Passes (`resources/views/profile.blade.php`):
 @endif
 ```
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/blade.ts`) runs each tool's `generate.py` over its fixtures, against the pinned tool
-versions, with the pinned PHP 8.5.11 first on `PATH` (each recorder's docstring has the setup):
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/blade.ts`) runs each tool's `generate.py`
+over its fixtures, against the pinned tool versions, with the pinned PHP 8.5.11 first on `PATH` (each generator's
+docstring has the setup):
 
 ```sh
 npm run fixtures:derive -- --pack blade                    # every tool
 npm run fixtures:derive -- --pack blade --tool bladestan   # one
-npm run fixtures:push -- --pack blade --tool bladestan     # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack blade --tool bladestan    # copy what changed into upstream/bladestan/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:

@@ -25,17 +25,17 @@
 // tester or case sets sourceType module is written as `.mjs` (`.mts` for TypeScript), unless its code has no module
 // syntax and reads a CommonJS wrapper name: upstream's RuleTester declares `globals.node`, those names included, in
 // every case, so such a case is written as CommonJS (`.js`/`.ts`), the only module system where Node defines them.
-// Each fixture's recording unit is the fixture and its nearest package.json (the one the plugin and Node read for
+// Each fixture's analysis unit is the fixture and its nearest package.json (the one the plugin and Node read for
 // it), so Rerail reads the same manifest: its `type`, `bin` and `engines`. `source.units` names each case's origin,
 // the rule whose test file it came from; each case also gets a rename variant under fixtures/renamed/
-// (conformance/recorders/eslint-record.mjs `writeRenameVariants`) with a copy of its manifest, linted like any case
+// (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`) with a copy of its manifest, linted like any case
 // and marked `renamedFrom` it.
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, isVariantPath, lint, pinnedRequire, RENAMED_DIRECTORY, REPOSITORY, withOrigins, writeRecording, writeRenameVariants } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, isVariantPath, lint, pinnedRequire, RENAMED_DIRECTORY, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = "eslint-plugin-n";
@@ -103,7 +103,7 @@ export function nodeSourceType(file) {
 }
 
 /**
- * A fixture's recording unit: the fixture (relative to `fixtures`), then its nearest package.json. The fixture comes
+ * A fixture's analysis unit: the fixture (relative to `fixtures`), then its nearest package.json. The fixture comes
  * first, as a unit's first path is its key in `source.units`.
  */
 function fixtureUnit(fixtures, path) {
@@ -330,7 +330,7 @@ function writeLicenses(upstream, cases, manifests, variants) {
 
 Upstream: [eslint-community/eslint-plugin-n](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${VERSION}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the upstream rule tests of the rules the Node pack records (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` recordings written by running eslint-plugin-n.
+The files listed below are the upstream rule tests of the rules the Node pack ports (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. One listed file is Rerail's and says so in its row: \`upstream/${TOOL}/fixtures/package.json\` (the fixtures' source type and engines), listed because it sits among the copied fixtures. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the generator \`upstream/${TOOL}/generate.mjs\`, \`upstream/${TOOL}/stub-test-helpers.js\` (stands in for upstream's \`tests/test-helpers.js\` and only captures cases), and the \`*.expected.json\` expected findings written by running eslint-plugin-n.
 
 Paths are relative to the pack directory, \`packs/node/\`.
 
@@ -375,7 +375,7 @@ async function main() {
   const kept = cases.filter(entry => !dropped.has(entry.path));
   for (const path of [...dropped.keys()].filter(path => !isVariantPath(path))) rmSync(join(fixtures, path));
   const recorded = withOrigins(fixtures, kept.map(entry => entry.path).sort().map(path => units.get(path)), origins, variants, new Set(dropped.keys()), fixtureRun.findings);
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, recorded.findings);
+  writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, recorded.findings);
   const keptVariants = recorded.files.filter(unit => isVariantPath(unit[0])).map(unit => ({ unit, of: recorded.units[unit[0]].renamedFrom }));
   writeLicenses(upstream, kept, manifests, keptVariants);
 

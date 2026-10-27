@@ -88,7 +88,7 @@ export function missingPackFixture(path: string): string;
 export function packFixtureAbsence(path: string): string | undefined;
 export function requirePackFixture(path: string): string;
 export function packFixturesWritten(paths: readonly string[], root?: string): string;
-export function recordingWritten(path: string, kind: string): string;
+export function expectedFindingsWritten(path: string, kind: string): string;
 export function requireAws(aws?: Aws): void;
 export function toolPacks(root?: string): ToolPack[];
 export function selectToolPacks(root?: string, pack?: string, tool?: string): ToolPack[];

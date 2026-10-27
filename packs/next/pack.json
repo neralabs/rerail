@@ -3,7 +3,7 @@
   "id": "next",
   "name": "Next.js",
   "category": "framework",
-  "covers": "21 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own recorded findings on its rule tests.",
+  "covers": "21 @next/eslint-plugin-next rules ported to Rerail, each scored against the plugin's own findings on its rule tests.",
   "reason": "matches Next.js",
   "match": {
     "any": [

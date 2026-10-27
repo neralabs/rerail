@@ -4,11 +4,13 @@ Upstream: [@vitest/eslint-plugin 1.6.27](https://github.com/vitest-dev/eslint-pl
 
 The files listed below contain material copied from @vitest/eslint-plugin and remain under its license. The rule documents in
 `candidates/rules/vitest-*.json` are Rerail's re-implementations of three of the plugin's rules, under the pack's
-licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The recorder `upstream/eslint-plugin-vitest/generate.mjs` and
-the `*.expected.json` recordings it writes by running the plugin are Rerail's, under the Apache License 2.0 (the pack's `LICENSE`).
+licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The generator `upstream/eslint-plugin-vitest/generate.mjs` and
+the `*.expected.json` expected findings it writes by running the plugin are Rerail's, under the Apache License 2.0 (the pack's `LICENSE`).
 
-Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written by the recorder:
-cases for another parser or file type are left out, and identical cases are written once.
+Each copied file is the `code` of one of the rule's own `valid` or `invalid` RuleTester cases, verbatim, written by the generator:
+cases for another parser or file type are left out, and identical cases are written once. Each file under
+`upstream/eslint-plugin-vitest/fixtures/renamed/` is derived from the copied file of the same path below `fixtures/`,
+with its names and literals renamed.
 
 Paths are relative to the pack directory, `packs/typescript/`.
 
@@ -181,10 +183,3 @@ Paths are relative to the pack directory, `packs/typescript/`.
 | `upstream/eslint-plugin-vitest/fixtures/renamed/no-focused-tests/018.test.ts` | `tests/no-focused-tests.test.ts` | derived (`fixtures/no-focused-tests/018.test.ts` with its names and literals renamed) |
 | `upstream/eslint-plugin-vitest/fixtures/renamed/no-focused-tests/019.test.ts` | `tests/no-focused-tests.test.ts` | derived (`fixtures/no-focused-tests/019.test.ts` with its names and literals renamed) |
 | `upstream/eslint-plugin-vitest/fixtures/renamed/no-focused-tests/020.test.ts` | `tests/no-focused-tests.test.ts` | derived (`fixtures/no-focused-tests/020.test.ts` with its names and literals renamed) |
-
-> `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
-> table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
-> git (docs/port-readiness.md). It carries excerpts of this upstream's tests (`tests/*.test.ts`: the `code` of each
-> RuleTester case), redistributed under the licence above, together with Rerail's Apache-2.0; `LICENSE` beside this file
-> is this upstream's own, at the pinned commit.
-

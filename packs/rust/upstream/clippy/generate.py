@@ -19,7 +19,7 @@ for tests/ui-toml. `RUSTC_BOOTSTRAP=1` is set because the tests and aux crates u
 which the stable driver otherwise refuses (upstream runs them on nightly); `-Dwarnings` is not passed (it changes
 only the level). That run is compared, per test, with the upstream `.stderr` (each diagnostic's primary `-->`
 line:column) and the `//~` annotations (lint and line); every difference is written to fixtures.upstream-check.json.
-The recording, fixtures.expected.json, is a second run with `-W clippy::<lint>` for every ported lint added, so each
+The expected findings, fixtures.expected.json, are a second run with `-W clippy::<lint>` for every ported lint added, so each
 lint is recorded over every test (in-source `allow`/`expect` still apply): each finding is the lint, test path, and
 the primary span's 1-based line and column (code points), one per distinct primary span (start and end): two
 diagnostics that start at one point, like precedence_bits' outer and nested `^`, are two findings. `source.units`
