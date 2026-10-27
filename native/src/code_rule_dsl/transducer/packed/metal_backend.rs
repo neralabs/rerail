@@ -8,7 +8,21 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of_val;
 use std::ptr::NonNull;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+
+pub(crate) mod launch;
+
+// G's process-wide buffer counters; nothing charges them until G's buffer budget is ported.
+static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+static METAL_PRIVATE_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+pub(super) fn buffer_usage() -> (usize, usize) {
+    (
+        METAL_BUFFER_BYTES.load(Ordering::Acquire),
+        METAL_PRIVATE_BYTES.load(Ordering::Acquire),
+    )
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -178,6 +192,23 @@ fn anchor_literal(program: &Program) -> Result<(u16, &[u8], u16, u16), Error> {
         split(program.words[2]).2,
         split(program.words[3]).2,
     ))
+}
+
+static METAL_EXECUTION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+pub(super) struct MetalExecutionGuard {
+    _lock: MutexGuard<'static, ()>,
+    _launch_scope: launch::LaunchScope,
+}
+
+pub(super) fn metal_execution_guard() -> Result<MetalExecutionGuard, Error> {
+    let lock = METAL_EXECUTION_LOCK
+        .lock()
+        .map_err(|_| Error::BackendFailure)?;
+    Ok(MetalExecutionGuard {
+        _lock: lock,
+        _launch_scope: launch::LaunchScope::enter(),
+    })
 }
 
 thread_local! {

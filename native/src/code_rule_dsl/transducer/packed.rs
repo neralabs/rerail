@@ -740,6 +740,7 @@ pub(in crate::code_rule_dsl) enum Error {
     UnsupportedBackend,
     BackendCapacity,
     BackendFailure,
+    BackendLaunchLimit,
 }
 
 #[derive(Clone, Copy)]
