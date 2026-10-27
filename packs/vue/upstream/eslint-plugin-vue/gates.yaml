@@ -23,11 +23,88 @@ upstream:
   # vue2-* configurations are for Vue 2, and `flat/base` turns no ported rule on; none of them is approved.
   recommended_configs:
     - flat/recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".js", ".mjs", ".vue"]
 popularity:
   observed_on: 2026-10-19
   evidence:
     - "npm: 3,736,783 downloads of eslint-plugin-vue in the week 2026-10-12 to 2026-10-18 (api.npmjs.org/downloads/point/last-week/eslint-plugin-vue)"
     - "GitHub: vuejs/eslint-plugin-vue has 4,591 stars, is MIT and is not archived (gh api repos/vuejs/eslint-plugin-vue)"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "vue/attribute-hyphenation":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-async-in-computed-properties":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-child-content":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-deprecated-v-on-native-modifier":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-dupe-keys":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-dupe-v-else-if":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-duplicate-attributes":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-export-in-script-setup":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-mutating-props":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-ref-as-operand":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-setup-props-reactivity-loss":
+    deprecated: null
+    recommended: null
+  "vue/no-side-effects-in-computed-properties":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-template-shadow":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-unused-refs":
+    deprecated: null
+    recommended: null
+  "vue/no-unused-vars":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-use-v-if-with-v-for":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-v-html":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-v-text-v-html-on-component":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-watch-after-await":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/require-v-for-key":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/require-valid-default-prop":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/return-in-computed-property":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/v-on-event-hyphenation":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: ["always",{"autofix":true}] }
+  "vue/valid-v-for":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Gate 5 lints every case of tests/lib/rules/**/*.test.ts with ESLint's RuleTester, which upstream's

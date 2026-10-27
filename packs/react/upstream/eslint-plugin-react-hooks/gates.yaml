@@ -19,11 +19,22 @@ upstream:
   # change no result.
   recommended_configs:
     - flat.recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "npm: 121,229,108 downloads of eslint-plugin-react-hooks in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "GitHub: facebook/react (now reported as react/react) has 250,912 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "react-hooks/exhaustive-deps":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react-hooks/rules-of-hooks":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Pack precondition: packages/eslint-plugin-react-hooks/package.json at the pinned tag says 7.0.0, because React stamps each

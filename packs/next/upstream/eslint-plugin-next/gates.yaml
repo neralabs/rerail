@@ -20,11 +20,79 @@ upstream:
   # core-web-vitals-legacy are the eslintrc forms of the same two.
   recommended_configs:
     - recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "npm: 47,739,164 downloads of @next/eslint-plugin-next in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "GitHub: vercel/next.js has 143,240 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "@next/next/google-font-display":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/google-font-preconnect":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/inline-script-id":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/next-script-for-ga":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-assign-module-variable":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-async-client-component":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-before-interactive-script-outside-document":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-css-tags":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-document-import-in-page":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-duplicate-head":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-head-element":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-head-import-in-document":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-img-element":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-location-assign-relative-destination":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-page-custom-font":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-script-component-in-head":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-styled-jsx-in-document":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-sync-scripts":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-title-in-document-head":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-typos":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "@next/next/no-unwanted-polyfillio":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Gate 5 lints every RuleTester case of test/unit/eslint-plugin-next/*.test.ts with the rule as configs.recommended

@@ -33,12 +33,107 @@ upstream:
   # - Positions are each diagnostic's primary span, start and end, in rustc's 1-based lines and character columns.
   recommended_configs:
     - default
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".rs"]
 popularity:
   observed_on: 2026-10-19
   evidence:
     - "GitHub: rust-lang/rust-clippy has 13,586 stars and 2,214 forks, and is not archived (gh api repos/rust-lang/rust-clippy)"
     - "rustup: clippy is a component of rustup's default profile, which every `rustup` install of Rust uses unless told otherwise (rust-lang.github.io/rustup/concepts/profiles.html)"
     - "crates.io: 497,230,628,220 crate downloads across 356,135 crates, the ecosystem Clippy lints (crates.io/api/v1/summary)"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "allow_attributes":
+    deprecated: null
+    recommended: null
+  "allow_attributes_without_reason":
+    deprecated: null
+    recommended: null
+  "builtin_type_shadow":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "decimal_literal_representation":
+    deprecated: null
+    recommended: null
+  "double_parens":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "else_if_without_else":
+    deprecated: null
+    recommended: null
+  "inconsistent_digit_grouping":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "int_plus_one":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "large_digit_groups":
+    deprecated: null
+    recommended: null
+  "many_single_char_names":
+    deprecated: null
+    recommended: null
+  "mixed_case_hex_literals":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "needless_arbitrary_self_type":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "needless_else":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "needless_raw_string_hashes":
+    deprecated: null
+    recommended: null
+  "needless_raw_strings":
+    deprecated: null
+    recommended: null
+  "octal_escapes":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "option_env_unwrap":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "partial_pub_fields":
+    deprecated: null
+    recommended: null
+  "precedence":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "precedence_bits":
+    deprecated: null
+    recommended: null
+  "redundant_at_rest_pattern":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "redundant_field_names":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "redundant_static_lifetimes":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "single_char_lifetime_names":
+    deprecated: null
+    recommended: null
+  "single_component_path_imports":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "unneeded_wildcard_pattern":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "unnested_or_patterns":
+    deprecated: null
+    recommended: null
+  "unreadable_literal":
+    deprecated: null
+    recommended: null
+  "unusual_byte_groupings":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "zero_prefixed_literal":
+    deprecated: null
+    recommended: { config: "default", options: [] }
 known_gaps:
   - id: box-pattern-unnested-or-patterns
     # The whole function: a probe must occur in the fixture and be a source file of its own.

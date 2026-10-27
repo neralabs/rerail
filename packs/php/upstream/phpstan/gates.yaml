@@ -50,9 +50,38 @@ upstream:
   #   (span-units/phpstan.ts).
   recommended_configs:
     - level0
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".php"]
 popularity:
   observed_on: 2026-10-20
   evidence:
     - "Packagist: 418,322,883 installs of phpstan/phpstan in total, 16,580,215 in the last 30 days (packagist.org/packages/phpstan/phpstan/stats.json)"
     - "GitHub: phpstan/phpstan has 14,132 stars and is not archived; phpstan/phpstan-src, its source, is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "argument.sprintf":
+    deprecated: null
+    recommended: { config: "level0", options: [] }
+  "argument.sscanf":
+    deprecated: null
+    recommended: { config: "level0", options: [] }
+  "argument.type":
+    deprecated: null
+    recommended: null
+  "array.duplicateKey":
+    deprecated: null
+    recommended: { config: "level0", options: [] }
+  "if.alwaysFalse":
+    deprecated: null
+    recommended: null
+  "if.alwaysTrue":
+    deprecated: null
+    recommended: null
+  "missingType.return":
+    deprecated: null
+    recommended: null
+  "variable.undefined":
+    deprecated: null
+    recommended: { config: "level0", options: [{"checkMaybeUndefinedVariables":false,"checkNonStringableDynamicAccess":false,"cliArgumentsVariablesRegistered":true,"polluteScopeWithAlwaysIterableForeach":true,"polluteScopeWithLoopInitialAssignments":true}] }
 known_gaps: []

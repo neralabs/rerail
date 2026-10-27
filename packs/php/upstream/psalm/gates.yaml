@@ -53,9 +53,20 @@ upstream:
   #   breaks them and columns in UTF-8 bytes, as Psalm counts them (span-units/psalm.ts).
   recommended_configs:
     - init
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".php"]
 popularity:
   observed_on: 2026-10-20
   evidence:
     - "Packagist: 89,304,062 installs of vimeo/psalm in total, 2,309,491 in the last 30 days (packagist.org/packages/vimeo/psalm/stats.json)"
     - "GitHub: vimeo/psalm has 5,897 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "ForbiddenCode":
+    deprecated: null
+    recommended: { config: "init", options: [] }
+  "UnusedVariable":
+    deprecated: null
+    recommended: { config: "init", options: [] }
 known_gaps: []

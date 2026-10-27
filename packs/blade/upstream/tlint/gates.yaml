@@ -38,9 +38,29 @@ upstream:
   recommended_configs:
     - tighten
     - laravel
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".blade.php"]
 popularity:
   observed_on: 2026-10-20
   evidence:
     - "Packagist: 1,374,160 installs of tightenco/tlint in total, 28,025 in the last 30 days (packagist.org/packages/tightenco/tlint/stats.json)"
     - "GitHub: tighten/tlint has 530 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "NoDumpDirectives":
+    deprecated: null
+    recommended: { config: "tighten", options: [] }
+  "NoJsonDirective":
+    deprecated: null
+    recommended: { config: "tighten", options: [] }
+  "NoRayDirective":
+    deprecated: null
+    recommended: { config: "tighten", options: [] }
+  "SpaceAfterBladeDirectives":
+    deprecated: null
+    recommended: { config: "tighten", options: [] }
+  "SpacesAroundBladeRenderContent":
+    deprecated: null
+    recommended: { config: "tighten", options: [] }
 known_gaps: []

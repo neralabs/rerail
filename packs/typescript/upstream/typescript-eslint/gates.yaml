@@ -30,12 +30,203 @@ upstream:
   recommended_configs:
     - flat/recommended
     - flat/recommended-type-checked
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".cts", ".js", ".mjs", ".mts", ".ts", ".tsx"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "npm: 169,864,457 downloads of @typescript-eslint/eslint-plugin in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "npm: 112,639,766 downloads of typescript-eslint in the same week"
     - "GitHub: typescript-eslint/typescript-eslint has 16,410 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "@typescript-eslint/adjacent-overload-signatures":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/array-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/ban-ts-comment":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/ban-tslint-comment":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/class-literal-property-style":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/class-methods-use-this":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-generic-constructors":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-indexed-object-style":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-type-assertions":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-type-definitions":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-type-imports":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/default-param-last":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/explicit-function-return-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/explicit-member-accessibility":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/explicit-module-boundary-types":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/init-declarations":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/max-params":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/member-ordering":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/method-signature-style":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-array-constructor":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-confusing-non-null-assertion":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-dupe-class-members":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-duplicate-enum-values":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-dynamic-delete":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-empty-function":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-empty-object-type":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-extra-non-null-assertion":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-extraneous-class":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-import-type-side-effects":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-inferrable-types":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-invalid-this":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-invalid-void-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-magic-numbers":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-misused-new":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-namespace":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-non-null-asserted-nullish-coalescing":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-non-null-asserted-optional-chain":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-non-null-assertion":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-redeclare":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-require-imports":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-shadow":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-this-alias":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unnecessary-parameter-property-assignment":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-unnecessary-type-constraint":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unsafe-declaration-merging":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unsafe-function-type":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unused-expressions":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unused-private-class-members":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-unused-vars":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-use-before-define":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-useless-constructor":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-useless-empty-export":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-wrapper-object-types":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/parameter-properties":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-as-const":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/prefer-enum-initializers":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-for-of":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-function-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-literal-enum-member":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-namespace-keyword":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/triple-slash-reference":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/unified-signatures":
+    deprecated: null
+    recommended: null
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings):
 # - Gate 5 runs every case of packages/eslint-plugin/tests/rules/**/*.test.ts through upstream's own RuleTester, as

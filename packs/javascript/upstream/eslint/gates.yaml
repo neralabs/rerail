@@ -15,12 +15,380 @@ upstream:
   # eslint:recommended as the pinned @eslint/js publishes it (`configs.recommended`); it turns rules on without options.
   recommended_configs:
     - recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".js", ".mjs"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "npm: 198,218,333 downloads of eslint in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "npm: 176,459,385 downloads of @eslint/js in the same week"
     - "GitHub: eslint/eslint has 27,629 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "accessor-pairs":
+    deprecated: null
+    recommended: null
+  "arrow-body-style":
+    deprecated: null
+    recommended: null
+  "capitalized-comments":
+    deprecated: null
+    recommended: null
+  "class-methods-use-this":
+    deprecated: null
+    recommended: null
+  "curly":
+    deprecated: null
+    recommended: null
+  "default-case":
+    deprecated: null
+    recommended: null
+  "default-case-last":
+    deprecated: null
+    recommended: null
+  "default-param-last":
+    deprecated: null
+    recommended: null
+  "dot-notation":
+    deprecated: null
+    recommended: null
+  "eqeqeq":
+    deprecated: null
+    recommended: null
+  "func-name-matching":
+    deprecated: null
+    recommended: null
+  "func-style":
+    deprecated: null
+    recommended: null
+  "grouped-accessor-pairs":
+    deprecated: null
+    recommended: null
+  "guard-for-in":
+    deprecated: null
+    recommended: null
+  "id-length":
+    deprecated: null
+    recommended: null
+  "max-classes-per-file":
+    deprecated: null
+    recommended: null
+  "max-depth":
+    deprecated: null
+    recommended: null
+  "max-nested-callbacks":
+    deprecated: null
+    recommended: null
+  "max-params":
+    deprecated: null
+    recommended: null
+  "max-statements":
+    deprecated: null
+    recommended: null
+  "no-alert":
+    deprecated: null
+    recommended: null
+  "no-array-constructor":
+    deprecated: null
+    recommended: null
+  "no-await-in-loop":
+    deprecated: null
+    recommended: null
+  "no-bitwise":
+    deprecated: null
+    recommended: null
+  "no-caller":
+    deprecated: null
+    recommended: null
+  "no-case-declarations":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-compare-neg-zero":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-cond-assign":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-console":
+    deprecated: null
+    recommended: null
+  "no-continue":
+    deprecated: null
+    recommended: null
+  "no-debugger":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-delete-var":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-div-regex":
+    deprecated: null
+    recommended: null
+  "no-dupe-class-members":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-dupe-else-if":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-dupe-keys":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-duplicate-case":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-duplicate-imports":
+    deprecated: null
+    recommended: null
+  "no-empty":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-empty-function":
+    deprecated: null
+    recommended: null
+  "no-empty-pattern":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-empty-static-block":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-eq-null":
+    deprecated: null
+    recommended: null
+  "no-eval":
+    deprecated: null
+    recommended: null
+  "no-extend-native":
+    deprecated: null
+    recommended: null
+  "no-extra-bind":
+    deprecated: null
+    recommended: null
+  "no-extra-label":
+    deprecated: null
+    recommended: null
+  "no-implied-eval":
+    deprecated: null
+    recommended: null
+  "no-inline-comments":
+    deprecated: null
+    recommended: null
+  "no-irregular-whitespace":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-iterator":
+    deprecated: null
+    recommended: null
+  "no-labels":
+    deprecated: null
+    recommended: null
+  "no-lonely-if":
+    deprecated: null
+    recommended: null
+  "no-loss-of-precision":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-magic-numbers":
+    deprecated: null
+    recommended: null
+  "no-multi-assign":
+    deprecated: null
+    recommended: null
+  "no-multi-str":
+    deprecated: null
+    recommended: null
+  "no-negated-condition":
+    deprecated: null
+    recommended: null
+  "no-nested-ternary":
+    deprecated: null
+    recommended: null
+  "no-new":
+    deprecated: null
+    recommended: null
+  "no-new-func":
+    deprecated: null
+    recommended: null
+  "no-new-wrappers":
+    deprecated: null
+    recommended: null
+  "no-nonoctal-decimal-escape":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-obj-calls":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-object-constructor":
+    deprecated: null
+    recommended: null
+  "no-octal":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-octal-escape":
+    deprecated: null
+    recommended: null
+  "no-plusplus":
+    deprecated: null
+    recommended: null
+  "no-proto":
+    deprecated: null
+    recommended: null
+  "no-prototype-builtins":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-redeclare":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-return-assign":
+    deprecated: null
+    recommended: null
+  "no-script-url":
+    deprecated: null
+    recommended: null
+  "no-self-assign":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-self-compare":
+    deprecated: null
+    recommended: null
+  "no-sequences":
+    deprecated: null
+    recommended: null
+  "no-setter-return":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-sparse-arrays":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-template-curly-in-string":
+    deprecated: null
+    recommended: null
+  "no-ternary":
+    deprecated: null
+    recommended: null
+  "no-undef":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unexpected-multiline":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unneeded-ternary":
+    deprecated: null
+    recommended: null
+  "no-unsafe-finally":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unsafe-negation":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unsafe-optional-chaining":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unused-expressions":
+    deprecated: null
+    recommended: null
+  "no-unused-labels":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unused-private-class-members":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-unused-vars":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-useless-call":
+    deprecated: null
+    recommended: null
+  "no-useless-catch":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "no-useless-computed-key":
+    deprecated: null
+    recommended: null
+  "no-useless-concat":
+    deprecated: null
+    recommended: null
+  "no-useless-constructor":
+    deprecated: null
+    recommended: null
+  "no-useless-rename":
+    deprecated: null
+    recommended: null
+  "no-var":
+    deprecated: null
+    recommended: null
+  "no-void":
+    deprecated: null
+    recommended: null
+  "no-warning-comments":
+    deprecated: null
+    recommended: null
+  "no-with":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "one-var":
+    deprecated: null
+    recommended: null
+  "operator-assignment":
+    deprecated: null
+    recommended: null
+  "prefer-const":
+    deprecated: null
+    recommended: null
+  "prefer-destructuring":
+    deprecated: null
+    recommended: null
+  "prefer-exponentiation-operator":
+    deprecated: null
+    recommended: null
+  "prefer-numeric-literals":
+    deprecated: null
+    recommended: null
+  "prefer-object-has-own":
+    deprecated: null
+    recommended: null
+  "prefer-spread":
+    deprecated: null
+    recommended: null
+  "prefer-template":
+    deprecated: null
+    recommended: null
+  "radix":
+    deprecated: null
+    recommended: null
+  "require-await":
+    deprecated: null
+    recommended: null
+  "require-yield":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "sort-imports":
+    deprecated: null
+    recommended: null
+  "sort-keys":
+    deprecated: null
+    recommended: null
+  "sort-vars":
+    deprecated: null
+    recommended: null
+  "strict":
+    deprecated: null
+    recommended: null
+  "symbol-description":
+    deprecated: null
+    recommended: null
+  "use-isnan":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "valid-typeof":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "vars-on-top":
+    deprecated: null
+    recommended: null
+  "yoda":
+    deprecated: null
+    recommended: null
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings):
 # - Gate 5 lints every RuleTester case of tests/lib/rules/<rule>.js as eslint:recommended configures a project: with

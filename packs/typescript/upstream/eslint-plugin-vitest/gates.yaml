@@ -18,12 +18,26 @@ upstream:
   # every rule, and `env` only declares Vitest's globals; none of them is approved.
   recommended_configs:
     - recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".js", ".mjs"]
 popularity:
   observed_on: 2026-10-07
   evidence:
     - "npm: 4,552,292 downloads of @vitest/eslint-plugin in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "npm: 739,731 downloads of eslint-plugin-vitest, its earlier name, in the same week"
     - "GitHub: vitest-dev/eslint-plugin-vitest has 513 stars, is MIT and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "vitest/expect-expect":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "vitest/no-disabled-tests":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "vitest/no-focused-tests":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings, as for typescript-eslint's rules, and what
 # this plugin adds):

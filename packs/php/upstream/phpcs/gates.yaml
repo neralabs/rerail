@@ -42,9 +42,38 @@ upstream:
   #   end (span-units/phpcs.ts).
   recommended_configs:
     - PSR12
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".inc", ".php"]
 popularity:
   observed_on: 2026-10-20
   evidence:
     - "Packagist: 416,475,636 installs of squizlabs/php_codesniffer in total, 10,544,655 in the last 30 days (packagist.org/packages/squizlabs/php_codesniffer/stats.json)"
     - "GitHub: PHPCSStandards/PHP_CodeSniffer has 1,562 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "Generic.CodeAnalysis.EmptyStatement":
+    deprecated: null
+    recommended: null
+  "Generic.PHP.BacktickOperator":
+    deprecated: null
+    recommended: null
+  "Generic.PHP.DeprecatedFunctions":
+    deprecated: null
+    recommended: null
+  "Generic.PHP.ForbiddenFunctions":
+    deprecated: null
+    recommended: null
+  "Generic.PHP.LowerCaseConstant":
+    deprecated: null
+    recommended: { config: "PSR12", options: [] }
+  "Generic.PHP.NoSilencedErrors":
+    deprecated: null
+    recommended: null
+  "Squiz.PHP.DisallowSizeFunctionsInLoops":
+    deprecated: null
+    recommended: null
+  "Squiz.PHP.Eval":
+    deprecated: null
+    recommended: null
 known_gaps: []

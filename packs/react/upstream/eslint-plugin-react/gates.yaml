@@ -19,11 +19,73 @@ upstream:
   # react-react-in-jsx-scope off. `configs.flat.all` turns every rule on and is not a recommendation.
   recommended_configs:
     - flat.recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "npm: 76,020,341 downloads of eslint-plugin-react in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "GitHub: jsx-eslint/eslint-plugin-react has 9,290 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "react/button-has-type":
+    deprecated: null
+    recommended: null
+  "react/jsx-key":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/jsx-no-comment-textnodes":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/jsx-no-duplicate-props":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/jsx-no-target-blank":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/jsx-no-undef":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-array-index-key":
+    deprecated: null
+    recommended: null
+  "react/no-children-prop":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-danger":
+    deprecated: null
+    recommended: null
+  "react/no-danger-with-children":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-direct-mutation-state":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-find-dom-node":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-is-mounted":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-render-return-value":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-string-refs":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/no-unescaped-entities":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/react-in-jsx-scope":
+    deprecated: null
+    recommended: { config: "flat.recommended", options: [] }
+  "react/self-closing-comp":
+    deprecated: null
+    recommended: null
+  "react/void-dom-elements-no-children":
+    deprecated: null
+    recommended: null
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Gate 5 lints every case of tests/lib/rules/<rule>.js as upstream's own helpers build it: tests/helpers/ruleTester.js

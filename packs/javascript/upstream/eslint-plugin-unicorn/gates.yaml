@@ -17,11 +17,25 @@ upstream:
   # subset of it and `all` every rule; neither is approved.
   recommended_configs:
     - recommended
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".cjs", ".js", ".mjs"]
 popularity:
   observed_on: 2026-10-07
   evidence:
     - "npm: 9,015,434 downloads of eslint-plugin-unicorn in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "GitHub: sindresorhus/eslint-plugin-unicorn has 5,263 stars, is MIT and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "unicorn/filename-case":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "unicorn/no-null":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
+  "unicorn/prefer-node-protocol":
+    deprecated: null
+    recommended: { config: "recommended", options: [] }
 known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings, as for ESLint's own rules, and what this
 # plugin adds):

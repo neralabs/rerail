@@ -28,9 +28,80 @@ upstream:
   # whose UNION check is for the dialects where a bare UNION is ambiguous) cannot pass `fires`.
   recommended_configs:
     - default
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".sql"]
 popularity:
   observed_on: 2026-10-19
   evidence:
     - "PyPI: 2,391,178 downloads of sqlfluff in the last week and 9,355,581 in the last month, without mirrors (pypistats.org/api/packages/sqlfluff/recent, 2026-10-19)"
     - "GitHub: sqlfluff/sqlfluff has 9,984 stars and 1,238 forks and is not archived (gh api repos/sqlfluff/sqlfluff, 2026-10-19)"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "AL04":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AL05":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AL08":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AL09":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AM01":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AM02":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AM05":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "AM09":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "CV02":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "CV04":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "CV05":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "CV08":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PG01":
+    deprecated: null
+    recommended: null
+  "PG02":
+    deprecated: null
+    recommended: null
+  "RF01":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RF04":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RF05":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RF06":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "ST01":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "ST02":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "ST08":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "ST10":
+    deprecated: null
+    recommended: { config: "default", options: [] }
 known_gaps: []

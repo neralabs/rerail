@@ -27,9 +27,239 @@ upstream:
   # differs on its own tests (`# nosec` lines, `shell=[]` and `shell={}`, and line 7 of examples/new_candidates-all.py
   # and new_candidates-some.py), so the reading decides no verdict. bandit:b106 meets the same positions (examples/pyghmi.py 5, dask's
   # multi-line keyword calls) but reports the keyword rather than its value, so it differs there either way.
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".py"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "PyPI: 6,183,459 downloads of bandit in the week 2026-09-28 to 2026-10-04, without mirrors (pypistats.org)"
     - "GitHub: PyCQA/bandit has 8,295 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "B101":
+    deprecated: null
+    recommended: { config: "default", options: [{"skips":[]}] }
+  "B102":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B103":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B104":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B105":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B106":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B107":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B108":
+    deprecated: null
+    recommended: { config: "default", options: [{"tmp_dirs":["/tmp","/var/tmp","/dev/shm"]}] }
+  "B110":
+    deprecated: null
+    recommended: { config: "default", options: [{"check_typed_exception":false}] }
+  "B112":
+    deprecated: null
+    recommended: { config: "default", options: [{"check_typed_exception":false}] }
+  "B113":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B201":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B202":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B301":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B302":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B303":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B304":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B305":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B306":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B307":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B308":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B310":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B311":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B312":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B313":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B314":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B315":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B316":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B317":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B318":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B319":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B321":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B323":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B324":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B401":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B402":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B403":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B404":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B405":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B406":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B407":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B408":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B409":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B411":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B412":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B413":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B415":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B501":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B502":
+    deprecated: null
+    recommended: { config: "default", options: [{"bad_protocol_versions":["PROTOCOL_SSLv2","SSLv2_METHOD","SSLv23_METHOD","PROTOCOL_SSLv3","PROTOCOL_TLSv1","SSLv3_METHOD","TLSv1_METHOD","PROTOCOL_TLSv1_1","TLSv1_1_METHOD"]}] }
+  "B503":
+    deprecated: null
+    recommended: { config: "default", options: [{"bad_protocol_versions":["PROTOCOL_SSLv2","SSLv2_METHOD","SSLv23_METHOD","PROTOCOL_SSLv3","PROTOCOL_TLSv1","SSLv3_METHOD","TLSv1_METHOD","PROTOCOL_TLSv1_1","TLSv1_1_METHOD"]}] }
+  "B504":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B505":
+    deprecated: null
+    recommended: { config: "default", options: [{"weak_key_size_dsa_high":1024,"weak_key_size_dsa_medium":2048,"weak_key_size_ec_high":160,"weak_key_size_ec_medium":224,"weak_key_size_rsa_high":1024,"weak_key_size_rsa_medium":2048}] }
+  "B506":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B507":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B508":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B509":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B601":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B602":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B603":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B604":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B605":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B606":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B607":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B608":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B609":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B610":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B611":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B612":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B613":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B614":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B615":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B701":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B702":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B703":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B704":
+    deprecated: null
+    recommended: { config: "default", options: [{"allowed_calls":[],"extend_markup_names":[]}] }
 known_gaps: []

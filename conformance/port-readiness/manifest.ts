@@ -173,6 +173,20 @@ const eslintSchema = z.strictObject({
 /** Which ESLint rules a tool-pack ports and where upstream keeps them; required for the eslint adapter. */
 export type EslintUpstream = z.infer<typeof eslintSchema>;
 
+/** A file type: its extension, or a dialect's longer suffix (`.blade.php`). */
+const fileType = z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .py or .blade.php");
+
+/**
+ * What upstream says of one of its rules at the pins, declared and reviewed at each bump: `deprecated` is upstream's
+ * deprecation message, or null; `recommended` is the first of `upstream.recommended_configs` that turns the rule on,
+ * with its options, or null.
+ */
+const upstreamRuleFactsSchema = z.strictObject({
+  deprecated: z.string().min(1).nullable(),
+  recommended: z.strictObject({ config: nonEmpty, options: z.array(z.json()) }).nullable(),
+});
+export type UpstreamRuleFacts = z.infer<typeof upstreamRuleFactsSchema>;
+
 export const gatesManifestSchema = z.strictObject({
   /** The live adapter that reads this upstream (recorders/port-readiness/adapters/<adapter>.ts, or <adapter>/<adapter>.ts). */
   adapter: z.enum(ADAPTERS),
@@ -186,9 +200,9 @@ export const gatesManifestSchema = z.strictObject({
      */
     project: z.string().regex(/^[A-Za-z0-9._-]+$/u),
     /**
-     * The file types rerail's ports of this tool cover, when the pack deliberately covers fewer than upstream lints:
-     * `loads`'s in-scope check then asks for these alone. Each must be a type upstream lints (the `in-scope-narrowing`
-     * tool-pack check). Absent, the ports must cover every type upstream lints.
+     * The file types rerail's ports of this tool cover, when the pack deliberately covers fewer than upstream lints
+     * (`upstream.lints`): `loads`'s in-scope check then asks for these alone. Each must be one of `upstream.lints`.
+     * Absent, the ports must cover every type upstream lints.
      */
     in_scope: unique(z.string().regex(/^\.[a-z]+$/u)).min(1).optional(),
   }),
@@ -207,12 +221,22 @@ export const gatesManifestSchema = z.strictObject({
     recommended_configs: unique(nonEmpty).min(1),
     /** The directory under conformance/recorders/port-readiness/runtimes/ that pins the runtime upstream is run with. */
     runtime: runtimeDirectory,
+    /**
+     * The file types upstream lints with its approved configuration at the pins. Every port of this tool must apply to
+     * each of them (`loads`'s in-scope check), or to each of `rerail.in_scope` when the pack narrows it.
+     */
+    lints: unique(fileType).min(1),
   }),
   /** Recorded evidence that the upstream is public and popular: tool-pack registration data, not a per-rule label. */
   popularity: z.strictObject({
     observed_on: z.iso.date(),
     evidence: z.array(nonEmpty).min(1),
   }),
+  /**
+   * Every rule of the pinned upstream the pack ports or may port, by upstream name, with what upstream says of it. A
+   * name not listed is no rule of the pinned upstream.
+   */
+  rules: z.record(nonEmpty, upstreamRuleFactsSchema),
   known_gaps: z.array(knownGapSchema),
   eslint: eslintSchema.optional(),
 }).superRefine((manifest, context) => {
@@ -222,6 +246,9 @@ export const gatesManifestSchema = z.strictObject({
   const ids = manifest.known_gaps.map((gap) => gap.id);
   const repeated = ids.find((id, index) => ids.indexOf(id) !== index);
   if (repeated !== undefined) context.addIssue({ code: "custom", path: ["known_gaps"], message: `lists the known gap ${repeated} twice` });
+  for (const type of manifest.rerail.in_scope ?? []) {
+    if (!manifest.upstream.lints.includes(type)) context.addIssue({ code: "custom", path: ["rerail", "in_scope"], message: `names ${type}, which upstream does not lint (upstream.lints: ${manifest.upstream.lints.join(", ")})` });
+  }
 });
 
 export type GatesManifest = z.infer<typeof gatesManifestSchema>;

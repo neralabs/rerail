@@ -56,9 +56,26 @@ upstream:
   #   validators do not judge, and Laravel's BladeCompiler with `php -l` gives the other verdict.
   recommended_configs:
     - blade.validation
+  # The file types upstream lints with its approved configuration at the pins (seeded from the recording's in-scope samples).
+  lints: [".blade.php"]
 popularity:
   observed_on: 2026-10-20
   evidence:
     - "Packagist: 2,355,299 installs of stillat/blade-parser in total, 269,991 in the last 30 days (packagist.org/packages/stillat/blade-parser/stats.json)"
     - "GitHub: stillat/blade-parser has 148 stars and is not archived"
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (seeded from the recording; reviewed at each bump).
+rules:
+  "ComponentShorthandVariableParameterValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [] }
+  "DebugDirectiveValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [{"custom_directives":[],"ignore_directives":["livewire"]}] }
+  "DuplicateConditionExpressionsValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [{"ignore_directives":["livewire"]}] }
+  "ForElseStructureValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [] }
 known_gaps: []
