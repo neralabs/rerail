@@ -84,4 +84,3 @@ rules:
   "variable.undefined":
     deprecated: null
     recommended: { config: "level0", options: [{"checkMaybeUndefinedVariables":false,"checkNonStringableDynamicAccess":false,"cliArgumentsVariablesRegistered":true,"polluteScopeWithAlwaysIterableForeach":true,"polluteScopeWithLoopInitialAssignments":true}] }
-known_gaps: []

@@ -389,7 +389,6 @@ rules:
   "yoda":
     deprecated: null
     recommended: null
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings):
 # - Gate 5 lints every RuleTester case of tests/lib/rules/<rule>.js as eslint:recommended configures a project: with
 #   the rule at the options of its first approved configuration, not the case's own options (the TSLint precedent),
@@ -429,22 +428,6 @@ known_gaps: []
 # - Upstream's tests run in validation/upstream/eslint-10.11.0 with the test-time packages its package.json asks for:
 #   @typescript-eslint/parser 8.70.1 (^8.58.2), typescript 6.0.3 (^6.0.3), globals 16.5.0 (^16.2.0), fs-teardown 0.1.3.
 eslint:
-  plugin: null
-  # eslint publishes lib/ as it is; its tests require the rules from ../../../lib, which run from the installed package.
   release:
     tag: v10.11.0
-    path: lib
     installed: eslint/lib
-    verbatim: true
-  implementation: lib/rules/{rule}.js
-  tests: ["tests/lib/rules/*.js"]
-  # Helper libraries ESLint's rules are written with; ReferenceTracker's default global object names (global,
-  # globalThis, self, window) are in it. Parsers and language tables (espree, esutils, @eslint-community/regexpp) and
-  # general libraries are not rule helpers and are not read, as TSLint's typescript and tsutils are not.
-  helpers: ["@eslint-community/eslint-utils"]
-  checkout: ["/lib/", "/conf/", "/messages/", "/tests/lib/rules/", "/tests/fixtures/", "/tests/_utils/", "/packages/js/", "/LICENSE", "/NOTICE", "/package.json"]
-  # Each fixture parser here returns the tree a TypeScript parser (@typescript-eslint/parser or its predecessor) built
-  # for the case's own code, which its header quotes, so the case is TypeScript; the other parsers in
-  # tests/fixtures/parsers return a tree whatever the code.
-  fixture_parsers:
-    tests/fixtures/parsers/typescript-parsers/: ".ts"

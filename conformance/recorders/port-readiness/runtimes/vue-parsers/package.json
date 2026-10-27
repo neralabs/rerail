@@ -1,8 +1,0 @@
-{
-  "name": "nera-rule-discovery-second-opinion-vue-parsers",
-  "private": true,
-  "description": "The independent parser that splits a Vue single-file component for a second opinion on it: @vue/compiler-sfc, at the version the vue pack pins. Its parse errors are the component's own, and the scripts it splits out are read by runtimes/parsers' TypeScript and Babel.",
-  "dependencies": {
-    "@vue/compiler-sfc": "3.5.43"
-  }
-}

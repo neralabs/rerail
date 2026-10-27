@@ -533,4 +533,3 @@ rules:
   "W605":
     deprecated: null
     recommended: { config: "default", options: [] }
-known_gaps: []

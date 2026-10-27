@@ -591,8 +591,7 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     # Rerail's cases first: a shipped rule without one stops the run before any fixture is deleted.
     cases = authored()
     target = HERE / "fixtures"
-    # Only the files the last run wrote: fixtures/ also holds the case sources the port readiness recorder commits
-    # (conformance/recorders/port-readiness/record.ts), which this run must keep.
+    # Only the files the last run wrote: the rest of fixtures/ is not this run's to delete.
     expected = HERE / "fixtures.expected.json"
     for file in json.loads(expected.read_text(encoding="utf-8"))["source"]["files"] if expected.exists() else []:
         (target / file).unlink(missing_ok=True)

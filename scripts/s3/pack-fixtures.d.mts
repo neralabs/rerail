@@ -19,11 +19,6 @@ export interface Lock {
   files: number;
   bytes: number;
 }
-/** The recording archive a recording.lock names, as a Lock for verifiedRecording. */
-export interface LockedRecording extends Lock {
-  /** Its key in the lock's `files` (RECORDING_ARCHIVE). */
-  name: string;
-}
 export interface CommandOptions {
   root?: string;
   pack?: string;
@@ -77,13 +72,6 @@ export const BUCKET: string;
 export const REGION: string;
 export const ARCHIVE_PREFIX: string;
 export const ARCHIVE_CACHE: string;
-export const RECORDING_PREFIX: string;
-export const RECORDING_CACHE: string;
-export const RECORDING_LOCK: "recording.lock";
-export const RECORDING_LOCK_FORMAT: "rerail.port-readiness-recording-lock/v4";
-export const RECORDING_ARCHIVE: "recording.tar.zst";
-export const RECORDING_ARCHIVE_FORMAT: "rerail.port-readiness-recording-archive/v1";
-export const RECORDING_TREE_ROOTS: readonly string[];
 export const AUTHORED_CORPUS_PATTERN: string;
 export const PACK_FIXTURE_PATTERNS: readonly string[];
 export const PULL_INSTRUCTION: string;
@@ -111,25 +99,16 @@ export function licenceAllowed(expression: string, allowed: ReadonlySet<string>)
 export function archiveKey(toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
 export function archiveCachePath(root: string, toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
 export function readLock(root: string, toolPack: ToolPack): Lock;
-export function recordingKey(toolPack: Pick<ToolPack, "pack" | "tool">, digest: string): string;
-export function recordingArchiveCacheFile(root: string, digest: string): string;
-export function recordingTreeDirectory(root: string, digest: string): string;
-export function lockedRecording(text: string, label: string): LockedRecording;
-export function readRecordingLock(root: string, toolPack: ToolPack): { label: string; archive: LockedRecording } | undefined;
 export function verifiedEntries(compressed: Buffer, lock: Lock, key: string, directory: string): { path: string; bytes: Buffer }[];
-export function verifiedRecording(compressed: Buffer, lock: Lock, key: string): { path: string; bytes: Buffer }[];
-export const RECORDING_TREE_MARKER: string;
-export function recordingTreeReady(directory: string, lock: Pick<Lock, "sha256" | "files" | "bytes">): boolean;
-export function extractRecordingTree(directory: string, entries: readonly { path: string; bytes: Buffer }[], lock: Pick<Lock, "sha256" | "files" | "bytes">): void;
+export const TREE_MARKER: string;
+export function treeReady(directory: string, lock: Pick<Lock, "sha256" | "files" | "bytes">): boolean;
+export function extractTree(directory: string, entries: readonly { path: string; bytes: Buffer }[], lock: Pick<Lock, "sha256" | "files" | "bytes">): void;
 export function pull(options?: CommandOptions): {
   /** Each selected tool-pack, where its archive came from, and how many publish/ files were laid over it. */
   toolPacks: (ToolPack & { source: "cache" | "S3" | "publish/"; published: number })[];
   /** The selected tool-packs with a samples.lock, and where each one's samples archive came from. */
   samples: (ToolPack & { source: "cache" | "S3" })[];
 };
-/** `cache`: the recording cache directory to fill (RECORDING_CACHE under `root` by default; the recorder's `<--cache>/recordings`). */
-export function recordings(options?: CommandOptions & { cache?: string }): { kept: string[]; downloaded: string[]; missing: string[]; extracted: string[] };
-export function recordingsPush(options: UploadOptions): { uploaded: string[]; locks: string[] };
 /** A tool-pack's real-code samples manifest, beside test-data.lock and in its format. */
 export const SAMPLES_LOCK: "samples.lock";
 export const SAMPLES_PREFIX: string;

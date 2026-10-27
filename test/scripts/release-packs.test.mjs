@@ -176,7 +176,6 @@ describe("missingChangesets", () => {
     const changed = [
       "packs/php/upstream/phpcs/gates.yaml",
       "packs/php/upstream/phpcs/test-data.lock",
-      "packs/php/upstream/phpcs/recording.lock",
       "packs/php/candidates/rules/x.json",
       "packs/php/CHANGELOG.md",
       "packs/php/rules.md",

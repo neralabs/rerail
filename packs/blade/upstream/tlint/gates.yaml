@@ -63,4 +63,3 @@ rules:
   "SpacesAroundBladeRenderContent":
     deprecated: null
     recommended: { config: "tighten", options: [] }
-known_gaps: []

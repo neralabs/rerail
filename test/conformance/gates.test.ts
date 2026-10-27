@@ -36,7 +36,6 @@ rules:
   EX101:
     deprecated: null
     recommended: ${recommended}
-known_gaps: []
 `;
 
 const UNGATED = { checks: [], notGated: [], pending: [] };

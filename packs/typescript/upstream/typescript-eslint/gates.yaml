@@ -227,7 +227,6 @@ rules:
   "@typescript-eslint/unified-signatures":
     deprecated: null
     recommended: null
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings):
 # - Gate 5 runs every case of packages/eslint-plugin/tests/rules/**/*.test.ts through upstream's own RuleTester, as
 #   the approved configuration configures a project: with the rule at the options of its first approved
@@ -266,27 +265,6 @@ known_gaps: []
 # - Upstream's tests run in validation/upstream/typescript-eslint-8.70.1 on the eslint (10.8.1), typescript (6.0.3) and
 #   tsx versions typescript-eslint's own v8.70.1 pnpm-lock.yaml resolves, not on ESLint 10.11.0.
 eslint:
-  plugin:
-    package: "@typescript-eslint/eslint-plugin"
-    namespace: "@typescript-eslint"
-  # The plugin publishes dist/, built from src/; its tests import ../../src/rules/<rule>, which run as the installed build.
   release:
     tag: v8.70.1
-    path: packages/eslint-plugin/src
     installed: "@typescript-eslint/eslint-plugin/dist"
-    verbatim: false
-  implementation: packages/eslint-plugin/src/rules/{rule}.ts
-  tests: ["packages/eslint-plugin/tests/rules/**/*.test.ts"]
-  # The files type-checked cases compile against (file.ts, react.tsx, deprecated.ts, the tsconfig variants).
-  test_fixtures: ["packages/eslint-plugin/tests/fixtures/**"]
-  # Helper libraries typescript-eslint's rules are written with, from its own monorepo, and ESLint's for the ESLint
-  # rules some of them extend. Parsers (@typescript-eslint/typescript-estree, @eslint-community/regexpp) and the
-  # TypeScript compiler with its API utilities (typescript, ts-api-utils) are not rule helpers and are not read, as
-  # TSLint's typescript and tsutils are not. The approved configurations' parser calls @typescript-eslint/scope-manager's
-  # analyze, whose default jsxPragma is React; every rule reads the scopes it builds.
-  helpers:
-    - "@eslint-community/eslint-utils"
-    - "@typescript-eslint/scope-manager"
-    - "@typescript-eslint/type-utils"
-    - "@typescript-eslint/utils"
-  checkout: ["/packages/eslint-plugin/", "/LICENSE", "/NOTICE", "/package.json"]

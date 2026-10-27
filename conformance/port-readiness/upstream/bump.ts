@@ -2,17 +2,17 @@
  * `npm run port-readiness:bump`: move one tool-pack's pins to a newer upstream release. With every tool-pack
  * `port-readiness:upstream-releases` finds behind, the nightly (port-readiness-nightly.yml) dispatches
  * port-readiness-bump.yml once on the work branch auto/bump-run/upstream, whose leg per tool-pack runs it, then on Linux
- * derives and records again every tool-pack the bump made stale and packs each one's test data into the archive its
+ * derives again every tool-pack the bump made stale and packs each one's test data into the archive its
  * test-data.lock names; that upstream code at an unreviewed release runs with no OIDC or write token, and outside main's
  * cache scope. port-readiness-bump-publish.yml then, on main, runs it again for each leg, composes the verified legs into
- * a commit per tool-pack carrying its pins, test-data.lock and recording.lock files together, uploads the archives to S3
+ * a commit per tool-pack carrying its pins and test-data.lock files together, uploads the archives to S3
  * and opens one pull request, which a maintainer reviews and merges. A maintainer can run it the same way, and
  * regenerate the rest as the pull request's "Regenerate locally" section says.
  *
  * A gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream in several places, all moved together:
  * - gates.yaml's `upstream.version` and `upstream.commit`, the commit being the one the release's tag names on GitHub
  *   (an annotated tag is followed to its commit), and an ESLint upstream's `eslint.release.tag`;
- * - the runtime's pin file under conformance/recorders/port-readiness/runtimes/<upstream.runtime>/ (package.json,
+ * - the runtime's pin file under scripts/pack-data/runtimes/<upstream.runtime>/ (package.json,
  *   pyproject.toml or composer.json): upstream's package, and on npm every package of the same scope pinned at the same
  *   release (typescript-eslint publishes its packages together). A runtime directory named `<name>-<version>` is
  *   renamed to the new version, and every gates.yaml naming it follows;
@@ -40,8 +40,8 @@ import { isDeepStrictEqual, parseArgs } from "node:util";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
-import { gatedToolPacks, parseGatesManifest, readGatesManifest, recordedRuntimes, type GatesManifest } from "../../languages/manifest.js";
-import { RUNTIMES_DIRECTORY } from "../../recorders/port-readiness/recorded-adapter.js";
+import { gatedToolPacks, parseGatesManifest, readGatesManifest, type GatesManifest } from "../../languages/manifest.js";
+import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 import {
   ECOSYSTEM_NAMES,
   PIN_FILES,
@@ -85,8 +85,11 @@ export interface Bump {
   files: BumpFile[];
   /** Runtime directories renamed, repository-relative. */
   renames: { from: string; to: string }[];
-  /** The gated tool-packs (`<pack>/<tool>`) whose recordings the bump makes stale: each installs a runtime it changed. */
-  record: string[];
+  /**
+   * The tool-packs (`<pack>/<tool>`) whose test data the bump makes stale: its own, and each other whose gates.yaml
+   * `upstream.runtime` is the runtime it changed.
+   */
+  derive: string[];
   /** Lines that still name the old release once the bump is written: `<path>:<line>: <text>`. */
   leftovers: string[];
   /** Anything the reviewer should know about how a pin was chosen. */
@@ -256,7 +259,6 @@ function yamlScalar(indent: string, key: string, value: string): RegExp {
 function renamedRuntime(manifest: GatesManifest, from: string, to: string): GatesManifest {
   const copy = structuredClone(manifest);
   if (copy.upstream.runtime === from) copy.upstream.runtime = to;
-  if (copy.eslint?.environment?.runtime === from) copy.eslint.environment.runtime = to;
   return copy;
 }
 
@@ -452,13 +454,13 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     edits.write(path, text);
   }
 
-  // The tool-packs whose recordings install the changed runtime.
-  const record = [toolPack, ...[...manifests].filter(([id, other]) => id !== toolPack && recordedRuntimes(other).includes(newRuntime)).map(([id]) => id)];
+  // The tool-packs whose test data the changed runtime derives.
+  const derive = [toolPack, ...[...manifests].filter(([id, other]) => id !== toolPack && other.upstream.runtime === newRuntime).map(([id]) => id)];
 
   const project = manifest.rerail.project;
   const leftovers = findLeftovers(root, edits, [
     gatesPath,
-    ...filesIn(root, `packs/${pack}/upstream/${tool}`).filter((path) => !path.endsWith("/recording.lock") && !path.endsWith(".expected.json")),
+    ...filesIn(root, `packs/${pack}/upstream/${tool}`).filter((path) => !path.endsWith(".expected.json")),
     ...scripts.shared,
     conformancePath,
     `packs/${pack}/README.md`,
@@ -466,7 +468,7 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], from.version, renames);
 
-  return { toolPack, pack, tool, ecosystem, package: pin.package, repository, from, to, files: edits.changed(renames), renames, record, leftovers, notes };
+  return { toolPack, pack, tool, ecosystem, package: pin.package, repository, from, to, files: edits.changed(renames), renames, derive, leftovers, notes };
 }
 
 const channelSchema = z.object({
@@ -598,7 +600,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
 
   const leftovers = findLeftovers(root, edits, [
     common,
-    ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith("/recording.lock") && !path.endsWith(".expected.json")),
+    ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith(".expected.json")),
     conformancePath,
     "packs/rust/README.md",
     ...(existsSync(join(root, "packs/rust/licenses")) ? readdirSync(join(root, "packs/rust/licenses")).map((project) => `packs/rust/licenses/${project}/UPSTREAM.md`) : []),
@@ -615,8 +617,8 @@ export async function planClippyBump(root: string, version: string, sources: Sou
     to: { version, tag: source.tag, commit: source.commit },
     files: edits.changed(renames),
     renames,
-    // Clippy is gated: its tool-pack is recorded again with the new toolchain (on Linux, as CI records it).
-    record: ["rust/clippy"],
+    // Clippy's tool-pack is derived again with the new toolchain (on Linux, as CI derives it).
+    derive: ["rust/clippy"],
     leftovers,
     notes: source.note === null ? [] : [source.note],
   };
@@ -698,26 +700,26 @@ export function renderBump(bump: Bump): string {
     pinDiff(bump),
     "```",
     "",
-    "### Derived and recorded again",
+    "### Derived again",
     "",
-    "The nightly derived each tool-pack's test data from the new pins and recorded its upstream answers again, on Linux with the runtimes the port readiness gates install, then packed the test data into the archive its `test-data.lock` names:",
+    "The nightly derived each tool-pack's test data from the new pins, on Linux, then packed it into the archive its `test-data.lock` names:",
     "",
-    ...bump.record.map((id) => `- \`${id}\``),
+    ...bump.derive.map((id) => `- \`${id}\``),
     "",
     "### Regenerate locally",
     "",
     "From this branch, with the current test data pulled (`npm run fixtures:pull`), for each tool-pack above:",
     "",
     "```sh",
-    ...bump.record.map((id) => {
+    ...bump.derive.map((id) => {
       const [pack, tool] = id.split("/");
       const selector = `--pack ${pack!} --tool ${tool!}`;
-      return `npm run fixtures:derive -- ${selector} --update && npm run port-readiness:record -- ${selector} --full && npm run fixtures:push -- ${selector}`;
+      return `npm run fixtures:derive -- ${selector} --update && npm run fixtures:push -- ${selector}`;
     }),
     "```",
     "",
-    "then commit each tool-pack's `test-data.lock` and `recording.lock`.",
-    ...(bump.record.includes("rust/clippy") ? ["", "Derive and record `rust/clippy` on Linux: Clippy's answers on macOS differ from the ones CI checks."] : []),
+    "then commit each tool-pack's `test-data.lock`.",
+    ...(bump.derive.includes("rust/clippy") ? ["", "Derive `rust/clippy` on Linux: Clippy's answers on macOS differ from the ones CI checks."] : []),
     "",
     `### Still naming ${bump.from.version}`,
     "",
@@ -736,7 +738,7 @@ export function renderBump(bump: Bump): string {
 export function bumpJson(bump: Bump | null, toolPack: string, version: string): unknown {
   if (bump === null) return { toolPack, version, changed: false };
   const { files, ...rest } = bump;
-  return { ...rest, version: bump.to.version, changed: true, files: files.map((file) => file.path), record: bump.record.map((id) => ({ pack: id.split("/")[0], tool: id.split("/")[1] })) };
+  return { ...rest, version: bump.to.version, changed: true, files: files.map((file) => file.path), derive: bump.derive.map((id) => ({ pack: id.split("/")[0], tool: id.split("/")[1] })) };
 }
 
 const USAGE = `usage:

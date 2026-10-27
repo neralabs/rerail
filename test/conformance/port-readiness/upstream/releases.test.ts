@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../../scripts/pack-data/runtimes.js";
 import {
   checkUpstreamReleases,
   eslintPackage,
@@ -124,7 +124,6 @@ popularity:
   evidence:
     - a fake upstream
 rules: {}
-known_gaps: []
 `;
 }
 
@@ -150,7 +149,6 @@ popularity:
   evidence:
     - a fake upstream
 rules: {}
-known_gaps: []
 `;
 
 /**

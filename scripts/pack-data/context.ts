@@ -38,9 +38,9 @@ export interface DeriveContext {
   toolDirectory: string;
   /** Where the recipe's installs, checkouts and scratch files go (gitignored). */
   cacheRoot: string;
-  /** The port readiness recorder's cache root: its runtimes (runtimes.ts's npmRuntime, uvRuntime, composerRuntime) and checkouts. */
-  recorderCache: string;
-  /** The runner the recorder's runtime helpers take. */
+  /** Where the pinned runtimes (runtimes.ts's npmRuntime, uvRuntime, composerRuntime) install (gitignored). */
+  runtimeCache: string;
+  /** The runner the runtime helpers take. */
   runner: CommandRunner;
   /** Runs a command with its output shown, failing when it exits non-zero. */
   exec(argv: readonly string[], options?: RunOptions): Promise<void>;
@@ -84,7 +84,7 @@ export function derivationEnvironment(base: NodeJS.ProcessEnv = process.env): No
 /**
  * How one tool-pack's derived pack test data is made from its pins: the generator(s) under packs/<pack>/upstream/,
  * run on inputs the recipe provisions. derive.ts runs it on a tool directory holding only the authored data (every
- * derived file removed), then the port readiness recorder's case sources for a gated tool-pack, then its checks.
+ * derived file removed), then its checks.
  */
 export interface DeriveRecipe {
   pack: string;
@@ -130,13 +130,13 @@ export interface ContextOptions {
   pack: string;
   tool: string;
   cacheRoot: string;
-  recorderCache: string;
+  runtimeCache: string;
   runner: CommandRunner;
   log: (message: string) => void;
 }
 
 export function createContext(options: ContextOptions): DeriveContext {
-  const { root, pack, tool, cacheRoot, recorderCache, runner, log } = options;
+  const { root, pack, tool, cacheRoot, runtimeCache, runner, log } = options;
   const exec = async (argv: readonly string[], run: RunOptions = {}) => {
     await spawnChecked(argv, run, false);
   };
@@ -250,7 +250,7 @@ export function createContext(options: ContextOptions): DeriveContext {
     tool,
     toolDirectory: join(root, "packs", pack, "upstream", tool),
     cacheRoot,
-    recorderCache,
+    runtimeCache,
     runner,
     exec,
     capture,

@@ -86,7 +86,6 @@ rules:
   "react/void-dom-elements-no-children":
     deprecated: null
     recommended: null
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Gate 5 lints every case of tests/lib/rules/<rule>.js as upstream's own helpers build it: tests/helpers/ruleTester.js
 #   (on ESLint 9 it converts each case to flat config and defaults ecmaVersion 5 and sourceType script) and
@@ -131,33 +130,6 @@ known_gaps: []
 # - No port's message is copied from upstream's rule docs (docs/rules/*.md; no-render-return-value.md quotes the legacy
 #   reactjs.org ReactDOM documentation).
 eslint:
-  # The environment the pack is linted in, decided by the team on 2026-10-09 (docs/decisions/eslint-test-globals.md):
-  # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
-  # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
-  # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
-  # upstream's test cases; its plugins, rules and settings are not the pack's. A test case's own parser
-  # and globals give way to them.
-  environment:
-    package: eslint-config-next
-    version: 16.3.8
-    runtime: eslint-config-next-16.3.8
-    source:
-      repository: https://github.com/vercel/next.js
-      commit: b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6
-      path: packages/eslint-config-next
-  plugin:
-    package: eslint-plugin-react
-    namespace: react
-  # Upstream's tests require ../../../lib/rules/<rule>, which run from the installed package.
   release:
     tag: v7.37.5
-    path: lib
     installed: eslint-plugin-react/lib
-    verbatim: false
-  implementation: lib/rules/{rule}.js
-  tests: ["tests/lib/rules/*.js"]
-  helpers: ["jsx-ast-utils"]
-  checkout: ["/lib/", "/tests/lib/rules/", "/tests/helpers/", "/index.js", "/configs/", "/LICENSE", "/package.json"]
-  parsers:
-    eslint-config-next: javascript
-    typescript-eslint-parser: typescript

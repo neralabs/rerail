@@ -28,7 +28,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, withOrigins, writeRenameVariants } from "../../../conformance/recorders/eslint-record.mjs";
+import { isVariantPath, withOrigins, writeRenameVariants, writeVariantRows } from "../../../conformance/recorders/eslint-record.mjs";
 import { recordingWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -322,6 +322,7 @@ async function recordFixtures(tool) {
   }
   const kept = files.filter(file => !unparsedSet.has(file));
   const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
+  writeVariantRows(join(HERE, "..", "licenses", tool, "UPSTREAM.md"), tool, units);
   const source = CHECKOUTS[tool];
   writeJson(join(HERE, tool, "fixtures.expected.json"), {
     tool,

@@ -38,7 +38,6 @@ rules:
   "vitest/no-focused-tests":
     deprecated: null
     recommended: { config: "recommended", options: [] }
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings, as for typescript-eslint's rules, and what
 # this plugin adds):
 # - Gate 5 runs every case of tests/*.test.ts through upstream's own RuleTester (typescript-eslint's, built in
@@ -66,22 +65,6 @@ known_gaps: []
 #   (8.58.0), typescript (5.9.3) and tsx (4.21.0) versions upstream's own v1.6.27 pnpm-lock.yaml resolves, with every
 #   transitive package at the version that lockfile resolves for its dependent.
 eslint:
-  plugin:
-    package: "@vitest/eslint-plugin"
-    namespace: vitest
-  # The plugin publishes one bundle, dist/index.mjs and dist/index.cjs, built from src/ with tsdown; its tests import
-  # ../src/rules/<rule>, whose copies the installed bundle's rules of the same name and metadata replace.
   release:
     tag: v1.6.27
-    path: src
     installed: "@vitest/eslint-plugin/dist"
-    verbatim: false
-  implementation: src/rules/{rule}.ts
-  tests: ["tests/*.test.ts"]
-  # The project type-checked cases compile against (tests/fixture/tsconfig.json and its files).
-  test_fixtures: ["tests/fixture/**"]
-  # The plugin's runtime dependencies, the typescript-eslint libraries its rules are written with.
-  helpers:
-    - "@typescript-eslint/scope-manager"
-    - "@typescript-eslint/utils"
-  checkout: ["/src/", "/tests/", "/LICENSE", "/package.json"]

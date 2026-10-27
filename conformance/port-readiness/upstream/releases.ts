@@ -4,10 +4,10 @@
  * and a breaking one as a red job, rather than as rules quietly ported from an old version.
  *
  * Each gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream twice: `upstream.version` in
- * gates.yaml, and the package its runtime installs (`conformance/recorders/port-readiness/runtimes/<upstream.runtime>/`:
+ * gates.yaml, and the package its runtime installs (`scripts/pack-data/runtimes/<upstream.runtime>/`:
  * package.json, pyproject.toml or composer.json). The two must agree, and the version is held to the latest stable
  * release the package's registry (npm, PyPI or Packagist) publishes. The Rust pack's Clippy ships with Rust: its pin is
- * the Rust toolchain its generators and its recorder's runtime refuse any other than (`packs/rust/upstream/common.py`,
+ * the Rust toolchain its generators and its runtime refuse any other than (`packs/rust/upstream/common.py`,
  * `runtimes/clippy-<release>/rust-toolchain.toml`), held to the latest stable Rust's major.minor (clippyPin, releaseGap).
  *
  * Each tool-pack's gap to upstream is `current`, `patch`, `minor`, `major` or `breaking-minor` (a minor release of a 0.x
@@ -26,7 +26,7 @@ import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
 import { gatedToolPacks, readGatesManifest, type GatesManifest } from "../../languages/manifest.js";
-import { RUNTIMES_DIRECTORY } from "../../recorders/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 
 /** The registries a gated tool-pack's runtime installs its upstream from. */
 export type PackageEcosystem = "npm" | "pypi" | "packagist";
@@ -134,7 +134,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
     package: name,
     version,
     disagreements,
-    bump: `npm run port-readiness:bump -- --pack ${pack} --tool ${tool}, then record it again (the nightly opens this as a pull request)`,
+    bump: `npm run port-readiness:bump -- --pack ${pack} --tool ${tool}, then derive it again (the nightly opens this as a pull request)`,
   };
 }
 
@@ -177,7 +177,7 @@ export function clippyPin(root: string, pack = "rust", tool = "clippy"): Upstrea
     package: "rust",
     version,
     disagreements,
-    bump: "npm run port-readiness:bump -- --pack rust --tool clippy, then record it again (the nightly opens this as a pull request)",
+    bump: "npm run port-readiness:bump -- --pack rust --tool clippy, then derive it again (the nightly opens this as a pull request)",
   };
 }
 

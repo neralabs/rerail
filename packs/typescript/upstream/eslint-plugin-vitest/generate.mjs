@@ -34,6 +34,7 @@ import {
   withOrigins,
   writeRecording,
   writeRenameVariants,
+  writeVariantRows,
 } from "../../../../conformance/recorders/eslint-record.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -802,6 +803,7 @@ async function recordFixtures() {
   const unparsed = new Set(linted.skipped.map(({ path }) => path));
   const kept = files.filter(file => !unparsed.has(file)).sort();
   const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
+  writeVariantRows(join(HERE, "..", "..", "licenses", TOOL, "UPSTREAM.md"), TOOL, units);
   writeAuthoredRecord([...authored].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)));
   writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
   console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
