@@ -651,6 +651,7 @@ interface Scored {
   reviewed: readonly Point[];
   cleanSamples: number;
   silentCleanSamples: number;
+  judgedSamples: number;
   ownUnits: number;
   silentOwnUnits: number;
   upstreamFindings: number;
@@ -679,6 +680,7 @@ function rowOf({ rule }: CompiledRule, loaded: LoadedPack, source: string, score
     reviewedFindings: scored.reviewed.slice(0, EXAMPLE_LIMIT),
     cleanSamples: scored.cleanSamples,
     silentCleanSamples: scored.silentCleanSamples,
+    judgedSamples: scored.judgedSamples,
     ownUnits: scored.ownUnits,
     silentOwnUnits: scored.silentOwnUnits,
     upstreamFindings: scored.upstreamFindings,
@@ -734,9 +736,10 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
     reviewed: [],
     cleanSamples: 0,
     silentCleanSamples: 0,
+    judgedSamples: 0,
     ...ownUnits(rule, units, findings, rerail),
     upstreamFindings: expected.length,
-    renamed: variantPaths.size === 0 ? null : renamedScore(rule, units, expectedRenamed, pointsOf(run.renamedActual.get(rule.id) ?? noActual()), applicable, used),
+    renamed: variantPaths.size === 0 ? null : renamedScore(rule, units, findings, expectedRenamed, run.renamedActual.get(rule.id) ?? noActual(), pointsOf, applicable, used),
     // On the fixtures, which the port must read as upstream does, every failure but `source-partial` and the T1
     // syntax-error skips is an engine failure, parse-induced `source-incomplete` included.
     engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures + total(rerail.incompletePaths) + rerail.pathlessIncomplete,
@@ -763,24 +766,37 @@ function ownUnits(rule: PackRule, units: readonly ScoredUnit[], findings: readon
   return { ownUnits: own.length, silentOwnUnits: silent.length };
 }
 
-/** The rule scored on its tool's rename variants alone, as the originals are scored (holds-under-rename). */
+/**
+ * The rule scored on its tool's rename variants alone, as the originals are scored (holds-under-rename). An engine
+ * failure on a variant fails the rule as on an original; a parse-induced `source-incomplete` is only counted, as a
+ * sample's is. A variant whose original upstream reports the rule in, and which upstream reports it nowhere in, is
+ * counted as renamed away: the renaming took a name the rule keys on, so the variant tests only its silence.
+ */
 function renamedScore(
   rule: PackRule,
   units: readonly ScoredUnit[],
+  findings: readonly UpstreamFinding[],
   expected: readonly Point[],
-  actual: readonly Point[],
+  rerail: RuleActual,
+  pointsOf: (rerail: RuleActual) => Point[],
   applicable: readonly Divergence[],
   used: Set<Divergence>,
 ): NonNullable<RuleRow["renamed"]> {
-  const score = scoreSource([...expected], [...actual], rule.match, [...applicable]);
+  const score = scoreSource([...expected], pointsOf(rerail), rule.match, [...applicable]);
   for (const entry of score.explained) used.add(entry.divergence);
+  const variants = units.filter(unit => unit.origin?.renamedFrom !== undefined && unit.paths.some(path => coversFixture(rule, path)));
+  const pathsOf = new Map(units.map(unit => [unit.key, unit.paths]));
+  const reported = new Set(findings.map(finding => finding.path));
   return {
-    units: units.filter(unit => unit.origin?.renamedFrom !== undefined && unit.paths.some(path => coversFixture(rule, path))).length,
+    units: variants.length,
     tp: score.tp,
     fp: score.falsePositives.length,
     fn: score.falseNegatives.length,
     falsePositives: score.falsePositives.slice(0, EXAMPLE_LIMIT),
     falseNegatives: score.falseNegatives.slice(0, EXAMPLE_LIMIT),
+    engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures,
+    incomplete: total(rerail.incompletePaths) + rerail.pathlessIncomplete,
+    renamedAway: variants.filter(unit => (pathsOf.get(unit.origin!.renamedFrom!) ?? []).some(path => reported.has(path)) && !unit.paths.some(path => reported.has(path))).length,
   };
 }
 
@@ -813,6 +829,7 @@ function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, us
     reviewed: score.reviewed,
     cleanSamples: clean.length,
     silentCleanSamples: silent.length,
+    judgedSamples: samples.length,
     ownUnits: 0,
     silentOwnUnits: 0,
     upstreamFindings: 0,
@@ -899,8 +916,9 @@ export async function runPack(loaded: LoadedPack, options: RunOptions): Promise<
  * in part (a T1 syntax error, `source-partial`, a parse-induced `source-incomplete`: `isParseIncomplete`) is still
  * judged but fails nothing by itself: a sample judges the rule, and a label the partial read hides is a missed label.
  * A sample's context files are never judged, so their engine failures fail nothing either. Other engine failures fail
- * on both. On the fixtures' rename variants, scored apart, an unexplained FP or FN fails too (holds-under-rename). A
- * candidate's row (a port under `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
+ * on both. On the fixtures' rename variants, scored apart, an unexplained FP or FN fails too, and so does an engine
+ * failure other than a parse-induced `source-incomplete` (holds-under-rename). A candidate's row (a port under
+ * `candidates/`) is reported but fails nothing; its errors and stale divergences still do.
  */
 export function reportFailures(report: T4Report): string[] {
   return [
@@ -918,6 +936,7 @@ export function reportFailures(report: T4Report): string[] {
         if (row.tp === 0 && !row.examples) problems.push(`${where}: 0 TP and no examples in pack.json; nothing shows it catches anything`);
         if (row.renamed !== null && row.renamed.fp > 0) problems.push(`${where}: ${row.renamed.fp} unexplained FP on rename variants, first ${JSON.stringify(row.renamed.falsePositives[0])}`);
         if (row.renamed !== null && row.renamed.fn > 0) problems.push(`${where}: ${row.renamed.fn} unexplained FN on rename variants, first ${JSON.stringify(row.renamed.falseNegatives[0])}`);
+        if (row.renamed !== null && row.renamed.engineFailures > 0) problems.push(`${where}: ${row.renamed.engineFailures} engine failure(s) on rename variants`);
       }
       if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
       return problems;

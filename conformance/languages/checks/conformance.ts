@@ -44,17 +44,38 @@ const point = (value: { path: string; line: number; column?: number | undefined 
 
 const FIX = "fix the rule, or declare the divergence in the pack's divergences.json";
 
-/** holds-under-rename: the rule scored on its tool's rename variants, apart from the originals. */
-function holdsUnderRename(row: RuleRow): Check {
+/**
+ * holds-under-rename: the rule scored on its tool's rename variants, apart from the originals. An unexplained FP or
+ * FN, or an engine failure, on a variant fails it; parse-induced `source-incomplete` reads and variants the renaming
+ * took every finding from are only reported. With no variant for the rule it is n/a, naming the held-out evidence left.
+ */
+function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
+  const id = "holds-under-rename";
   const renamed = row.renamed;
-  if (renamed === null) return { id: "holds-under-rename", ok: true, detail: "n/a: samples are the held-out evidence" };
-  const ok = renamed.fp === 0 && renamed.fn === 0;
+  if (renamed === null) {
+    const judged = samples?.judgedSamples ?? 0;
+    return {
+      id,
+      ok: true,
+      detail: judged > 0 ? `n/a: no rename variants; samples are the held-out evidence (${judged} judged samples)` : "n/a: no rename variants and no samples: no held-out evidence",
+    };
+  }
+  if (renamed.units === 0) return { id, ok: true, detail: "n/a: no rename variant covers this rule" };
+  const notes = [
+    ...(renamed.incomplete > 0 ? [`${renamed.incomplete} parse-induced source-incomplete read(s) on variants, not failing`] : []),
+    ...(renamed.renamedAway > 0 ? [`${renamed.renamedAway} variant(s) lost every finding of the rule (renamed away)`] : []),
+  ].map(note => `; ${note}`).join("");
+  const disagrees = renamed.fp > 0 || renamed.fn > 0;
+  const problems = [
+    ...(disagrees ? [`${renamed.fp} unexplained FP${point(renamed.falsePositives[0])} and ${renamed.fn} unexplained FN${point(renamed.falseNegatives[0])} on rename variants: the rule matches the test cases' names or literals, not the construct`] : []),
+    ...(renamed.engineFailures > 0 ? [`${renamed.engineFailures} engine failure(s) on rename variants`] : []),
+  ];
   return {
-    id: "holds-under-rename",
-    ok,
-    detail: ok
-      ? `agrees with upstream on its ${renamed.units} rename variant unit(s) (${renamed.tp} true positive(s))`
-      : `${renamed.fp} unexplained FP${point(renamed.falsePositives[0])} and ${renamed.fn} unexplained FN${point(renamed.falseNegatives[0])} on rename variants: the rule matches the test cases' names or literals, not the construct; ${FIX}`,
+    id,
+    ok: problems.length === 0,
+    detail: problems.length === 0
+      ? `agrees with upstream on its ${renamed.units} rename variant unit(s) (${renamed.tp} true positive(s))${notes}`
+      : `${problems.join("; ")}${notes}; ${disagrees ? FIX : "fix the rule"}`,
   };
 }
 
@@ -88,7 +109,7 @@ export function conformanceChecks(conformance: PackConformance, id: string): Che
     { id: "no-unexplained-misses", ok: row.fn === 0, detail: row.fn === 0 ? "misses no finding upstream reports on the pack's fixtures" : `${row.fn} unexplained FN on the pack's fixtures${point(row.falseNegatives[0])}: ${FIX}` },
     { id: "catches-something", ok: row.tp > 0 || row.examples, detail: row.tp > 0 ? `${row.tp} finding(s) agree with upstream on the fixtures` : row.examples ? "pack.json gives it examples" : "0 true positives on the fixtures and no examples in pack.json: nothing shows it catches anything" },
     { id: "engine-reads-fixtures", ok: row.engineFailures === 0, detail: row.engineFailures === 0 ? "the engine evaluates it on every fixture" : `${row.engineFailures} engine failure(s) on the fixtures` },
-    holdsUnderRename(row),
+    holdsUnderRename(row, conformance.sampleRows.get(id)),
   );
   const samples = conformance.sampleRows.get(id);
   if (samples !== undefined) {

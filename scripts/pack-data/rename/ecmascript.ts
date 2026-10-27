@@ -16,17 +16,21 @@
  * - Numbers: the digits 1-9 of decimal and hexadecimal literals (not their exponents) go through one permutation
  *   per file, so equal numbers stay equal and zero stays zero. Legacy octal, `0o` and `0b` literals stay.
  * - Protected: keywords and contextual keywords, the ES standard library (globals and every member declared in
- *   TypeScript's lib.es*.d.ts) and a curated host list (DOM/Node/React/module names); intrinsic JSX tags and the
- *   attributes on intrinsic elements; any name with an occurrence that cannot be rewritten in place (unicode
- *   escapes); module specifiers, import attributes, directives (`"use strict"`) and meta-property names (`import.meta`,
- *   `new.target`); escape sequences inside literals. Comments, regular expressions and JSX text are never touched.
+ *   TypeScript's lib.es*.d.ts) and the names `HOST_NAMES` lists, no more: a few browser and Node globals, console
+ *   methods, React's class API and the six hooks it names, common test globals. Every other DOM, Node or React name
+ *   (`useReducer`, a custom hook, `findDOMNode`, `readFileSync`, `exit`) is renamed like the tests' own names, so a
+ *   variant can lose every finding of a rule keyed on it (the conformance report counts those as renamed away). Also
+ *   protected: intrinsic JSX tags and the attributes on intrinsic elements; any name with an occurrence that cannot be
+ *   rewritten in place (unicode escapes); module specifiers, import attributes, directives (`"use strict"`) and
+ *   meta-property names (`import.meta`, `new.target`); escape sequences inside literals. Comments, regular expressions
+ *   and JSX text are never touched.
  */
 import { createRequire } from "node:module";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import ts from "typescript";
 
-/** Globals and members a rule may legitimately target that are not in the ES lib: host, module system, React. */
+/** The host, module-system and React names kept (not exhaustive: any name missing here is renamed). */
 const HOST_NAMES = [
   "window", "document", "navigator", "location", "globalThis", "self", "console", "process", "Buffer", "global", "require", "module", "exports",
   "define", "__dirname", "__filename", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate",

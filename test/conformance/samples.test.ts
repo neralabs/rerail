@@ -289,7 +289,7 @@ describe("rename variants", () => {
     const row = fixturesRow(report);
     expect(row).toMatchObject({ tp: before.tp, fp: before.fp, fn: before.fn, upstreamFindings: before.upstreamFindings, ownUnits: 1 });
     // The original's divergence names asserts.py:5, so it explains nothing on the variant: holds-under-rename fails.
-    expect(row.renamed).toEqual({ units: 1, tp: 2, fp: 1, fn: 0, falsePositives: [{ path: "renamed/asserts.py", line: 5, column: 5 }], falseNegatives: [] });
+    expect(row.renamed).toEqual({ units: 1, tp: 2, fp: 1, fn: 0, falsePositives: [{ path: "renamed/asserts.py", line: 5, column: 5 }], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 0 });
     expect(reportFailures(report)).toEqual([`assert-used (fixtures): 1 unexplained FP on rename variants, first {"path":"renamed/asserts.py","line":5,"column":5}`]);
     expect(failingChecks(report)).toEqual(["holds-under-rename"]);
   });
@@ -301,6 +301,33 @@ describe("rename variants", () => {
     expect(fixturesRow(report).renamed).toMatchObject({ tp: 2, fp: 0, fn: 0 });
     expect(reportFailures(report)).toEqual([]);
     expect(failingChecks(report)).toEqual([]);
+  });
+
+  it("fail a shipped rule on an engine failure on a variant upstream is silent on", async () => {
+    // More asserts than the engine's witness limit (10,000): the rule fails on the variant, where examplelint (as
+    // written here) reports nothing.
+    const fixtures = join(directory, "upstream", "examplelint", "fixtures");
+    mkdirSync(join(fixtures, "renamed"), { recursive: true });
+    writeFileSync(join(fixtures, "renamed", "clean.py"), "assert q\n".repeat(10_001));
+    setUnits({ "clean.py": { rules: ["EX101"] }, "renamed/clean.py": { rules: ["EX101"], renamedFrom: "clean.py" } }, ["renamed/clean.py"]);
+    const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(fixturesRow(report).renamed).toMatchObject({ units: 1, fp: 0, fn: 0, engineFailures: 1, incomplete: 0 });
+    expect(fixturesRow(report).engineFailures).toBe(0);
+    expect(reportFailures(report)).toEqual(["assert-used (fixtures): 1 engine failure(s) on rename variants"]);
+    expect(failingChecks(report)).toEqual(["holds-under-rename"]);
+  });
+
+  it("count a variant the renaming took every finding of the rule from, without failing", async () => {
+    // renamed/asserts.py is asserts.py with its asserts gone: examplelint reports the original, not the variant.
+    const fixtures = join(directory, "upstream", "examplelint", "fixtures");
+    mkdirSync(join(fixtures, "renamed"), { recursive: true });
+    writeFileSync(join(fixtures, "renamed", "asserts.py"), "z = 1\n");
+    setUnits({ "asserts.py": { rules: ["EX101"] }, "renamed/asserts.py": { rules: ["EX101"], renamedFrom: "asserts.py" } }, ["renamed/asserts.py"]);
+    const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(fixturesRow(report).renamed).toMatchObject({ units: 1, tp: 0, fp: 0, fn: 0, renamedAway: 1 });
+    expect(reportFailures(report)).toEqual([]);
+    const check = conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(entry => entry.id === "holds-under-rename");
+    expect(check).toEqual({ id: "holds-under-rename", ok: true, detail: "agrees with upstream on its 1 rename variant unit(s) (0 true positive(s)); 1 variant(s) lost every finding of the rule (renamed away)" });
   });
 });
 

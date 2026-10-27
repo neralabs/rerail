@@ -4,12 +4,12 @@ import { test } from "vitest";
 import { conformanceChecks, type PackConformance } from "../../conformance/languages/checks/conformance.js";
 import type { RuleRow } from "../../conformance/languages/report.js";
 
-type Counts = Partial<Pick<RuleRow, "tp" | "fp" | "fn" | "engineFailures" | "examples" | "reviewed" | "cleanSamples" | "silentCleanSamples" | "ownUnits" | "silentOwnUnits" | "renamed" | "syntaxErrorFiles">>;
+type Counts = Partial<Pick<RuleRow, "tp" | "fp" | "fn" | "engineFailures" | "examples" | "reviewed" | "cleanSamples" | "silentCleanSamples" | "judgedSamples" | "ownUnits" | "silentOwnUnits" | "renamed" | "syntaxErrorFiles">>;
 
 function row(rule: string, counts: Counts = {}, source = "fixtures"): RuleRow {
   return {
     rule, candidate: true, examples: false, upstream: { tool: "ruff", rule: "X1" }, capabilities: [], source, tp: 2, fp: 0, fn: 0,
-    precision: 1, recall: 1, reviewed: 0, reviewedFindings: [], cleanSamples: 0, silentCleanSamples: 0,
+    precision: 1, recall: 1, reviewed: 0, reviewedFindings: [], cleanSamples: 0, silentCleanSamples: 0, judgedSamples: 0,
     // By default the rule has one own upstream unit it and upstream are silent on.
     ownUnits: 1, silentOwnUnits: 1, upstreamFindings: 2, renamed: null,
     engineFailures: 0, contextFailures: 0, partialFiles: 0, syntaxErrorFiles: { count: 0, files: [] }, divergences: [], falsePositives: [], falseNegatives: [], ...counts,
@@ -71,12 +71,20 @@ test("stays-silent: an own upstream unit upstream and the rule are silent on, or
   assert.match(staysSilent(0, 0, undefined).detail, /^no own upstream unit upstream reports nothing in \(0 own unit\(s\)\) and no clean sample/u);
 });
 
-test("holds-under-rename: an unexplained FP or FN on a rename variant fails it; without variants the samples are the held-out evidence", () => {
-  const renamed = (fp: number, fn: number): RuleRow["renamed"] => ({ units: 4, tp: 3, fp, fn, falsePositives: fp === 0 ? [] : [{ path: "renamed/a/001.js", line: 2, column: 5 }], falseNegatives: [] });
-  const check = (value: RuleRow["renamed"]) => conformanceChecks(conformance([row("a", { renamed: value })]), "a").find((entry) => entry.id === "holds-under-rename")!;
-  assert.deepEqual(check(null), { id: "holds-under-rename", ok: true, detail: "n/a: samples are the held-out evidence" });
+test("holds-under-rename: an unexplained FP or FN on a rename variant fails it; without variants it names the held-out evidence left", () => {
+  const renamed = (fp: number, fn: number): RuleRow["renamed"] => ({ units: 4, tp: 3, fp, fn, falsePositives: fp === 0 ? [] : [{ path: "renamed/a/001.js", line: 2, column: 5 }], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 0 });
+  const check = (value: RuleRow["renamed"], judgedSamples?: number) =>
+    conformanceChecks(conformance([row("a", { renamed: value })], judgedSamples === undefined ? {} : { sampleRows: new Map([["a", row("a", { judgedSamples }, "samples")]]) }), "a").find((entry) => entry.id === "holds-under-rename")!;
+  assert.deepEqual(check(null), { id: "holds-under-rename", ok: true, detail: "n/a: no rename variants and no samples: no held-out evidence" });
+  assert.deepEqual(check(null, 7), { id: "holds-under-rename", ok: true, detail: "n/a: no rename variants; samples are the held-out evidence (7 judged samples)" });
   assert.deepEqual(check(renamed(0, 0)), { id: "holds-under-rename", ok: true, detail: "agrees with upstream on its 4 rename variant unit(s) (3 true positive(s))" });
   assert.equal(check(renamed(1, 0)).ok, false);
   assert.match(check(renamed(1, 0)).detail, /^1 unexplained FP, first renamed\/a\/001\.js:2:5 and 0 unexplained FN on rename variants/u);
   assert.equal(check(renamed(0, 2)).ok, false);
+});
+
+test("holds-under-rename: n/a, not agreement, when the tool has rename variants but none covers the rule", () => {
+  const none: RuleRow["renamed"] = { units: 0, tp: 0, fp: 0, fn: 0, falsePositives: [], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 0 };
+  const check = conformanceChecks(conformance([row("a", { renamed: none })]), "a").find((entry) => entry.id === "holds-under-rename");
+  assert.deepEqual(check, { id: "holds-under-rename", ok: true, detail: "n/a: no rename variant covers this rule" });
 });

@@ -61,6 +61,8 @@ export const ruleRowSchema = z.object({
    */
   cleanSamples: z.number().int().nonnegative(),
   silentCleanSamples: z.number().int().nonnegative(),
+  /** Samples only: every sample judged for the rule, labelled or clean (0 on the fixtures). */
+  judgedSamples: z.number().int().nonnegative(),
   /**
    * Fixtures only (0 on samples): the rule's own upstream units, the original units whose `source.units` origin names
    * its upstream rule (a unit with no origin is never one, nor a rename variant); and of those, the ones upstream
@@ -72,17 +74,28 @@ export const ruleRowSchema = z.object({
   upstreamFindings: z.number().int().nonnegative(),
   /**
    * Fixtures only: the rule scored on its tool's rename variants, apart from the originals (the other counts are the
-   * originals' alone); an unexplained FP or FN here fails a shipped rule (holds-under-rename). Null when the tool's
-   * test data has no rename variants, and on samples.
+   * originals' alone); an unexplained FP or FN, or an engine failure, here fails a shipped rule (holds-under-rename).
+   * Null when the tool's test data has no rename variants, and on samples.
    */
   renamed: z
     .object({
+      /** The variant units the rule is scored on; 0 when the tool has variants but none covers the rule. */
       units: z.number().int().nonnegative(),
       tp: z.number().int().nonnegative(),
       fp: z.number().int().nonnegative(),
       fn: z.number().int().nonnegative(),
       falsePositives: z.array(pointSchema),
       falseNegatives: z.array(pointSchema),
+      /** Failures on the variants other than `source-partial`, the syntax-error skips and parse-induced `source-incomplete`; each fails a shipped rule. */
+      engineFailures: z.number().int().nonnegative(),
+      /** Parse-induced `source-incomplete` failures on the variants; reported, never failing. */
+      incomplete: z.number().int().nonnegative(),
+      /**
+       * Variant units whose original upstream reports the rule in and the variant itself not: the renaming took away
+       * every finding (a name the rule keys on was renamed), so the variant tests only that the rule stays silent.
+       * Reported, never failing.
+       */
+      renamedAway: z.number().int().nonnegative(),
     })
     .nullable(),
   /**
