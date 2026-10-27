@@ -16,10 +16,10 @@ Data read from the pinned tools (through `node`):
 
 Writes (every other policy of the pack is hand-written: packs/node/candidates/rules/n-no-process-exit.json):
 - packs/node/candidates/rules/<id>.json: every ported rule but n-no-process-exit. They are candidates until
-  eslint-plugin-n is gated; a port that passes the port readiness gates joins SHIPPED and is written to
+  eslint-plugin-n is gated; a port that passes the conformance gates joins SHIPPED and is written to
   packs/node/rules/<id>.json instead, shipped, its candidates/rules copy removed;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
-The pack manifests, recordings and the probes' hand-labelled expectations are not written here.
+The pack manifests, expected findings and the probes' hand-labelled expectations are not written here.
 
 Each port's violations name its rule under suppress.eslint and, for a rule oxlint 1.88.0 implements (OXLINT_NODE_RULES),
 under suppress.oxlint. suppress.biome belongs to scripts/generate/packs/biome-suppression.mjs: this script carries each
@@ -49,7 +49,7 @@ PINS = {"eslint-plugin-n": "18.4.1", "globals": "17.13.0"}
 # set-up's `oxlintRuleOfPort` maps it).
 OXLINT_NODE_RULES = {"callback-return", "exports-style", "global-require", "handle-callback-err", "no-exports-assign",
                      "no-mixed-requires", "no-new-require", "no-path-concat", "no-process-env", "no-sync", "no-top-level-await"}
-# The ports that passed the port readiness gates (none yet), written to packs/node/rules/; every other port is written
+# The ports that passed the conformance gates (none yet), written to packs/node/rules/; every other port is written
 # to packs/node/candidates/rules/. Each is removed from the other directory, so promoting a port moves its document.
 SHIPPED = set()
 

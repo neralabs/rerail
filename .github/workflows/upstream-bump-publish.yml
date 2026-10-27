@@ -1,0 +1,1194 @@
+name: Upstream bump (publish)
+
+# Publishes what an upstream-bump.yml run produced (docs/upstream.md, "Bump pull requests"): each of its legs'
+# patches is checked on its own, the verified ones are composed into one commit per tool-pack on main's head, and the
+# commits are proposed as one pull request, which carries each stale tool-pack's derived data in its publish/ directory;
+# then pack-data-publish.yml is dispatched for that pull request with replace, the one path pack data reaches S3 by:
+# its prep packs and summarises the data, a code owner approves the upload, and its finish commits the locks and
+# removes publish/. A maintainer reviews and merges the pull request like any other; nothing merges itself. Then the
+# run's work branch auto/bump-run/upstream is deleted. A run whose legs all failed, changed nothing, or that main's head
+# has moved past, publishes nothing, and its work branch is deleted all the same.
+#
+# A workflow_run run is main's: main's workflow file and checkout, in main's cache scope. The bump run's artifacts are
+# the output of upstream code at an unreviewed release, so they are data here, never code: no job runs a file from
+# them. Each verify leg runs its bump's pin edits again with main's code and npm packages, holding nothing but a
+# read-only token, and admits the patch only if it makes exactly those edits plus the files deriving and staging write.
+# The compose job, holding the same, checks that each patch it composes is, by sha256, the one its verify leg checked.
+# The job holding the app's token installs no package and restores no cache: it runs only git and the API, on the
+# commits the compose job made, confined to the packs and the runtimes. The data in publish/ is reviewed as bytes in the
+# pull request's diff and in the publish run's prep summary. The pull request's body puts what this workflow wrote
+# first; each bump leg's own markdown follows, folded, as plain text marked unverified.
+
+run-name: Publish the upstream release bumps
+
+on:
+  workflow_run:
+    workflows: [Upstream bump]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  # Checks the bump run before any of its artifacts is read, with a read-only token alone (GitHub's API and fetching the
+  # bump's commit): the run is a dispatch on the work branch, started at most 24 hours ago, at a commit of main whose
+  # code main's head has not changed since. The nightly dispatches the bump at main's head, and main may move on while
+  # it runs. A run whose leg failed ends in failure and is still published: its other legs stand alone. Its outputs are
+  # main's head, the legs that produced an artifact (the verify matrix) and every leg the run had, with how it ended
+  # (for the pull request's summary).
+  run:
+    name: Check the bump run
+    if: >-
+      (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure') &&
+      github.event.workflow_run.event == 'workflow_dispatch' && github.repository_owner == 'neralabs'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      # main's head when this run started; the patches are applied to it.
+      base: ${{ steps.main.outputs.base }}
+      # JSON [{pack, tool, version}]: the legs that succeeded and kept a `bump-<pack>--<tool>` artifact, sorted; `[]`
+      # when there is nothing to verify.
+      legs: ${{ steps.legs.outputs.legs }}
+      # JSON [{pack, tool, version, conclusion}]: every leg the run had, sorted.
+      requested: ${{ steps.legs.outputs.requested }}
+      # "true" when the run re-derived tool-packs at their pinned releases (upstream-bump.yml's resnapshot input, which
+      # names the run).
+      resnapshot: ${{ steps.main.outputs.resnapshot }}
+    steps:
+      # Anyone who can push could put an edited bump workflow on an auto/bump-run/ branch and dispatch it. The nightly
+      # points the work branch at main's head and dispatches the bump there, so the run published here must be at a
+      # commit of main: then the code that made the artifacts is main's reviewed code (the upstream code it ran is still
+      # untrusted, and checked below as data). Main may have moved on since; the code step checks what moved.
+      - id: main
+        name: Check the bump ran a recent commit of main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          STARTED: ${{ github.event.workflow_run.run_started_at }}
+          TITLE: ${{ github.event.workflow_run.display_title }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_BRANCH" != "auto/bump-run/upstream" ]; then
+            echo "::error::the bump ran on $HEAD_BRANCH, not its work branch auto/bump-run/upstream"
+            exit 1
+          fi
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the bump run's commit $HEAD_SHA is not a commit id"; exit 1; }
+          started="$(date -u -d "$STARTED" +%s)" || { echo "::error::the bump run's start time '$STARTED' is not a time"; exit 1; }
+          if [ $(( $(date -u +%s) - started )) -gt 86400 ]; then
+            echo "::error::the bump run started at $STARTED, more than 24 hours ago: only a recent bump is published. The next nightly bumps again from main's head."
+            exit 1
+          fi
+          main="$(gh api "repos/$REPO/branches/main" --jq .commit.sha)"
+          [[ "$main" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::main's head $main is not a commit id"; exit 1; }
+          # base...head: "ahead" when main's head descends from the bump's commit, "identical" when it is that commit.
+          status="$(gh api "repos/$REPO/compare/$HEAD_SHA...$main?per_page=1" --jq .status)"
+          case "$status" in
+            identical | ahead) ;;
+            *)
+              echo "::error::the bump ran $HEAD_SHA, which is not a commit of main: main's head $main compares to it as '$status'. Only a bump the nightly dispatched at main's head is published."
+              exit 1
+              ;;
+          esac
+          echo "the bump ran $HEAD_SHA; main's head is $main ($status)"
+          case "$TITLE" in
+            "Bump the upstream releases") resnapshot=false ;;
+            "Re-snapshot the upstream pins") resnapshot=true ;;
+            *) echo "::error::the bump run is titled neither a bump nor a re-snapshot"; exit 1 ;;
+          esac
+          {
+            echo "base=$main"
+            echo "resnapshot=$resnapshot"
+          } >> "$GITHUB_OUTPUT"
+
+      # The commit just checked, not whatever main is by now.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.main.outputs.base }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      # The bump's derived data is what main's head would make only while nothing the bump legs ran or read as code
+      # differs between its commit and main's head (upstream-bump.yml's bump job):
+      # - the bump workflow and the local actions it uses (lfs, pack-test-data, node-deps, php);
+      # - npm ci's inputs (.npmrc, package.json, package-lock.json) and tsx's (tsconfig.json);
+      # - conformance/, which the derivation imports (its process runner);
+      # - scripts/: upstream:bump, fixtures:derive with its recipes and runtimes, and scripts/s3/pack-fixtures.mjs
+      #   (`stage`);
+      # - src/engine, which the derivation imports, and the engine source a recipe reads (DEFAULT_PYTHON_MINOR);
+      # - the packs' upstream/ directories (generators, gates.yaml, the locks naming the archives the bump started
+      #   from), licenses/ (the per-repo UPSTREAM.md and licence texts) and conformance manifests.
+      # The build (npm run build:js) writes only dist/, which none of these read. When any of them moved, the whole run
+      # is skipped, not failed: the next nightly bumps again from main's head.
+      - id: code
+        name: Check main's head runs the bump's code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BASE: ${{ steps.main.outputs.base }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_SHA" != "$BASE" ]; then
+            auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+            git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --quiet --no-tags --depth=1 origin "$HEAD_SHA"
+            code=(
+              .github/workflows/upstream-bump.yml
+              .github/actions
+              .npmrc
+              package.json
+              package-lock.json
+              tsconfig.json
+              conformance
+              scripts
+              src/engine
+              native/src/code_rule_dsl/scope/options.rs
+              'packs/*/upstream/*'
+              'packs/*/licenses/*'
+              'packs/*/conformance.json'
+              'packs/*/candidates/conformance.json'
+            )
+            changed="$(git diff --name-only --no-renames "$HEAD_SHA" "$BASE" -- "${code[@]}")"
+            if [ -n "$changed" ]; then
+              echo "::notice::main moved from the bump's $HEAD_SHA to $BASE and changed code the bump ran, so its patches and derived data may not be what main's head makes; the next nightly bumps again from main's head"
+              echo "changed since the bump's commit ($(wc -l <<< "$changed") file(s), the first 50):"
+              head -n 50 <<< "$changed"
+              exit 0
+            fi
+          fi
+          echo "same=true" >> "$GITHUB_OUTPUT"
+
+      # The legs are the run's bump jobs, each named `Bump <pack>/<tool> to <version>` (upstream-bump.yml) from
+      # the list its scope job checked. A leg is verified when it succeeded and the run holds its artifact,
+      # `bump-<pack>--<tool>`; verify then checks that the artifact's bump.json names the same tool-pack and release. An
+      # artifact of any other name is not a leg's, and is ignored.
+      - id: legs
+        name: List the bump run's legs and artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          SAME: ${{ steps.code.outputs.same }}
+        run: |
+          set -euo pipefail
+          if [ "$SAME" != "true" ]; then
+            echo "legs=[]" >> "$GITHUB_OUTPUT"
+            echo "requested=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          : > "$RUNNER_TEMP/requested.tsv"
+          mapfile -t jobs < <(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" --jq '.jobs[] | "\(.conclusion // "unfinished")\t\(.name)"')
+          for job in "${jobs[@]}"; do
+            IFS=$'\t' read -r conclusion name <<< "$job"
+            if [[ "$conclusion" =~ ^[a-z_]+$ ]] && [[ "$name" =~ ^Bump\ ([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)\ to\ ([a-z0-9][a-z0-9._-]*)$ ]]; then
+              printf '%s\t%s\t%s\t%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$conclusion" >> "$RUNNER_TEMP/requested.tsv"
+            fi
+          done
+          requested="$(jq -R -s -c 'split("\n") | map(select(. != "") | split("\t") | { pack: .[0], tool: .[1], version: .[2], conclusion: .[3] }) | sort_by(.pack, .tool)' "$RUNNER_TEMP/requested.tsv")"
+          if ! jq -e '. == unique_by([.pack, .tool])' <<< "$requested" > /dev/null; then
+            echo "::error::the bump run lists a tool-pack twice"
+            exit 1
+          fi
+
+          mapfile -t artifacts < <(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.expired | not) | .name')
+          names=()
+          for name in "${artifacts[@]}"; do
+            [[ "$name" == bump-* ]] || continue
+            if [[ "$name" =~ ^bump-[a-z0-9][a-z0-9._-]*--[a-z0-9][a-z0-9._-]*$ ]]; then
+              names+=("$name")
+            else
+              echo "::warning::the bump run holds an artifact whose name is not a leg's; ignoring it"
+            fi
+          done
+          legs="$(jq -c '[.[] | select(.conclusion == "success") | select("bump-\(.pack)--\(.tool)" as $name | any($ARGS.positional[]; . == $name)) | { pack, tool, version }]' --args "${names[@]}" <<< "$requested")"
+          echo "legs to verify: $(jq length <<< "$legs") of the run's $(jq length <<< "$requested")"
+          {
+            echo "legs=$legs"
+            echo "requested=$requested"
+          } >> "$GITHUB_OUTPUT"
+
+  # One leg per bump leg that produced an artifact, each failing alone, with a read-only token alone (the artifact and
+  # nothing else):
+  # - the artifact's bump.json names the leg's tool-pack and release;
+  # - its patch applies to main's head, confined to the packs and the runtimes, and changes no lock (the publish writes
+  #   them);
+  # - `npm run upstream:bump`, run here with main's code and packages, writes the same bump.json and the same tree,
+  #   apart from the files deriving and staging write for the tool-packs the bump derived again.
+  # Its verdict, `verified-<pack>--<tool>`, says what the compose job may use: the sha256 of the patch it checked, the
+  # tree it makes on main's head, the release it moves from (from main's own bump.json) and the tool-packs it derived
+  # again; or why it has nothing to compose. A leg that fails leaves no verdict.
+  verify:
+    name: Verify ${{ matrix.pack }}/${{ matrix.tool }}
+    needs: run
+    if: needs.run.outputs.legs != '' && needs.run.outputs.legs != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.run.outputs.legs) }}
+    steps:
+      # The commit the run job checked, not whatever main is by now.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.run.outputs.base }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the bump
+        uses: actions/download-artifact@v8
+        with:
+          name: bump-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/bump
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # The bump names its tool-pack and release; they must be the leg's. A bump that changed nothing (the tool-pack
+      # already pins the release) has nothing to compose, unless the run is a re-snapshot, which must change no pin;
+      # a leg that left an empty patch has nothing to compose either way.
+      - id: bump
+        name: Read the bump's tool-pack and release
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.version }}
+          RESNAPSHOT: ${{ needs.run.outputs.resnapshot }}
+        run: |
+          set -euo pipefail
+          IFS=/ read -r pack tool <<< "$(jq -r '.toolPack' "$RUNNER_TEMP/bump/bump.json")"
+          version="$(jq -r '.version' "$RUNNER_TEMP/bump/bump.json")"
+          for value in "$pack" "$tool" "$version"; do
+            if ! [[ "$value" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+              echo "::error::bump.json names '$value', which is not a pack, tool or version"
+              exit 1
+            fi
+          done
+          if [ "$pack/$tool $version" != "$PACK/$TOOL $VERSION" ]; then
+            echo "::error::bump.json names $pack/$tool $version, but the artifact is the leg bumping $PACK/$TOOL to $VERSION"
+            exit 1
+          fi
+          changed="$(jq -r '.changed == true' "$RUNNER_TEMP/bump/bump.json")"
+          if [ "$RESNAPSHOT" = "true" ] && [ "$changed" = "true" ]; then
+            echo "::error::a re-snapshot leg moved $pack/$tool's pins"
+            exit 1
+          fi
+          if [ "$RESNAPSHOT" != "true" ] && [ "$changed" != "true" ]; then
+            echo "::notice::$pack/$tool already pins $version: nothing to publish"
+            echo "status=unchanged" >> "$GITHUB_OUTPUT"
+          elif ! [ -s "$RUNNER_TEMP/bump/bump.patch" ]; then
+            echo "::notice::the bump of $pack/$tool to $version changed no file: nothing to publish"
+            echo "status=empty" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Applied into a separate index (the checkout stays main's head for the trusted bump below), confined as the
+      # compose and pull-request jobs confine it. A patch that no longer applies to main's head is left out: the
+      # next nightly bumps again from there.
+      - id: patch
+        name: Apply the patch to main's head
+        if: steps.bump.outputs.status == ''
+        run: |
+          set -euo pipefail
+          export GIT_INDEX_FILE="$RUNNER_TEMP/patched.index"
+          git read-tree HEAD
+          # --whitespace=nowarn: git apply would otherwise echo the patch's lines into the log, where a line could be a
+          # workflow command.
+          if ! git apply --cached --binary --whitespace=nowarn "$RUNNER_TEMP/bump/bump.patch"; then
+            echo "::notice::the bump's patch does not apply to main's head; the next nightly bumps again from there"
+            echo "status=not-applying" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          outside="$(git diff --cached --name-only --no-renames | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          if [ -n "$outside" ]; then
+            echo "::error::the bump patch touches files outside the pins and the derived data:"
+            # Each path after "- ": a path from the patch could otherwise begin a workflow command.
+            mapfile -t paths <<< "$outside"
+            printf -- '- %s\n' "${paths[@]}"
+            exit 1
+          fi
+          # The locks are the publish workflow's to write, once S3 holds what they name; samples are never derived.
+          locks="$(git diff --cached --name-only --no-renames | grep -E '^packs/[a-z0-9-]+/upstream/[a-z0-9._-]+/(test-data|samples)\.lock$|/publish/samples/' || true)"
+          if [ -n "$locks" ]; then
+            echo "::error::the bump patch changes a lock or stages samples:"
+            mapfile -t paths <<< "$locks"
+            printf -- '- %s\n' "${paths[@]}"
+            exit 1
+          fi
+          if git diff --cached --raw --no-renames | awk '{ print $2 }' | grep -q -E '^(120000|160000)$'; then
+            echo "::error::the bump patch adds a symbolic link or a submodule"
+            exit 1
+          fi
+          echo "tree=$(git write-tree)" >> "$GITHUB_OUTPUT"
+
+      # Main's dependencies from main's lockfile, with no npm cache: nothing from another run is restored.
+      - if: steps.patch.outputs.tree != ''
+        uses: ./.github/actions/node-deps
+        with:
+          npm-cache: "false"
+
+      # The bump leg's own first step, with main's code: the pins it edits read from GitHub's API and the registries,
+      # before and without any upstream code. bump.ts needs no build (tsx).
+      - name: Bump the pins with main's code
+        if: steps.patch.outputs.tree != ''
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: npm run upstream:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --json "$RUNNER_TEMP/trusted/bump.json"
+
+      # The bump run's bump.json must say what main's code says, apart from `leftovers` (prose naming the old release,
+      # read from files the run job's code step does not compare, such as a pack's README). Its tree, staged as the bump
+      # leg stages it, must be the trusted bump's but for these files, of the bumped tool-pack and each tool-pack in
+      # bump.json's `derive` (the ones the bump leg derived and staged again; a re-snapshot's own tool-pack alone):
+      # - upstream/<tool>/publish/**, but publish/samples/: the derived data, staged whole (fixtures:stage --all), which
+      #   the publish workflow packs, licence-checks and summarises, and a code owner approves;
+      # - upstream/<tool>/UPSTREAM.md: the generators' list of the cases Rerail wrote (packs/python/upstream/common.py
+      #   write_record, the next, vitest and vue generators);
+      # - licenses/<project>/UPSTREAM.md, <project> being gates.yaml's rerail.project: the per-repo record of what is
+      #   copied (bumps are paused until the generators write it rather than per-file rows; docs/upstream.md);
+      # - any other file directly in licenses/<project>/: upstream's licence text, which the generators copy verbatim
+      #   from upstream's checkout at the pinned commit (LICENSE, LICENSE.md, license.md, licence.txt, COPYRIGHT, ...).
+      # Any other difference fails.
+      - id: compare
+        name: Compare the patch with main's bump
+        if: steps.patch.outputs.tree != ''
+        env:
+          TREE: ${{ steps.patch.outputs.tree }}
+        run: |
+          set -euo pipefail
+          trusted="$RUNNER_TEMP/trusted/bump.json"
+          if ! diff <(jq -S 'del(.leftovers)' "$trusted") <(jq -S 'del(.leftovers)' "$RUNNER_TEMP/bump/bump.json"); then
+            echo "::error::the bump run's bump.json (>) is not what upstream:bump writes with main's code (<)"
+            exit 1
+          fi
+
+          jq -r '[{ pack: (.toolPack | split("/")[0]), tool: (.toolPack | split("/")[1]) }] + (.derive // []) | unique | .[] | "\(.pack) \(.tool)"' "$trusted" \
+            > "$RUNNER_TEMP/trusted/tool-packs.txt"
+          # shellcheck disable=SC2016 # JavaScript template literals, not shell expansions
+          node --import tsx --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            const { readGatesManifest } = await import("./conformance/languages/manifest.ts");
+            for (const line of readFileSync(0, "utf8").split("\n").filter((entry) => entry !== "")) {
+              const [pack, tool] = line.split(" ");
+              process.stdout.write(`${pack} ${tool} ${readGatesManifest(process.cwd(), pack, tool).rerail.project}\n`);
+            }
+          ' < "$RUNNER_TEMP/trusted/tool-packs.txt" > "$RUNNER_TEMP/trusted/projects.txt"
+          mapfile -t tool_packs < "$RUNNER_TEMP/trusted/projects.txt"
+          if [ "${#tool_packs[@]}" -eq 0 ]; then
+            echo "::error::the bump names no tool-pack to derive again"
+            exit 1
+          fi
+          for entry in "${tool_packs[@]}"; do
+            read -r pack tool project <<< "$entry"
+            if ! [[ "$pack" =~ ^[a-z0-9][a-z0-9._-]*$ && "$tool" =~ ^[a-z0-9][a-z0-9._-]*$ && "$project" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+              echo "::error::the bump's tool-pack '$entry' is not a pack, tool and licence project"
+              exit 1
+            fi
+            echo "derived again: $pack/$tool (licenses/$project)"
+          done
+
+          git add -A -- packs scripts/pack-data/runtimes
+          bumped="$(git write-tree)"
+          mapfile -d '' -t differing < <(git diff -z --name-only --no-renames "$bumped" "$TREE")
+          unexpected=()
+          for path in "${differing[@]}"; do
+            allowed=false
+            for entry in "${tool_packs[@]}"; do
+              read -r pack tool project <<< "$entry"
+              case "$path" in
+                "packs/$pack/upstream/$tool/publish/samples/"*) ;;
+                "packs/$pack/upstream/$tool/publish/"* | "packs/$pack/upstream/$tool/UPSTREAM.md")
+                  allowed=true
+                  ;;
+                "packs/$pack/licenses/$project/"*)
+                  [[ "${path#"packs/$pack/licenses/$project/"}" == */* ]] || allowed=true
+                  ;;
+              esac
+            done
+            [ "$allowed" = true ] || unexpected+=("$path")
+          done
+          if [ "${#unexpected[@]}" -gt 0 ]; then
+            echo "::error::the bump patch differs from upstream:bump run with main's code in ${#unexpected[@]} file(s) that deriving and staging do not write:"
+            printf -- '- %s\n' "${unexpected[@]}" | head -n 200
+            exit 1
+          fi
+          echo "the patch is main's bump plus ${#differing[@]} file(s) the derivation and the staging write"
+          echo "verified=true" >> "$GITHUB_OUTPUT"
+
+      # Written only once every step above passed. Breaking as upstream:releases reads it (releaseGap and BREAKING_GAPS
+      # in scripts/upstream/releases.ts), from main's own bump.json: null when either release is not a plain one, false
+      # for a re-snapshot (no release moves).
+      - name: Record the verdict
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.version }}
+          SKIPPED: ${{ steps.bump.outputs.status }}${{ steps.patch.outputs.status }}
+          VERIFIED: ${{ steps.compare.outputs.verified }}
+          TREE: ${{ steps.patch.outputs.tree }}
+        run: |
+          set -euo pipefail
+          verdict="$RUNNER_TEMP/verdict/verified-$PACK--$TOOL.json"
+          mkdir -p "$RUNNER_TEMP/verdict"
+          if [ "$VERIFIED" = "true" ]; then
+            trusted="$RUNNER_TEMP/trusted/bump.json"
+            patch="$(sha256sum < "$RUNNER_TEMP/bump/bump.patch" | cut -d ' ' -f 1)"
+            # shellcheck disable=SC2016 # JavaScript, not shell expansions
+            breaking=false
+            [ "$(jq -r .changed "$trusted")" != "true" ] || breaking="$(node --import tsx --input-type=module -e '
+              const { BREAKING_GAPS, releaseGap, releaseParts } = await import("./scripts/upstream/releases.ts");
+              const [ecosystem, from, to] = process.argv.slice(1);
+              const [pinned, latest] = [releaseParts(from), releaseParts(to)];
+              process.stdout.write(pinned === null || latest === null ? "null" : String(BREAKING_GAPS[releaseGap(ecosystem, pinned, latest)]));
+            ' "$(jq -r .ecosystem "$trusted")" "$(jq -r .from.version "$trusted")" "$(jq -r .to.version "$trusted")")"
+            jq -n --arg pack "$PACK" --arg tool "$TOOL" --arg version "$VERSION" --arg patch "$patch" --arg tree "$TREE" \
+              --argjson breaking "$breaking" --slurpfile bump "$trusted" '
+                $bump[0] as $trusted
+                | {
+                    pack: $pack, tool: $tool, version: $version, status: "verified",
+                    from: ($trusted.from.version // $version),
+                    breaking: $breaking,
+                    derived: ([$trusted.toolPack] + (($trusted.derive // []) | map("\(.pack)/\(.tool)")) | unique),
+                    patch: $patch,
+                    tree: $tree
+                  }
+              ' > "$verdict"
+          elif [ -n "$SKIPPED" ]; then
+            jq -n --arg pack "$PACK" --arg tool "$TOOL" --arg version "$VERSION" --arg status "$SKIPPED" \
+              '{ pack: $pack, tool: $tool, version: $version, status: $status }' > "$verdict"
+          else
+            echo "::error::the verification of $PACK/$TOOL reached no verdict"
+            exit 1
+          fi
+          cat "$verdict"
+
+      - name: Keep the verdict
+        uses: actions/upload-artifact@v7
+        with:
+          name: verified-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/verdict/verified-${{ matrix.pack }}--${{ matrix.tool }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # From main's head the run job checked, with the same read-only token: applies each verified patch, in tool-pack
+  # order, as a commit of its own ("Bump <pack>/<tool> to <version>", `git apply --3way --index`), each after checking
+  # that the artifact's patch is still the one its verify leg checked. A tool-pack is left out, and listed as not bumped
+  # tonight with the reason, when its leg failed or left no verdict, it had nothing to bump, its patch does not apply
+  # after the ones before it, or it derives again a tool-pack an earlier one bumped or derived again (the first in
+  # tool-pack order stays). Then it builds the whole pull request body, before anything is pushed. Its outputs are what
+  # the pull-request job acts on: the commits' tool-packs, releases and trees, the last tree, and the title; its
+  # `composed` artifact holds the commits (a git bundle) and the body.
+  compose:
+    name: Compose the bumps
+    needs: [run, verify]
+    if: ${{ !cancelled() && needs.run.result == 'success' && needs.run.outputs.legs != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      # "true" when at least one tool-pack is composed; otherwise nothing is proposed.
+      publish: ${{ steps.compose.outputs.publish }}
+      # JSON [{pack, tool, version, tree}], one per commit, in order: the tree each commit makes.
+      commits: ${{ steps.compose.outputs.commits }}
+      # The last commit's tree.
+      tree: ${{ steps.compose.outputs.tree }}
+      title: ${{ steps.compose.outputs.title }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.run.outputs.base }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      # This run's own verdicts; none when every verify leg failed.
+      - name: Download the verdicts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: verified-*
+          path: ${{ runner.temp }}/verified
+          merge-multiple: true
+
+      - id: compose
+        name: Compose the verified bumps
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          BASE: ${{ needs.run.outputs.base }}
+          LEGS: ${{ needs.run.outputs.legs }}
+          REQUESTED: ${{ needs.run.outputs.requested }}
+          RESNAPSHOT: ${{ needs.run.outputs.resnapshot }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$BASE" ] || { echo "::error::the checkout is not main's head $BASE"; exit 1; }
+          git switch --quiet -c composed
+          mkdir -p "$RUNNER_TEMP/legs" "$RUNNER_TEMP/composed"
+          # pack, tool, version, from, breaking, status: one row per leg, in tool-pack order, for the body's summary.
+          : > "$RUNNER_TEMP/status.tsv"
+          # pack, tool, version, from, breaking, commit: one row per commit, in order.
+          : > "$RUNNER_TEMP/included.tsv"
+          # "<tool-pack> <the tool-pack whose bump derives it again>", for each composed bump.
+          claims=()
+          mapfile -t requested < <(jq -r '.[] | [.pack, .tool, .version, .conclusion] | @tsv' <<< "$REQUESTED")
+          for entry in "${requested[@]}"; do
+            IFS=$'\t' read -r pack tool version conclusion <<< "$entry"
+            name="$pack--$tool"
+            verdict="$RUNNER_TEMP/verified/verified-$name.json"
+            leave() {
+              printf '%s\t%s\t%s\t%s\t%s\tnot bumped tonight: %s\n' "$pack" "$tool" "$version" "${1:-?}" "${2:-?}" "$3" >> "$RUNNER_TEMP/status.tsv"
+              echo "not bumped tonight: $pack/$tool $version: $3"
+            }
+            if [ "$conclusion" != "success" ]; then
+              leave "" "" "its bump leg did not succeed ($conclusion)"
+              continue
+            fi
+            if ! jq -e --arg pack "$pack" --arg tool "$tool" 'any(.[]; .pack == $pack and .tool == $tool)' <<< "$LEGS" > /dev/null; then
+              leave "" "" "the bump run kept no artifact for it"
+              continue
+            fi
+            if ! [ -f "$verdict" ]; then
+              leave "" "" "its verify leg failed"
+              continue
+            fi
+            if ! jq -e --arg pack "$pack" --arg tool "$tool" --arg version "$version" '.pack == $pack and .tool == $tool and .version == $version' "$verdict" > /dev/null; then
+              echo "::error::the verdict for $pack/$tool is not of its release $version"
+              exit 1
+            fi
+            case "$(jq -r .status "$verdict")" in
+              verified) ;;
+              unchanged) leave "$version" false "it already pins $version"; continue ;;
+              empty) leave "" "" "its bump changed no file"; continue ;;
+              not-applying) leave "" "" "its patch does not apply to main's head"; continue ;;
+              *) echo "::error::the verdict for $pack/$tool has an unknown status"; exit 1 ;;
+            esac
+            from="$(jq -r .from "$verdict")"
+            breaking="$(jq -r .breaking "$verdict")"
+            [[ "$from" =~ ^[a-z0-9][a-z0-9._-]*$ && "$breaking" =~ ^(true|false|null)$ ]] || { echo "::error::the verdict for $pack/$tool names no release it moves from"; exit 1; }
+
+            # The artifact the verify leg checked, unchanged since: the same patch, byte for byte.
+            dir="$RUNNER_TEMP/legs/bump-$name"
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "bump-$name" --dir "$dir"
+            if [ "$(sha256sum < "$dir/bump.patch" | cut -d ' ' -f 1)" != "$(jq -r .patch "$verdict")" ]; then
+              echo "::error::the bump-$name artifact's patch is not the one its verify leg checked"
+              exit 1
+            fi
+
+            mapfile -t derived < <(jq -r '.derived[]' "$verdict")
+            overlap=""
+            for toolpack in "${derived[@]}"; do
+              for claim in "${claims[@]}"; do
+                read -r claimed owner <<< "$claim"
+                if [ "$toolpack" = "$claimed" ]; then
+                  overlap="its bump derives \`$toolpack\` again, as \`$owner\`'s does"
+                  break 2
+                fi
+              done
+            done
+            if [ -n "$overlap" ]; then
+              leave "$from" "$breaking" "$overlap"
+              continue
+            fi
+
+            # Quiet: git apply would otherwise echo paths from the patch into the log, where one could be a workflow
+            # command.
+            if ! git apply --3way --index --binary --whitespace=nowarn "$dir/bump.patch" > /dev/null 2>&1; then
+              git reset --quiet --hard HEAD
+              git clean -q -f -d -- packs scripts/pack-data/runtimes
+              leave "$from" "$breaking" "its patch does not apply after the bumps before it"
+              continue
+            fi
+            if [ "$RESNAPSHOT" = "true" ]; then subject="Re-snapshot $pack/$tool at $version"; else subject="Bump $pack/$tool to $version"; fi
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet --no-verify -m "$subject"
+            for toolpack in "${derived[@]}"; do claims+=("$toolpack $pack/$tool"); done
+            printf '%s\t%s\t%s\t%s\t%s\tbumped\n' "$pack" "$tool" "$version" "$from" "$breaking" >> "$RUNNER_TEMP/status.tsv"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$pack" "$tool" "$version" "$from" "$breaking" "$(git rev-parse HEAD)" >> "$RUNNER_TEMP/included.tsv"
+            echo "composed: $pack/$tool $from → $version"
+          done
+
+          count="$(wc -l < "$RUNNER_TEMP/included.tsv")"
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::no bump is composed tonight: nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The commits together, confined as each verified patch was.
+          outside="$(git diff --name-only --no-renames "$BASE" HEAD | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          if [ -n "$outside" ]; then
+            echo "::error::the composed bumps touch files outside the pins and the derived data:"
+            mapfile -t paths <<< "$outside"
+            printf -- '- %s\n' "${paths[@]}"
+            exit 1
+          fi
+          if git diff --raw --no-renames "$BASE" HEAD | awk '{ print $2 }' | grep -q -E '^(120000|160000)$'; then
+            echo "::error::the composed bumps add a symbolic link or a submodule"
+            exit 1
+          fi
+
+          git bundle create "$RUNNER_TEMP/composed/composed.bundle" composed "^$BASE"
+          commits="$(while IFS=$'\t' read -r pack tool version _ _ commit; do
+            jq -n -c --arg pack "$pack" --arg tool "$tool" --arg version "$version" --arg tree "$(git rev-parse "$commit^{tree}")" \
+              '{ pack: $pack, tool: $tool, version: $version, tree: $tree }'
+          done < "$RUNNER_TEMP/included.tsv" | jq -s -c .)"
+          if [ "$count" -eq 1 ]; then
+            title="$(git log -1 --format=%s HEAD)"
+          elif [ "$RESNAPSHOT" = "true" ]; then
+            title="Upstream re-snapshots: $count tool-packs"
+          else
+            title="Upstream releases: $count tool-packs"
+          fi
+          {
+            echo "publish=true"
+            echo "commits=$commits"
+            echo "tree=$(git rev-parse 'HEAD^{tree}')"
+            echo "title=$title"
+          } >> "$GITHUB_OUTPUT"
+
+      # The whole pull request body, before anything is pushed:
+      # - for a bump, a marker per composed bump, `<!-- bump: <pack>/<tool>@<version> -->`, first: closing the pull
+      #   request without merging it keeps the nightly from starting exactly these again (upstream-releases.yml,
+      #   bump-dispatch); a re-snapshot carries none;
+      # - what this workflow checked: the summary of every leg (tool-pack, release, breaking or not, bumped or why not),
+      #   then per commit the pins, the data staged in publish/, the gates.yaml `rules:` facts to review and how to
+      #   regenerate, then how the data publishes and what checks it;
+      # - each composed leg's own summary, folded and fenced as plain text, with mentions and any HTML that could hide
+      #   text removed.
+      # Each part is capped, the per-commit parts and the reports sharing their caps between the commits, and the whole
+      # must stay under GitHub's 65,536-character limit, or the job fails here.
+      - name: Build the pull request body
+        if: steps.compose.outputs.publish == 'true'
+        env:
+          BASE: ${{ needs.run.outputs.base }}
+          RESNAPSHOT: ${{ needs.run.outputs.resnapshot }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          BUMP_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PUBLISH_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/pack-data-publish.yml
+          DOCS_URL: ${{ github.server_url }}/${{ github.repository }}/blob/main/docs/upstream.md#bump-pull-requests
+        run: |
+          set -euo pipefail
+          parts="$RUNNER_TEMP/body"
+          mkdir -p "$parts"
+
+          # A fence longer than any run of backticks in the file, so nothing in it ends the block.
+          fence() {
+            local length
+            length="$(awk '{ while (match($0, /`+/)) { if (RLENGTH > longest) longest = RLENGTH; $0 = substr($0, RSTART + RLENGTH) } } END { print (longest >= 3 ? longest + 1 : 3) }' "$1")"
+            printf '%*s' "$length" '' | tr ' ' '`'
+          }
+          # Cuts the file $1 to at most $2 bytes, dropping a multibyte character the cut may have split, and says where
+          # the rest is ($3).
+          cap() {
+            local size
+            size="$(wc -c < "$1")"
+            if [ "$size" -gt "$2" ]; then
+              head -c "$2" "$1" | perl -0777 -pe 's/[\xC0-\xFF][\x80-\xBF]*\z//' > "$1.cut"
+              printf '\n... cut at %s of its %s bytes: %s\n' "$2" "$size" "$3" >> "$1.cut"
+              mv "$1.cut" "$1"
+            fi
+          }
+
+          mapfile -t included < "$RUNNER_TEMP/included.tsv"
+          count="${#included[@]}"
+          # A per-commit part's cap: one commit gets $1 bytes, several share it, none getting less than $2.
+          share() {
+            local each=$(( $1 / count ))
+            echo $(( each > $2 ? each : $2 ))
+          }
+
+          : > "$parts/markers.md"
+          if [ "$RESNAPSHOT" != "true" ]; then
+            for entry in "${included[@]}"; do
+              IFS=$'\t' read -r pack tool version _ <<< "$entry"
+              echo "<!-- bump: $pack/$tool@$version -->"
+            done > "$parts/markers.md"
+          fi
+
+          {
+            if [ "$RESNAPSHOT" = "true" ]; then
+              echo "## Upstream re-snapshots"
+            else
+              echo "## Upstream releases"
+            fi
+            echo
+            echo "| Tool-pack | From → to | Breaking | Status |"
+            echo "| --- | --- | --- | --- |"
+            while IFS=$'\t' read -r pack tool version from breaking status; do
+              case "$breaking" in true) breaking=yes ;; false) breaking=no ;; *) breaking="?" ;; esac
+              echo "| \`$pack/$tool\` | $from → $version | $breaking | $status |"
+            done < "$RUNNER_TEMP/status.tsv"
+            echo
+            if [ "$RESNAPSHOT" = "true" ]; then
+              echo "The upstream re-snapshot derived each tool-pack again at the release it already pins, in a leg of its own on Linux, and staged its whole data in its \`publish/\`. Before opening this pull request, the publish run ran \`npm run upstream:bump\` itself for each, with main's code and packages at \`$BASE\`, and found the pins unchanged: each commit below changes only the \`publish/\`, \`UPSTREAM.md\` and licence files that deriving and staging write."
+            else
+              echo "The upstream bump moved each tool-pack's pins to its upstream's release in a leg of its own, then derived again, on Linux, each tool-pack the bump made stale and staged its whole data in its \`publish/\`. Before opening this pull request, the publish run ran \`npm run upstream:bump\` itself for each, with main's code and packages at \`$BASE\`: each commit below makes exactly its edits, and otherwise changes only the \`publish/\`, \`UPSTREAM.md\` and licence files that deriving and staging write. A breaking release is a major one, or a minor one of a \`0.x\` pin."
+            fi
+            echo
+            echo "Each tool-pack is one commit, and no two commits derive the same tool-pack again. When a tool-pack's conformance check fails on this pull request, merge the others without its commit ([how]($DOCS_URL))."
+            if [ "$HEAD_SHA" != "$BASE" ]; then
+              echo
+              echo "The bump ran on \`$HEAD_SHA\`; main's head \`$BASE\` changes none of the code it ran, and the commits are on it."
+            fi
+            echo
+          } > "$parts/summary.md"
+          cap "$parts/summary.md" 8000 "this run's compose job lists every leg"
+
+          stat_cap="$(share 12000 400)"
+          pins_cap="$(share 16000 800)"
+          data_cap="$(share 6000 600)"
+          facts_cap="$(share 12000 800)"
+          regenerate_cap="$(share 4000 600)"
+          : > "$parts/commits.md"
+          number=0
+          for entry in "${included[@]}"; do
+            IFS=$'\t' read -r PACK TOOL VERSION FROM _ COMMIT <<< "$entry"
+            number=$((number + 1))
+            PARENT="$(git rev-parse "$COMMIT^")"
+            section="$parts/commit-$number"
+            mkdir -p "$section"
+
+            # The release and the pins: the commit beside its file list (at most 100 files), publish/ left to the next
+            # section.
+            git diff --stat=120 --stat-count=100 --no-renames "$PARENT" "$COMMIT" -- . ':(exclude)packs/*/upstream/*/publish/**' > "$section/stat.txt"
+            cap "$section/stat.txt" "$stat_cap" "the commit lists every file"
+            git diff --no-renames "$PARENT" "$COMMIT" -- . ':(exclude)packs/*/upstream/*/publish/**' > "$section/pins.diff"
+            cap "$section/pins.diff" "$pins_cap" "the commit has all of it"
+            {
+              if [ "$RESNAPSHOT" = "true" ]; then
+                echo "## \`$PACK/$TOOL\` at $VERSION"
+                echo
+                echo "Commit $number of $count, \`$(git log -1 --format=%s "$COMMIT")\`: the test data derived again at the pinned release."
+              else
+                echo "## \`$PACK/$TOOL\` $FROM → $VERSION"
+                echo
+                echo "Commit $number of $count, \`$(git log -1 --format=%s "$COMMIT")\`: \`npm run upstream:bump -- --pack $PACK --tool $TOOL --version $VERSION\`, then the test data of each tool-pack it made stale."
+              fi
+              echo
+              echo "### Pins"
+              echo
+              fence "$section/stat.txt"
+              echo
+              cat "$section/stat.txt"
+              fence "$section/stat.txt"
+              echo
+              echo
+              fence "$section/pins.diff"
+              echo "diff"
+              cat "$section/pins.diff"
+              fence "$section/pins.diff"
+              echo
+              echo
+            } > "$section/release.md"
+
+            # The data the commit stages, per tool-pack: what the publish workflow packs and a code owner approves.
+            mapfile -t staged < <(git diff --name-only --no-renames "$PARENT" "$COMMIT" -- 'packs/*/upstream/*/publish/**' \
+              | awk -F/ '{ print $2 " " $4 }' | sort | uniq -c | awk '{ print $2 " " $3 " " $1 }')
+            tool_packs=("$PACK $TOOL")
+            {
+              echo "### Test data to publish"
+              echo
+              if [ "${#staged[@]}" -eq 0 ]; then
+                echo "Nothing is staged: the test data derived at the pins is main's, byte for byte."
+              else
+                for item in "${staged[@]}"; do
+                  read -r pack tool files <<< "$item"
+                  tool_packs+=("$pack $tool")
+                  echo "- \`packs/$pack/upstream/$tool/publish/\`: $files file(s) changed, of the whole derived set"
+                done
+                echo
+                echo "Each \`publish/\` holds the tool-pack's whole derived set, so the publish (with replace) makes its archive exactly this data. The bump run derived it by running upstream's code at a release nobody has reviewed: read it in this diff and in the publish run's prep summary."
+              fi
+              echo
+            } > "$section/test-data.md"
+            cap "$section/test-data.md" "$data_cap" "the commit has every publish/ file"
+
+            # The upstream facts each gated tool-pack hand-declares (gates.yaml `rules:`), to review against the release.
+            mapfile -t tool_packs < <(printf '%s\n' "${tool_packs[@]}" | sort -u)
+            {
+              echo "### Upstream facts to review"
+              echo
+              echo "Each gated tool-pack declares its upstream's rules by hand (\`gates.yaml\` \`rules:\`, beside \`upstream.lints\`); check them against the release this commit pins, and correct them in this pull request."
+              echo
+            } > "$section/facts.md"
+            for tool_pack in "${tool_packs[@]}"; do
+              read -r pack tool <<< "$tool_pack"
+              gates="packs/$pack/upstream/$tool/gates.yaml"
+              git cat-file -e "$COMMIT:$gates" 2> /dev/null || continue
+              git show "$COMMIT:$gates" | awk '/^rules:/ { block = 1; print; next } block && /^[^ #]/ { block = 0 } block' > "$section/rules.yaml"
+              [ -s "$section/rules.yaml" ] || echo "(no rules: block)" > "$section/rules.yaml"
+              {
+                echo "<details>"
+                echo "<summary><code>$gates</code></summary>"
+                echo
+                fence "$section/rules.yaml"
+                echo "yaml"
+                cat "$section/rules.yaml"
+                fence "$section/rules.yaml"
+                echo
+                echo
+                echo "</details>"
+                echo
+              } >> "$section/facts.md"
+            done
+            cap "$section/facts.md" "$facts_cap" "each gates.yaml in the commit has its whole rules: block"
+
+            # How to do the same by hand, for each tool-pack the commit derived again.
+            {
+              echo "### Regenerate locally"
+              echo
+              echo "From this branch, with the current test data pulled (\`npm run fixtures:pull\`), for each tool-pack the bump derived again:"
+              echo
+              echo '```sh'
+              for tool_pack in "${tool_packs[@]}"; do
+                read -r pack tool <<< "$tool_pack"
+                selector="--pack $pack --tool $tool"
+                echo "npm run fixtures:derive -- $selector --update && npm run fixtures:stage -- $selector --all"
+              done
+              echo '```'
+              echo
+              echo "then commit each tool-pack's \`publish/\` and run the [publish workflow]($PUBLISH_URL) for this pull request with replace."
+              if printf '%s\n' "${tool_packs[@]}" | grep -q -x 'rust clippy'; then
+                echo
+                echo "Derive \`rust/clippy\` on Linux: Clippy's answers on macOS differ from the ones CI checks."
+              fi
+              echo
+            } > "$section/regenerate.md"
+            cap "$section/regenerate.md" "$regenerate_cap" "run the same commands for the remaining tool-packs the bump names"
+
+            cat "$section/release.md" "$section/test-data.md" "$section/facts.md" "$section/regenerate.md" >> "$parts/commits.md"
+          done
+
+          {
+            echo "## Publishing, and what checks the test data"
+            echo
+            echo "This run dispatched the [publish workflow]($PUBLISH_URL) for this pull request with replace. Its prep packs each \`publish/\` from this branch's blobs with main's code, checks every file's licence and summarises what changed against the locked archive; a code owner reads that summary and approves the \`test-data-upload\` deployment; its finish then commits the new \`test-data.lock\` files and removes \`publish/\`. Until then this pull request cannot merge. If that run fails or is rejected, the sticky comment on this pull request says how to run it again."
+            echo
+            echo "This pull request's own CI judges the data, not the bump run's reports below: the conformance check scores every rule on the derived test data."
+            echo
+            echo "---"
+            if [ "$RESNAPSHOT" = "true" ]; then
+              echo "Made by an [upstream re-snapshot run]($BUMP_URL), checked and opened by [its publish run]($RUN_URL); nothing merges it."
+            else
+              echo "Made by an [upstream bump run]($BUMP_URL), checked and opened by [its publish run]($RUN_URL); the nightly updates this pull request while these releases are the latest, and never merges it. Closing it without merging keeps the nightly from proposing these releases again."
+            fi
+            echo
+          } > "$parts/checks.md"
+
+          trusted="$parts/trusted.md"
+          cat "$parts/markers.md" "$parts/summary.md" "$parts/commits.md" "$parts/checks.md" > "$trusted"
+
+          # Each composed leg's report, sharing what room is left; none when too little is.
+          room=$((60000 - $(wc -c < "$trusted") - 600 * count))
+          : > "$parts/reports.md"
+          if [ $(( room / count )) -lt 1000 ]; then
+            echo "The bump run's own reports did not fit in this description: each leg's \`bump-<pack>--<tool>\` artifact holds its report." > "$parts/reports.md"
+          else
+            for entry in "${included[@]}"; do
+              IFS=$'\t' read -r pack tool version _ <<< "$entry"
+              leg="$RUNNER_TEMP/legs/bump-$pack--$tool"
+              report="$parts/report-$pack--$tool.txt"
+              perl -0777 -CSD -pe '
+                s/<!--|-->//g;
+                s{</?(?:a|abbr|area|audio|b|base|blockquote|br|button|center|cite|code|dd|del|details|dfn|div|dl|dt|em|embed|figcaption|figure|font|form|h[1-6]|hr|i|iframe|img|input|ins|kbd|label|li|link|map|mark|marquee|meta|noscript|object|ol|option|p|picture|pre|q|rp|rt|ruby|s|samp|script|select|slot|small|source|span|strike|strong|style|sub|summary|sup|svg|table|tbody|td|template|textarea|tfoot|th|thead|tr|tt|u|ul|var|video|wbr)\b[^>]*>}{}gi;
+                s/@/\@\x{200B}/g;
+              ' "$leg/summary.md" > "$report.raw"
+              # Only valid UTF-8 reaches the body: iconv -c drops what is not, and exits 1 when it did.
+              iconv -f UTF-8 -t UTF-8 -c "$report.raw" > "$report" || true
+              cap "$report" "$(( room / count ))" "the bump run's bump-$pack--$tool artifact holds all of it"
+              {
+                echo "<details>"
+                echo "<summary>Reported by the bump run for <code>$pack/$tool</code>, unverified: the release links, the pin diff and notes, and what still names the old release. That run ran upstream's code at an unreviewed release, so this is untrusted text; this pull request's CI is the check.</summary>"
+                echo
+                fence "$report"
+                echo "text"
+                cat "$report"
+                echo
+                fence "$report"
+                echo
+                echo
+                echo "</details>"
+                echo
+              } >> "$parts/reports.md"
+            done
+          fi
+
+          body="$RUNNER_TEMP/composed/body.md"
+          cat "$trusted" "$parts/reports.md" > "$body"
+          iconv -f UTF-8 -t UTF-8 "$body" > /dev/null || { echo "::error::the pull request body is not valid UTF-8"; exit 1; }
+          if [ "$(wc -c < "$body")" -gt 65000 ]; then
+            echo "::error::the pull request body is $(wc -c < "$body") bytes, over GitHub's 65,536-character limit"
+            exit 1
+          fi
+          echo "the pull request body is $(wc -c < "$body") bytes"
+
+      - name: Keep the commits and the pull request body
+        if: steps.compose.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: composed
+          path: |
+            ${{ runner.temp }}/composed/composed.bundle
+            ${{ runner.temp }}/composed/body.md
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  # Commits the composed bumps on their branch (auto/bump-upstream, or auto/resnapshot-upstream for a re-snapshot), one
+  # commit per tool-pack from the commit of main the run job checked, opens or updates the pull request with the
+  # neralabs-ci app's token (a pull request opened with GITHUB_TOKEN would run no CI) and the body the compose job built,
+  # then dispatches pack-data-publish.yml for it with replace (the token's actions: write), the one path its publish/
+  # data reaches S3 by. It runs on a fresh runner, takes only the trees the compose job named, confined to the packs and
+  # the runtimes, and never merges: a maintainer reviews the pin diffs, the data, the upstream facts and the prose the
+  # bumps left naming the old releases, reads the pull request's own conformance report, and approves it like any pull
+  # request. Idempotent: a branch that already holds exactly these commits on that same commit of main, with or
+  # without the publish's commit on top, is not pushed or published again; a branch whose tip someone else pushed is
+  # left alone; and a bump a maintainer closed without merging is not proposed again. Only the app's own
+  # same-repository pull requests count.
+  pull-request:
+    name: Bump pull request
+    needs: [run, compose]
+    if: ${{ !cancelled() && needs.run.result == 'success' && needs.compose.result == 'success' && needs.compose.outputs.publish == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Download the composed bumps
+        uses: actions/download-artifact@v8
+        with:
+          name: composed
+          path: ${{ runner.temp }}/composed
+
+      - id: app-token
+        name: Get the neralabs-ci app token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: write
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.run.outputs.base }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: commit
+        name: Commit the bumps on their branch
+        env:
+          BASE: ${{ needs.run.outputs.base }}
+          COMMITS: ${{ needs.compose.outputs.commits }}
+          TREE: ${{ needs.compose.outputs.tree }}
+          TITLE: ${{ needs.compose.outputs.title }}
+          RESNAPSHOT: ${{ needs.run.outputs.resnapshot }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          if [ "$RESNAPSHOT" = "true" ]; then branch="auto/resnapshot-upstream"; else branch="auto/bump-upstream"; fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          count="$(jq length <<< "$COMMITS")"
+          mapfile -t entries < <(jq -r '.[] | "\(.pack)/\(.tool)@\(.version)"' <<< "$COMMITS")
+
+          # The app's own pull requests from this repository's branch, in a state: anyone can open one from a fork's
+          # branch of the same name, or push to this one and open it themselves.
+          app_pulls() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?head=$GITHUB_REPOSITORY_OWNER:$branch&state=$1&per_page=100" \
+              | jq -s -c --arg repo "$GITHUB_REPOSITORY" --arg login "${APP_SLUG}[bot]" \
+                '[(add // [])[] | select(.head.repo.full_name == $repo and .user.type == "Bot" and .user.login == $login)]'
+          }
+
+          # A maintainer closed a pull request carrying one of these bumps without merging it, after the nightly that
+          # started them looked (upstream-releases.yml, bump-dispatch): the bumps it carried are the markers its body
+          # starts with. The next nightly leaves them out. A re-snapshot was asked for by hand, and carries no marker.
+          closed=()
+          [ "$RESNAPSHOT" = "true" ] || mapfile -t closed < <(app_pulls closed | jq -r '
+            .[] | select(.merged_at == null) | (.body // "") | split("\n") | map(rtrimstr("\r")) as $lines
+            | ([$lines | to_entries[] | select(.value | test("^<!-- bump: [a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]* -->$") | not) | .key][0] // ($lines | length)) as $end
+            | $lines[0:$end][] | capture("^<!-- bump: (?<entry>[^ ]+) -->$").entry
+          ')
+          for entry in "${entries[@]}"; do
+            for gone in "${closed[@]}"; do
+              if [ "$entry" = "$gone" ]; then
+                echo "::notice::a bump pull request carrying $entry was closed without merging; not proposing it again"
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          done
+
+          # The compose job's commits, one per tool-pack on main's head, each making the tree it named.
+          git fetch --quiet --no-tags "$RUNNER_TEMP/composed/composed.bundle" "refs/heads/composed:refs/composed"
+          mapfile -t composed < <(git rev-list --reverse --topo-order "$BASE..refs/composed")
+          if [ "${#composed[@]}" -ne "$count" ]; then
+            echo "::error::the composed bundle holds ${#composed[@]} commits, not the compose job's $count"
+            exit 1
+          fi
+          parent="$BASE"
+          for i in "${!composed[@]}"; do
+            if [ "$(git rev-parse "${composed[$i]}^@")" != "$parent" ] || [ "$(git rev-parse "${composed[$i]}^{tree}")" != "$(jq -r --argjson i "$i" '.[$i].tree' <<< "$COMMITS")" ]; then
+              echo "::error::the composed commit $((i + 1)) is not the one the compose job named"
+              exit 1
+            fi
+            parent="${composed[$i]}"
+          done
+          if [ "$(git rev-parse "$parent^{tree}")" != "$TREE" ]; then
+            echo "::error::the composed commits do not make the tree the compose job named, $TREE"
+            exit 1
+          fi
+
+          # The commits may touch only the packs' pins, scripts, derived data and licence files, and the runtimes, as
+          # regular files, and no lock: the publish writes those once S3 holds what they name.
+          outside="$(git diff --name-only --no-renames "$BASE" "$TREE" | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          if [ -n "$outside" ]; then
+            echo "::error::the composed bumps touch files outside the pins and the derived data:"
+            mapfile -t paths <<< "$outside"
+            printf -- '- %s\n' "${paths[@]}"
+            exit 1
+          fi
+          if git diff --raw --no-renames "$BASE" "$TREE" | awk '{ print $2 }' | grep -q -E '^(120000|160000)$'; then
+            echo "::error::the composed bumps add a symbolic link or a submodule"
+            exit 1
+          fi
+          if git diff --name-only --no-renames "$BASE" "$TREE" | grep -q -E '^packs/[a-z0-9-]+/upstream/[a-z0-9._-]+/(test-data|samples)\.lock$'; then
+            echo "::error::the composed bumps change a lock, which only the publish writes"
+            exit 1
+          fi
+
+          # The same trees, committed again as the app's bot user, as GitHub attributes it.
+          user_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          email="${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          export GIT_AUTHOR_NAME="${APP_SLUG}[bot]" GIT_AUTHOR_EMAIL="$email" GIT_COMMITTER_NAME="${APP_SLUG}[bot]" GIT_COMMITTER_EMAIL="$email"
+          head="$BASE"
+          for i in "${!composed[@]}"; do
+            IFS=$'\t' read -r pack tool version < <(jq -r --argjson i "$i" '.[$i] | [.pack, .tool, .version] | @tsv' <<< "$COMMITS")
+            if [ "$RESNAPSHOT" = "true" ]; then
+              subject="Re-snapshot $pack/$tool at $version"
+              detail="Opened by the upstream re-snapshot: npm run fixtures:derive -- --pack $pack --tool $tool --update on Linux at the pinned release, staged whole in its publish/ for pack-data-publish.yml."
+            else
+              subject="Bump $pack/$tool to $version"
+              detail="Opened by the upstream bump: npm run upstream:bump -- --pack $pack --tool $tool --version $version, then each tool-pack it made stale derived again on Linux and staged whole in its publish/ for pack-data-publish.yml."
+            fi
+            head="$(git commit-tree "$(git rev-parse "${composed[$i]}^{tree}")" -p "$head" -m "$subject" -m "$detail")"
+          done
+
+          # The branch already holds these bumps only if its last $count commits are the app's, on the same commit of
+          # main, with the same messages and trees, under at most the publish's own commit (pack-data-publish.yml's
+          # finish, the app's too: `chore(pack-data): publish ...`): then nothing is pushed or published again. An author
+          # email is easily forged, so a commit under it beneath them, or commits on another base, are replaced, not
+          # adopted. A tip the app did not commit is left alone.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git_auth=(-c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}")
+          lease=""
+          if git "${git_auth[@]}" fetch --no-tags --depth="$((count + 2))" origin "+refs/heads/$branch:refs/remotes/origin/$branch" 2> /dev/null; then
+            if [ "$(git log -1 --format='%ae %ce' "origin/$branch")" != "$email $email" ]; then
+              echo "::warning::$branch has a commit the bump did not make; leaving it alone"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            bumps="origin/$branch"
+            if [[ "$(git log -1 --format=%s "$bumps")" == "chore(pack-data): publish "* ]]; then bumps="origin/$branch~1"; fi
+            if [ "$(git rev-parse --verify --quiet "$bumps~$count" || true)" = "$BASE" ] \
+              && [ "$(git log --format='%ae %ce' -n "$count" "$bumps" | sort -u)" = "$email $email" ] \
+              && [ "$(git log --format='%T %B' -n "$count" "$bumps")" = "$(git log --format='%T %B' -n "$count" "$head")" ]; then
+              echo "$branch already makes these bumps on $BASE; not publishing them again"
+              exit 0
+            fi
+            lease="$(git rev-parse "origin/$branch")"
+          fi
+          git "${git_auth[@]}" push --force-with-lease="refs/heads/$branch:$lease" origin "$head:refs/heads/$branch"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      # The body the compose job built and checked before anything was pushed.
+      - id: pull
+        name: Open or update the pull request
+        if: steps.commit.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          BRANCH: ${{ steps.commit.outputs.branch }}
+          TITLE: ${{ needs.compose.outputs.title }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/composed/body.md"
+          # The app's own open pull request from this repository's branch.
+          open_pull() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?head=$GITHUB_REPOSITORY_OWNER:$BRANCH&state=open&per_page=100" \
+              | jq -s -r --arg repo "$GITHUB_REPOSITORY" --arg login "${APP_SLUG}[bot]" \
+                '[(add // [])[] | select(.head.repo.full_name == $repo and .user.type == "Bot" and .user.login == $login)][0].number // empty'
+          }
+          number="$(open_pull)"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$body"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$TITLE" --body-file "$body"
+            number="$(open_pull)"
+          fi
+          [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::no open pull request of the app's on $BRANCH"; exit 1; }
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      # The one upload path: the publish workflow, on main, packs this pull request's publish/ (replace: each
+      # tool-pack's archive becomes exactly its derived set), and a code owner approves its upload. Only after a push:
+      # a branch that already held these bumps had its publish dispatched by the run that pushed them.
+      - name: Dispatch the publish
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ steps.pull.outputs.number }}
+        run: |
+          set -euo pipefail
+          gh workflow run pack-data-publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f pr="$PR" -f replace=true
+          echo "dispatched pack-data-publish.yml for #$PR with replace"
+
+  # The work branch has served its run: after the pull request job, or straight after the compose job (or the run job)
+  # when there is nothing to publish: every leg failed or changed nothing, nothing composed, or main's head moved past
+  # the run. It is deleted only while it still names the run's commit, so a branch the next nightly already pointed
+  # elsewhere for a newer run stays; already gone is fine. No checkout, nothing from the artifacts.
+  work-branch:
+    name: Delete the work branch
+    needs: [run, compose, pull-request]
+    if: >-
+      ${{
+        !cancelled() && github.repository_owner == 'neralabs' && needs.run.result == 'success' &&
+        (needs.run.outputs.legs == '[]' ||
+          (needs.compose.result == 'success' && (needs.compose.outputs.publish != 'true' || needs.pull-request.result == 'success')))
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the work branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$BRANCH" != "auto/bump-run/upstream" ]; then
+            echo "::error::$BRANCH is not the bump work branch"
+            exit 1
+          fi
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" --jq .object.sha 2> /dev/null || true)"
+          if [ -z "$sha" ]; then
+            echo "$BRANCH is already gone"
+          elif [ "$sha" != "$HEAD_SHA" ]; then
+            echo "$BRANCH now names $sha, not this bump's $HEAD_SHA; leaving it for that run"
+          else
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" > /dev/null || echo "$BRANCH is already gone"
+          fi

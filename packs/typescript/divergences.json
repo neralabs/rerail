@@ -14,5 +14,21 @@
     "line": 1,
     "kind": "rerail-unknown",
     "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Foo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-consistent-type-definitions",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/037.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/037.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Hlo = { [key: string] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-consistent-type-definitions",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/038.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/038.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Hlo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). Rerail cannot decide it until the grammar reads the construct."
   }
 ]

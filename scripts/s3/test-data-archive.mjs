@@ -68,13 +68,15 @@ function paxRecord(key, value) {
 
 /**
  * Throws unless `path` is a safe relative POSIX path in NFC: no empty, `.` or `..` segment, no backslash, no control
- * character (U+0000 to U+001F, U+007F). A path in another normalization would name a second file on a filesystem that
- * keeps names as given and the same file on one that normalizes them.
+ * character (U+0000 to U+001F, U+007F), and no `` ` ``, `<`, `>` or `|`. A path in another normalization would name a
+ * second file on a filesystem that keeps names as given and the same file on one that normalizes them.
  */
 export function checkEntryPath(path) {
   if (path === "" || path.startsWith("/") || /[\\\u0000-\u001f\u007f]/u.test(path) || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
     throw new Error(`unsafe archive path ${JSON.stringify(path)}`);
   }
+  // The approver's publish summary shows paths in markdown code spans: none may break out of one or into a table cell.
+  if (/[`<>|]/u.test(path)) throw new Error(`archive path ${JSON.stringify(path)} holds \`, <, > or |, which the publish summary cannot show safely`);
   if (path.normalize("NFC") !== path) throw new Error(`archive path ${JSON.stringify(path)} is not in Unicode normalization form C`);
 }
 

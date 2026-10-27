@@ -3,14 +3,12 @@
 // Pins: eslint 10.11.0, @next/eslint-plugin-next 16.3.8, @typescript-eslint/parser 8.70.1, typescript 5.9.3,
 // globals 17.13.0 (installed under `.rerail/tools/next`); upstream vercel/next.js v16.3.8 =
 // b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6 (`.rerail/tools/next/upstream-next`, sparse packages/eslint-plugin-next +
-// test/unit/eslint-plugin-next); corpora shadcn-ui @ 0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13, next-examples @
-// 6194d642b6fd743437da21dac3c720a587e6b9b2, commerce @ 3761e52e60df9c6a316e067dbfd7032e494d3634
-// (`.rerail/corpora/next/<name>`). Any other version or commit is refused.
+// test/unit/eslint-plugin-next). Any other version or commit is refused.
 //
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request
 // CI). Usage (Node >= 23.6 for type stripping and module.registerHooks):
-//   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--corpora <dir>] [--upstream <dir>]
-//                                                            [--only fixtures|corpora|tests|licenses]
+//   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--upstream <dir>]
+//                                                            [--only fixtures|tests|licenses]
 //
 // 1. tests: copies the chosen rules' upstream test files verbatim into tests/.
 // 2. fixtures: executes each copied test with a stub `RuleTester` (ours, below) that captures run(name, rule,
@@ -19,15 +17,13 @@
 //    `C:\` turned into `C/`, backslashes into `/`). Writes Rerail's own cases (AUTHORED, below) as
 //    fixtures/<rule>/rerail-<name>.tsx and lists them in UPSTREAM.md. Then runs the pinned plugin (PACK_CONFIG, default
 //    options, every chosen rule) over every fixture file: fixtures.expected.json.
-// 3. corpora: the same config over each pinned corpus's files (conformance.json paths and excludes):
-//    corpus-<name>.expected.json.
-// 4. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
+// 3. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, assertPortableCase, corpusFiles, lint, pinnedRequire, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import { assertCommit, assertPortableCase, isVariantPath, lint, pinnedRequire, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
 import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,13 +52,8 @@ const PINS = {
 const UPSTREAM_REPOSITORY = "https://github.com/vercel/next.js";
 const UPSTREAM_COMMIT = "b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6";
 const UPSTREAM_TESTS = "test/unit/eslint-plugin-next";
-const CORPUS_COMMITS = {
-  "shadcn-ui": "0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13",
-  "next-examples": "6194d642b6fd743437da21dac3c720a587e6b9b2",
-  commerce: "3761e52e60df9c6a316e067dbfd7032e494d3634",
-};
 
-/** The chosen rules (plugin rule names); every one is recorded on every fixture and corpus file. */
+/** The chosen rules (plugin rule names); every one is recorded on every fixture file. */
 export const RULES = [
   "google-font-display",
   "google-font-preconnect",
@@ -90,7 +81,7 @@ const RULE_IDS = RULES.map(rule => `@next/next/${rule}`);
 
 /**
  * Ours: cases Rerail wrote for the plugin to score beside the upstream tests, each an input the engine once misread.
- * `errors` is how many findings the case's own rule must report, checked against the recording as a test's count is.
+ * `errors` is how many findings the case's own rule must report, checked against the expected findings as a test's count is.
  */
 const AUTHORED = [
   // A bare `&` in a JSX attribute string is text; the vendored TSX grammar once read it as a parse error.
@@ -111,7 +102,6 @@ const AUTHORED = [
 const { values: options } = parseArgs({
   options: {
     tools: { type: "string" },
-    corpora: { type: "string" },
     upstream: { type: "string" },
     only: { type: "string" },
   },
@@ -211,7 +201,7 @@ function writeFixtures(cases) {
         const name = `${kind}-${String(index).padStart(3, "0")}`;
         const path = test.filename === undefined ? `${rule}/${name}.js` : `${rule}/${name}/${caseFilename(test.filename)}`;
         if (test.options !== undefined || test.settings !== undefined || test.languageOptions !== undefined)
-          throw new Error(`${rule} ${name}: case options/settings/languageOptions are not supported by this recorder`);
+          throw new Error(`${rule} ${name}: case options/settings/languageOptions are not supported by this generator`);
         assertPortableCase(path, test.code);
         mkdirSync(dirname(join(fixturesDirectory, path)), { recursive: true });
         writeFileSync(join(fixturesDirectory, path), test.code);
@@ -228,7 +218,7 @@ function writeFixtures(cases) {
   return written;
 }
 
-/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not Next.js's. */
+/** UPSTREAM.md beside this generator: the fixtures Rerail wrote, which are Rerail's, not Next.js's. */
 function writeAuthoredRecord(kept) {
   const rows = kept.filter(entry => entry.kind === "authored").map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | written by Rerail |`);
   const text = `# ${TOOL} ${PLUGIN_VERSION}: cases Rerail wrote
@@ -244,44 +234,37 @@ ${rows.join("\n")}
 
 async function recordFixtures() {
   const written = writeFixtures(await captureCases());
-  const { findings, skipped } = await lint(ESLint, fixturesDirectory, packConfig(), written.map(entry => entry.path), RULE_IDS);
-  const dropped = new Set(skipped.map(entry => entry.path));
-  for (const entry of skipped) {
+  // Each upstream case is a case of the rule whose test file it came from; Rerail's own cases have no upstream origin.
+  const origins = new Map(written.filter(entry => entry.kind !== "authored").map(entry => [entry.path, [`@next/next/${entry.rule}`]]));
+  const { variants, skipped: unrenamed } = writeRenameVariants(fixturesDirectory, [...origins.keys()], origins);
+  const linted = await lint(ESLint, fixturesDirectory, packConfig(), [...written.map(entry => entry.path), ...variants.map(variant => variant.unit)], RULE_IDS);
+  const dropped = new Set(linted.skipped.map(entry => entry.path));
+  for (const entry of linted.skipped.filter(({ path }) => !isVariantPath(path))) {
     console.warn(`dropped (ESLint cannot parse under the pack config): ${entry.path}: ${entry.reason}`);
     rmSync(join(fixturesDirectory, entry.path));
   }
   const kept = written.filter(entry => !dropped.has(entry.path));
+  const recorded = withOrigins(fixturesDirectory, kept.map(entry => entry.path).sort(), origins, variants, dropped, linted.findings);
+  const findings = recorded.findings;
   writeAuthoredRecord(kept);
-  writeRecording(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: kept.map(entry => entry.path).sort() }, findings);
+  writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, PLUGIN_VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, findings);
   // Sanity check: the case's own rule under the pack config vs the test's expected error count.
   const mismatches = [];
   for (const entry of kept) {
     const own = findings.filter(finding => finding.path === entry.path && finding.rule === `@next/next/${entry.rule}`).length;
     if (own !== entry.errors) mismatches.push({ path: entry.path, expected: entry.errors, recorded: own });
   }
-  writeFileSync(join(HERE, "fixtures.cases.json"), `${JSON.stringify({ cases: written.map(({ rule, kind, index, path, errors }) => ({ rule, kind, index, path, errors, dropped: dropped.has(path) })), mismatches }, null, 1)}\n`);
+  const byPath = new Map(written.map(entry => [entry.path, entry]));
+  const renamed = Object.entries(recorded.units).flatMap(([path, { renamedFrom }]) => {
+    if (renamedFrom === undefined) return [];
+    const { rule, kind, index } = byPath.get(renamedFrom);
+    return [{ rule, kind: "renamed", index, path, of: renamedFrom, renamedKind: kind }];
+  });
+  const cases = [...written.map(({ rule, kind, index, path, errors }) => ({ rule, kind, index, path, errors, dropped: dropped.has(path) })), ...renamed];
+  writeFileSync(join(HERE, "fixtures.cases.json"), `${JSON.stringify({ cases, unrenamed, mismatches }, null, 1)}\n`);
   console.log(packFixturesWritten([join(HERE, "fixtures.cases.json")]));
-  console.log(`fixtures: ${written.length} cases extracted, ${dropped.size} dropped, ${findings.length} findings, ${mismatches.length} mismatches vs the tests`);
+  console.log(`fixtures: ${written.length} cases extracted, ${dropped.size} dropped, ${renamed.length} rename variants, ${findings.length} findings, ${mismatches.length} mismatches vs the tests`);
   for (const mismatch of mismatches) console.log(`  mismatch ${mismatch.path}: test expects ${mismatch.expected}, plugin reports ${mismatch.recorded}`);
-}
-
-async function recordCorpora() {
-  const manifest = JSON.parse(readFileSync(join(PACK, "conformance.json"), "utf8"));
-  for (const corpus of manifest.corpora) {
-    if (CORPUS_COMMITS[corpus.name] !== corpus.commit) throw new Error(`conformance.json pins ${corpus.name} at ${corpus.commit}; this recorder pins ${CORPUS_COMMITS[corpus.name]}`);
-    const root = join(options.corpora ?? rerailDirectory("corpora"), corpus.name);
-    const files = corpusFiles(root, corpus);
-    const { findings, skipped } = await lint(ESLint, root, packConfig(), files, RULE_IDS);
-    writeRecording(
-      join(HERE, `corpus-${corpus.name}.expected.json`),
-      TOOL,
-      PLUGIN_VERSION,
-      { kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: RULE_IDS, skipped: skipped.map(entry => entry.path).sort() },
-      findings,
-    );
-    console.log(`corpus ${corpus.name}: ${files.length} files, ${skipped.length} skipped, ${findings.length} findings`);
-    for (const entry of skipped) console.log(`  skipped ${entry.path}: ${entry.reason}`);
-  }
 }
 
 function writeLicenses() {
@@ -293,14 +276,17 @@ function writeLicenses() {
   const rows = [
     ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
     ...cases
-      .filter(entry => !entry.dropped && entry.kind !== "authored")
+      .filter(entry => !entry.dropped && entry.kind !== "authored" && entry.kind !== "renamed")
       .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim) |`),
+    ...cases
+      .filter(entry => entry.kind === "renamed")
+      .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | derived from ${entry.renamedKind}[${entry.index}] (\`fixtures/${entry.of}\` with its names and literals renamed) |`),
   ];
   const text = `# Next.js ${PLUGIN_VERSION} (@next/eslint-plugin-next)
 
 Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${PLUGIN_VERSION}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
 
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the recorder \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` outputs recorded by running the pinned plugin.
+The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the generator \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` expected findings written by running the pinned plugin.
 
 Paths are relative to the pack directory, \`packs/next/\`.
 
@@ -316,4 +302,3 @@ const only = options.only;
 if (only === undefined || only === "tests") copyTests();
 if (only === undefined || only === "fixtures") await recordFixtures();
 if (only === undefined || only === "licenses") writeLicenses();
-if (only === undefined || only === "corpora") await recordCorpora();

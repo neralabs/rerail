@@ -9,22 +9,6 @@
     "scope",
     "suppression"
   ],
-  "corpora": [
-    {
-      "name": "vscode",
-      "repository": "https://github.com/microsoft/vscode",
-      "commit": "729f257fa411ea4b1cbdb7f404aa79941182209b",
-      "paths": [
-        "src"
-      ],
-      "exclude": [
-        "**/*.js",
-        "**/*.jsx",
-        "**/*.mjs",
-        "**/*.cjs"
-      ]
-    }
-  ],
   "tools": [
     {
       "name": "typescript-eslint",

@@ -1,13 +1,14 @@
 """Shared by packs/rust/upstream/clippy/generate.py and fixtures/rust/suppress/generate_corpus.py: the
-pinned toolchain, the Rust pack's corpora and clippy lints (packs/rust/conformance.json), the
-`cargo clippy` corpus run, and the recording format `rerail/conformance/languages/pack.ts` reads (`recordingSchema`).
+pinned toolchain, the Rust pack's clippy lints (packs/rust/conformance.json), the pinned corpora and the
+`cargo clippy` corpus run fixtures/rust/suppress records, and the expected-findings format
+`rerail/conformance/languages/pack.ts` reads (`expectedFindingsSchema`).
 
 Pins (each generator refuses anything else):
 - Rust toolchain 1.99.0: `rustc 1.99.0 (b940084d7 2026-09-28)`, `clippy 0.1.99 (b940084d7e 2026-09-28)`, invoked as
   `rustc +1.99.0` / `cargo +1.99.0 clippy` / `<sysroot>/bin/clippy-driver`.
 - Clippy source: https://github.com/rust-lang/rust-clippy at tag `rust-1.99.0`,
   commit 49e2f89a2605a9a340e04955fdbefa9803e6027a.
-- Corpora (from conformance.json): ripgrep 3fce3b5bb0236da2df6d99672afb8a719642eca7,
+- Corpora (`CORPORA`): ripgrep 3fce3b5bb0236da2df6d99672afb8a719642eca7,
   tokio b2636752450484955e7ad334bac678424d51bc4a. tokio commits no Cargo.lock: its lock is cargo's resolution of the
   crates published by 2026-10-04T00:00:00Z (`CORPUS_LOCK_PUBLISH_TIMES`), which `run_corpus` writes before it runs.
 Python 3.9 standard library only."""
@@ -31,13 +32,16 @@ RUSTC_VERSION = "rustc 1.99.0 (b940084d7 2026-09-28)"
 CLIPPY_VERSION = "clippy 0.1.99 (b940084d7e 2026-09-28)"
 CLIPPY_COMMIT = "49e2f89a2605a9a340e04955fdbefa9803e6027a"
 CLIPPY_ORIGIN = f"https://github.com/rust-lang/rust-clippy@{CLIPPY_COMMIT}"
-CORPUS_COMMITS = {
-    "ripgrep": "3fce3b5bb0236da2df6d99672afb8a719642eca7",
-    "tokio": "b2636752450484955e7ad334bac678424d51bc4a",
+# The corpora fixtures/rust/suppress/generate_corpus.py records: each one's repository, commit and the paths scored.
+CORPORA = {
+    "ripgrep": {"repository": "https://github.com/BurntSushi/ripgrep",
+                "commit": "3fce3b5bb0236da2df6d99672afb8a719642eca7", "paths": ["."]},
+    "tokio": {"repository": "https://github.com/tokio-rs/tokio",
+              "commit": "b2636752450484955e7ad334bac678424d51bc4a", "paths": ["."]},
 }
 # Corpora that commit no Cargo.lock: `cargo +1.99.0 generate-lockfile --publish-time <time>` resolves their
 # dependencies to what crates.io held then (unstable in cargo 1.99, so RUSTC_BOOTSTRAP=1 and -Zunstable-options),
-# the lock the recordings were made with.
+# the lock the expected findings were made with.
 CORPUS_LOCK_PUBLISH_TIMES = {
     "tokio": "2026-10-04T00:00:00Z",
 }
@@ -49,7 +53,7 @@ def pack() -> dict:
 
 
 def tool_version() -> str:
-    """The clippy version the pack pins (`tools[].version`), which every recording carries."""
+    """The clippy version the pack pins (`tools[].version`), which every expected-findings file carries."""
     for entry in pack()["tools"]:
         if entry["name"] == TOOL:
             return entry["version"]
@@ -90,17 +94,14 @@ def check_head(root: pathlib.Path, commit: str) -> None:
 
 
 def corpus(name: str) -> dict:
-    """The pack's declaration of corpus `name`, checked against the commit this file pins."""
-    for entry in pack()["corpora"]:
-        if entry["name"] == name:
-            if CORPUS_COMMITS.get(name) != entry["commit"]:
-                raise SystemExit(f"{PACK} pins {name} at {entry['commit']}, common.py at {CORPUS_COMMITS.get(name)}")
-            return entry
-    raise SystemExit(f"{name} is not a corpus of {PACK}")
+    """The pinned corpus `name` (`CORPORA`): repository, commit, paths."""
+    if name not in CORPORA:
+        raise SystemExit(f"{name} is not a corpus common.py pins")
+    return CORPORA[name]
 
 
 def corpus_files(root: pathlib.Path, name: str) -> list[str]:
-    """Corpus-relative `.rs` files under the pack's paths (`.git` and `target` directories excluded), checked out at
+    """Corpus-relative `.rs` files under the corpus's paths (`.git` and `target` directories excluded), checked out at
     the pinned commit."""
     declared = corpus(name)
     check_head(root, declared["commit"])
@@ -220,137 +221,6 @@ def dep_info_sources(artifact: pathlib.Path, root: pathlib.Path) -> set[str]:
     return sources
 
 
-# Rust keywords that may precede `!` without naming a macro (`if !(..)`, `return !x`, `in ![..]`).
-KEYWORDS = {"as", "async", "await", "box", "break", "const", "continue", "crate", "do", "dyn", "else", "enum",
-            "extern", "false", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut",
-            "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait", "true", "try", "type",
-            "unsafe", "use", "where", "while", "yield"}
-IDENT = re.compile(r"(?:r#)?[A-Za-z_][A-Za-z0-9_]*")
-OPEN = {"(": ")", "[": "]", "{": "}"}
-
-
-def macro_token_trees(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Code-point ranges `[start, end)` of the outermost bang-macro invocation token trees in `text` (`name!(..)`,
-    `path::name! { .. }`; the delimiters included), and of `macro_rules! name { .. }` definition bodies. A lexer:
-    comments, string, raw string, byte, C-string and char literals and lifetimes are skipped, so delimiters inside
-    them never count."""
-    invocations: list[tuple[int, int]] = []
-    definitions: list[tuple[int, int]] = []
-    stack: list[tuple[str, int, str | None]] = []  # (closing delimiter, start, kind of the outermost macro)
-    i, n = 0, len(text)
-    previous_ident: str | None = None  # an identifier immediately followed by `!`
-    pending: str | None = None  # "invocation" / "definition" once `ident!` (or `macro_rules! name`) was seen
-    while i < n:
-        c = text[i]
-        if c in " \t\r\n":
-            i += 1
-            continue
-        if text.startswith("//", i):
-            j = text.find("\n", i)
-            i = n if j < 0 else j
-            continue
-        if text.startswith("/*", i):
-            depth, i = 1, i + 2
-            while i < n and depth:
-                if text.startswith("/*", i):
-                    depth, i = depth + 1, i + 2
-                elif text.startswith("*/", i):
-                    depth, i = depth - 1, i + 2
-                else:
-                    i += 1
-            continue
-        raw = re.match(r'(?:b|c)?r(#*)"', text[i:i + 300])
-        if raw:
-            end = text.find('"' + raw.group(1), i + raw.end())
-            i = n if end < 0 else end + 1 + len(raw.group(1))
-            previous_ident = pending = None
-            continue
-        if c == '"' or (c in "bc" and text.startswith('"', i + 1)):
-            i += 1 if c == '"' else 2
-            while i < n and text[i] != '"':
-                i += 2 if text[i] == "\\" else 1
-            i += 1
-            previous_ident = None
-            continue
-        if c == "'" or (c == "b" and text.startswith("'", i + 1)):
-            start = i + (1 if c == "'" else 2)
-            if start < n and text[start] == "\\":
-                end = text.find("'", start + 2)
-                i = n if end < 0 else end + 1
-            elif start + 1 < n and text[start + 1] == "'":
-                i = start + 2
-            else:  # a lifetime or label
-                match = IDENT.match(text, start)
-                i = match.end() if match else start
-            previous_ident = None
-            continue
-        match = IDENT.match(text, i)
-        if match:
-            word = match.group(0)
-            i = match.end()
-            if pending == "definition-name":
-                pending = "definition"
-                continue
-            previous_ident = word if text.startswith("!", i) and not text.startswith("!=", i) else None
-            pending = None
-            continue
-        if c == "!" and previous_ident is not None:
-            word, previous_ident = previous_ident, None
-            i += 1
-            if word == "macro_rules":
-                pending = "definition-name"
-            elif word not in KEYWORDS:
-                pending = "invocation"
-            continue
-        if c in OPEN:
-            kind = pending if pending in ("invocation", "definition") else None
-            outer = next((entry[2] for entry in stack if entry[2] is not None), None)
-            stack.append((OPEN[c], i, kind if outer is None else None))
-            pending = previous_ident = None
-            i += 1
-            continue
-        if c in ")]}":
-            if stack:
-                closing, start, kind = stack.pop()
-                if kind == "invocation":
-                    invocations.append((start, i + 1))
-                elif kind == "definition":
-                    definitions.append((start, i + 1))
-            i += 1
-            pending = previous_ident = None
-            continue
-        pending = previous_ident = None
-        i += 1
-    return invocations, definitions
-
-
-def classify_macro_positions(root: pathlib.Path, findings: list[dict]) -> dict:
-    """How many findings' primary span starts inside a bang-macro invocation's token tree (e.g. tokio's
-    `cfg_rt! { .. }`), inside a `macro_rules!` definition body, or carries rustc's expansion backtrace."""
-    counts = {"findings": len(findings), "insideInvocationTokenTree": 0, "insideMacroRulesDefinition": 0,
-              "expansion": 0, "byRule": {}}
-    cache: dict[str, tuple[list[int], list[tuple[int, int]], list[tuple[int, int]]]] = {}
-    for finding in findings:
-        path = finding["path"]
-        if path not in cache:
-            text = (root / path).read_text(encoding="utf-8")
-            starts = [0] + [index + 1 for index, char in enumerate(text) if char == "\n"]
-            cache[path] = (starts, *macro_token_trees(text))
-        starts, invocations, definitions = cache[path]
-        offset = starts[finding["line"] - 1] + finding["column"] - 1
-        rule = counts["byRule"].setdefault(finding["rule"], {"findings": 0, "insideInvocationTokenTree": 0,
-                                                             "insideMacroRulesDefinition": 0, "expansion": 0})
-        rule["findings"] += 1
-        for key, ranges in (("insideInvocationTokenTree", invocations), ("insideMacroRulesDefinition", definitions)):
-            if any(start <= offset < end for start, end in ranges):
-                counts[key] += 1
-                rule[key] += 1
-        if finding.get("expansion"):
-            counts["expansion"] += 1
-            rule["expansion"] += 1
-    return counts
-
-
 def corpus_source(name: str, rules: list[str], skipped: list[str]) -> dict:
     declared = corpus(name)
     return {"kind": "corpus", "name": name, "repository": declared["repository"], "commit": declared["commit"],
@@ -362,4 +232,4 @@ def write(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
                       key=lambda f: (f["rule"], f["path"], f["line"], f["column"]))
     path.write_text(json.dumps({"tool": TOOL, "version": tool_version(), "source": source, "findings": findings},
                                indent=1, ensure_ascii=False) + "\n")
-    pack_fixtures.recording_written(path, source)
+    pack_fixtures.expected_findings_written(path, source)

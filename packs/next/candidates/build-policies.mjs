@@ -213,7 +213,7 @@ policy("no-head-element", "Use the Head component from next/head instead of a ra
     ast: { file: { path: { notRegex: "app/" } }, rule: { all: [OPEN, named("head")] } },
     message: `Do not use \`<head>\` element. Use \`<Head />\` from \`next/head\` instead. See: https://nextjs.org/docs/messages/no-head-element`,
   },
-// The port readiness gates no longer score the plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects.
+// The plugin's invalid[1], JSX at pages/index.ts that upstream's own parser rejects, is not scored.
 ]);
 
 policy("no-sync-scripts", "Add async or defer to script tags that load an external src; synchronous scripts block page rendering.", [
@@ -619,8 +619,8 @@ policy(
       message: `Replace this location.assign call with redirect() during render or useRouter().push() in a client event handler.`,
     },
   ],
-  // The port readiness gates lint in eslint-config-next's environment, whose browser globals let upstream report the 29 findings
-  // this port reproduces.
+  // The samples' labels were made in eslint-config-next's environment, whose browser globals let upstream report the 29
+  // findings this port reproduces.
 );
 
 const ported = WRITTEN.filter(entry => !entry.candidate);

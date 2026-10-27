@@ -3,7 +3,6 @@ by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream
 the pinned venv (fixtures/sql/common.py):
 
     <checkout>/.rerail/tools/sql/venv/bin/python generate.py fixtures
-    <checkout>/.rerail/tools/sql/venv/bin/python generate.py corpus [<name> ...]   # default: every T4 corpus
 
 `fixtures` copies every case of each chosen rule's own YAML test file (`test/fixtures/rules/std_rule_cases/<CODE>.yml`
 of the pinned sqlfluff checkout, tag 4.4.0) that the port can reproduce: the case's dialect is one the pack targets
@@ -12,15 +11,12 @@ noted) and its SQL holds no Jinja (Rerail reads raw SQL; the cases run here with
 `pass_str` or `fail_str` becomes `fixtures/<dialect>/<CODE>/<case>.sql` (licenses/sqlfluff/UPSTREAM.md lists
 them). SQLFluff then lints every copy with every chosen rule, and the run is required to reproduce the upstream test
 on a rule's own cases: no finding of the rule on a `pass_str`, at least one on a `fail_str`, and exactly the
-`violations` positions (or `line_numbers`) where the case lists them. So the recording on a rule's own cases is the
-upstream test's expectation, and on the other rules' cases the tool's output. `fixtures.cases.json` keeps per case
-what the standard recording has no field for: the upstream expectation, the reference parser's verdict on the copy
+`violations` positions (or `line_numbers`) where the case lists them. So the expected findings on a rule's own cases are the
+upstream test's expectation, and on the other rules' cases the tool's output. `source.units` names each upstream copy's
+origin: the rule whose YAML test file it came from (Rerail's own cases have none). `fixtures.cases.json` keeps per case
+what the standard expected findings have no field for: the upstream expectation, the reference parser's verdict on the copy
 (PostgreSQL 18.6 for ansi and postgres cases, SQLite 3.50.4 for sqlite ones) and, for ansi cases, whether SQLFluff's
 postgres dialect reports the same findings (a pack without an ansi dialect reads them as PostgreSQL).
-
-`corpus` lints a corpus's T4 files (common.CORPORA globs, dialect by path) with the same rules. Files SQLFluff cannot
-read whole (any parse, lex or templating error, or larger than SQLFLUFF_MAX_BYTES, where its parse is super-linear)
-go to `skipped`: a rule's findings there cover only the parsed part.
 
 Each finding is the rule code, path, line and column (SQLFluff's `start_line_no` and `start_line_pos`: 1-based,
 in characters).
@@ -29,7 +25,6 @@ in characters).
 from __future__ import annotations
 
 import collections
-import concurrent.futures
 import json
 import pathlib
 import shutil
@@ -48,8 +43,6 @@ TOOL = "sqlfluff"
 ORIGIN = f"{common.CORPORA['sqlfluff-dialects']['repository']}@{common.CORPORA['sqlfluff-dialects']['commit']}"
 CASES = "test/fixtures/rules/std_rule_cases"
 DIALECTS = ("ansi", "postgres", "mysql", "sqlite")
-SQLFLUFF_MAX_BYTES = 200_000
-T4_CORPORA = ("postgres", "mattermost", "anki", "application-services")
 
 # code -> the port's rule configuration (SQLFluff's `rules:` section). Empty: SQLFluff's defaults.
 RULES: dict[str, dict] = {
@@ -212,17 +205,17 @@ def check_case(case: dict, findings: list[dict]) -> None:
         assert [line for line, _ in own] == case["lineNumbers"], (where, own, case["lineNumbers"])
 
 
-def write_recording(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
+def write_expected_findings(path: pathlib.Path, source: dict, findings: list[dict]) -> None:
     findings = sorted(findings, key=lambda f: (f["rule"], f["path"], f["line"], f.get("column", 0)))
     path.write_text(json.dumps({"tool": TOOL, "version": common.TOOLS["sqlfluff"], "source": source,
                                 "findings": findings}, indent=1, ensure_ascii=False) + "\n")
-    pack_fixtures.recording_written(path, source)
+    pack_fixtures.expected_findings_written(path, source)
 
 
 def fixtures() -> None:
     target = HERE / "fixtures"
     shutil.rmtree(target, ignore_errors=True)
-    files, findings, cases, left_out = [], [], [], {}
+    files, findings, cases, left_out, units = [], [], [], {}, {}
     for code in RULES:
         kept, left = load_cases(code)
         left_out[code] = left
@@ -251,10 +244,13 @@ def fixtures() -> None:
                                           == sorted(map(_key, found))}
             cases.append(row)
             files.append(relative)
+            if not case.get("own"):
+                units[relative] = {"rules": [code]}
             findings += [{"rule": f["rule"], "path": relative, "line": f["line"], "column": f["column"]}
                          for f in found]
-    write_recording(HERE / "fixtures.expected.json",
-                    {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files}, findings)
+    write_expected_findings(HERE / "fixtures.expected.json",
+                    {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files,
+                     "units": dict(sorted(units.items()))}, findings)
     (HERE / "fixtures.cases.json").write_text(json.dumps(
         {"tool": TOOL, "version": common.TOOLS["sqlfluff"], "origin": ORIGIN, "portConfiguration": RULES,
          "leftOut": left_out, "cases": cases}, indent=1, ensure_ascii=False) + "\n")
@@ -266,45 +262,10 @@ def _key(finding: dict) -> tuple:
     return finding["rule"], finding["line"], finding["column"]
 
 
-def lint_corpus_file(job: tuple[str, str, str]) -> dict:
-    corpus, relative, dialect = job
-    raw = (common.corpus_dir(corpus) / relative).read_bytes()
-    if len(raw) > SQLFLUFF_MAX_BYTES:
-        return {"path": relative, "skipped": f"larger than {SQLFLUFF_MAX_BYTES} bytes"}
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return {"path": relative, "skipped": "not UTF-8"}
-    found, problems = lint(text, dialect)
-    if problems:
-        return {"path": relative, "skipped": problems[0][:200]}
-    return {"path": relative, "findings": found}
-
-
-def corpus(name: str, jobs: int) -> None:
-    common.check_pins(need_grammars=False)
-    units = [(name, path, dialect) for path, dialect in common.corpus_units(name)]
-    with concurrent.futures.ProcessPoolExecutor(jobs) as pool:
-        rows = list(pool.map(lint_corpus_file, units, chunksize=1))
-    skipped = sorted(row["path"] for row in rows if "skipped" in row)
-    findings = [{"rule": f["rule"], "path": row["path"], "line": f["line"], "column": f["column"]}
-                for row in rows for f in row.get("findings", [])]
-    declared = common.CORPORA[name]
-    write_recording(HERE / f"corpus-{name}.expected.json",
-                    {"kind": "corpus", "name": name, "repository": declared["repository"],
-                     "commit": declared["commit"], "rules": sorted(RULES), "skipped": skipped}, findings)
-    reasons = collections.Counter(row["skipped"].split(" ")[0] for row in rows if "skipped" in row)
-    print(f"{name}: {len(units)} files, {len(skipped)} skipped {dict(reasons)}, {len(findings)} findings "
-          f"{dict(collections.Counter(f['rule'] for f in findings))}", file=sys.stderr)
-
-
 def main() -> None:
     if sys.argv[1:2] == ["fixtures"]:
-        common.check_pins(need_grammars=False)
+        common.check_pins(need_grammars=False, corpora=("sqlfluff-dialects",))
         fixtures()
-    elif sys.argv[1:2] == ["corpus"]:
-        for name in sys.argv[2:] or T4_CORPORA:
-            corpus(name, jobs=8)
     else:
         raise SystemExit(__doc__)
 

@@ -19,7 +19,6 @@
       "reason": "Its only clause is a regex query over file.path, and the engine refuses suppress on a regex query, so /* eslint-disable unicorn/filename-case */ is not honoured."
     }
   ],
-  "corpora": [],
   "tools": [
     {
       "name": "eslint",
@@ -348,7 +347,7 @@
         "tool": "eslint",
         "rule": "no-loss-of-precision"
       },
-      "policy": "rules/eslint-no-loss-of-precision.json",
+      "policy": "candidates/rules/eslint-no-loss-of-precision.json",
       "capabilities": [
         "syntax",
         "value",
@@ -495,7 +494,7 @@
         "tool": "eslint",
         "rule": "no-prototype-builtins"
       },
-      "policy": "rules/eslint-no-prototype-builtins.json",
+      "policy": "candidates/rules/eslint-no-prototype-builtins.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -967,7 +966,7 @@
         "tool": "eslint",
         "rule": "dot-notation"
       },
-      "policy": "candidates/rules/eslint-dot-notation.json",
+      "policy": "rules/eslint-dot-notation.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1302,7 +1301,7 @@
         "tool": "eslint",
         "rule": "no-duplicate-imports"
       },
-      "policy": "candidates/rules/eslint-no-duplicate-imports.json",
+      "policy": "rules/eslint-no-duplicate-imports.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1350,7 +1349,7 @@
         "tool": "eslint",
         "rule": "no-extra-label"
       },
-      "policy": "candidates/rules/eslint-no-extra-label.json",
+      "policy": "rules/eslint-no-extra-label.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -1390,7 +1389,7 @@
         "tool": "eslint",
         "rule": "no-labels"
       },
-      "policy": "rules/eslint-no-labels.json",
+      "policy": "candidates/rules/eslint-no-labels.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1403,7 +1402,7 @@
         "tool": "eslint",
         "rule": "no-lonely-if"
       },
-      "policy": "candidates/rules/eslint-no-lonely-if.json",
+      "policy": "rules/eslint-no-lonely-if.json",
       "capabilities": [
         "syntax",
         "suppression"

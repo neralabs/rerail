@@ -2,10 +2,6 @@
   "pack": "rust",
   "family": "rust",
   "capabilities": ["syntax", "value", "scope", "suppression"],
-  "corpora": [
-    {"name": "ripgrep", "repository": "https://github.com/BurntSushi/ripgrep", "commit": "3fce3b5bb0236da2df6d99672afb8a719642eca7", "paths": ["."], "exclude": []},
-    {"name": "tokio", "repository": "https://github.com/tokio-rs/tokio", "commit": "b2636752450484955e7ad334bac678424d51bc4a", "paths": ["."], "exclude": []}
-  ],
   "tools": [
     { "name": "clippy", "version": "0.1.99" }
   ],

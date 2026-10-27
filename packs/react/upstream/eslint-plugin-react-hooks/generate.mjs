@@ -1,11 +1,10 @@
-// Recorder for the React pack's eslint-plugin-react-hooks rules (rerail/packs/react/conformance.json).
+// Generator for the React pack's eslint-plugin-react-hooks rules (rerail/packs/react/conformance.json).
 //
 // Pins: eslint 9.39.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-react 7.37.5, @typescript-eslint/parser 8.70.1,
 // typescript 5.9.3 (refuses any other); upstream facebook/react 1ddff43c41147b880c22eb363e07aade5a71c5d9 (the
-// published 7.1.1's gitHead); corpus excalidraw = excalidraw/excalidraw@ed10ac7dca7e40f3f4a31269b4bfba980d0db41e
-// (conformance.json).
+// published 7.1.1's gitHead).
 //
-// Usage: node generate.mjs [--tools <.rerail/tools/react>] [--corpora <.rerail/corpora/react>] [--no-corpora]
+// Usage: node generate.mjs [--tools <.rerail/tools/react>]
 //
 // 1. Copies the rules' upstream test files verbatim to tests/__tests__/.
 // 2. Executes each with the stubs below (ours, not upstream's): `eslint-v7`/`eslint-v9` RuleTesters that capture every
@@ -15,18 +14,17 @@
 //    reads is JSX, one only the @typescript-eslint runs read is TSX, and one only hermes-eslint reads (Flow component
 //    and hook syntax) is dropped.
 // 3. Writes Rerail's own cases (common.mjs `AUTHORED`) beside them and lists them in UPSTREAM.md. Runs the pinned
-//    plugins (common.mjs `config`) over every fixture file and each corpus.
+//    plugins (common.mjs `config`) over every fixture file.
 // 4. Writes ../../licenses/react/UPSTREAM.md and LICENSE.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertCommit } from "../../../../conformance/recorders/eslint-record.mjs";
-import { execute, finishFixtures, options, recordCorpora, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
+import { assertCommit } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { execute, finishFixtures, options, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react-hooks";
 const DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const argv = process.argv.slice(2);
-const { tools, corpora } = options(argv);
+const { tools } = options(process.argv.slice(2));
 const require = toolsRequire(tools);
 const upstream = join(tools, UPSTREAM[TOOL].checkout);
 assertCommit(upstream, UPSTREAM[TOOL].commit);
@@ -103,7 +101,3 @@ for (const { rule, file } of TESTS) {
 
 const result = await finishFixtures(require, TOOL, DIRECTORY, cases, tools);
 writeLicense(TOOL, upstream, copied, result.kept);
-if (!argv.includes("--no-corpora")) {
-  const summary = await recordCorpora(require, TOOL, DIRECTORY, corpora);
-  for (const entry of summary) console.log(`corpus ${entry.corpus}: ${entry.files} files, ${entry.skipped} skipped, ${entry.findings} findings`);
-}
