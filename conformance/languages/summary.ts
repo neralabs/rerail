@@ -78,19 +78,20 @@ export function ungatedRow(check: Check): BlockingRow {
 
 /**
  * Merge the pack reports' failures, the gated tool-packs' verdicts and the not-gated checks. A failure line of a shipped
- * rule some gated tool-pack judged is that rule's gate failure, so it is listed once, as the gate's.
+ * rule the gate failed is that rule's gate failure, so it is listed once, as the gate's. A failure line of a rule the
+ * gate passed stays: the report fails the job on it, so the summary must not read green.
  */
 export function summarize(packs: readonly PackFailures[], toolPacks: readonly ToolPackVerdict[], ungated: UngatedResult): Summary {
   const blocking: BlockingRow[] = [];
-  const gatedShipped = new Map<string, Set<string>>();
+  const gateFailed = new Map<string, Set<string>>();
   for (const verdict of toolPacks) {
-    const ids = gatedShipped.get(verdict.pack) ?? new Set<string>();
-    for (const rule of verdict.rules) if (rule.location === "shipped") ids.add(rule.id);
-    gatedShipped.set(verdict.pack, ids);
+    const ids = gateFailed.get(verdict.pack) ?? new Set<string>();
+    for (const rule of verdict.rules) if (rule.location === "shipped" && !rule.pass) ids.add(rule.id);
+    gateFailed.set(verdict.pack, ids);
   }
   for (const { pack, failures } of packs) {
-    const judged = [...(gatedShipped.get(pack) ?? [])];
-    for (const line of failures.filter((entry) => !judged.some((id) => namesRule(entry, id)))) {
+    const failed = [...(gateFailed.get(pack) ?? [])];
+    for (const line of failures.filter((entry) => !failed.some((id) => namesRule(entry, id)))) {
       blocking.push({ pack, rule: "-", stoppedAt: "Conformance", check: "report", why: line });
     }
   }

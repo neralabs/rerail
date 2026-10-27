@@ -69,7 +69,9 @@ function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
       detail: judged > 0 ? `n/a: no rename variants; samples are the held-out evidence (${judged} judged samples)` : "n/a: no rename variants and no samples: no held-out evidence",
     };
   }
-  if (renamed.units === 0) return { id, ok: true, detail: "n/a: no rename variant covers this rule" };
+  // n/a only when the variants hold nothing against the rule: `reportFailures` fails a shipped row on any FP, FN or
+  // engine failure on them, whether or not a variant unit covers the rule, and the gate must agree.
+  if (renamed.units === 0 && renamed.fp + renamed.fn + renamed.engineFailures === 0) return { id, ok: true, detail: "n/a: no rename variant covers this rule" };
   const notes = [
     ...(renamed.incomplete > 0 ? [`${renamed.incomplete} parse-induced source-incomplete read(s) on variants, not failing`] : []),
     ...(renamed.renamedAway > 0 ? [`${renamed.renamedAway} variant(s) lost every finding of the rule (renamed away)`] : []),

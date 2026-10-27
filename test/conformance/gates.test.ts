@@ -140,6 +140,17 @@ describe("the conformance report's errors", () => {
 });
 
 describe("the summary", () => {
+  it("keeps a report failure line of a shipped rule the gate passed, so a red job never reads green", async () => {
+    setUnits({ "clean.py": { rules: ["EX101"] } });
+    const { verdict } = await judge();
+    expect(verdict.rules[0]).toMatchObject({ id: "assert-used", pass: true });
+    const line = `assert-used (fixtures): 1 unexplained FP on rename variants, first {"path":"renamed/asserts.py","line":5,"column":5}`;
+    const summary = summarize([{ pack: "valid", failures: [line] }], [verdict], UNGATED);
+    expect(summary.blocking).toContainEqual({ pack: "valid", rule: "-", stoppedAt: "Conformance", check: "report", why: line });
+    expect(summary.pass).toBe(false);
+    expect(renderComment(summary)).not.toContain("Nothing blocks.");
+  });
+
   it("lists a shipped rule passing a check vacuously, without blocking, and the comment shows it", async () => {
     setUnits({ "clean.py": { rules: ["EX101"] } });
     const { verdict } = await judge();
