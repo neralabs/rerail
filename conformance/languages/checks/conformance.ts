@@ -18,7 +18,9 @@ export interface PackConformance {
   stale: Map<string, string[]>;
   /** The report's errors that name a rule (a document that does not compile, test data that does not cover it). */
   ruleErrors: Map<string, string[]>;
-  /** The report's errors that name no rule. */
+  /** The report's errors that name no rule but one tool (`fixtures <tool>: …`, `samples <tool>: …`), per tool. */
+  toolErrors: Map<string, string[]>;
+  /** The report's errors that name neither a rule nor a tool: they concern the whole pack. */
   errors: string[];
 }
 
@@ -31,13 +33,17 @@ export function conformanceOf(loaded: LoadedPack, report: T4Report): PackConform
   const stale = new Map<string, string[]>();
   for (const divergence of report.staleDivergences) add(stale, divergence.rule, `${divergence.path}:${divergence.line} (${divergence.kind})`);
   const ruleErrors = new Map<string, string[]>();
+  const toolErrors = new Map<string, string[]>();
   const errors: string[] = [];
+  const tools = loaded.pack.tools.map((tool) => tool.name);
   for (const error of report.errors) {
     const id = ids.find((candidate) => error.startsWith(`${candidate} `) || error.startsWith(`${candidate}:`));
-    if (id === undefined) errors.push(error);
-    else add(ruleErrors, id, error);
+    const tool = tools.find((name) => ["fixtures", SAMPLES_SOURCE].some((source) => error.startsWith(`${source} ${name}:`)));
+    if (id !== undefined) add(ruleErrors, id, error);
+    else if (tool !== undefined) add(toolErrors, tool, error);
+    else errors.push(error);
   }
-  return { rows: rowsOf("fixtures"), sampleRows: rowsOf(SAMPLES_SOURCE), stale, ruleErrors, errors };
+  return { rows: rowsOf("fixtures"), sampleRows: rowsOf(SAMPLES_SOURCE), stale, ruleErrors, toolErrors, errors };
 }
 
 const point = (value: { path: string; line: number; column?: number | undefined } | undefined) => (value === undefined ? "" : `, first ${value.path}:${value.line}${value.column === undefined ? "" : `:${value.column}`}`);
@@ -47,7 +53,10 @@ const FIX = "fix the rule, or declare the divergence in the pack's divergences.j
 /**
  * holds-under-rename: the rule scored on its tool's rename variants, apart from the originals. An unexplained FP or
  * FN, or an engine failure, on a variant fails it; parse-induced `source-incomplete` reads and variants the renaming
- * took every finding from are only reported. With no variant for the rule it is n/a, naming the held-out evidence left.
+ * took every finding from are only reported. When the renaming took every finding, the check holds vacuously: no
+ * finding survived to show the rule matches the construct rather than the cases' names or literals. That is reported
+ * as `vacuous`, not failed, while the renamer still rewrites the literals a rule may match; it blocks once the renamer
+ * keeps literals. With no variant for the rule it is n/a, naming the held-out evidence left.
  */
 function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
   const id = "holds-under-rename";
@@ -70,12 +79,16 @@ function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
     ...(disagrees ? [`${renamed.fp} unexplained FP${point(renamed.falsePositives[0])} and ${renamed.fn} unexplained FN${point(renamed.falseNegatives[0])} on rename variants: the rule matches the test cases' names or literals, not the construct`] : []),
     ...(renamed.engineFailures > 0 ? [`${renamed.engineFailures} engine failure(s) on rename variants`] : []),
   ];
+  const vacuous = problems.length === 0 && renamed.tp === 0 && renamed.renamedAway > 0;
   return {
     id,
     ok: problems.length === 0,
-    detail: problems.length === 0
-      ? `agrees with upstream on its ${renamed.units} rename variant unit(s) (${renamed.tp} true positive(s))${notes}`
-      : `${problems.join("; ")}${notes}; ${disagrees ? FIX : "fix the rule"}`,
+    ...(vacuous ? { vacuous: true as const } : {}),
+    detail: problems.length > 0
+      ? `${problems.join("; ")}${notes}; ${disagrees ? FIX : "fix the rule"}`
+      : vacuous
+        ? `vacuous: no finding of the rule survives on its ${renamed.units} rename variant unit(s)${notes}`
+        : `agrees with upstream on its ${renamed.units} rename variant unit(s) (${renamed.tp} true positive(s))${notes}`,
   };
 }
 

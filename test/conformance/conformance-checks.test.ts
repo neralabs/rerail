@@ -17,7 +17,7 @@ function row(rule: string, counts: Counts = {}, source = "fixtures"): RuleRow {
 }
 
 function conformance(rows: RuleRow[], extra: Partial<PackConformance> = {}): PackConformance {
-  return { rows: new Map(rows.map((entry) => [entry.rule, entry])), sampleRows: new Map(), stale: new Map(), ruleErrors: new Map(), errors: [], ...extra };
+  return { rows: new Map(rows.map((entry) => [entry.rule, entry])), sampleRows: new Map(), stale: new Map(), ruleErrors: new Map(), toolErrors: new Map(), errors: [], ...extra };
 }
 
 const failing = (pack: PackConformance, id: string) => conformanceChecks(pack, id).filter((check) => !check.ok).map((check) => check.id);
@@ -87,4 +87,18 @@ test("holds-under-rename: n/a, not agreement, when the tool has rename variants 
   const none: RuleRow["renamed"] = { units: 0, tp: 0, fp: 0, fn: 0, falsePositives: [], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 0 };
   const check = conformanceChecks(conformance([row("a", { renamed: none })]), "a").find((entry) => entry.id === "holds-under-rename");
   assert.deepEqual(check, { id: "holds-under-rename", ok: true, detail: "n/a: no rename variant covers this rule" });
+});
+
+test("holds-under-rename: vacuous, reported and not failed, when the renaming took every finding of the rule", () => {
+  const away: RuleRow["renamed"] = { units: 2, tp: 0, fp: 0, fn: 0, falsePositives: [], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 2 };
+  const check = conformanceChecks(conformance([row("a", { renamed: away })]), "a").find((entry) => entry.id === "holds-under-rename");
+  assert.deepEqual(check, {
+    id: "holds-under-rename",
+    ok: true,
+    vacuous: true,
+    detail: "vacuous: no finding of the rule survives on its 2 rename variant unit(s); 2 variant(s) lost every finding of the rule (renamed away)",
+  });
+  // One surviving true positive is evidence: the check is no longer vacuous.
+  const survived = conformanceChecks(conformance([row("a", { renamed: { ...away, tp: 1, renamedAway: 1 } })]), "a").find((entry) => entry.id === "holds-under-rename");
+  assert.equal(survived?.vacuous, undefined);
 });

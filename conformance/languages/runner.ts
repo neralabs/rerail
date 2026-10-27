@@ -213,6 +213,8 @@ interface CompiledRule {
   rule: PackRule;
   /** The code rule document's `id`, which every violation and failure of the rule carries as `ruleId`. */
   policyId: string;
+  /** The code rule document's text, for its applicability probe (`applicabilityProbe`). */
+  document: string;
   compiled: NativeCompiledCodeRuleDsl;
 }
 
@@ -237,7 +239,7 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
         if (clause.violation !== undefined && clause.violation.code !== rule.upstream.rule)
           throw new Error(`clause ${clause.id} reports code ${clause.violation.code}, not the upstream rule ${rule.upstream.rule}`);
       }
-      return [{ rule, policyId: document.id, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
+      return [{ rule, policyId: document.id, document: text, compiled: runtime.compile(text, "json", capabilitiesJson()) }];
     } catch (error) {
       errors.push(`${rule.id}: ${relative(RERAIL_ROOT, path)}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
@@ -315,9 +317,62 @@ interface SamplesRun {
   actual: Map<string, RuleActual>;
   /** Per pack rule id, the samples judged for it; a rule no sample has a key for has no samples row. */
   judged: Map<string, JudgedSample[]>;
+  /** Per pack rule id, the clean samples its scope and its clauses' `file` conditions admit (`applicabilityProbe`). */
+  admitted: Map<string, ReadonlySet<string>>;
   /** Rules whose tool's samples tree is missing: the run's errors name each, and none of their divergences is stale. */
   unscored: ReadonlySet<string>;
   summary: SourceSummary;
+}
+
+type JsonObject = Record<string, unknown>;
+const isJsonObject = (value: unknown): value is JsonObject => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Matches a file's root node alone, whatever its grammar: the one node inside no other. */
+const ROOT_NODE = { not: { inside: { regex: "[\\s\\S]" } } };
+
+/**
+ * The applicability probe of a code rule document: the same document (scope, options) whose AST clauses each match
+ * only the file's root node, keeping the clause's language and `file` condition. It reports a file exactly when the
+ * rule's scope and some clause's `file` condition admit it, whatever the file holds. Undefined when the document has
+ * no AST clause: its scope alone decides then, and the rule's own evaluation applies it.
+ */
+export function applicabilityProbe(documentText: string): string | undefined {
+  const document = JSON.parse(documentText) as JsonObject;
+  const clauses = Array.isArray(document.clauses) ? document.clauses.filter(isJsonObject) : [];
+  const probes = clauses.flatMap((clause, index) => {
+    const body = isJsonObject(clause.forbid) ? clause.forbid : isJsonObject(clause.require) ? clause.require : undefined;
+    if (!isJsonObject(body?.ast)) return [];
+    const ast = body.ast;
+    // A clause chosen by a document option (`$option`) applies where any of its cases does.
+    const variants = ast.$option !== undefined && isJsonObject(ast.cases) ? [...Object.values(ast.cases), ast.default].filter(isJsonObject) : [ast];
+    return variants.flatMap((variant, position) => {
+      if (typeof variant.language !== "string") return [];
+      const kept: JsonObject = { language: variant.language, rule: ROOT_NODE };
+      for (const key of ["file", "languageOptions", "embedded"] as const) if (variant[key] !== undefined) kept[key] = variant[key];
+      return [{ id: `applies-${index}-${position}`, forbid: { ast: kept }, violation: { anchor: "witness.span", code: "APPLIES-PROBE", message: "the rule applies to this file" } }];
+    });
+  });
+  if (probes.length === 0) return undefined;
+  // Clauses that only define (options, utilities) stay: the probe's options resolve as the rule's do.
+  const defining = clauses.filter(clause => clause.forbid === undefined && clause.require === undefined);
+  return JSON.stringify({ ...document, clauses: [...defining, ...probes] });
+}
+
+/** The paths of `files` the rule's applicability probe reports: where its scope and `file` conditions admit it. */
+async function admittedPaths(entry: CompiledRule, files: readonly SourceFile[], judged: readonly string[], errors: string[]): Promise<ReadonlySet<string>> {
+  const probe = applicabilityProbe(entry.document);
+  if (probe === undefined) return new Set(judged);
+  let compiled: NativeCompiledCodeRuleDsl;
+  try {
+    compiled = loadNativeBinding().CodeRuleDslRuntime.compile(probe, "json", capabilitiesJson());
+  } catch (error) {
+    // Fail closed: no clean sample counts as silence for a rule whose applicability cannot be asked.
+    errors.push(`${entry.rule.id} (${SAMPLES_SOURCE}): its applicability probe does not compile: ${error instanceof Error ? error.message : String(error)}`);
+    return new Set();
+  }
+  const evaluation = await evaluateWorkspace([compiled], files);
+  const reported = new Set(evaluation.violations.flatMap(violation => (violation.path === undefined ? [] : [violation.path])));
+  return new Set(judged.filter(path => reported.has(path)));
 }
 
 /** Collects each rule's violations and failures; `syntaxErrors` holds the probe-confirmed syntax-error files. */
@@ -553,6 +608,7 @@ async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[],
   const languages = familyLanguages(loaded);
   const actual: SamplesRun["actual"] = new Map();
   const judged: SamplesRun["judged"] = new Map();
+  const admitted: SamplesRun["admitted"] = new Map();
   const unscored = new Set<string>();
   const evaluated = new Map<string, number>();
   const judgedPaths = new Set<string>();
@@ -602,6 +658,8 @@ async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[],
       evaluationMs += evaluation.ms;
       for (const [path, bytes] of sources) evaluated.set(path, bytes.length);
       for (const file of files) judgedPaths.add(file.path);
+      const clean = labelled.filter(sample => sample.expected[entry.rule.id]!.length === 0).map(sample => sample.path);
+      if (clean.length > 0) admitted.set(entry.rule.id, await admittedPaths(entry, all, clean, errors));
     }
   }
   const summary: SourceSummary = {
@@ -612,7 +670,7 @@ async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[],
     syntaxErrorFiles: syntaxErrorSummary(actual),
     evaluationMs: Math.round(evaluationMs),
   };
-  return { actual, judged, unscored, summary };
+  return { actual, judged, admitted, unscored, summary };
 }
 
 /**
@@ -818,11 +876,13 @@ function samplesRow(entry: CompiledRule, run: SamplesRun, loaded: LoadedPack, us
   const applicable = loaded.divergences.filter(divergence => divergence.rule === rule.id && (divergence.source === undefined || divergence.source === SAMPLES_SOURCE));
   const score = scoreSamples(samples, actual, applicable);
   const readInPart = new Set([...rerail.partialPaths, ...rerail.incompletePaths.keys()].filter(path => judged.has(path)));
-  // A clean sample is stays-silent evidence only where the rule read it in full and finished: no report, no read in
-  // part, no engine failure there, and no failure naming no file, which leaves every file's answer in doubt.
+  // A clean sample is stays-silent evidence only where the rule applies and read it in full and finished: its scope and
+  // a clause's `file` condition admit the file (silence where the rule never looks proves nothing), no report, no read
+  // in part, no engine failure there, and no failure naming no file, which leaves every file's answer in doubt.
   const finished = rerail.pathlessEngineFailures + rerail.pathlessIncomplete === 0;
+  const admitted = run.admitted.get(rule.id) ?? new Set<string>();
   const silent = clean.filter(
-    ({ path }) => finished && !reported.has(path) && !rerail.syntaxErrorFiles.has(path) && !readInPart.has(path) && !rerail.engineFailurePaths.has(path),
+    ({ path }) => finished && admitted.has(path) && !reported.has(path) && !rerail.syntaxErrorFiles.has(path) && !readInPart.has(path) && !rerail.engineFailurePaths.has(path),
   );
   return rowOf(entry, loaded, SAMPLES_SOURCE, {
     score,

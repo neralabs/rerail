@@ -131,7 +131,9 @@ export function judgeToolPack(root: string, engine: Engine, loaded: LoadedPack, 
         ? `conformance.json pins ${tool} ${pinned}, as gates.yaml's upstream.version does`
         : `conformance.json pins ${tool} ${pinned ?? "(not listed)"}, but gates.yaml's upstream.version is ${manifest.upstream.version}`,
     });
-    checks.push({ id: "conformance-runs", ok: conformance.errors.length === 0, detail: conformance.errors.length === 0 ? "the pack's conformance check runs without errors" : conformance.errors.slice(0, 3).join("; ") });
+    // An error naming another tool of the pack (its fixtures or samples) is that tool-pack's, not this one's.
+    const runErrors = [...conformance.errors, ...(conformance.toolErrors.get(tool) ?? [])];
+    checks.push({ id: "conformance-runs", ok: runErrors.length === 0, detail: runErrors.length === 0 ? "the pack's conformance check runs without errors" : runErrors.slice(0, 3).join("; ") });
     const blockedBy = failing(checks);
 
     const rules = mine.map(({ path, location }): RuleVerdict => {

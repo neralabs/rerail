@@ -8,6 +8,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { cell, renderComment } from "./comment.js";
+import type { Check } from "./checks/check.js";
 import type { UngatedResult } from "./checks/ungated.js";
 import { BLOCKING_GATES, type RuleVerdict, type ToolPackVerdict } from "./gates.js";
 
@@ -45,6 +46,8 @@ export interface Summary {
   /** Candidates that pass every gate: the signal to promote them into rules/ (a reviewer still decides). */
   promotable: { toolPack: string; rule: string; upstreamRule: string; startsOn: boolean; startReason: string }[];
   onOff: { pack: string; rule: string; packJson: boolean; upstreamStatus: boolean; reason: string }[];
+  /** Shipped rules that pass a check with no evidence behind it (`Check.vacuous`): reported, not blocking. */
+  vacuous: { toolPack: string; rule: string; check: string; why: string }[];
   toolPacks: { toolPack: string; shipped: string; candidates: string; failedGate: Record<string, number>; checks: { id: string; ok: boolean; detail: string }[] }[];
   pass: boolean;
 }
@@ -59,6 +62,18 @@ const namesRule = (line: string, id: string): boolean => line.startsWith(`${id} 
 
 function failureRow(toolPack: string, rule: RuleVerdict): BlockingRow {
   return { pack: toolPack, rule: rule.id, stoppedAt: GATE_TITLES[rule.stoppedAt!], check: rule.failure!.check, why: rule.failure!.why };
+}
+
+/**
+ * A failing not-gated or pending check as a blocking row. Its id is `<kind>:<subject>`: the subject names a pack
+ * (`not-gated:`, `frozen-list:`), a tool-pack (`pending:`), or, for `shrinks:`, a list's path, which goes in the why.
+ */
+export function ungatedRow(check: Check): BlockingRow {
+  const separator = check.id.indexOf(":");
+  const kind = separator < 0 ? check.id : check.id.slice(0, separator);
+  const subject = separator < 0 ? "" : check.id.slice(separator + 1);
+  if (kind === "shrinks") return { pack: "-", rule: "-", stoppedAt: "Not gated / pending", check: kind, why: `${subject}: ${check.detail}` };
+  return { pack: subject, rule: "-", stoppedAt: "Not gated / pending", check: kind, why: check.detail };
 }
 
 /**
@@ -102,7 +117,7 @@ export function summarize(packs: readonly PackFailures[], toolPacks: readonly To
       candidateRows.push({ toolPack: verdict.toolPack, ...(rule.pass ? { pack: verdict.pack, rule: rule.id, stoppedAt: "passes", check: "-", why: "-" } : failureRow(verdict.toolPack, rule)) });
     }
   }
-  for (const check of ungated.checks.filter((item) => !item.ok)) blocking.push({ pack: check.id.split(":")[1] ?? "", rule: "-", stoppedAt: "Not gated / pending", check: check.id.split(":")[0]!, why: check.detail });
+  for (const check of ungated.checks.filter((item) => !item.ok)) blocking.push(ungatedRow(check));
 
   const rules = toolPacks.flatMap((verdict) => verdict.rules);
   const count = (location: RuleVerdict["location"]) => ({ rules: rules.filter((rule) => rule.location === location).length, pass: rules.filter((rule) => rule.location === location && rule.pass).length });
@@ -119,6 +134,9 @@ export function summarize(packs: readonly PackFailures[], toolPacks: readonly To
     onOff: toolPacks.flatMap((verdict) => verdict.rules
       .filter((rule) => rule.location === "shipped" && rule.on !== null && rule.on !== rule.defaultOn)
       .map((rule) => ({ pack: verdict.toolPack, rule: rule.id, packJson: rule.on!, upstreamStatus: rule.defaultOn, reason: rule.defaultOnReason }))),
+    vacuous: toolPacks.flatMap((verdict) => verdict.rules
+      .filter((rule) => rule.location === "shipped")
+      .flatMap((rule) => rule.gates.conformance.filter((check) => check.vacuous === true).map((check) => ({ toolPack: verdict.toolPack, rule: rule.id, check: check.id, why: check.detail })))),
     toolPacks: toolPacks.map((verdict) => {
       const of = (location: RuleVerdict["location"]) => verdict.rules.filter((rule) => rule.location === location);
       return {
@@ -163,6 +181,14 @@ export function renderSummary(summary: Summary): string {
     "## On or off",
     "",
     ...(summary.onOff.length === 0 ? ["Every shipped rule's pack.json on agrees with upstream-status."] : table(["Tool-pack", "Rule", "pack.json", "upstream-status", "Reason"], summary.onOff.map((row) => [row.pack, row.rule, row.packJson ? "on" : "off", row.upstreamStatus ? "on" : "off", row.reason]))),
+    "",
+    "## Passing without evidence",
+    "",
+    ...(summary.vacuous.length === 0 ? ["None."] : [
+      `${summary.vacuous.length} shipped rule check(s) pass with no evidence behind them: reported, not blocking.`,
+      "",
+      ...table(["Tool-pack", "Rule", "Check", "Why"], summary.vacuous.map((row) => [row.toolPack, row.rule, row.check, row.why])),
+    ]),
     "",
     "## Not gated",
     "",

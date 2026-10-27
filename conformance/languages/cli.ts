@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ProcessCommandRunner } from "../process.js";
 import { loadEngine } from "./checks/engine.js";
@@ -97,8 +98,13 @@ async function gate(scored: ReadonlyMap<string, { loaded: LoadedPack; report: T4
   return summary.pass;
 }
 
-async function main(): Promise<void> {
+/**
+ * The command line, checked: the pack directories to score and the options. `--check` judges the packs under the
+ * repository's packs/ (`gate` walks RERAIL_ROOT), so it takes no `--pack-dir` outside them.
+ */
+export function parseCli(args: readonly string[]) {
   const { values } = parseArgs({
+    args: [...args],
     options: {
       pack: { type: "string" },
       "pack-dir": { type: "string" },
@@ -113,10 +119,8 @@ async function main(): Promise<void> {
       help: { type: "boolean", default: false },
     },
   });
-  if (values.help) {
-    console.log(USAGE);
-    return;
-  }
+  if (values.help) return { values, directories: [] };
+  if (values.check && values["pack-dir"] !== undefined) throw new Error("--check judges the repository's packs/; it does not take --pack-dir (use --pack <name>)");
   const directories =
     values["pack-dir"] !== undefined
       ? [resolve(values["pack-dir"])]
@@ -129,9 +133,17 @@ async function main(): Promise<void> {
   if (values.check && values.write) throw new Error("--check runs the fixtures and the samples; it does not take --write");
   if (values.check && values.rule !== undefined) throw new Error("--check judges every rule; it does not take --rule");
   if (!values.check && (values.base !== undefined || values.out !== undefined)) throw new Error("--base and --out go with --check");
+  return { values, directories };
+}
+
+async function main(): Promise<void> {
+  const { values, directories } = parseCli(process.argv.slice(2));
+  if (values.help) {
+    console.log(USAGE);
+    return;
+  }
   // With no source chosen, every source; --check chooses every source too.
   const everySource = values.check || (!values.fixtures && !values.samples);
-
   let failed = false;
   const scored = new Map<string, { loaded: LoadedPack; report: T4Report }>();
   for (const directory of directories) {
@@ -156,7 +168,9 @@ async function main(): Promise<void> {
   if (failed) process.exitCode = 1;
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 2;
-});
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 2;
+  });
+}

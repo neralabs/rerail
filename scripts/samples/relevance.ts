@@ -9,7 +9,8 @@
  * to JavaScript, so the builder asks the engine the same question through a relaxed query: the rule's document with
  * each AST clause cut down to the node it anchors on (`kind`, `pattern`, the `matches` utilities they name, and the
  * `any`/`all`/`$option` combinations of those), dropping every condition on the node (`has`, `inside`, `not`, `regex`,
- * `resolves`, `when`, `constraints`, `file`, ...). A file where the relaxed query reports a node has a candidate node
+ * `resolves`, `when`, `constraints`, ...). The clause's `file` condition stays: a file the rule never looks at is no
+ * near miss. A file where the relaxed query reports a node has a candidate node
  * for the rule. A clause whose root names no node of its own anchors on the node its first relation names (`inside`,
  * `has`, `follows`, `precedes`), which the file must hold for the clause to match. A text (`regex`) clause, or a
  * clause that anchors on nothing at all, selects no candidate: the rule then keeps only its smallest clean file.
@@ -116,6 +117,7 @@ export function relaxedDocument(document: Json): Json | undefined {
       const kept: Json = { language: variant.language, rule };
       if (variant.languageOptions !== undefined) kept.languageOptions = variant.languageOptions;
       if (variant.embedded !== undefined) kept.embedded = variant.embedded;
+      if (variant.file !== undefined) kept.file = variant.file;
       return [{ id: `candidate-${index}-${position}`, forbid: { ast: kept }, violation: PROBE_VIOLATION }];
     });
   });
