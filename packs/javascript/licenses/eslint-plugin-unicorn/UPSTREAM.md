@@ -117,7 +117,6 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/097/test/foo/fooBar.testUtils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/098/test/foo/.testUtils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/099/test/foo/foo_bar.Test.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/0bc018802648.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/100/test/foo/foo_bar.Test_Utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/101/test/foo/.Test_Utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/102/test/foo/foo-bar.Test.js` | `test/filename-case.js` | derived |
@@ -129,7 +128,6 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/108/src/foo-bar/file.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/109/src/$userId/page.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/110/src/FooBar/file.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/110d8c7ba808.vue` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/111/src/meta/BadName.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/112/work/Src/fooBar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/113/src/foo/foo_bar.js` | `test/filename-case.js` | derived |
@@ -139,7 +137,6 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/117/src/foo/Article.ts` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/118/Test/Foo/fooBar.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/119/Test/Foo/foo_bar.test.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/11d9c8e15dc7.vue` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/120/Test/Foo/foo-bar.test-utils.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/121/Src/Foo/PageFAQ.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/122/Src/Foo/FAQ-Page.js` | `test/filename-case.js` | derived |
@@ -179,29 +176,6 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/156/src/foo-js/.spec.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/157/foo.SPEC.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/filename-case/158/.SPEC.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/2d26e87a0a23.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/33f30d1bf742.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/39b635d302fe.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/3e9dd61f8fa5.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/437dfa0cae52.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/450fdf6100cf.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/4ebfa70f8a0b.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/53fba3fcf7dd.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/602748334ecf.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/603fe13a0b05` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/60588a1a1ca8.mjs` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/72c9766d8470.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/8bb73935d039.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/8c46ea638bb7.tsx` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/8e49ed877feb.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/97a4a593102b` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/a7e0a6633b8a.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/b261ff7fac00.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/b66dfd152690.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/b69aa47eecea.vue` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/bb9f2aa9a984.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/bf6345e9bb57.js` | `test/filename-case.js` | derived |
-| `upstream/eslint-plugin-unicorn/fixtures/filename-case/c125bff6c234.js` | `test/filename-case.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/001.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/002.js` | `test/no-null.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/no-null/003.js` | `test/no-null.js` | derived |
@@ -325,6 +299,112 @@ Paths are relative to the pack directory, `packs/javascript/`.
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/063.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived |
 | `upstream/eslint-plugin-unicorn/fixtures/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/095/src/foo/foo_bar.js` | `test/filename-case.js` | derived (`fixtures/filename-case/095/src/foo/foo_bar.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/113/src/foo/foo_bar.js` | `test/filename-case.js` | derived (`fixtures/filename-case/113/src/foo/foo_bar.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/153.js` | `test/filename-case.js` | derived (`fixtures/filename-case/153.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/154/src/foo-js/bar.js` | `test/filename-case.js` | derived (`fixtures/filename-case/154/src/foo-js/bar.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/155/src/foo-js/bar.spec.js` | `test/filename-case.js` | derived (`fixtures/filename-case/155/src/foo-js/bar.spec.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/156/src/foo-js/.spec.js` | `test/filename-case.js` | derived (`fixtures/filename-case/156/src/foo-js/.spec.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/157/foo.SPEC.js` | `test/filename-case.js` | derived (`fixtures/filename-case/157/foo.SPEC.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/filename-case/158/.SPEC.js` | `test/filename-case.js` | derived (`fixtures/filename-case/158/.SPEC.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/001.js` | `test/no-null.js` | derived (`fixtures/no-null/001.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/003.js` | `test/no-null.js` | derived (`fixtures/no-null/003.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/004.js` | `test/no-null.js` | derived (`fixtures/no-null/004.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/005.js` | `test/no-null.js` | derived (`fixtures/no-null/005.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/006.js` | `test/no-null.js` | derived (`fixtures/no-null/006.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/008.js` | `test/no-null.js` | derived (`fixtures/no-null/008.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/012.js` | `test/no-null.js` | derived (`fixtures/no-null/012.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/013.js` | `test/no-null.js` | derived (`fixtures/no-null/013.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/014.js` | `test/no-null.js` | derived (`fixtures/no-null/014.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/015.js` | `test/no-null.js` | derived (`fixtures/no-null/015.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/016.js` | `test/no-null.js` | derived (`fixtures/no-null/016.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/017.js` | `test/no-null.js` | derived (`fixtures/no-null/017.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/018.js` | `test/no-null.js` | derived (`fixtures/no-null/018.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/019.js` | `test/no-null.js` | derived (`fixtures/no-null/019.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/020.js` | `test/no-null.js` | derived (`fixtures/no-null/020.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/021.js` | `test/no-null.js` | derived (`fixtures/no-null/021.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/022.js` | `test/no-null.js` | derived (`fixtures/no-null/022.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/023.js` | `test/no-null.js` | derived (`fixtures/no-null/023.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/024.js` | `test/no-null.js` | derived (`fixtures/no-null/024.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/025.js` | `test/no-null.js` | derived (`fixtures/no-null/025.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/026.js` | `test/no-null.js` | derived (`fixtures/no-null/026.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/027.js` | `test/no-null.js` | derived (`fixtures/no-null/027.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/028.js` | `test/no-null.js` | derived (`fixtures/no-null/028.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/029.js` | `test/no-null.js` | derived (`fixtures/no-null/029.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/030.js` | `test/no-null.js` | derived (`fixtures/no-null/030.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/031.js` | `test/no-null.js` | derived (`fixtures/no-null/031.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/032.js` | `test/no-null.js` | derived (`fixtures/no-null/032.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/033.js` | `test/no-null.js` | derived (`fixtures/no-null/033.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/034.js` | `test/no-null.js` | derived (`fixtures/no-null/034.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/035.js` | `test/no-null.js` | derived (`fixtures/no-null/035.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/036.js` | `test/no-null.js` | derived (`fixtures/no-null/036.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/037.js` | `test/no-null.js` | derived (`fixtures/no-null/037.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/038.js` | `test/no-null.js` | derived (`fixtures/no-null/038.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/040.js` | `test/no-null.js` | derived (`fixtures/no-null/040.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/042.js` | `test/no-null.js` | derived (`fixtures/no-null/042.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/044.js` | `test/no-null.js` | derived (`fixtures/no-null/044.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/046.js` | `test/no-null.js` | derived (`fixtures/no-null/046.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/048.js` | `test/no-null.js` | derived (`fixtures/no-null/048.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/049.js` | `test/no-null.js` | derived (`fixtures/no-null/049.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/050.js` | `test/no-null.js` | derived (`fixtures/no-null/050.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/051.js` | `test/no-null.js` | derived (`fixtures/no-null/051.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/053.js` | `test/no-null.js` | derived (`fixtures/no-null/053.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/054.js` | `test/no-null.js` | derived (`fixtures/no-null/054.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/055.js` | `test/no-null.js` | derived (`fixtures/no-null/055.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/056.js` | `test/no-null.js` | derived (`fixtures/no-null/056.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/057.js` | `test/no-null.js` | derived (`fixtures/no-null/057.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/no-null/058.js` | `test/no-null.js` | derived (`fixtures/no-null/058.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/001.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/001.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/002.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/002.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/003.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/003.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/004.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/004.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/005.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/005.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/006.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/006.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/007.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/007.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/017.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/017.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/018.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/018.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/020.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/020.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/021.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/021.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/022.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/022.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/024.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/024.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/025.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/025.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/026.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/026.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/027.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/027.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/028.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/028.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/029.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/029.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/033.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/033.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/034.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/034.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/035.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/035.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/036.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/036.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/037.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/037.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/038.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/038.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/039.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/039.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/040.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/040.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/041.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/041.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/042.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/042.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/043.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/043.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/044.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/044.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/045.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/045.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/046.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/046.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/047.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/047.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/048.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/048.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/049.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/049.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/050.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/050.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/051.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/051.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/052.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/052.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/053.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/053.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/054.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/054.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/055.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/055.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/056.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/056.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/057.js` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/057.js` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/058.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/058.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/059.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/059.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/060.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/060.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/061.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/061.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/062.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/062.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/063.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/063.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/064.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/064.ts` with its names and literals renamed) |
+| `upstream/eslint-plugin-unicorn/fixtures/renamed/prefer-node-protocol/065.ts` | `test/prefer-node-protocol.js` | derived (`fixtures/prefer-node-protocol/065.ts` with its names and literals renamed) |
 
 > `recording.tar.zst` is a port readiness recording, and no file of this pack, so it is recorded here rather than in the
 > table above: the tool-pack's `recording.lock` names it by its sha256, and the bytes are an object in S3, not a file in
