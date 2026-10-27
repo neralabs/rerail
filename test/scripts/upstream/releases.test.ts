@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 import {
   checkUpstreamReleases,
   eslintPackage,
@@ -124,7 +124,6 @@ popularity:
   evidence:
     - a fake upstream
 rules: {}
-known_gaps: []
 `;
 }
 
@@ -150,7 +149,6 @@ popularity:
   evidence:
     - a fake upstream
 rules: {}
-known_gaps: []
 `;
 
 /**
@@ -364,7 +362,7 @@ test("gates.yaml and the runtime disagreeing about the pin is reported, as is a 
   const { code, stdout } = await nightly(root, releasing(root, {}));
   assert.equal(code, 0, stdout);
   assert.match(stdout, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.4 \| current \| pins disagree \|$/mu);
-  assert.match(stdout, /gates\.yaml upstream\.version is 1\.9\.4 but conformance\/recorders\/port-readiness\/runtimes\/bandit-1\.9\.4\/pyproject\.toml pins bandit 1\.9\.3/u);
+  assert.match(stdout, /gates\.yaml upstream\.version is 1\.9\.4 but scripts\/pack-data\/runtimes\/bandit-1\.9\.4\/pyproject\.toml pins bandit 1\.9\.3/u);
   assert.match(stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit pins disagree/mu);
   assert.match(stdout, /^1 of 2 upstreams need a maintainer \(pins that disagree, or a registry that cannot be read\):$/mu);
 
@@ -377,7 +375,7 @@ test("gates.yaml and the runtime disagreeing about the pin is reported, as is a 
   roots.push(missing);
   const unread = await nightly(missing, releasing(missing, {}));
   assert.equal(unread.code, 0, unread.stdout);
-  assert.match(unread.stdout, /`demo\/bandit`: conformance\/recorders\/port-readiness\/runtimes\/bandit-1\.9\.4\/pyproject\.toml cannot be read/u);
+  assert.match(unread.stdout, /`demo\/bandit`: scripts\/pack-data\/runtimes\/bandit-1\.9\.4\/pyproject\.toml cannot be read/u);
 });
 
 test("a registry that cannot be read is a warning, not a pass", async () => {

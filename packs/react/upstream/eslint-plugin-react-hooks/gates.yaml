@@ -35,7 +35,6 @@ rules:
   "react-hooks/rules-of-hooks":
     deprecated: null
     recommended: { config: "flat.recommended", options: [] }
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Pack precondition: packages/eslint-plugin-react-hooks/package.json at the pinned tag says 7.0.0, because React stamps each
 #   package's published version from ReactVersions.js ('eslint-plugin-react-hooks': '7.1.1') when it builds.
@@ -82,48 +81,6 @@ known_gaps: []
 #   the languages of its @ plugin), which 9.0.0's does not; the inventory's probe found byte-identical expected answers
 #   on 9.0.0 and 9.39.5.
 eslint:
-  # The environment the pack is linted in, decided by the team on 2026-10-09 (docs/decisions/eslint-test-globals.md):
-  # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
-  # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
-  # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
-  # upstream's test cases; its plugins, rules and settings are not the pack's. A test case's own parser
-  # and globals give way to them.
-  environment:
-    package: eslint-config-next
-    version: 16.3.8
-    runtime: eslint-config-next-16.3.8
-    source:
-      repository: https://github.com/vercel/next.js
-      commit: b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6
-      path: packages/eslint-config-next
-  plugin:
-    package: eslint-plugin-react-hooks
-    namespace: react-hooks
-  eslint_package: eslint-v9
-  # React publishes a Rollup bundle (cjs/eslint-plugin-react-hooks.*.js) of src/ and the React Compiler.
   release:
     tag: eslint-plugin-react-hooks@7.1.1
-    path: packages/eslint-plugin-react-hooks/src
     installed: eslint-plugin-react-hooks
-    verbatim: false
-    default_export: true
-    version_file: ReactVersions.js
-  implementation: packages/eslint-plugin-react-hooks/src/rules/{Rule}.ts
-  tests: ["packages/eslint-plugin-react-hooks/__tests__/ESLint*-test.js"]
-  test_cwd: packages/eslint-plugin-react-hooks
-  helpers: []
-  checkout:
-    - "/packages/eslint-plugin-react-hooks/"
-    - "/babel.config.js"
-    - "/babel.config-ts.js"
-    - "/ReactVersions.js"
-    - "/LICENSE"
-    - "/package.json"
-  parsers:
-    eslint-config-next: javascript
-    "@babel/eslint-parser": javascript
-    hermes-eslint: javascript
-    "@typescript-eslint/parser-v2": typescript
-    "@typescript-eslint/parser-v3": typescript
-    "@typescript-eslint/parser-v4": typescript
-    "@typescript-eslint/parser-v5": typescript

@@ -46,10 +46,7 @@ export const RULES = {
 };
 export const ALL_RULES = Object.values(RULES).flat();
 
-/**
- * The upstream checkouts the fixtures are extracted from, at the pinned commits. `derived` ends the licence record's
- * sentence on the `derived` rows the port readiness recorder adds: how upstream's test helpers build the case it copies.
- */
+/** The upstream checkouts the fixtures are extracted from, at the pinned commits. */
 export const UPSTREAM = {
   "eslint-plugin-react": {
     title: "eslint-plugin-react 7.37.5",
@@ -59,7 +56,6 @@ export const UPSTREAM = {
     checkout: "upstream-eslint-plugin-react",
     project: "eslint-plugin-react",
     license: "MIT (Copyright (c) 2014 Yannick Croissant)",
-    derived: ": `tests/helpers/parsers.js` copies each case once per parser and appends a `// features: [...], parser: ...` comment to its code",
   },
   "eslint-plugin-react-hooks": {
     title: "eslint-plugin-react-hooks 7.1.1",
@@ -69,7 +65,6 @@ export const UPSTREAM = {
     checkout: "upstream-react",
     project: "react",
     license: "MIT (Copyright (c) Meta Platforms, Inc. and affiliates.)",
-    derived: "; it is named by the sha256 of its code",
   },
 };
 
@@ -319,7 +314,7 @@ Upstream: [${meta.repository.replace("https://github.com/", "")}](${meta.reposit
 
 The files listed below are the upstream tests of the rules the React pack records (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the recordings they write by running the pinned plugin. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them.
 
-Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`. A \`derived\` row is a case's \`code\` that the port readiness gates' recorder (\`npm run port-readiness:record\`) copied from that upstream test file (at upstream's repository path), as upstream's own test helpers build the case${meta.derived}.
+Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`. A \`derived\` row is a rename variant of the extracted case it names.
 
 | File | Upstream path | Copy |
 |---|---|---|

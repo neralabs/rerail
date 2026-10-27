@@ -12,7 +12,7 @@
  * A gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream in several places, all moved together:
  * - gates.yaml's `upstream.version` and `upstream.commit`, the commit being the one the release's tag names on GitHub
  *   (an annotated tag is followed to its commit), and an ESLint upstream's `eslint.release.tag`;
- * - the runtime's pin file under conformance/recorders/port-readiness/runtimes/<upstream.runtime>/ (package.json,
+ * - the runtime's pin file under scripts/pack-data/runtimes/<upstream.runtime>/ (package.json,
  *   pyproject.toml or composer.json): upstream's package, and on npm every package of the same scope pinned at the same
  *   release (typescript-eslint publishes its packages together). A runtime directory named `<name>-<version>` is
  *   renamed to the new version, and every gates.yaml naming it follows;
@@ -41,7 +41,7 @@ import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
 import { gatedToolPacks, parseGatesManifest, readGatesManifest, type GatesManifest } from "../../conformance/languages/manifest.js";
-import { RUNTIMES_DIRECTORY } from "../../conformance/recorders/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../pack-data/runtimes.js";
 import {
   ECOSYSTEM_NAMES,
   PIN_FILES,
@@ -259,7 +259,6 @@ function yamlScalar(indent: string, key: string, value: string): RegExp {
 function renamedRuntime(manifest: GatesManifest, from: string, to: string): GatesManifest {
   const copy = structuredClone(manifest);
   if (copy.upstream.runtime === from) copy.upstream.runtime = to;
-  if (copy.eslint?.environment?.runtime === from) copy.eslint.environment.runtime = to;
   return copy;
 }
 
@@ -571,7 +570,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
   const clippyVersion = `0.1.${releaseParts(pinned.toolchain)![1]!}`;
   if (clippyVersion !== fresh.clippyVersion) edits.write(conformancePath, bumpConformanceTool(conformancePath, edits.read(conformancePath), "clippy", clippyVersion, fresh.clippyVersion));
 
-  // gates.yaml (upstream commit, Clippy's version, the runtime it names) and the recorder's runtime, named for the Rust
+  // gates.yaml (upstream commit, Clippy's version, the runtime it names) and the tool-pack's runtime, named for the Rust
   // release whose toolchain it pins (runtimes/clippy-<release>/rust-toolchain.toml).
   const renames: { from: string; to: string }[] = [];
   const oldRuntime = manifest.upstream.runtime;

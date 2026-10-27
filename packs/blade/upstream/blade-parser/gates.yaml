@@ -37,8 +37,8 @@ upstream:
   #   knows Blade's core directives and no custom one. A template the parser or a validator throws on gets no answer.
   # - The cases are the templates the tests of the ported validators (tests/Validation/<X>Test.php, Pest files) hand
   #   Document::fromText(), for every dataset row (DebugDirectiveTest's rows are the parser's own directive names),
-  #   read by running the tests with the recorder's reader (conformance/recorders/port-readiness/adapters/
-  #   blade_parser_tests.php, which the pack's conformance recorder runs too). Each distinct template of a test file is
+  #   read by running the tests with the pack's reader (upstream/blade-parser/read_tests.php, which
+  #   upstream/blade-parser/generate.py runs). Each distinct template of a test file is
   #   its own source (`<test file>#<n>`, n in Pest's order), committed as
   #   packs/blade/upstream/blade-parser/fixtures/<X>Test/<n>.blade.php, the copies upstream/blade-parser/generate.py
   #   wrote. A validator's cases are every ported validator's templates, not its own alone: they are Blade templates any
@@ -78,4 +78,3 @@ rules:
   "ForElseStructureValidator":
     deprecated: null
     recommended: { config: "blade.validation", options: [] }
-known_gaps: []

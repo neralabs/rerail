@@ -36,7 +36,6 @@ rules:
   "unicorn/prefer-node-protocol":
     deprecated: null
     recommended: { config: "recommended", options: [] }
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings, as for ESLint's own rules, and what this
 # plugin adds):
 # - unicorn:no-array-for-each is not a rule of the pinned upstream: v66.0.0 renamed it no-for-each (#3216) and 76.0.0
@@ -79,32 +78,6 @@ known_gaps: []
 #   runtime holds the versions npm resolved for its package.json ranges on 76.0.0's publish date (eslint 10.11.0,
 #   @typescript-eslint/parser 8.70.0, typescript 6.0.3 and the parsers and language plugins its test utilities load).
 eslint:
-  plugin:
-    package: eslint-plugin-unicorn
-    namespace: unicorn
-  # The plugin publishes rules/ as it is (with index.js and configs/); its tests import ../index.js, whose rules/ imports
-  # run from the installed package.
   release:
     tag: v76.0.0
-    path: rules
     installed: eslint-plugin-unicorn/rules
-    verbatim: true
-  implementation: rules/{rule}.js
-  # AVA's test files (package.json ava.files also names test/unit/*.js, which tests utilities, not rules).
-  tests: ["test/*.js"]
-  # AVA runs the tests at the repository root, and filename-case's build file names from that directory.
-  test_cwd: "."
-  # Files the rules read from disk while upstream's cases run (no-missing-local-resource's resources and the like).
-  test_fixtures: ["test/fixtures/**"]
-  # The helper libraries the ported rules are written with: ESLint's, and the Node.js built-in module list
-  # prefer-node-protocol checks names against (is-builtin-module reads builtin-modules' builtin-modules.json; the rule's
-  # own comment says it uses that static list rather than node:module's isBuiltin). Parsers (regjsparser,
-  # @eslint/css-tree, yaml) and general libraries (change-case, pluralize, semver and the rest of its dependencies) are
-  # not rule helpers and are not read, as for ESLint's own rules.
-  helpers:
-    - "@eslint-community/eslint-utils"
-    - "builtin-modules"
-    - "is-builtin-module"
-  checkout: ["/index.js", "/configs/", "/rules/", "/scripts/", "/test/", "/license", "/package.json"]
-  # test.snapshot() cases run through upstream's own SnapshotRuleTester rather than ESLint's RuleTester.
-  case_testers: ["test/utils/snapshot-rule-tester.js"]

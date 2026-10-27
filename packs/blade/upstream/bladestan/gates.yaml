@@ -84,4 +84,3 @@ rules:
   "variable.undefined":
     deprecated: null
     recommended: { config: "level0", options: [] }
-known_gaps: []

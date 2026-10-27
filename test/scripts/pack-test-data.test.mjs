@@ -1,8 +1,7 @@
 // scripts/s3/pack-fixtures.mjs: which paths are pack test data and which of it is authored, and pull (with a tool-pack's
 // publish/ laid over it), stage, push, pack (from the data on disk, or a pull request's publish/ from its commit), upload
-// (and the publish workflow's upload --objects and confirm), recordings (the pull of the one recording archive and its
-// tree, and recordings push), check and the CI cache entry against a temporary git checkout with a fake `aws` whose
-// bucket is a local directory.
+// (and the publish workflow's upload --objects and confirm), samples, check and the CI cache entry against a temporary
+// git checkout with a fake `aws` whose bucket is a local directory.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -30,13 +29,6 @@ import {
   publishPath,
   pull,
   push,
-  RECORDING_CACHE,
-  RECORDING_TREE_MARKER,
-  recordingArchiveCacheFile,
-  recordingKey,
-  recordingTreeDirectory,
-  recordings,
-  recordingsPush,
   readLock,
   readSamplesLock,
   requireAws,
@@ -48,6 +40,7 @@ import {
   samplesTree,
   samplesTreeDirectory,
   stage,
+  TREE_MARKER,
   upload,
   uploadPublished,
 } from "../../scripts/s3/pack-fixtures.mjs";
@@ -197,9 +190,7 @@ describe("isPackFixture", () => {
       "packs/python/upstream/ruff/gates.yaml",
       "packs/python/upstream/ruff/generate.py",
       "packs/python/upstream/ruff/UPSTREAM.md",
-      "packs/python/upstream/ruff/recording.lock",
       "packs/python/upstream/ruff/test-data.lock",
-      "packs/python/upstream/ruff/recording.json",
       "packs/php/upstream/phpcs/ruleset.xml",
       "packs/blade/upstream/bladestan/composer-laravel.lock",
       "packs/python/upstream/common.py",
@@ -681,310 +672,8 @@ describe("an archive that is not the canonical archive of its tool directory's p
   });
 });
 
-const RECORDING_LOCK_V4 = "rerail.port-readiness-recording-lock/v4";
-/** A recording tree, as archive path → content, in the recording archive's layout (conformance/port-readiness/recording/). */
-const ANSWERS = {
-  "config/c0.json": '{\n  "format": 1\n}\n',
-  "tool/c0/identity.json": '{\n  "name": "t"\n}\n',
-  "rules/c0/no-null/rule.json": '{\n  "cases": []\n}\n',
-  "rules/c0/no-null/texts.json": "[]\n",
-  "texts/0f.json": '"a"\n',
-  "rules/c0/no-null/cases/a0f.json": '{\n  "findings": [\n    [1, 1, 1, 5]\n  ]\n}\n',
-  "rules/c0/no-null/cases/b1e.json": '{\n  "findings": []\n}\n',
-  "verdicts/v0/0f.js.json": "[]\n",
-};
-
-/**
- * Writes, with `write`, a v4 recording.lock into `toolPack`'s directory naming the canonical archive of `answers`, or
- * `archive` when given (truthfully: its tar's sha256, file count and bytes); returns `recording` as
- * `{ name, bytes, sha256, key, local(root), tree(root) }` with `bytes` compressed as stored, and as `named`.
- */
-function lockRecordings(write, toolPack = T, answers = ANSWERS, archive = buildArchive(Object.entries(answers).map(([path, content]) => ({ path, bytes: Buffer.from(content) })))) {
-  const recording = {
-    name: "recording.tar.zst",
-    bytes: compressArchive(archive.tar),
-    sha256: archive.sha256,
-    key: recordingKey(toolPack, archive.sha256),
-    local: (root) => recordingArchiveCacheFile(root, archive.sha256),
-    tree: (root) => recordingTreeDirectory(root, archive.sha256),
-  };
-  const locked = { "recording.tar.zst": { sha256: archive.sha256, files: archive.files, bytes: archive.bytes, format: "rerail.port-readiness-recording-archive/v1" } };
-  write(`${toolPack.directory}/recording.lock`, `${JSON.stringify({ format: RECORDING_LOCK_V4, tool: toolPack.tool, files: locked }, null, 2)}\n`);
-  return { recording, named: [recording] };
-}
-
-/**
- * An archive holding two answers whose paths differ only by case, which buildArchive refuses to make: each file's
- * canonical tar, the first without its end blocks, then the second.
- */
-function caseCollidingArchive() {
-  const content = Buffer.from('{\n  "findings": []\n}\n');
-  const [upper, lower] = ["A", "a"].map((name) => buildArchive([{ path: `rules/c0/no-null/cases/${name}0f.json`, bytes: content }]).tar);
-  const tar = Buffer.concat([upper.subarray(0, upper.length - 1024), lower]);
-  return { tar, sha256: sha256(tar), files: 2, bytes: 2 * content.length };
-}
-
-const keys = (named) => named.map((recording) => recording.key).sort();
-/** What a pull extracted for `recording`, as path → content (the marker aside): ANSWERS when it extracted the whole archive. */
-const extractedTree = (root, recording) => Object.fromEntries(files(recording.tree(root)).filter((path) => path !== RECORDING_TREE_MARKER).map((path) => [path, readFileSync(join(recording.tree(root), path), "utf8")]));
-const treeLabel = (root, recording) => relative(root, recording.tree(root)).split("\\").join("/");
-
-describe("recordings", () => {
+describe("upload without a local archive", () => {
   const quiet = () => {};
-  /** withData, with a recording.lock for packs/p/upstream/t naming the archive of `answers`, or `archive`. */
-  function locked(answers = ANSWERS, archive = undefined) {
-    const context = withData();
-    return { ...context, ...lockRecordings(context.write, T, answers, archive) };
-  }
-
-  it("fetches the recording archive from S3, verified, and extracts its tree", () => {
-    const { root, aws, object, called, recording } = locked();
-    putFile(object(recording.key), recording.bytes);
-    expect(recording.key).toBe(`rerail/recordings/p/t/${recording.sha256}.tar.zst`);
-    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [], downloaded: [recording.key], missing: [], extracted: [treeLabel(root, recording)] });
-    expect(readFileSync(recording.local(root))).toEqual(recording.bytes);
-    expect(treeLabel(root, recording)).toBe(`.rerail/port-readiness/recordings/tree/${recording.sha256}`);
-    expect(extractedTree(root, recording)).toEqual(ANSWERS);
-    // The marker names the tar the tree was extracted from.
-    expect(readFileSync(join(recording.tree(root), RECORDING_TREE_MARKER), "utf8")).toBe(`${recording.sha256}\n`);
-    expect(called("cp")).toHaveLength(1);
-  });
-
-  it("keeps a valid cached archive and extracts it, calling no aws", () => {
-    const { root, aws, calls, recording } = locked();
-    putFile(recording.local(root), recording.bytes);
-    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [recording.key], downloaded: [], missing: [], extracted: [treeLabel(root, recording)] });
-    expect(extractedTree(root, recording)).toEqual(ANSWERS);
-    expect(calls).toEqual([]);
-  });
-
-  it("reuses a tree whose files rebuild the locked tar, without its archive, and extracts again a tree missing a file", () => {
-    const { root, aws, calls, recording } = locked();
-    putFile(recording.local(root), recording.bytes);
-    recordings({ root, aws, log: quiet });
-    rmSync(recording.local(root));
-    expect(recordings({ root, aws, log: quiet })).toEqual({ kept: [recording.key], downloaded: [], missing: [], extracted: [] });
-
-    putFile(recording.local(root), recording.bytes);
-    rmSync(join(recording.tree(root), "rules/c0/no-null/rule.json"));
-    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
-    expect(extractedTree(root, recording)).toEqual(ANSWERS);
-    expect(calls).toEqual([]);
-  });
-
-  it("extracts again a tree whose marker names another archive, though its files and bytes count the same", () => {
-    const { root, aws, recording } = locked();
-    putFile(recording.local(root), recording.bytes);
-    recordings({ root, aws, log: quiet });
-    writeFileSync(join(recording.tree(root), "verdicts/v0/0f.js.json"), "{}\n");
-    writeFileSync(join(recording.tree(root), RECORDING_TREE_MARKER), `${"0".repeat(64)}\n`);
-    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
-    expect(extractedTree(root, recording)).toEqual(ANSWERS);
-    // A tree without a marker is no finished extraction either.
-    rmSync(join(recording.tree(root), RECORDING_TREE_MARKER));
-    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
-    expect(existsSync(join(recording.tree(root), RECORDING_TREE_MARKER))).toBe(true);
-  });
-
-  it("extracts again a tree whose marker names the archive but whose files were edited or renamed, the counts kept", () => {
-    const { root, aws, calls, recording } = locked();
-    putFile(recording.local(root), recording.bytes);
-    recordings({ root, aws, log: quiet });
-    // A finding's coordinate moved: the same file count and bytes, other content.
-    const answer = join(recording.tree(root), "rules/c0/no-null/cases/a0f.json");
-    writeFileSync(answer, ANSWERS["rules/c0/no-null/cases/a0f.json"].replace("[1, 1, 1, 5]", "[2, 1, 1, 5]"));
-    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
-    expect(extractedTree(root, recording)).toEqual(ANSWERS);
-    // An answer filed under another name.
-    renameSync(answer, answer.replace("a0f", "c0f"));
-    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([treeLabel(root, recording)]);
-    expect(extractedTree(root, recording)).toEqual(ANSWERS);
-    // An untouched tree is kept, its archive unread.
-    expect(recordings({ root, aws, log: quiet }).extracted).toEqual([]);
-    expect(calls).toEqual([]);
-  });
-
-  it("fills the recording cache it is given, the recorder's --cache, rather than the checkout's", () => {
-    const { root, aws, object, recording } = locked();
-    putFile(object(recording.key), recording.bytes);
-    const cache = join(root, "elsewhere", "recordings");
-    expect(recordings({ root, cache, aws, log: quiet }).downloaded).toEqual([recording.key]);
-    expect(files(cache)).toContain(`${recording.sha256}.tar.zst`);
-    expect(files(cache)).toContain(`tree/${recording.sha256}/${RECORDING_TREE_MARKER}`);
-    expect(files(join(root, RECORDING_CACHE))).toEqual([]);
-  });
-
-  it("notes an archive S3 does not hold, naming its sha256, key and the command that records it, and succeeds", () => {
-    const { root, aws, recording } = locked();
-    const printed = [];
-    expect(recordings({ root, aws, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], missing: [recording.key], extracted: [] });
-    for (const text of [recording.sha256, `s3://${BUCKET}/${recording.key}`, "npm run port-readiness:record -- --pack p --tool t"]) expect(printed.join("\n")).toContain(text);
-    expect(files(join(root, RECORDING_CACHE))).toEqual([]);
-    expect(existsSync(recording.tree(root))).toBe(false);
-  });
-
-  const corrupt = [
-    ["is not zstd", () => locked(), () => Buffer.from("not zstd"), "is not a zstd archive of the size the lock allows"],
-    ["holds another tar than the locked one (tampered)", () => locked(), () => compressArchive(buildArchive([{ path: "config/c0.json", bytes: Buffer.from("{}\n") }]).tar), "holds a tar whose sha256 is"],
-    ["holds a file outside the tree's roots", () => locked({ ...ANSWERS, "run.sh": "rm -rf /\n" }), (recording) => recording.bytes, "e.g. run.sh"],
-    ["holds two files that differ only by case", () => locked(ANSWERS, caseCollidingArchive()), (recording) => recording.bytes, "which differ only in case"],
-  ];
-  it.each(corrupt)("refuses a recording archive in S3 that %s, naming the lock and key, and extracts nothing", (_, make, stored, reason) => {
-    const { root, aws, object, recording } = make();
-    putFile(object(recording.key), stored(recording));
-    const message = failure(() => recordings({ root, aws, log: quiet }));
-    for (const text of [reason, "packs/p/upstream/t/recording.lock", `s3://${BUCKET}/${recording.key}`, "nothing was extracted"]) expect(message).toContain(text);
-    expect(files(join(root, RECORDING_CACHE))).toEqual([]);
-  });
-
-  it("deletes a corrupt cached archive, and says to delete the Actions cache entry when S3 cannot be read", () => {
-    const { root, recording } = locked();
-    putFile(recording.local(root), "not zstd");
-    const signedOut = () => ({ status: 255, stderr: "\nUnable to locate credentials\n" });
-    const message = failure(() => recordings({ root, aws: signedOut, log: quiet }));
-    expect(message).toContain(relative(root, recording.local(root)));
-    expect(message).toContain("gh cache delete");
-    expect(existsSync(recording.local(root))).toBe(false);
-    expect(existsSync(recording.tree(root))).toBe(false);
-  });
-
-  const digest = sha256(Buffer.from("{}"));
-  const oldLocks = [
-    ["v2", { format: "rerail.port-readiness-recording-lock/v2", tool: "t", files: { "corpus.json": { sha256: digest, size: 2 }, "recording.json": { sha256: digest, size: 2 } } }],
-    ["v3", { format: "rerail.port-readiness-recording-lock/v3", tool: "t", files: { "corpus.tar.zst": { sha256: digest, files: 1, bytes: 2 }, "recording.json": { sha256: digest, size: 2 } } }],
-  ];
-  it.each(oldLocks)("refuses a %s recording.lock, saying to delete it and record again, fetching nothing", (_, old) => {
-    const { root, aws, calls, write } = withData();
-    write("packs/p/upstream/t/recording.lock", `${JSON.stringify(old)}\n`);
-    const message = failure(() => recordings({ root, aws, log: quiet }));
-    for (const text of ["packs/p/upstream/t/recording.lock", `not ${RECORDING_LOCK_V4}`, "delete it and record the tool-pack again", "npm run port-readiness:record -- --pack p --tool t"]) expect(message).toContain(text);
-    expect(failure(() => recordingsPush({ root, pack: "p", aws, tags: TAGS, log: quiet }))).toContain(`not ${RECORDING_LOCK_V4}`);
-    expect(calls).toEqual([]);
-  });
-
-  it("refuses a v4 lock naming anything but the one archive", () => {
-    const { root, aws, write } = withData();
-    const entry = { sha256: sha256(Buffer.from("{}")), files: 1, bytes: 2, format: "rerail.port-readiness-recording-archive/v1" };
-    write("packs/p/upstream/t/recording.lock", `${JSON.stringify({ format: RECORDING_LOCK_V4, tool: "t", files: { "recording.tar.zst": entry, "recording.json": entry } })}\n`);
-    expect(failure(() => recordings({ root, aws, log: quiet }))).toContain("must name exactly recording.tar.zst");
-  });
-
-  it("--dry-run names what it would fetch, and fetches, extracts and deletes nothing", () => {
-    const { root, aws, calls, recording } = locked();
-    putFile(recording.local(root), "not zstd");
-    const printed = [];
-    expect(recordings({ root, aws, dryRun: true, log: (line) => printed.push(line) })).toEqual({ kept: [], downloaded: [], missing: [], extracted: [] });
-    expect(printed.join("\n")).toContain(`would fetch s3://${BUCKET}/${recording.key}`);
-    expect(printed.join("\n")).toContain(`would delete ${relative(root, recording.local(root))}`);
-    expect(calls).toEqual([]);
-    expect(readFileSync(recording.local(root), "utf8")).toBe("not zstd");
-    expect(existsSync(recording.tree(root))).toBe(false);
-  });
-});
-
-describe("recordings push", () => {
-  const quiet = () => {};
-  /** withData, with a recording.lock for packs/p/upstream/t. */
-  function locked() {
-    const context = withData();
-    return { ...context, ...lockRecordings(context.write) };
-  }
-
-  it("puts the archive from the recordings cache, reads it back, and puts nothing when run again", () => {
-    const { root, aws, object, called, recording } = locked();
-    putFile(recording.local(root), recording.bytes);
-    const printed = [];
-    expect(recordingsPush({ root, pack: "p", aws, tags: TAGS, log: (line) => printed.push(line) })).toEqual({ uploaded: [recording.key], locks: ["packs/p/upstream/t/recording.lock"] });
-    expect(readFileSync(object(recording.key))).toEqual(recording.bytes);
-    expect(printed.at(-1)).toContain("git add -- packs/p/upstream/t/recording.lock");
-
-    const again = [];
-    expect(recordingsPush({ root, pack: "p", aws, tags: TAGS, log: (line) => again.push(line) }).uploaded).toEqual([]);
-    expect(again.filter((line) => line.includes("S3 already holds"))).toHaveLength(1);
-    expect(called("put-object")).toHaveLength(1);
-  });
-
-  it("refuses when neither the recordings cache nor S3 holds the archive, naming it and both remedies, before putting anything", () => {
-    const { root, aws, bucket, called, recording } = locked();
-    const message = failure(() => recordingsPush({ root, pack: "p", tool: "t", aws, tags: TAGS, log: quiet }));
-    for (const text of [
-      "packs/p/upstream/t/recording.lock",
-      recording.sha256,
-      `s3://${BUCKET}/${recording.key}`,
-      "npm run port-readiness:record -- --pack p --tool t",
-      "gh run download <run-id> -n recordings-p--t -D .rerail/port-readiness/recordings",
-    ]) {
-      expect(message).toContain(text);
-    }
-    expect(called("put-object")).toEqual([]);
-    expect(files(bucket)).toEqual([]);
-  });
-
-  it("refuses a cached archive that is not the locked one, calling no aws", () => {
-    const { root, aws, bucket, calls, recording } = locked();
-    putFile(recording.local(root), compressArchive(buildArchive([{ path: "config/c0.json", bytes: Buffer.from("{}\n") }]).tar));
-    const message = failure(() => recordingsPush({ root, pack: "p", aws, tags: TAGS, log: quiet }));
-    expect(message).toContain(relative(root, recording.local(root)));
-    expect(message).toContain("packs/p/upstream/t/recording.lock");
-    expect(calls).toEqual([]);
-    expect(files(bucket)).toEqual([]);
-  });
-});
-
-describe("upload with recordings", () => {
-  const quiet = () => {};
-  /** withData packed, with a recording.lock for packs/p/upstream/t. */
-  function packed() {
-    const context = withData();
-    pack({ root: context.root, log: quiet });
-    return { ...context, ...lockRecordings(context.write) };
-  }
-  const putKeys = (called) => called("put-object").map((args) => args[args.indexOf("--key") + 1]);
-
-  it("uploads the local recording archive under its sha256 and reads it back", () => {
-    const { root, aws, object, called, recording } = packed();
-    putFile(recording.local(root), recording.bytes);
-    const { uploaded } = upload({ root, pack: "p", tool: "t", aws, tags: TAGS, log: quiet });
-    expect(uploaded).toEqual([archiveKey(T, readLock(root, T).sha256), recording.key]);
-    expect(readFileSync(object(recording.key))).toEqual(recording.bytes);
-    expect(called("cp").map((args) => args[2])).toContain(`s3://${BUCKET}/${recording.key}`);
-  });
-
-  it("does not upload a recording archive S3 holds, whether or not there is a local copy", () => {
-    const { root, aws, object, called, recording } = packed();
-    putFile(object(recording.key), recording.bytes);
-    putFile(recording.local(root), recording.bytes);
-    const archive = archiveKey(T, readLock(root, T).sha256);
-    expect(upload({ root, pack: "p", tool: "t", aws, tags: TAGS, log: quiet }).uploaded).toEqual([archive]);
-    expect(putKeys(called)).toEqual([archive]);
-  });
-
-  it("fails on a recording archive in neither place, naming its sha256, its key and both remedies, before putting anything", () => {
-    const { root, aws, bucket, called, recording } = packed();
-    const message = failure(() => upload({ root, pack: "p", tool: "t", aws, tags: TAGS, log: quiet }));
-    for (const text of [
-      "packs/p/upstream/t/recording.lock",
-      recording.sha256,
-      `s3://${BUCKET}/${recording.key}`,
-      "npm run port-readiness:record -- --pack p --tool t",
-      "gh run download <run-id> -n recordings-p--t -D .rerail/port-readiness/recordings",
-    ]) {
-      expect(message).toContain(text);
-    }
-    expect(called("put-object")).toEqual([]);
-    expect(files(bucket)).toEqual([]);
-  });
-
-  it("refuses a local recording archive that is not the locked one, calling no aws", () => {
-    const { root, aws, bucket, calls, recording } = packed();
-    putFile(recording.local(root), "tampered\n");
-    const message = failure(() => upload({ root, pack: "p", tool: "t", aws, tags: TAGS, log: quiet }));
-    expect(message).toContain("packs/p/upstream/t/recording.lock");
-    expect(message).toContain(relative(root, recording.local(root)));
-    expect(calls).toEqual([]);
-    expect(files(bucket)).toEqual([]);
-  });
-
 
   it("verifies an archive S3 holds when the archive cache lacks it, and fails naming the key when neither holds it", () => {
     const { root, aws, object, called } = published();
@@ -1025,7 +714,7 @@ function lockSamples(write, toolPack = T, content = SAMPLES, archive = archiveOf
 }
 
 /** What a samples tree holds besides its marker, as path → content. */
-const samplesIn = (directory) => Object.fromEntries(files(directory).filter((path) => path !== RECORDING_TREE_MARKER).map((path) => [path, readFileSync(join(directory, path), "utf8")]));
+const samplesIn = (directory) => Object.fromEntries(files(directory).filter((path) => path !== TREE_MARKER).map((path) => [path, readFileSync(join(directory, path), "utf8")]));
 const shown = (root, path) => relative(root, path).split("\\").join("/");
 
 describe("samples", () => {
@@ -1049,7 +738,7 @@ describe("samples", () => {
     putFile(object(sample.key), sample.bytes);
     expect(samplesTree({ root, pack: "p", tool: "t", aws })).toBe(sample.tree(root));
     expect(samplesIn(sample.tree(root))).toEqual(SAMPLES);
-    expect(readFileSync(join(sample.tree(root), RECORDING_TREE_MARKER), "utf8")).toBe(`${sample.sha256}\n`);
+    expect(readFileSync(join(sample.tree(root), TREE_MARKER), "utf8")).toBe(`${sample.sha256}\n`);
     expect(readFileSync(sample.local(root))).toEqual(sample.bytes);
     expect(called("cp")).toHaveLength(1);
     // No partial file or directory is left behind.
@@ -1096,7 +785,7 @@ describe("samples", () => {
     ["holds another tar than the lock names", () => archiveOf(SAMPLES), () => compressArchive(archiveOf(other).tar), /holds a tar whose sha256 is [0-9a-f]{64}, not the locked/u],
     ["holds more files than a lock edited by hand says", () => ({ ...archiveOf(SAMPLES), files: 2 }), () => compressArchive(archiveOf(SAMPLES).tar), /the lock says 2 of/u],
     ["holds a file outside LICENSES.md and <sample-id>/", () => archiveOf({ ...SAMPLES, "notes.txt": "x\n" }), (archive) => compressArchive(archive.tar), /holds 1 file\(s\) that are not real-code samples [^]*notes\.txt/u],
-    ["holds the tree's marker", () => archiveOf({ ...SAMPLES, [RECORDING_TREE_MARKER]: "x\n" }), (archive) => compressArchive(archive.tar), /that are not real-code samples [^]*\.tar-sha256/u],
+    ["holds the tree's marker", () => archiveOf({ ...SAMPLES, [TREE_MARKER]: "x\n" }), (archive) => compressArchive(archive.tar), /that are not real-code samples [^]*\.tar-sha256/u],
     ["holds a sample whose id is not a sample id", () => archiveOf({ ...SAMPLES, "Demo-a-0123456789ab/a.js": "x\n" }), (archive) => compressArchive(archive.tar), /that are not real-code samples [^]*Demo-a-0123456789ab\/a\.js/u],
   ];
   it.each(corrupt)("refuses an archive that %s, naming the lock and key, and extracts and keeps nothing", (_, lockFor, stored, reason) => {
@@ -1114,7 +803,7 @@ describe("samples", () => {
   it("checks sample ids as scripts/samples/format.ts's SAMPLE_ID does", () => {
     expect(SAMPLE_ID.test(SAMPLE)).toBe(true);
     expect(SAMPLE_ID.test("Demo-a-0123456789ab")).toBe(false);
-    expect(SAMPLE_ID.test(RECORDING_TREE_MARKER)).toBe(false);
+    expect(SAMPLE_ID.test(TREE_MARKER)).toBe(false);
   });
 
   it("deletes a cached archive that is not the locked one and fetches the locked one from S3", () => {
@@ -1573,42 +1262,37 @@ describe("stage", () => {
 });
 
 describe("check", () => {
-  /** published, with a recording.lock for packs/p/upstream/t and a samples.lock for packs/q/upstream/u whose archives S3 holds. */
+  /** published, with a samples.lock for packs/q/upstream/u whose archive S3 holds. */
   function locked() {
     const context = published();
-    const { named } = lockRecordings(context.write);
-    for (const recording of named) putFile(context.object(recording.key), recording.bytes);
     const sample = lockSamples(context.write, U);
     putFile(context.object(sample.key), sample.bytes);
-    return { ...context, named, sample };
+    return { ...context, sample };
   }
   const archiveKeys = (root) => [T, { pack: "p", tool: "w", directory: "packs/p/upstream/w" }, U].map((toolPack) => archiveKey(toolPack, readLock(root, toolPack).sha256));
 
-  it("passes when S3 holds every archive, recording and samples archive the locks name, asking head-object alone", () => {
-    const { root, aws, calls, named, sample } = locked();
-    expect(check({ root, aws, log: () => {} }).checked).toEqual([...archiveKeys(root), ...keys(named), sample.key].sort());
+  it("passes when S3 holds every archive and samples archive the locks name, asking head-object alone", () => {
+    const { root, aws, calls, sample } = locked();
+    expect(check({ root, aws, log: () => {} }).checked).toEqual([...archiveKeys(root), sample.key].sort());
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
   });
 
   it("fails listing each missing archive with its lock and remedy, downloading nothing", () => {
-    const { root, aws, object, calls, named, sample } = locked();
-    const [recording] = named;
+    const { root, aws, object, calls, sample } = locked();
     const archive = archiveKey(U, readLock(root, U).sha256);
     rmSync(object(archive));
-    rmSync(object(recording.key));
     rmSync(object(sample.key));
     const message = failure(() => check({ root, aws, log: () => {} }));
     expect(message.split("\n")).toEqual([
-      'S3 lacks 3 of the 5 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
+      'S3 lacks 2 of the 4 object(s) the locks name (CONTRIBUTING.md, "Pack test data"):',
       `  packs/q/upstream/u/test-data.lock names s3://${BUCKET}/${archive}, which S3 does not hold: publish the pull request's data through the publish workflow (https://github.com/neralabs/rerail/actions/workflows/pack-data-publish.yml), which commits the lock naming what it uploaded`,
       `  packs/q/upstream/u/samples.lock names s3://${BUCKET}/${sample.key}, which S3 does not hold: stage the set with writeSampleSet (scripts/samples/pack.ts) into the tool-pack's publish/samples/ and run the publish workflow (https://github.com/neralabs/rerail/actions/workflows/pack-data-publish.yml) for the pull request`,
-      `  packs/p/upstream/t/recording.lock names recording.tar.zst at s3://${BUCKET}/${recording.key}, which S3 does not hold: a maintainer downloads the pull request's CI recording with \`gh run download <run> -n recordings-p--t -D .rerail/port-readiness/recordings\`, then puts it in S3 with \`node scripts/s3/pack-fixtures.mjs recordings push --pack p --tool t\``,
     ]);
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
   });
 
   it("exits 0 when S3 holds everything and 1 when it lacks anything, as a command", () => {
-    const { root, bucket, object, named } = locked();
+    const { root, bucket, object, sample } = locked();
     const bin = join(dirname(root), "bin");
     putFile(join(bin, "aws"), FAKE_AWS);
     chmodSync(join(bin, "aws"), 0o755);
@@ -1620,12 +1304,12 @@ describe("check", () => {
     });
     const passed = run();
     expect(passed.stderr).toBe("");
-    expect(passed.stdout).toBe("S3 holds every object the locks name: 3 archive(s), 1 recording archive(s) and 1 samples archive(s)\n");
+    expect(passed.stdout).toBe("S3 holds every object the locks name: 3 archive(s) and 1 samples archive(s)\n");
     expect(passed.status).toBe(0);
-    rmSync(object(named[0].key));
+    rmSync(object(sample.key));
     const failed = run();
     expect(failed.status).toBe(1);
-    expect(failed.stderr).toContain(`fixtures:check: S3 lacks 1 of the 5 object(s)`);
-    expect(failed.stderr).toContain(`s3://${BUCKET}/${named[0].key}`);
+    expect(failed.stderr).toContain(`fixtures:check: S3 lacks 1 of the 4 object(s)`);
+    expect(failed.stderr).toContain(`s3://${BUCKET}/${sample.key}`);
   });
 });

@@ -262,4 +262,3 @@ rules:
   "B704":
     deprecated: null
     recommended: { config: "default", options: [{"allowed_calls":[],"extend_markup_names":[]}] }
-known_gaps: []

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { RUNTIMES_DIRECTORY } from "../../../conformance/recorders/port-readiness/recorded-adapter.js";
+import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 import { applyBump, main, planBump, renderBump, type Sources } from "../../../scripts/upstream/bump.js";
 import { upstreamPins, type Fetch } from "../../../scripts/upstream/releases.js";
 
@@ -56,7 +56,7 @@ function lightweight(repository: string, tag: string, commit: string): Record<st
 }
 
 function popularity(): string {
-  return "popularity:\n  observed_on: 2026-10-06\n  evidence:\n    - a fake upstream\nrules: {}\nknown_gaps: []\n";
+  return "popularity:\n  observed_on: 2026-10-06\n  evidence:\n    - a fake upstream\nrules: {}\n";
 }
 
 const BANDIT_COMMIT = "92ae8b82fb422a639f0ed8d99e96cea769594e08";
@@ -136,8 +136,8 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.doesNotMatch(markdown, /recording|port-readiness|fixtures:push/u);
 });
 
-/** An ESLint-family gates.yaml: upstream, its release tag, and optionally the environment the pack is linted in. */
-function eslintGates(options: { pack: string; tool: string; repository: string; commit: string; version: string; runtime: string; installed: string; environment?: string }): string {
+/** An ESLint-family gates.yaml: upstream and its release tag. */
+function eslintGates(options: { pack: string; tool: string; repository: string; commit: string; version: string; runtime: string; installed: string }): string {
   return `adapter: eslint
 rerail:
   pack: ${options.pack}
@@ -153,26 +153,9 @@ upstream:
   runtime: ${options.runtime}
   lints: [".py"]
 ${popularity()}eslint:
-  plugin:
-    package: "${options.installed.split("/").slice(0, 2).join("/")}"
-    namespace: "@demo"
   release:
     tag: v${options.version}
-    path: src
     installed: "${options.installed}"
-    verbatim: false
-${options.environment === undefined ? "" : `  environment:
-    package: demo-config
-    version: 1.0.0
-    runtime: ${options.environment}
-    source:
-      repository: https://github.com/demo/config
-      commit: ${"b".repeat(40)}
-      path: packages/config
-`}  implementation: src/rules/{rule}.ts
-  tests: ["tests/*.test.ts"]
-  helpers: []
-  checkout: ["/src/", "/tests/"]
 `;
 }
 
@@ -366,7 +349,7 @@ const CLIPPY_ANSWERS = {
   [`${GITHUB}/rust-lang/rust/contents/src/tools?ref=1.99.0`]: tools("f3bfc2411549eab24928aeb8b373bf1f6290f943"),
 };
 
-/** The Rust pack's gated Clippy at Rust 1.99.0: common.py, conformance.json, gates.yaml and the recorder's runtime. */
+/** The Rust pack's gated Clippy at Rust 1.99.0: common.py, conformance.json, gates.yaml and its runtime. */
 const CLIPPY_GATES = `adapter: clippy
 rerail:
   pack: rust
@@ -386,7 +369,6 @@ popularity:
   evidence:
     - a fake upstream
 rules: {}
-known_gaps: []
 `;
 
 const CLIPPY_TOOLCHAIN = '[toolchain]\nchannel = "1.99.0"\ncomponents = ["clippy"]\nprofile = "minimal"\n';

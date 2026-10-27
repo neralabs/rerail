@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { recordingSchema } from "../../conformance/languages/pack.js";
 // @ts-expect-error: a JavaScript module without declarations, run by the generators.
-import { withOrigins, writeRenameVariants } from "../../conformance/recorders/eslint-record.mjs";
+import { withOrigins, writeRenameVariants, writeVariantRows } from "../../conformance/recorders/eslint-record.mjs";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -68,5 +68,17 @@ describe("rename variants and unit origins", () => {
   it("refuses an origin for a unit the recording does not list, and a variant of no original", () => {
     expect(recordingSchema.safeParse(recording(["a.js"], { "b.js": { rules: ["r1"] } })).success).toBe(false);
     expect(recordingSchema.safeParse(recording(["a.js", "renamed/a.js"], { "renamed/a.js": { rules: ["r1"], renamedFrom: "a.js" } })).success).toBe(false);
+  });
+
+  it("lists each kept variant in the licence table as derived from its original's upstream test file, and no stale one", () => {
+    const head = "# t 1\n\n| File | Upstream path | Copy |\n|---|---|---|\n";
+    const directory = fixtures({
+      "UPSTREAM.md": `${head}| \`upstream/t/fixtures/r1/001.js\` | \`tests/r1.js\` | derived |\n| \`upstream/t/fixtures/r2/001.js\` | \`tests/r2.js\` | derived |\n| \`upstream/t/fixtures/renamed/r9/001.js\` | \`tests/r9.js\` | derived |\n\nAfter the table.\n`,
+    });
+    const licence = join(directory, "UPSTREAM.md");
+    writeVariantRows(licence, "t", ["r1/001.js", "r2/001.js", "renamed/r2/001.js"]);
+    expect(readFileSync(licence, "utf8")).toBe(`${head}| \`upstream/t/fixtures/r1/001.js\` | \`tests/r1.js\` | derived |\n| \`upstream/t/fixtures/r2/001.js\` | \`tests/r2.js\` | derived |\n| \`upstream/t/fixtures/renamed/r2/001.js\` | \`tests/r2.js\` | derived (\`fixtures/r2/001.js\` with its names and literals renamed) |\n\nAfter the table.\n`);
+    // A variant whose original the table does not list has no source to name.
+    expect(() => writeVariantRows(licence, "t", ["r3/001.js", "renamed/r3/001.js"])).toThrow(/lists no upstream\/t\/fixtures\/r3\/001\.js/u);
   });
 });

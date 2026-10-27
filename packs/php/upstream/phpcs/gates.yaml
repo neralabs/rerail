@@ -76,4 +76,3 @@ rules:
   "Squiz.PHP.Eval":
     deprecated: null
     recommended: null
-known_gaps: []

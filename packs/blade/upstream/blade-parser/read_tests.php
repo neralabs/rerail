@@ -1,21 +1,19 @@
 <?php
 // Runs one stillat/blade-parser 2.1.0 validator test (tests/Validation/<X>Test.php, a Pest file) with every template
-// it hands Document::fromText() captured (blade_capture.php), and prints, as JSON, per test and dataset row in Pest's
+// it hands Document::fromText() captured (../blade_capture.php), and prints, as JSON, per test and dataset row in Pest's
 // order: the templates and the expectations it made ({"count": n} for toHaveCount, {"be": value} for toBe). Pest is
 // stubbed by what these tests use (uses(), test()->with(), expect()->toHaveCount()/toBe(), and expect()->extend()
 // in tests/Pest.php, loaded first for its dataset functions); every expectation is checked against the validator's
 // real output as Pest checks it (toHaveCount: count() ===, toBe: ===), and a failed or unsupported expectation, or a
 // test row expecting nothing, fails the run. The tests run on a bare container (no Laravel application), so the
 // parser knows the core directives and no custom one, and validators are constructed with their defaults.
-// Called by blade-parser.ts and by the Blade pack's conformance recorder (packs/blade/upstream/blade-parser/generate.py):
-//   php blade_parser_tests.php <composer project with stillat/blade-parser 2.1.0> <checkout> <X>Test.php
-// It is kept here, outside packs/, because the port readiness recorder runs it: a pull request's packs/ is recorded,
-// never run.
+// Called by the Blade pack's generator (packs/blade/upstream/blade-parser/generate.py):
+//   php read_tests.php <composer project with stillat/blade-parser 2.1.0> <checkout> <X>Test.php
 
 declare(strict_types=1);
 
 require $argv[1].'/vendor/autoload.php';
-require __DIR__.'/blade_capture.php';
+require __DIR__.'/../blade_capture.php';
 
 final class RerailExpectation
 {

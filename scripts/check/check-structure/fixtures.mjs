@@ -10,10 +10,9 @@
 // It may live only under `fixtures/` or `packs/<id>/upstream/` (a pack's tool recordings and their inputs). Declared
 // exemptions: `packs/<id>/candidates/` (ports still scored, never shipped, with their hand-labelled probe packs: pack
 // data), `gate-pins` (the conformance gate's lists: `conformance/languages/ungated-rules.json` and
-// `conformance/languages/pending.json`, the not-gated rules and pending tool-packs it reads;
-// `conformance/recorders/port-readiness/runtimes/**`, the manifests that pin each upstream runtime; and the Python
-// and PHP workers under `conformance/recorders/port-readiness/`, code the recorder runs inside those runtimes) and, for code-rule
-// documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
+// `conformance/languages/pending.json`, the not-gated rules and pending tool-packs it reads; and
+// `scripts/pack-data/runtimes/**`, the manifests that pin each runtime the derivation runs upstream on) and, for
+// code-rule documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
 //
 // #10: every directory fixtures/<family>/<feature>/ names a top-level module of the engine
 // (native/src/code_rule_dsl/<feature>.rs or <feature>/), or a documented non-engine group: `upstream` (a language's
@@ -75,11 +74,10 @@ function fixtureKind(repo, path) {
   return undefined;
 }
 
-/** Exemption `gate-pins`: the conformance gate's lists and the recorder's runtimes and Python and PHP workers (see the header). */
+/** Exemption `gate-pins`: the conformance gate's lists and the derivation's runtimes (see the header). */
 function isGatePin(path) {
   if (path === "conformance/languages/ungated-rules.json" || path === "conformance/languages/pending.json") return true;
-  if (path.startsWith("conformance/recorders/port-readiness/runtimes/")) return true;
-  return path.startsWith("conformance/recorders/port-readiness/") && (path.endsWith(".py") || path.endsWith(".php"));
+  return path.startsWith("scripts/pack-data/runtimes/");
 }
 
 function allowed(path, kind) {

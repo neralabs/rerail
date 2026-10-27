@@ -1,5 +1,5 @@
 /**
- * How the gates and their recorder run other programs (git for upstream's checkouts; the upstream runtimes when recording):
+ * How the conformance checks and the derivation (scripts/pack-data/) run other programs (git; the pinned runtimes):
  * through a runner, so a test can stand one in.
  */
 import { spawn } from "node:child_process";

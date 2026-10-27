@@ -104,4 +104,3 @@ rules:
   "ST10":
     deprecated: null
     recommended: { config: "default", options: [] }
-known_gaps: []

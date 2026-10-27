@@ -16,20 +16,11 @@ coverage/
 .env.*
 !.env.example
 
-# The port readiness gates' upstream runtimes are pinned by their manifests alone (conformance/recorders/port-readiness/runtimes.ts):
-# installs resolve in .rerail/port-readiness/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
-conformance/recorders/port-readiness/runtimes/*/package-lock.json
-conformance/recorders/port-readiness/runtimes/*/uv.lock
-conformance/recorders/port-readiness/runtimes/*/composer.lock
-
-# The port readiness gates' recordings are not in the tree: each tool-pack commits a recording.lock naming, by sha256, the
-# one recording archive its rules are judged against (conformance/port-readiness/recording/store.ts), an object in S3
-# (s3://nera-test-fixtures/rerail/recordings/<pack>/<tool>/, written once); the recorder and
-# `node scripts/s3/pack-fixtures.mjs recordings` put it in .rerail/port-readiness/recordings/, and CI keeps copies in its
-# Actions cache. recording.json and corpus.json are the recording's formats before the archive; a stale copy on disk
-# must not be committed.
-packs/*/upstream/*/recording.json
-packs/*/upstream/*/corpus.json
+# The derivation's runtimes are pinned by their manifests alone (scripts/pack-data/runtimes.ts): installs resolve in
+# .rerail/pack-data/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
+scripts/pack-data/runtimes/*/package-lock.json
+scripts/pack-data/runtimes/*/uv.lock
+scripts/pack-data/runtimes/*/composer.lock
 
 # Pack test data (PACK_FIXTURE_PATTERNS, scripts/s3/pack-fixtures.mjs), each tool's test cases and its recorded answers
 # on them, is never in git. Each tool-pack's data is one archive in S3, which its tracked test-data.lock names by sha256;

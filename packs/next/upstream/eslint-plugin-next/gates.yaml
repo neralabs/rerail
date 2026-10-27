@@ -93,7 +93,6 @@ rules:
   "@next/next/no-unwanted-polyfillio":
     deprecated: null
     recommended: { config: "recommended", options: [] }
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Gate 5 lints every RuleTester case of test/unit/eslint-plugin-next/*.test.ts with the rule as configs.recommended
 #   sets it (no options; no case sets options or settings either), in eslint-config-next's environment (the
@@ -133,35 +132,6 @@ known_gaps: []
 #   typescript (6.0.2) and glob (7.1.6, which index.test.ts imports) versions vercel/next.js's root package.json pins at
 #   v16.3.8; eslint 9.37.0 is also the plugin's own devDependency, and tsx loads the TypeScript test files.
 eslint:
-  # The environment the pack is linted in, decided by the team on 2026-10-09 (docs/decisions/eslint-test-globals.md):
-  # eslint-config-next, the shareable configuration Next.js tells projects to use. Its file globs
-  # (**/*.{js,jsx,mjs,ts,tsx,mts,cts}), its parsers (Next.js's compiled Babel parser with next/babel, and
-  # typescript-eslint's for .ts and .tsx) and its browser and Node globals come before the approved configuration, for
-  # upstream's test cases; its plugins, rules and settings are not the pack's. A test case's own parser
-  # and globals give way to them.
-  environment:
-    package: eslint-config-next
-    version: 16.3.8
-    runtime: eslint-config-next-16.3.8
-    source:
-      repository: https://github.com/vercel/next.js
-      commit: b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6
-      path: packages/eslint-config-next
-  plugin:
-    package: "@next/eslint-plugin-next"
-    namespace: "@next/next"
-  # The plugin publishes dist/, the swc build of src/; its tests import the package by name, which runs the installed
-  # build.
   release:
     tag: v16.3.8
-    path: packages/eslint-plugin-next/src
     installed: "@next/eslint-plugin-next/dist"
-    verbatim: false
-  implementation: packages/eslint-plugin-next/src/rules/{rule}.ts
-  tests: ["test/unit/eslint-plugin-next/*.test.ts"]
-  test_fixtures: ["test/unit/eslint-plugin-next/*/**"]
-  helpers: ["@eslint-community/eslint-utils"]
-  checkout: ["/packages/eslint-plugin-next/", "/test/unit/eslint-plugin-next/", "/license.md", "/package.json"]
-  # The npm package of the environment's Babel parser, which reads JavaScript with JSX.
-  parsers:
-    eslint-config-next: javascript

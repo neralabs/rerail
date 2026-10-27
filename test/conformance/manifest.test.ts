@@ -19,8 +19,7 @@ ${rerail}upstream:
 popularity:
   observed_on: 2026-10-06
   evidence: [a fake upstream]
-${rules}known_gaps: []
-`;
+${rules}`;
 
 test("gates.yaml declares the file types upstream lints and each rule's upstream facts", () => {
   const manifest = parseGatesManifest(gates("", '[".py", ".pyi"]'), "gates.yaml");

@@ -105,7 +105,6 @@ rules:
   "vue/valid-v-for":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-known_gaps: []
 # Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
 # - Gate 5 lints every case of tests/lib/rules/**/*.test.ts with ESLint's RuleTester, which upstream's
 #   tests/eslint-compat.ts returns on ESLint 10, with the rule at the options of flat/recommended (its own when it sets
@@ -137,26 +136,6 @@ known_gaps: []
 # - The published dist/ is lib/ compiled to CommonJS by tsdown (unbundled, file for file), so `verbatim` is false and
 #   the tag and version tie the package to the commit.
 eslint:
-  plugin:
-    package: eslint-plugin-vue
-    namespace: vue
   release:
     tag: v10.11.1
-    path: lib
     installed: eslint-plugin-vue/dist
-    verbatim: false
-    sources: true
-  # eslint-plugin-vue writes its rules in .js and .ts: the pattern resolves as a module path does.
-  implementation: lib/rules/{rule}
-  tests: ["tests/lib/rules/**/*.test.ts"]
-  # The files the indent rules' tests read their cases from, and the project the type-aware cases compile against.
-  test_fixtures: ["tests/fixtures/html-indent/**", "tests/fixtures/script-indent/**", "tests/fixtures/typescript/**"]
-  # Vitest runs upstream's tests at the repository's root, and cases name files and modules from process.cwd().
-  test_cwd: "."
-  # Upstream's tests are ES modules vitest imports as Node does: `import tsParser from '@typescript-eslint/parser'` is
-  # that package's exports, though its CommonJS build is marked __esModule without a default.
-  esm_tests: true
-  helpers: ["@eslint-community/eslint-utils"]
-  checkout: ["/lib/", "/tests/", "/LICENSE", "/package.json"]
-  vue:
-    runtime: vue-parsers

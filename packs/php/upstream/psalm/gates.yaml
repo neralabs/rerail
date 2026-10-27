@@ -69,4 +69,3 @@ rules:
   "UnusedVariable":
     deprecated: null
     recommended: { config: "init", options: [] }
-known_gaps: []
