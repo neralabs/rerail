@@ -2,6 +2,8 @@
 
 ## Using Rerail
 - [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+- [reference.md](reference.md): how rules and their configuration work, the database, updates, the daemon and its API,
+  and audits
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated
 - [writing-rules.md](writing-rules.md): which rules are worth having, and suggesting, writing, testing and tuning one
   with `/rerail-create` and `rerail rules evidence|test|add`
@@ -19,6 +21,7 @@
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
 ## Release
+- [release.md](release.md): how core is built, versioned and published
 - [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first publish to npm and its trusted
   publisher
 
@@ -27,6 +30,7 @@
   (`npm run check:structure`) that enforces them
 
 ## Design notes
+- [vision.md](vision.md): the coordination problem, the semantic monitor, and Rerail's design principles
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and

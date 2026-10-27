@@ -352,7 +352,7 @@ Settings, scans, status, update checks, rollback and reset are the CLI
 commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
-identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)
+identity. See the [scan and settings contract](reference.md#scan-and-settings-controls)
 for scope, mode, persistence, diagnostics, and background versus next-event
 delivery.
 
