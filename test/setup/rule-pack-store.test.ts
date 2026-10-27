@@ -92,7 +92,7 @@ describe("npmPackStore", () => {
     const { fetched, problems } = await npmPackStore(temporaryHome(), npm).fetch(["typescript", "gone", "complexity"], "latest");
 
     expect(fetched.map(pack => pack.id)).toEqual(["typescript", "complexity"]);
-    expect(problems).toEqual([{ packageName: "@neralabs/rerail-pack-gone", reason: "no read access to @neralabs/rerail-pack-gone, or it is not published; ask Nera for access" }]);
+    expect(problems).toEqual([{ packageName: "@neralabs/rerail-pack-gone", reason: "npm cannot read @neralabs/rerail-pack-gone: it is not published, or the registry or token in ~/.npmrc refuses it" }]);
     // A 404 is not a missing version under the tag, so it is not fetched again under next.
     expect(calls.filter(args => args.at(-1)!.startsWith("@neralabs/rerail-pack-gone@"))).toHaveLength(1);
   });

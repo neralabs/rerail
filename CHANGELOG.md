@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
+
 ## 0.1.0 (2026-10-27)
 
 First release of Rerail as `@neralabs/rerail`, licensed under Apache-2.0.

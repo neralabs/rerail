@@ -208,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
-          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access restricted --tag "$RELEASE_CHANNEL"
+          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL"
 
   # Reads core's dist-tags back from npm, which for this restricted package needs a read token: the read-only
   # NPM_PACKS_READ_TOKEN, which must cover @neralabs/rerail as well as the packs.
