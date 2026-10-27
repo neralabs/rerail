@@ -725,7 +725,7 @@ enum FileOutcome {
 
 /// A file's tape, as the workspace stores it, and its line table; `None` where the parser stopped
 /// at a limit before it read the file (Forte's nesting depth or step budget).
-pub(super) fn file_tape(
+pub(crate) fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {

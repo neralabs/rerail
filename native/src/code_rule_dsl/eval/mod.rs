@@ -17,7 +17,7 @@ pub(super) use output::{
     violation_ids,
 };
 pub(super) use query::{
-    WitnessError, document_matcher, evaluate_query, file_language, grammar_matcher,
+    WitnessError, document_matcher, evaluate_query, file_language, file_tape, grammar_matcher,
     witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]

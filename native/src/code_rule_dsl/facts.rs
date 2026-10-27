@@ -4,6 +4,8 @@ use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, 
 
 // The push path is wired into the workspace scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
+pub(crate) mod core;
+#[allow(dead_code)]
 pub(crate) mod memo;
 #[allow(dead_code)]
 pub(crate) mod observe;

@@ -2003,6 +2003,11 @@ impl TapeDoc {
         self.host.as_ref().map(|link| &link.host)
     }
 
+    /// This document's own text, which its spans index.
+    pub(super) fn document_source(&self) -> &Arc<String> {
+        &self.source
+    }
+
     /// The file's source: a guest's host's, else this document's own.
     pub(super) fn file_source(&self) -> &Arc<String> {
         self.host
@@ -2060,7 +2065,6 @@ impl TapeDoc {
         self.data[node as usize].kind
     }
 
-    #[cfg(test)]
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
         self.kind_overrides
             .binary_search_by_key(&node, |&(index, _)| index)
@@ -2068,7 +2072,6 @@ impl TapeDoc {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
 
-    #[cfg(test)]
     fn node_is_named(&self, node: u32) -> bool {
         self.kind_alias(node).map_or_else(
             || self.grammar.kind_is_named(self.data[node as usize].kind),
@@ -2076,12 +2079,10 @@ impl TapeDoc {
         )
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
@@ -2095,7 +2096,6 @@ impl TapeDoc {
         rec.start as usize..rec.end as usize
     }
 
-    #[cfg(test)]
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
@@ -2147,6 +2147,8 @@ impl TapeDoc {
         self.supertypes.iter().copied()
     }
 
+    // The packed runtime's class test (Phase 4).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
         self.supertypes.binary_search(&(node, kind)).is_ok()
     }
