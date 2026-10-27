@@ -89,12 +89,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 - Gate: full `cargo test --lib`, run once: 1504 passed, 12 failed, 22 ignored; 141 s user + 11 s sys CPU. All 12 failures are environmental, not from this phase: 3 need pack fixtures that are not in git (`npm run fixtures:pull`), and 9 `git_workspace` tests build temp repos with `git add .`, which the agent git hook blocks.
 
 - Modules: `content_store/{atoms, derivation, facts_memo, tree_diff, tree_pages}.rs` and `code_rule_dsl/facts/{observe, propagate, memo, pages, runs, overlay}.rs`; provenance in `provenance.md`.
-- Open items carried forward:
-  1. Nothing calls the push path yet. The observers are wired into the workspace scan (W `git_workspace.rs`, the watcher, buffers) when Phase 2's first consumer exists.
-  2. A new name is interned with a synchronous SQLite write (one transaction per batch). Warm edits rebind existing names; cold scans pay one write per batch.
-  3. Spill files are not recovered after a crash. SQLite stays consistent; lost layers are recomputed.
-  4. Page collection can drop pages whose binding is still in an unwritten overlay layer; the next lookup misses and recomputes.
-  5. Overlay byte accounting is an estimate per entry, and the overlay assumes a single pushing thread.
+- Open items carried forward: O1–O6 in `open-items.md`. O1 (stale-fact detection after a crash) must be validated before the overlay is used outside tests.
 
 ### Phase 2: core facts from the tape
 
