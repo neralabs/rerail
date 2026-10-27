@@ -144,7 +144,9 @@ describe("Rerail managed launcher", () => {
     expect(packaged.exitCode).toBe(0);
     const archive = join(root, `${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`);
     const consumer = join(root, "consumer");
-    const installed = await run(["npm", "install", "--prefix", consumer, "--no-audit", "--no-fund", archive], process.env);
+    // A clean install from the tarball's declared dependencies, so one missing from package.json fails here; packages
+    // already in the npm cache (CI restores it and runs npm ci first) are taken from it instead of the registry.
+    const installed = await run(["npm", "install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive], process.env);
     expect(installed.exitCode).toBe(0);
     const launcherRoot = join(consumer, "node_modules", ...manifest.name.split("/"));
     const accepted = await createPackageFixture(launcherRoot, join(root, "registry"), acceptedVersion, true);
@@ -237,7 +239,7 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 90_000); // npm pack, a real npm install of the tarball from the registry, then twelve CLI runs: about 30s locally, 45s to 60s in CI.
+  }, 90_000); // npm pack, a clean npm install of the tarball, then twelve CLI runs: about 30s locally, 45s to 60s in CI.
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
