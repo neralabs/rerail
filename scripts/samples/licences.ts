@@ -68,6 +68,65 @@ export const SOURCE_LICENCES: Readonly<Record<string, SourceLicence>> = {
   "legrandin/pycryptodome": { spdx: "BSD-2-Clause", files: ["LICENSE.rst"] },
 };
 
+/**
+ * Source repositories whose samples come from the ESLint test set (scripts/samples/convert-eslint-test-set.ts), with
+ * the licence the test set recorded for them, as the committed `SAMPLES.md` tables list it. Their licence texts are not
+ * read on build; a sample's `source.license` must still equal the entry.
+ */
+const TEST_SET_LICENCES: Readonly<Record<string, string>> = {
+  "aidenybai/million": "MIT",
+  "angular/angular-cli": "MIT",
+  "automattic/mongoose": "MIT",
+  "babel/babel": "MIT",
+  "boardgameio/boardgame.io": "MIT",
+  "cheeriojs/cheerio": "MIT",
+  "codeceptjs/codeceptjs": "MIT",
+  "colinhacks/zod": "MIT",
+  "darkreader/darkreader": "MIT",
+  "dherault/serverless-offline": "MIT",
+  "diegomura/react-pdf": "MIT",
+  "enricoros/big-agi": "MIT",
+  "eslint/eslint": "MIT",
+  "facebook/docusaurus": "MIT",
+  "gatsbyjs/gatsby": "MIT",
+  "gpujs/gpu.js": "MIT",
+  "ianstormtaylor/slate": "MIT",
+  "itsriffchan/solar-gwa-calculator": "MIT",
+  "jestjs/jest": "MIT",
+  "katex/katex": "MIT",
+  "marmelab/react-admin": "MIT",
+  "mermaid-js/mermaid": "MIT",
+  "mobxjs/mobx": "MIT",
+  "nasa-impact/mmgis": "Apache-2.0",
+  "notionnext-org/notionnext": "MIT",
+  "opentiny/tiny-charts": "MIT",
+  "postcss/postcss": "MIT",
+  "redis/ioredis": "MIT",
+  "redwoodjs/graphql": "MIT",
+  "reececorkhill/plan-it": "MIT",
+  "scimmyjs/scimmy": "MIT",
+  "tadanobutubutu/screeps": "MIT",
+  "tryghost/ghost": "MIT",
+  "typeorm/typeorm": "MIT",
+  "usebruno/bruno": "MIT",
+  "walkover-web-solution/giddh-new-angular4-app": "MIT",
+  "web-scrobbler/web-scrobbler": "MIT",
+  "wekan/wekan": "MIT",
+};
+
+/**
+ * Every source repository a sample may be taken from (`owner/name`, lowercase) and its SPDX licence: SOURCE_LICENCES
+ * and the ESLint test set's sources. Sample publish (`publishedSamples`) refuses a repository missing here and a
+ * declared `source.license` that is not this value; the approver summary lists repositories by it.
+ */
+export const RECORDED_LICENCES: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(Object.entries(SOURCE_LICENCES).map(([repo, licence]) => [repo, licence.spdx])),
+  ...TEST_SET_LICENCES,
+};
+
+/** The recorded SPDX licence of `repo` (any case), or undefined when none is recorded. */
+export const recordedLicence = (repo: string): string | undefined => RECORDED_LICENCES[repo.toLowerCase()];
+
 /** What each SPDX id's licence text must say, so a table entry that no longer matches its file stops the build. */
 const LICENCE_MARKERS: Readonly<Record<string, readonly RegExp[]>> = {
   MIT: [/Permission is hereby granted, free of charge/u],
