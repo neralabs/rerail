@@ -6,7 +6,7 @@ rerail:
   project: typescript-eslint
   # Since #52 a typescript rule runs on TypeScript files only, and JavaScript files are the javascript pack's.
   # typescript-eslint's approved configurations also lint .js, .mjs and .cjs, so the ports are held to the TypeScript
-  # types alone. Upstream's tests have no JavaScript file, and the pack's corpus excludes them.
+  # types alone. Upstream's tests have no JavaScript file.
   in_scope:
     - .ts
     - .mts
@@ -15,7 +15,7 @@ rerail:
 upstream:
   name: typescript-eslint/typescript-eslint plugin rules
   repository: https://github.com/typescript-eslint/typescript-eslint
-  # The release rerail's typescript pack records (packs/typescript/licenses/typescript-eslint/UPSTREAM.md:
+  # The release rerail's typescript pack ports (packs/typescript/licenses/typescript-eslint/UPSTREAM.md:
   # typescript-eslint 8.70.1 at this commit); tag v8.70.1.
   commit: 23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7
   version: 8.70.1
@@ -30,101 +30,209 @@ upstream:
   recommended_configs:
     - flat/recommended
     - flat/recommended-type-checked
+  # The file types upstream lints with its approved configuration at the pins (declared; reviewed at each bump).
+  lints: [".cjs", ".cts", ".js", ".mjs", ".mts", ".ts", ".tsx"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "npm: 169,864,457 downloads of @typescript-eslint/eslint-plugin in the week 2026-09-28 to 2026-10-04 (api.npmjs.org)"
     - "npm: 112,639,766 downloads of typescript-eslint in the same week"
     - "GitHub: typescript-eslint/typescript-eslint has 16,410 stars and is not archived"
-known_gaps: []
-# Candidates that differ from upstream on real code throughout (docs/port-readiness.md, "Goldens"): each differs on more
-# than 500 of its goldens in NRV's validation/goldens/typescript-typescript-eslint.tsv (NRV e8727c7), so one entry
-# stands in place of its goldens. differing_files counts those it differed on, engine gaps included, in rerail CI run
-# 38969340726. A listed rule fails no-real-code-gap; once it agrees there, import its NRV goldens into goldens.tsv in
-# place of its entry.
-real_code_gaps:
-  - rule: typescript-eslint-class-methods-use-this
-    differing_files: 2928
-  - rule: typescript-eslint-consistent-type-imports
-    differing_files: 6898
-  - rule: typescript-eslint-explicit-function-return-type
-    differing_files: 4200
-  - rule: typescript-eslint-explicit-member-accessibility
-    differing_files: 4343
-  # Counted in NRV 7f933d9: typescript-eslint 8.70.1 reports nothing at the
-  # rule's default options, and the port runs it as `always` (packs/typescript/README.md).
-  - rule: typescript-eslint-init-declarations
-    differing_files: 2693
-  - rule: typescript-eslint-max-params
-    differing_files: 3479
-  - rule: typescript-eslint-member-ordering
-    differing_files: 2124
-  - rule: typescript-eslint-method-signature-style
-    differing_files: 1539
-  - rule: typescript-eslint-no-inferrable-types
-    differing_files: 734
-# Decisions for the team to confirm (the eslint adapter's literal readings):
-# - Gate 5 runs every case of packages/eslint-plugin/tests/rules/**/*.test.ts through upstream's own RuleTester, as
-#   the approved configuration configures a project: with the rule at the options of its first approved
-#   configuration in place of the case's own (the TSLint precedent), and without the globals the case or its
-#   RuleTester declares (languageOptions.globals), which the recommended configurations do not declare and a port
-#   cannot see. The settings the case or its RuleTester declares (`settings`) are left out the same way; no
-#   typescript-eslint rule reads them. The case's parser, parserOptions and file name stay, since they define the
-#   language its code is in. Type-checked rules lint with the tsconfig fixtures upstream's tests use
-#   (packages/eslint-plugin/tests/fixtures). A case that declares globals or settings is not compared with its
-#   written expectation. Keeping the case's globals instead changes no verdict here; no-redeclare expects 31
-#   findings instead of 30 and fails either way.
-# - A rule's end positions are compared only when every finding upstream reports on its own tests carries one.
-# - Gate 3's upstream code for a rule is its file; the modules it imports by relative path, followed transitively (other
-#   rules aside); the module that defines each name it imports from one of the `helpers` packages below, and of what
-#   that module imports from another `helpers` package only JSON data (is-builtin-module's builtin-modules list), not
-#   that package's code (@typescript-eslint/utils re-exports token predicates from @eslint-community/eslint-utils, a
-#   single-file bundle holding the whole library's strings) nor its own package's internals; the ESLint rule a
-#   typescript-eslint rule extends, read the same way; and the
-#   helper modules the approved configurations' parser calls, since every rule reads the scopes that parser builds.
-#   Every word of their strings counts except in `meta`'s documentation (docs, schema): `meta.messages` and
-#   `meta.defaultOptions` count, and so do object literal keys (lookup tables such as conf/globals.js and
-#   ReferenceTracker trace maps).
-# - Gate 3's comment vocabulary, which explains words only in regexes that read comment text, is TypeScript's JSDoc tags
-#   and pragmas, ESLint's directive names, and the values ESLint's directives take, read from the pinned eslint: a
-#   global's setting (normalizeConfigGlobal's off, readonly, readable, writable, writeable, true, false) and a rule's
-#   severity (shared/severity.js's off, warn, error).
-# - Gate 3's test words are, for every RuleTester case of every upstream test file: its code and the code it expects
-#   after fixes (output and each suggestion's output), read with the scanner; its options, settings and the names of the
-#   globals it declares; and what it expects reported (each error's message and data values, each suggestion's
-#   description and data values). So are the files under packages/eslint-plugin/tests/fixtures, which type-checked cases
-#   compile against. The test modules' RuleTester scaffolding (valid, invalid, errors, messageId) is not read: it is the
-#   test framework's vocabulary, not upstream's test code.
-# - File types: of the approved configurations' entries only typescript-eslint/eslint-recommended sets `files` (**/*.ts,
-#   **/*.tsx, **/*.mts, **/*.cts); base and recommended set none, so the plugin's rules also run on ESLint's defaults
-#   .js, .mjs and .cjs. All seven are Gate 2's in-scope samples. Gate 6 takes the corpus's 39 .ts and 57 .tsx files, not
-#   its 11 .jsx, which no approved configuration lints.
-# - Type-checked rules report nothing on the corpus (a set of patched files is not a buildable project), as ADR 0006
-#   says.
-# - Upstream's tests run in validation/upstream/typescript-eslint-8.70.1 on the eslint (10.8.1), typescript (6.0.3) and
-#   tsx versions typescript-eslint's own v8.70.1 pnpm-lock.yaml resolves, not on ESLint 10.11.0.
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (declared; reviewed at each bump).
+rules:
+  "@typescript-eslint/adjacent-overload-signatures":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/array-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/ban-ts-comment":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/ban-tslint-comment":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/class-literal-property-style":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/class-methods-use-this":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-generic-constructors":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-indexed-object-style":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-type-assertions":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-type-definitions":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/consistent-type-imports":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/default-param-last":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/explicit-function-return-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/explicit-member-accessibility":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/explicit-module-boundary-types":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/init-declarations":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/max-params":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/member-ordering":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/method-signature-style":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-array-constructor":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-confusing-non-null-assertion":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-dupe-class-members":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-duplicate-enum-values":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-dynamic-delete":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-empty-function":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-empty-object-type":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-extra-non-null-assertion":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-extraneous-class":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-import-type-side-effects":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-inferrable-types":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-invalid-this":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-invalid-void-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-magic-numbers":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-misused-new":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-namespace":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-non-null-asserted-nullish-coalescing":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-non-null-asserted-optional-chain":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-non-null-assertion":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-redeclare":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-require-imports":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-shadow":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-this-alias":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unnecessary-parameter-property-assignment":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-unnecessary-type-constraint":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unsafe-declaration-merging":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unsafe-function-type":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unused-expressions":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-unused-private-class-members":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-unused-vars":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/no-use-before-define":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-useless-constructor":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-useless-empty-export":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/no-wrapper-object-types":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/parameter-properties":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-as-const":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/prefer-enum-initializers":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-for-of":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-function-type":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-literal-enum-member":
+    deprecated: null
+    recommended: null
+  "@typescript-eslint/prefer-namespace-keyword":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/triple-slash-reference":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "@typescript-eslint/unified-signatures":
+    deprecated: null
+    recommended: null
+# How the expected findings are made (the configuration, options and parser upstream runs with) is the
+# generator's own header: packs/typescript/upstream/generate.mjs.
+# - File types (`lints`): of the approved configurations' entries only typescript-eslint/eslint-recommended sets `files`
+#   (**/*.ts, **/*.tsx, **/*.mts, **/*.cts); base and recommended set none, so the plugin's rules also run on ESLint's
+#   defaults .js, .mjs and .cjs.
 eslint:
-  plugin:
-    package: "@typescript-eslint/eslint-plugin"
-    namespace: "@typescript-eslint"
-  # The plugin publishes dist/, built from src/; its tests import ../../src/rules/<rule>, which run as the installed build.
   release:
     tag: v8.70.1
-    path: packages/eslint-plugin/src
     installed: "@typescript-eslint/eslint-plugin/dist"
-    verbatim: false
-  implementation: packages/eslint-plugin/src/rules/{rule}.ts
-  tests: ["packages/eslint-plugin/tests/rules/**/*.test.ts"]
-  # The files type-checked cases compile against (file.ts, react.tsx, deprecated.ts, the tsconfig variants).
-  test_fixtures: ["packages/eslint-plugin/tests/fixtures/**"]
-  # Helper libraries typescript-eslint's rules are written with, from its own monorepo, and ESLint's for the ESLint
-  # rules some of them extend. Parsers (@typescript-eslint/typescript-estree, @eslint-community/regexpp) and the
-  # TypeScript compiler with its API utilities (typescript, ts-api-utils) are not rule helpers and are not read, as
-  # TSLint's typescript and tsutils are not. The approved configurations' parser calls @typescript-eslint/scope-manager's
-  # analyze, whose default jsxPragma is React; every rule reads the scopes it builds.
-  helpers:
-    - "@eslint-community/eslint-utils"
-    - "@typescript-eslint/scope-manager"
-    - "@typescript-eslint/type-utils"
-    - "@typescript-eslint/utils"
-  checkout: ["/packages/eslint-plugin/", "/LICENSE", "/NOTICE", "/package.json"]

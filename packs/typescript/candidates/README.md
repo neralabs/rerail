@@ -1,28 +1,24 @@
 # Rerail rule pack: TypeScript, candidates
 
-The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
-and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
+The ports in `rules/` here are still being evaluated: scored against the tools' expected findings and reported, never
+gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
 Every typescript-eslint 8.70.1 rule that needs no type information has a port, shipped or a candidate here, except
 `no-restricted-types` (the pack README says why).
 
-## `no-magic-numbers` passes the gates and stays a candidate
+## `no-magic-numbers` is a candidate
 
-It passes the blocking port readiness gates but `passes-conformance` ([docs/port-readiness.md](../../../docs/port-readiness.md)) and agrees with typescript-eslint on every fixture and every vscode file. A shipped rule's vscode
-recording has to cover it, though, and at its default options it reports nearly every number literal: about 187,500
-findings in vscode's `src/`. That would grow `corpus-vscode.expected.json` from 4.5 MB to about 41 MB, so the rule
-stays in `candidates/` until the recording can hold it. It would start off anyway: no approved typescript-eslint
-configuration turns it on.
+It agrees with typescript-eslint on every fixture. At its default options it reports nearly every number literal, and
+no approved typescript-eslint configuration turns it on, so it would start off if it shipped.
 
 ## `init-declarations` can't match upstream's tests
 
 typescript-eslint declares `'always'` as `init-declarations`' default. Its wrapper around ESLint's core rule has no
 `meta.defaultOptions`, so with no options ESLint 10 passes the core rule no mode, and it reports nothing. Every upstream
-test that expects a finding sets the option, so upstream's own tests never notice. `matches-upstream-tests` runs each case at the rule's
-default options, sees no upstream finding at all, and fails the rule whatever its document says; on real code it
-differs from upstream throughout, so `gates.yaml` lists it under `real_code_gaps`. The candidate ports the
-declared default, `'always'`. With that option set, it agrees with typescript-eslint on every upstream test case and on
-the vscode corpus.
+test that expects a finding sets the option, so upstream's own tests never notice. The generator lints each case at the
+rule's default options and leaves out the cases that set options, so the expected findings hold no upstream finding of
+the rule at all, whatever its document says. The candidate ports the declared default, `'always'`. With that option
+set, it agrees with typescript-eslint on every upstream test case.
 
 ## Rule details
 

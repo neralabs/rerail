@@ -1,7 +1,7 @@
 # Rerail rule pack: React, candidates
 
-The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
-and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
+The ports in `rules/` here are still being evaluated: scored against the tools' expected findings and reported, never
+gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
 ## Rule details
 

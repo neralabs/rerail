@@ -1,26 +1,26 @@
 # Rerail rule pack: PHP, candidates
 
-The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
-and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
+The ports in `rules/` here are still being evaluated: scored against the tools' expected findings and reported, never
+gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
 ## Candidates
 
 The title is what `pack.json` lists for a candidate once it ships; its group is the tool the title names. The reason
-is the blocking gate it fails and why.
+is why it stays a candidate.
 
-| Candidate | Title | Fails |
+| Candidate | Title | Why |
 |---|---|---|
-| `phpcs-generic-php-deprecated-functions` | PHP_CodeSniffer Generic.PHP.DeprecatedFunctions: Deprecated functions | `matches-upstream-tests`: the engine reports `source-incomplete` on LowerCaseConstant's deliberately broken test files (`.1.inc`, `.2.inc`), which every ported sniff is judged on |
-| `phpcs-generic-php-forbidden-functions` | PHP_CodeSniffer Generic.PHP.ForbiddenFunctions: Forbidden functions | `matches-upstream-tests`: as DeprecatedFunctions |
-| `phpcs-generic-php-no-silenced-errors` | PHP_CodeSniffer Generic.PHP.NoSilencedErrors: No silenced errors | `not-overfit`: its regex names `file_exists` (Rerail's own exemption), a word in upstream's tests but not its code |
-| `phpcs-squiz-php-disallow-size-functions-in-loops` | PHP_CodeSniffer Squiz.PHP.DisallowSizeFunctionsInLoops: Size functions in loops | `not-overfit`: it names `array_push`, from Rerail's own exemption, a word in upstream's tests but not its code |
-| `phpstan-variable-undefined` | PHPStan variable.undefined: Undefined variable | `matches-upstream-tests`: 13 files differ; it needs PHPStan's types |
-| `phpstan-argument-sprintf` | PHPStan argument.sprintf: sprintf() argument count | `matches-upstream-tests`: a format held in a variable with two possible values needs PHPStan's types |
-| `phpstan-array-duplicate-key` | PHPStan array.duplicateKey: Duplicate array key | `matches-upstream-tests`: implicit keys, class constants and PHPDoc-typed keys need PHPStan's types |
-| `phpstan-random-int-parameters` | PHPStan argument.type: random_int() parameters | `matches-upstream-tests`: integer ranges need PHPStan's types; it fires where PHPStan does not |
-| `phpstan-if-always-true` | PHPStan if.alwaysTrue: If condition always true | `matches-upstream-tests`: type narrowing needs PHPStan's types |
-| `phpstan-if-always-false` | PHPStan if.alwaysFalse: If condition always false | `matches-upstream-tests`: as if.alwaysTrue |
-| `psalm-unused-variable` | Psalm UnusedVariable: Unused variable | `matches-upstream-tests`: 6 of Psalm's cases differ (references and `global`, a call the engine cannot resolve, and one where Psalm reports another line), which needs engine work on PHP scope and usage (`scope/usage/php.rs`) |
+| `phpcs-generic-php-deprecated-functions` | PHP_CodeSniffer Generic.PHP.DeprecatedFunctions: Deprecated functions | the engine reports `source-incomplete` on LowerCaseConstant's deliberately broken test files (`.1.inc`, `.2.inc`), which every ported sniff is judged on |
+| `phpcs-generic-php-forbidden-functions` | PHP_CodeSniffer Generic.PHP.ForbiddenFunctions: Forbidden functions | as DeprecatedFunctions |
+| `phpcs-generic-php-no-silenced-errors` | PHP_CodeSniffer Generic.PHP.NoSilencedErrors: No silenced errors | its regex names `file_exists` (Rerail's own exemption), a word in upstream's tests but not its code: fitted to the tests, and no rename variant tests it |
+| `phpcs-squiz-php-disallow-size-functions-in-loops` | PHP_CodeSniffer Squiz.PHP.DisallowSizeFunctionsInLoops: Size functions in loops | it names `array_push`, from Rerail's own exemption, a word in upstream's tests but not its code: fitted to the tests, and no rename variant tests it |
+| `phpstan-variable-undefined` | PHPStan variable.undefined: Undefined variable | 13 files differ; it needs PHPStan's types |
+| `phpstan-argument-sprintf` | PHPStan argument.sprintf: sprintf() argument count | a format held in a variable with two possible values needs PHPStan's types |
+| `phpstan-array-duplicate-key` | PHPStan array.duplicateKey: Duplicate array key | implicit keys, class constants and PHPDoc-typed keys need PHPStan's types |
+| `phpstan-random-int-parameters` | PHPStan argument.type: random_int() parameters | integer ranges need PHPStan's types; it fires where PHPStan does not |
+| `phpstan-if-always-true` | PHPStan if.alwaysTrue: If condition always true | type narrowing needs PHPStan's types |
+| `phpstan-if-always-false` | PHPStan if.alwaysFalse: If condition always false | as if.alwaysTrue |
+| `psalm-unused-variable` | Psalm UnusedVariable: Unused variable | 6 of Psalm's cases differ (references and `global`, a call the engine cannot resolve, and one where Psalm reports another line), which needs engine work on PHP scope and usage (`scope/usage/php.rs`) |
 
 Two candidates carried an example pair while they shipped. `test/engine/catalog/candidate-examples.test.ts` still
 checks each pair below through the engine, and the pairs go back into `pack.json` with their rules:

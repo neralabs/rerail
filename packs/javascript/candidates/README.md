@@ -1,7 +1,7 @@
 # Rerail rule pack: JavaScript and TypeScript (ESLint core), candidates
 
-The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
-and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
+The ports in `rules/` here are still being evaluated: scored against the tools' expected findings and reported, never
+gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
 ## Rule details
 
@@ -18,10 +18,6 @@ Port of ESLint class-methods-use-this, default options. Flags non-static, non-co
 ### `eslint-default-param-last`
 
 Port of ESLint default-param-last on JS files. A rest parameter neither counts as required nor is reported (ESLint isRequiredParameter). TypeScript optional params are handled by typescript-eslint-default-param-last.
-
-### `eslint-dot-notation`
-
-Port of ESLint dot-notation, default options (allowKeywords true). Keys: string, static template, boolean/null literal that is a valid identifier. Reported at the key; no fix when comments sit inside the brackets.
 
 ### `eslint-func-name-matching`
 
@@ -75,10 +71,6 @@ Port of ESLint no-dupe-class-members. Static member names follow ESLint's getSta
 
 Port of ESLint no-dupe-else-if. Flags an else-if test that repeats an earlier test of the chain, is an operand of an earlier `||` test, or is an `&&` whose operand repeats an earlier test (one level only). Tests are compared by tokens, with `||`/`&&` operands in either order (ESLint's equal). Divergence: ESLint's full or/and set-cover over the whole chain is not expressed.
 
-### `eslint-no-duplicate-imports`
-
-Port of ESLint no-duplicate-imports. With includeExports, re-exports are also checked. Only flags when ESLint's merge rules allow merging (namespace vs named, `export *`, type-only default vs named). Module names are paired by cooked value trimmed the way JavaScript trims (`transform` with `value: true`), and the message names the trimmed value. Options (includeExports, allowSeparateTypeImports) live in the `options` define; a variant is a config patch.
-
 ### `eslint-no-empty-function`
 
 Port of ESLint no-empty-function, default options (allow: []). A body holding a comment is not empty; constructors with parameter properties are exempt.
@@ -91,10 +83,6 @@ Port of ESLint no-eval, default allowIndirect false. Indirect uses flagged: refe
 
 Port of ESLint no-extra-bind. Only `.bind(x)` with exactly one argument; the fix removes the call when the argument is side-effect free and no comment is inside.
 
-### `eslint-no-extra-label`
-
-Port of ESLint no-extra-label. Fix removes the label when the statement holds no comment.
-
 ### `eslint-no-implied-eval`
 
 Port of ESLint 10.11.0 no-implied-eval, default options. setTimeout/setInterval/execScript called directly or through window/self/global/globalThis, with a first argument that is a string (followed through effectively-constant bindings: `value.follow`), a template literal, or a `+` with such an operand. Those names count only when the configured ecmaVersion and globals declare them (`ast.languageOptions`) and nothing shadows them (`resolves`).
@@ -103,9 +91,13 @@ Port of ESLint 10.11.0 no-implied-eval, default options. setTimeout/setInterval/
 
 Port of ESLint no-irregular-whitespace. Reports every maximal run of irregular whitespace and every U+2028/U+2029 (`finding.each` over a regex group): inside tokens ESLint does not skip (comments, regex literals, template chunks), between tokens via a lexer regex over the program text and each template substitution that consumes non-code (comments, strings, templates, regex literals at the start or after a punctuator), and in the file's leading whitespace before the first token (only its first three runs or line terminators). Options skipComments/skipTemplates/skipRegExps/skipJSXText/skipStrings.
 
-### `eslint-no-lonely-if`
+### `eslint-no-labels`
 
-Port of ESLint no-lonely-if. Only when the else block's braces are not necessary; fixes to `else if` under ESLint's comment and ASI guards (ASI guard approximated conservatively).
+Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+
+### `eslint-no-loss-of-precision`
+
+Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span. A candidate: on the real-code samples (`docs/upstream.md#samples`) it reports 28 decimal literals of 2^63 (`9223372036854775808`), which a double stores exactly and ESLint does not report, because their digits differ from `String(v)`'s.
 
 ### `eslint-no-magic-numbers`
 
@@ -123,13 +115,17 @@ Port of ESLint no-new-func. Calling or constructing the global Function, or call
 
 Port of ESLint `no-obj-calls`. Flags calling or constructing Atomics, JSON, Math, Reflect, Intl or Temporal directly, through a global object (globalThis/window/self/global), or through an effectively constant variable whose binding holds one (resolved recursively via `resolves.binding`). Names count only when the configured ecmaVersion and globals declare them (`ast.languageOptions`) and nothing shadows them.
 
+### `eslint-no-prototype-builtins`
+
+Port of ESLint no-prototype-builtins. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+
 ### `eslint-no-redeclare`
 
 Flags each definition after the first in the same scope (`binds.redefines`); with builtinGlobals, definitions of a configured or `/* global */`-declared global (`binds.builtin`). Inside `/* global */` comments it reports per item (M12a eslintDirective parse): an item naming a builtin/configured global, one an identifier declares in the global scope, or one an earlier global comment names.
 
 ### `eslint-no-self-assign`
 
-Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Unrolled to 3 nested containers.
+Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
 
 ### `eslint-no-unexpected-multiline`
 

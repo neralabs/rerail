@@ -1,7 +1,6 @@
 // Records eslint-plugin-unicorn for the JavaScript pack's unicorn ports (packs/javascript/conformance.json), in the
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-unicorn/fixtures.expected.json.
-// Run by `npm run fixtures:derive` (a maintainer, the bump workflow, or a pull request's check that a changed
-// test-data.lock reproduces):
+// Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --unicorn <checkout>
 // <dir> holds node_modules with the runtime nera-rule-validation pins for eslint-plugin-unicorn 76.0.0
 // (validation/upstream/eslint-plugin-unicorn-76.0.0): eslint 10.11.0, eslint-plugin-unicorn 76.0.0,
@@ -11,21 +10,34 @@
 //
 // Each rule's test file is imported with test/utils/test.js and ava replaced by stubs that record the cases its
 // `test(…)`, `test.snapshot(…)` and `test.typescript(…)` calls declare. Every case is linted with every pack rule of
-// the plugin on at its default options (a case's own options are ignored, as the V1 gates' upstream-tests gate
-// ignores them), under ESLint's defaults plus the case's own ecmaVersion, sourceType and parserOptions;
+// the plugin on at its default options (a case's own options are ignored, as the pack's ports ignore
+// them), under ESLint's defaults plus the case's own ecmaVersion, sourceType and parserOptions;
 // typescript-eslint's parser where the case names it, and cases for any other parser (vue, svelte, html) are left
 // out. The case's globals and settings are left out. A case's code is written to
 // eslint-plugin-unicorn/fixtures/<rule>/<n>.<ext>, or, for a case with a `filename` (filename-case's tests are file
 // names), to <rule>/<n>/<filename>; a case named outside the ecma family's extensions (`.vue`, `.md`) is left out,
 // since Rerail does not read it as JavaScript. Code that does not parse is left out. Each kept file is one analysis unit.
 // Tests that build a `filename` from process.cwd() (filename-case's `path.join(cwd, …)` and `outsideCwd`) are imported
-// under `withRecordingCwd`, so a recording never carries the maintainer's own directory, neither in a fixture path (which
+// under `withUpstreamTestCwd`, so the expected findings never carry the maintainer's own directory, neither in a fixture path (which
 // must stay short enough to check out on Windows) nor in the case's code; `assertPortableCase` refuses one that would.
+// `source.units` names each file's origin, the rule whose test file it came from; each such file also gets a rename
+// variant under renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted in the original's
+// language and marked `renamedFrom` it.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join, normalize, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, assertPortableCase, lint, pinnedRequire, withRecordingCwd, writeRecording } from "../../../../conformance/recorders/eslint-record.mjs";
+import {
+  assertCommit,
+  assertPortableCase,
+  isVariantPath,
+  lint,
+  pinnedRequire,
+  withOrigins,
+  withUpstreamTestCwd,
+  writeExpectedFindings,
+  writeRenameVariants,
+} from "../../../../scripts/pack-data/eslint-expected.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -130,7 +142,7 @@ async function extractFixtures() {
   for (const rule of RULES) {
     const name = rule.slice(PREFIX.length);
     RUNS.length = 0;
-    await withRecordingCwd(() => import(pathToFileURL(join(options.unicorn, "test", `${name}.js`)).href));
+    await withUpstreamTestCwd(() => import(pathToFileURL(join(options.unicorn, "test", `${name}.js`)).href));
     const runs = RUNS.filter(run => run.rule === name);
     if (runs.length === 0) throw new Error(`${rule}: test/${name}.js declared no cases`);
     const seen = new Set();
@@ -180,6 +192,10 @@ async function extractFixtures() {
 
 installHooks();
 const { fixtures, files, languages, counts } = await extractFixtures();
+// Each file is a case of the rule whose test file it came from (`<rule>/…`); its rename variant joins its language group.
+const origins = new Map(files.map(file => [file, [`${PREFIX}${file.split("/")[0]}`]]));
+const { variants, skipped: unrenamed } = writeRenameVariants(fixtures, files, origins);
+const variantOf = new Map(variants.map(variant => [variant.of, variant.unit]));
 const config = [
   {
     files: ["**/*"],
@@ -189,17 +205,18 @@ const config = [
   },
   ...[...languages].map(([group, members]) => {
     const { language, typescript } = JSON.parse(group);
-    return { files: members, languageOptions: { ...(typescript ? { parser: tsParser } : {}), ...(language ?? {}) } };
+    return { files: [...members, ...members.flatMap(member => variantOf.get(member) ?? [])], languageOptions: { ...(typescript ? { parser: tsParser } : {}), ...(language ?? {}) } };
   }),
 ];
-const { findings, skipped } = await lint(ESLint, fixtures, config, files, RULES);
-for (const { path } of skipped) {
+const linted = await lint(ESLint, fixtures, config, [...files, ...variants.map(variant => variant.unit)], RULES);
+for (const { path } of linted.skipped.filter(({ path }) => !isVariantPath(path))) {
   rmSync(join(fixtures, path));
   const count = counts[`${PREFIX}${path.split("/")[0]}`];
   count.unparsed = (count.unparsed ?? 0) + 1;
 }
-const unparsed = new Set(skipped.map(({ path }) => path));
+const unparsed = new Set(linted.skipped.map(({ path }) => path));
 const kept = files.filter(file => !unparsed.has(file)).sort();
-writeRecording(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: kept }, findings);
-console.log(`${TOOL} fixtures: ${kept.length} files, ${findings.length} findings`);
+const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
+writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
+console.log(`${TOOL} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
 for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);

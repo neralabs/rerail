@@ -3,7 +3,7 @@
   "id": "rust",
   "name": "Rust",
   "category": "language",
-  "covers": "18 Clippy 0.1.99 lints ported to Rerail, 13 of them on and 5 off until turned on, each scored against Clippy's own recorded findings on its UI tests; 16 more ports are candidates until they pass the port readiness gates.",
+  "covers": "18 Clippy 0.1.99 lints ported to Rerail, 13 of them on and 5 off until turned on, each scored against Clippy's own findings on its UI tests; 16 more ports are candidates until they pass the conformance check.",
   "reason": "matches Rust",
   "match": {
     "any": [

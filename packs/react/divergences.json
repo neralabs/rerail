@@ -5,7 +5,7 @@
   "path": "jsx-key/rerail-stencil-h.tsx",
   "line": 2,
   "kind": "not-comparable",
-  "evidence": "A Stencil component: `import { h } from '@stencil/core'` makes Stencil's `h` the file's JSX factory, so its JSX is not React's. eslint-plugin-react, enabled on every file by the recording's config, reports the keyless `<div>` in `items.map`; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and this file's is another library's."
+  "evidence": "A Stencil component: `import { h } from '@stencil/core'` makes Stencil's `h` the file's JSX factory, so its JSX is not React's. eslint-plugin-react, enabled on every file by the generator's config, reports the keyless `<div>` in `items.map`; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and this file's is another library's."
  },
  {
   "rule": "react-react-in-jsx-scope",
@@ -13,7 +13,7 @@
   "path": "jsx-key/rerail-stencil-h.tsx",
   "line": 2,
   "kind": "not-comparable",
-  "evidence": "A Stencil component: `import { h } from '@stencil/core'` makes Stencil's `h` the file's JSX factory, so `<div>` needs no `React` in scope. eslint-plugin-react, enabled on every file by the recording's config and reading only `@jsx` comments for its pragma, reports it; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and this file's is another library's."
+  "evidence": "A Stencil component: `import { h } from '@stencil/core'` makes Stencil's `h` the file's JSX factory, so `<div>` needs no `React` in scope. eslint-plugin-react, enabled on every file by the generator's config and reading only `@jsx` comments for its pragma, reports it; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and this file's is another library's."
  },
  {
   "rule": "react-react-in-jsx-scope",
@@ -21,7 +21,7 @@
   "path": "react-in-jsx-scope/rerail-jsx-import-source-preact.jsx",
   "line": 2,
   "kind": "not-comparable",
-  "evidence": "`/** @jsxImportSource preact */` hands the file's JSX to Preact's automatic runtime (preact/jsx-runtime), so `<p>` needs no `React` in scope. eslint-plugin-react reads only `@jsx` comments for its pragma (util/pragma getFromContext), so with the recording's config it still asks for `React`; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and this file's is Preact."
+  "evidence": "`/** @jsxImportSource preact */` hands the file's JSX to Preact's automatic runtime (preact/jsx-runtime), so `<p>` needs no `React` in scope. eslint-plugin-react reads only `@jsx` comments for its pragma (util/pragma getFromContext), so with the generator's config it still asks for `React`; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and this file's is Preact."
  },
  {
   "rule": "react-hooks-rules-of-hooks",
@@ -29,6 +29,6 @@
   "path": "rules-of-hooks/rerail-vue-package/src/use-field.js",
   "line": 5,
   "kind": "not-comparable",
-  "evidence": "The file's package.json depends on vue and on no React library, and `useId` is Vue's (`import { useId } from 'vue'`), not a React Hook. eslint-plugin-react-hooks treats every `use*` call as a React Hook on every file the recording's config enables it on; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and a Vue-only package's is another library's."
+  "evidence": "The file's package.json depends on vue and on no React library, and `useId` is Vue's (`import { useId } from 'vue'`), not a React Hook. eslint-plugin-react-hooks treats every `use*` call as a React Hook on every file the generator's config enables it on; every React port runs only where the file's JSX runtime is React or unknown (`file.jsxRuntime`), and a Vue-only package's is another library's."
  }
 ]

@@ -23,17 +23,6 @@
       ]
     }
   ],
-  "corpora": [
-    {
-      "name": "django",
-      "repository": "https://github.com/django/django",
-      "commit": "fd91518f17c8a84fa47fe0e5534ef46afa7a0f7a",
-      "paths": [
-        "django"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "ruff",

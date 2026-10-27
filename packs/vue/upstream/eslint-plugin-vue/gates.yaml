@@ -23,71 +23,91 @@ upstream:
   # vue2-* configurations are for Vue 2, and `flat/base` turns no ported rule on; none of them is approved.
   recommended_configs:
     - flat/recommended
+  # The file types upstream lints with its approved configuration at the pins (declared; reviewed at each bump).
+  lints: [".cjs", ".js", ".mjs", ".vue"]
 popularity:
   observed_on: 2026-10-19
   evidence:
     - "npm: 3,736,783 downloads of eslint-plugin-vue in the week 2026-10-12 to 2026-10-18 (api.npmjs.org/downloads/point/last-week/eslint-plugin-vue)"
     - "GitHub: vuejs/eslint-plugin-vue has 4,591 stars, is MIT and is not archived (gh api repos/vuejs/eslint-plugin-vue)"
-known_gaps: []
-# Decisions for the team to confirm (the eslint adapter's literal readings for this plugin):
-# - Gate 5 lints every case of tests/lib/rules/**/*.test.ts with ESLint's RuleTester, which upstream's
-#   tests/eslint-compat.ts returns on ESLint 10, with the rule at the options of flat/recommended (its own when it sets
-#   none) in place of the case's, and without the globals and settings the case declares. Vitest itself does not run:
-#   a stand-in registers its tests. Upstream's tests load lib/ (`release.sources`), as vitest does: tsdown compiles each
-#   CommonJS source to a dist/ module that exports it only as `default`, so the build cannot stand in for lib/ file for
-#   file. The installed rule of each name, whose metadata equals its lib/ copy's, runs in that copy's place. Two test
-#   files (block-order, comment-directive) import the built plugin as ../../../dist, which gets the installed build.
-# - A case vue-eslint-parser reads as a component (a .vue name, or code that starts with `<` when the case names no
-#   file) is read at a .vue path. vue-eslint-parser reads any other case as one script, with the parser its
-#   parserOptions.parser picks for the file's extension (espree when none). The vue pack's ports cover .vue components
-#   (`rerail.in_scope`), so such a script case is recorded as the component that holds it, as generate.mjs writes its
-#   fixtures: `<script>` in the script's lang, the case's code on the lines after it, then `</script>`, at the case's
-#   own .vue name (eslint-plugin-vue's script cases at test.vue, which its rules take for a component's script by that
-#   name), or at a .vue name in its place, linted by upstream with vue-eslint-parser handing the block to the parser
-#   that read the script and the case's own options. Upstream's answer on that component is the expected one, and
-#   matches-upstream-tests scores every case.
-# - Independent parsers: @vue/compiler-sfc 3.5.43 (runtimes/vue-parsers) splits a .vue file; its parse errors are
-#   syntax errors, its checks of the component grammar errors, and TypeScript and Babel read its script blocks in their
-#   lang. Other files are read by TypeScript and Babel alone.
-# - Corpus files are linted with flat/recommended and every named rule at its approved setting, plus comment-directive
-#   (`vue.directive_rules`), so `<!-- eslint-disable -->` in a template works as it does for the plugin's users, and
-#   @typescript-eslint/parser for `<script lang="ts">` and `lang="tsx"` (`vue.script_parsers`), as the user guide's
-#   TypeScript setup sets parserOptions.parser; other scripts are read by espree, as flat/recommended reads them.
-# - A rule's end positions are compared only when every finding upstream reports on its own tests carries one.
-# - Gate 3's upstream code for a rule is lib/rules/<rule>.js or .ts, the modules it imports by relative path (lib/utils/),
-#   followed transitively, and the modules of @eslint-community/eslint-utils it imports, the helper library of scope
-#   lookups the rules are written with. Its test words are every case's code, outputs, options, settings and expected
-#   reports over all of tests/lib/rules, and the fixture files the indent and type-aware rule tests load.
-# - Upstream's tests run in runtimes/eslint-plugin-vue-10.11.1 on the parser stack the vue pack pins (eslint 10.11.0,
-#   vue-eslint-parser 10.4.1, @typescript-eslint/parser 8.70.1, typescript 6.0.3), with eslint-compat-utils 0.6.5 and
-#   semver 7.8.5, the latest its v10.11.1 devDependency ranges admit. Upstream commits no lockfile.
-# - The published dist/ is lib/ compiled to CommonJS by tsdown (unbundled, file for file), so `verbatim` is false and
-#   the tag and version tie the package to the commit.
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (declared; reviewed at each bump).
+rules:
+  "vue/attribute-hyphenation":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-async-in-computed-properties":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-child-content":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-deprecated-v-on-native-modifier":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-dupe-keys":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-dupe-v-else-if":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-duplicate-attributes":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-export-in-script-setup":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-mutating-props":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-ref-as-operand":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-setup-props-reactivity-loss":
+    deprecated: null
+    recommended: null
+  "vue/no-side-effects-in-computed-properties":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-template-shadow":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-unused-refs":
+    deprecated: null
+    recommended: null
+  "vue/no-unused-vars":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-use-v-if-with-v-for":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-v-html":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-v-text-v-html-on-component":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/no-watch-after-await":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/require-v-for-key":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/require-valid-default-prop":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/return-in-computed-property":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+  "vue/v-on-event-hyphenation":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: ["always",{"autofix":true}] }
+  "vue/valid-v-for":
+    deprecated: null
+    recommended: { config: "flat/recommended", options: [] }
+# How the expected findings are made (the configuration, options and parser upstream runs with) is the
+# generator's own header: packs/vue/upstream/eslint-plugin-vue/generate.mjs.
 eslint:
-  plugin:
-    package: eslint-plugin-vue
-    namespace: vue
   release:
     tag: v10.11.1
-    path: lib
     installed: eslint-plugin-vue/dist
-    verbatim: false
-    sources: true
-  # eslint-plugin-vue writes its rules in .js and .ts: the pattern resolves as a module path does.
-  implementation: lib/rules/{rule}
-  tests: ["tests/lib/rules/**/*.test.ts"]
-  # The files the indent rules' tests read their cases from, and the project the type-aware cases compile against.
-  test_fixtures: ["tests/fixtures/html-indent/**", "tests/fixtures/script-indent/**", "tests/fixtures/typescript/**"]
-  # Vitest runs upstream's tests at the repository's root, and cases name files and modules from process.cwd().
-  test_cwd: "."
-  # Upstream's tests are ES modules vitest imports as Node does: `import tsParser from '@typescript-eslint/parser'` is
-  # that package's exports, though its CommonJS build is marked __esModule without a default.
-  esm_tests: true
-  helpers: ["@eslint-community/eslint-utils"]
-  checkout: ["/lib/", "/tests/", "/LICENSE", "/package.json"]
-  vue:
-    runtime: vue-parsers
-    script_parsers:
-      ts: "@typescript-eslint/parser"
-      tsx: "@typescript-eslint/parser"
-    directive_rules: ["vue/comment-directive"]

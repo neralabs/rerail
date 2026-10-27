@@ -1,10 +1,14 @@
 # Rerail rule pack: Python
 
 136 code rules for Python, ported from Ruff 0.16.9 (98 rules) and Bandit 1.9.4 (38 tests). Each is scored against the
-tool's own findings on the tool's test fixtures, through the engine's production workspace path, with every
-disagreement declared in `divergences.json` (one today: ASYNC221 on a probe). Every port honours its tool's
+tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
+([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
+every disagreement declared in `divergences.json` (one today: ASYNC221 on a probe). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`).
-24 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`).
+24 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`). The conformance check
+([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The rename variants that test
+the ECMAScript packs against fitting to their tests (`holds-under-rename`) do not exist for Python yet, so the
+real-code samples are the pack's only such evidence.
 
 This is the reference pack for the [pack structure and validation contract](../../docs/pack-format.md): it is
 checked by `npx vitest run test/engine/catalog/packs.test.ts`.
@@ -13,24 +17,28 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and whether it is on; two rules carry examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
-| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpus (django) |
+| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, and probes of inputs the ports once misread), its recordings (`fixtures.expected.json`, `corpus-django.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`) |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
-| `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the recordings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) are not recorded |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, and probes of inputs the ports once misread), its expected findings (`fixtures.expected.json`), the generator (`generate.py`, sharing `upstream/common.py`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
+| `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) have no expected findings |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/python.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
-django, against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own install, on CPython
-3.13). The cases Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request with
-`git add -f`.
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/python.ts`) runs each tool's `generate.py`
+over its fixtures, against the pinned tool versions, under CPython 3.14 (Bandit itself runs from its own install, on
+CPython 3.13). The cases Rerail wrote (`fixtures/rerail/`) are authored: a change to them is staged into `publish/` with
+the derived data.
+
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
+pause lifts.
 
 ```sh
 npm run fixtures:derive -- --pack python                # every tool
 npm run fixtures:derive -- --pack python --tool ruff    # one
-npm run fixtures:push -- --pack python --tool ruff      # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack python --tool ruff     # copy what changed into upstream/ruff/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:

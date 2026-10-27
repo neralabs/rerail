@@ -1,7 +1,8 @@
 /**
  * The conformance gate's floor for a shipped port (`reportFailures`, conformance/languages/runner.ts): divergences can
  * excuse every finding of a rule's fixtures, so a port that matches nothing still scores 0 FP and 0 FN. Such a port
- * fails unless pack.json gives its rule examples, which the pack checks prove fire.
+ * fails unless pack.json gives its rule examples, which the pack checks prove fire. A candidate fails nothing, but its
+ * fixtures expected findings must still cover it.
  */
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { loadPack, type Divergence } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { fixturesPath } from "../support/oracles.js";
 
-const OPTIONS = { fixtures: true, corpora: [], date: "2026-01-01" };
+const OPTIONS = { fixtures: true, samples: false, date: "2026-01-01" };
 
 const editJson = (path: string, edit: (value: Record<string, unknown>) => unknown): void =>
   writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>), null, 2));
@@ -75,5 +76,21 @@ describe("a shipped port with no fixture TP", () => {
     const report = await runPack(loadPack(directory), OPTIONS);
     expect(report.rules.map(({ tp, candidate }) => ({ tp, candidate }))).toEqual([{ tp: 0, candidate: true }]);
     expect(reportFailures(report)).toEqual([]);
+  });
+
+  it("is still an error for a candidate the fixtures expected findings do not cover", async () => {
+    editJson(join(directory, "conformance.json"), pack => ({
+      ...pack,
+      rules: (pack.rules as Record<string, unknown>[]).map(rule => ({ ...rule, policy: "candidates/assert-used.json" })),
+    }));
+    cpSync(join(directory, "rules", "assert-used.json"), join(directory, "candidates", "assert-used.json"));
+    editJson(join(directory, "upstream", "examplelint", "fixtures.expected.json"), expected => ({
+      ...expected,
+      source: { ...(expected.source as Record<string, unknown>), rules: ["EX999"] },
+      findings: [],
+    }));
+    const report = await runPack(loadPack(directory), OPTIONS);
+    expect(report.errors).toEqual(["assert-used (fixtures): the examplelint expected findings do not cover EX101"]);
+    expect(report.pass).toBe(false);
   });
 });

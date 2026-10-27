@@ -1,0 +1,8 @@
+{
+  "name": "rerail/port-readiness-upstream-phpstan",
+  "description": "PHPStan as the conformance gates run it: the release the PHP pack's ported rules name.",
+  "license": "Apache-2.0",
+  "require": {
+    "phpstan/phpstan": "2.2.16"
+  }
+}

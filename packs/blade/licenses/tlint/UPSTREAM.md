@@ -1,33 +1,21 @@
 # tlint 9.7.0
 
-Upstream: [tighten/tlint](https://github.com/tighten/tlint/tree/e768bedce2bd84930712f9412ecbf2d4c586735c) at tag `v9.7.0` (commit `e768bedce2bd84930712f9412ecbf2d4c586735c`). License: MIT (Copyright (c) Tighten Co.); [`LICENSE.md`](LICENSE.md) is the upstream license file, copied verbatim at that tag.
+License: MIT (Copyright (c) Tighten Co.); [`LICENSE.md`](LICENSE.md) is the upstream license file, copied verbatim at the commit below.
 
-The files listed below are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running tlint 9.7.0.
+## Source
 
-Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/tlint/generate.py fixtures`, which runs the test with the template captured as the linter receives it.
+| Repository | Tag | Commit | Licence |
+|---|---|---|---|
+| https://github.com/tighten/tlint | `v9.7.0` | `e768bedce2bd84930712f9412ecbf2d4c586735c` | MIT |
 
-| File | Upstream path | Copy |
+## Taken from it
+
+| Pack paths | Upstream paths | How |
 |---|---|---|
-| `upstream/tlint/fixtures/NoDumpDirectivesTest/1.blade.php` | `tests/Linting/Linters/NoDumpDirectivesTest.php` | the template test `catches_dump_directive_usage` passes to `new NoDumpDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/NoDumpDirectivesTest/2.blade.php` | `tests/Linting/Linters/NoDumpDirectivesTest.php` | the template test `catches_dd_directive_usage` passes to `new NoDumpDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/NoJsonDirectiveTest/1.blade.php` | `tests/Linting/Linters/NoJsonDirectiveTest.php` | the template test `catches_json_directive_usage` passes to `new NoJsonDirective(...)`, captured verbatim |
-| `upstream/tlint/fixtures/NoRayDirectiveTest/1.blade.php` | `tests/Linting/Linters/NoRayDirectiveTest.php` | the template test `catches_ray_directive_usage` passes to `new NoRayDirective(...)`, captured verbatim |
-| `upstream/tlint/fixtures/NoSpaceAfterBladeDirectivesTest/1.blade.php` | `tests/Linting/Linters/NoSpaceAfterBladeDirectivesTest.php` | the template test `catches_space_after_directives` passes to `new NoSpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/1.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_if_statement` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/2.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_unless_statement` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/3.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_for_statement` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/4.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_foreach_statement` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/5.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_forelse_statement` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/6.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_while_statement` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/7.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_ignores_correctly_spaced_directives` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/8.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_missing_space_kitchen_sink` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpaceAfterBladeDirectivesTest/9.blade.php` | `tests/Linting/Linters/SpaceAfterBladeDirectivesTest.php` | the template test `it_catches_directives_spanning_multiple_lines` passes to `new SpaceAfterBladeDirectives(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/1.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `catches_missing_spaces_around_blade_render_content` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/2.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `catches_missing_spaces_around_blade_render_content_after_correctly_spaced` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/3.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `catches_extra_spaces_around_blade_render_content` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/4.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `catches_missing_spaces_around_raw_blade_render_content` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/5.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `does_not_trigger_when_spaces_are_placed_correctly_raw_blade_render_content` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/6.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `does_not_trigger_when_spaces_are_placed_correctly` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/7.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `does_not_trigger_on_multiline_renders` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/8.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `does_not_trigger_on_blade_comment` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
-| `upstream/tlint/fixtures/SpacesAroundBladeRenderContentTest/9.blade.php` | `tests/Linting/Linters/SpacesAroundBladeRenderContentTest.php` | the template test `does_not_trigger_on_escaped_blade` passes to `new SpacesAroundBladeRenderContent(...)`, captured verbatim |
+| `upstream/tlint/fixtures/**` | `tests/Linting/Linters/*` | extracted: each file is the template a test hands the lint, captured verbatim as the linter receives it |
+
+The files taken from it are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the generators `upstream/common.py` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the expected findings they write by running tlint 9.7.0.
+
+Each fixture is written by `upstream/tlint/generate.py fixtures`, which runs the test with the template captured as the linter receives it.
+
+Paths are relative to the pack directory, `packs/blade/`. The test files are in no package and not in git: the tool-pack's S3 archive (`upstream/tlint/test-data.lock`) holds them, with `provenance.json` (every file, its upstream path and how it was made, a snapshot of the per-file record this file kept before the archive took the files out of git) and `LICENSES.md` (this licence text). The expected findings recorded by running the tool are Rerail's.

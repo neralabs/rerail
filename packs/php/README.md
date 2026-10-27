@@ -4,13 +4,17 @@
 issue). 4 start off (`"on": false`): no approved configuration of their tool turns them on, so they are experimental.
 Bare `phpcs` runs PSR12, which has `Generic.PHP.LowerCaseConstant` alone of the ported sniffs, and PHPStan's default
 level 0 does not register `missingType.return` (a level 6 rule); Psalm's `psalm --init` configuration reports
-ForbiddenCode. Each is scored against the tool's own findings on the tool's tests, through the engine's production
-workspace path, with every disagreement declared in `divergences.json`.
+ForbiddenCode. Each is scored against the tool's own findings on the tool's tests, and against the labelled lines of
+the tool's real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
+production workspace path, with every disagreement declared in `divergences.json`. None of the three tools is
+ECMAScript, so the tests carry no rename variants (`holds-under-rename`); the real-code samples are the pack's only
+evidence that a port is not fitted to its tests.
 
-A port starts in `candidates/rules/` and moves to `rules/` and `pack.json` once it passes the port readiness gates
-([docs/port-readiness.md](../../docs/port-readiness.md)); every tool's ports are gated (`upstream/<tool>/gates.yaml`),
-and 11 fail a blocking gate and stay candidates ([candidates/README.md](candidates/README.md)). The conformance check (`--check`, run in CI) scores the
-tests: it gates the ports in `rules/` and reports the candidates without gating them.
+A port starts in `candidates/rules/` and moves to `rules/` and `pack.json` once it passes the conformance check
+([conformance/README.md](../../conformance/README.md#the-gate)); every tool's ports are gated
+(`upstream/<tool>/gates.yaml`), and 11 stay candidates ([candidates/README.md](candidates/README.md)). The conformance
+check (`--check`, run in CI) scores the tests and the samples: it gates the ports in `rules/` and reports the candidates
+without gating them.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack php"`.
@@ -21,25 +25,26 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `candidates/rules/` | The candidates' code-rule documents (`rerail.policy/v1`), scored but never shipped |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
-| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpora (laravel, symfony) |
+| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) and the recorder (`generate.py`, sharing `upstream/common.py`); Psalm's corpus dependencies are pinned by `upstream/psalm/composer-<name>.lock`; the tool's port readiness manifest (`gates.yaml`) and the lock naming its gates recording (`recording.lock`) |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`), its expected findings (`fixtures.expected.json`) and the generator (`generate.py`, sharing `upstream/common.py`); the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); the tool's upstream manifest (`gates.yaml`: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports) |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/php.ts`) runs each tool's `generate.py`, in `fixtures` mode and then `corpus` mode over
-laravel and symfony, against the pinned tool versions, with the pinned PHP 8.5.11
-(`conformance/recorders/port-readiness/runtimes/php/build.sh`) and Composer:
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/php.ts`) runs each tool's `generate.py` over
+its tests, against the pinned tool versions, with the pinned PHP 8.5.11 (`scripts/pack-data/runtimes/php/build.sh`)
+and Composer:
+
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
+pause lifts.
 
 ```sh
 npm run fixtures:derive -- --pack php                 # every tool
 npm run fixtures:derive -- --pack php --tool psalm    # one
-npm run fixtures:push -- --pack php --tool psalm      # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack php --tool psalm     # copy what changed into upstream/psalm/publish/
 ```
-
-The Psalm recorder reads which code Psalm leaves unanalysed with the usage-corpus generator it shares with the engine's
-scope oracle, `fixtures/php/scope/php/generate_usage_corpus.py`.
 
 Scoring one rule with every false positive and false negative printed:
 

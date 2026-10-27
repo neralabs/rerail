@@ -1,11 +1,11 @@
 # Rerail rule pack: Rust, candidates
 
-The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
-and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
+The ports in `rules/` here are still being evaluated: scored against the tools' expected findings and reported, never
+gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
 The four that port a non-default `clippy.toml` (`-threshold`, `-no-fractions`, `-one-allowed`) stay candidates whatever
-they score, since the gates judge them against Clippy's defaults. `clippy-option-env-unwrap`'s two disagreements on
-`tests/ui/option_env_unwrap.rs` (an `external!` proc macro that rewrites its tokens' spans, which syntax alone cannot
+they score, since their expected findings are Clippy's at its defaults. `clippy-option-env-unwrap`'s two disagreements
+on `tests/ui/option_env_unwrap.rs` (an `external!` proc macro that rewrites its tokens' spans, which syntax alone cannot
 tell from a span-keeping macro) are the only ones `divergences.json` leaves undeclared.
 
 ## Scores
@@ -16,37 +16,32 @@ and FN count unexplained points only, and an explained point is one a divergence
 | Source | Rules | TP | FP | FN | Explained FP | Explained FN |
 |---|---|---|---|---|---|---|
 | fixtures (Clippy's UI tests and Rerail's probes) | 34 | 397 | 2 | 2 | 0 | 7 |
-| ripgrep corpus | 34 | 614 | 0 | 0 | 11 | 6 |
-| tokio corpus | 34 | 555 | 0 | 0 | 98 | 95 |
 
-Divergences by kind (`divergences.json`), every one a candidate's:
+The 7 explained FN are `rerail-unknown` divergences (`divergences.json`), every one a candidate's: code
+tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns
+tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a
+rule's JSON-number bounds cannot name.
 
-| Kind | fixtures | ripgrep | tokio | Total | What |
-|---|---|---|---|---|---|
-| `rerail-unknown` | 7 | 2 | 90 | 99 | Code tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a rule's JSON-number bounds cannot name |
-| `not-comparable` | 0 | 15 | 100 | 115 | Items and files a `cfg` leaves out of the recording's build (macOS, `--all-features`, no `tokio_unstable`, `loom`, `docsrs` or `miri`), `cfg_attr` levels whose predicate is false there, `#[tokio::test]`'s expansion, grep-index's crate-root `#![allow(warnings)]` (read per file), and the ui-toml variants on corpora recorded with Clippy's defaults |
-| `upstream-wrong` | 0 | 0 | 0 | 0 | |
+Each candidate on the fixtures (TP / FP / FN, explained points in parentheses):
 
-Each candidate's TP / FP / FN, explained points in parentheses:
-
-| Rule | fixtures | ripgrep | tokio |
-|---|---|---|---|
-| `clippy-double-parens` | 24 / 0 / 0 (1) | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-redundant-static-lifetimes` | 31 / 0 / 0 | 32 / 0 / 0 (2) | 0 / 0 / 0 |
-| `clippy-else-if-without-else` | 4 / 0 / 0 | 23 / 0 / 0 (2) | 14 / 0 / 0 |
-| `clippy-unnested-or-patterns` | 32 / 0 / 0 (3) | 4 / 0 / 0 | 1 / 0 / 0 |
-| `clippy-option-env-unwrap` | 5 / 2 / 2 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-unreadable-literal` | 16 / 0 / 0 | 5 / 0 / 0 (1) | 0 / 0 / 0 (1) |
-| `clippy-unreadable-literal-no-fractions` | 1 / 0 / 0 | 5 / 0 / 0 (1) | 0 / 0 / 0 (1) |
-| `clippy-inconsistent-digit-grouping-no-fractions` | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-decimal-literal-representation` | 8 / 0 / 0 | 0 / 0 / 0 | 2 / 0 / 0 (2) |
-| `clippy-decimal-literal-representation-threshold` | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 (3) |
-| `clippy-needless-raw-strings` | 15 / 0 / 0 | 382 / 0 / 0 (1) | 1 / 0 / 0 |
-| `clippy-needless-raw-string-hashes-one-allowed` | 3 / 0 / 0 | 0 / 0 / 0 (4) | 0 / 0 / 0 |
-| `clippy-redundant-field-names` | 8 / 0 / 0 (1) | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-single-char-lifetime-names` | 9 / 0 / 0 | 129 / 0 / 0 (4) | 213 / 0 / 0 (61) |
-| `clippy-allow-attributes` | 25 / 0 / 0 (1) | 14 / 0 / 0 (1) | 140 / 0 / 0 (48) |
-| `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) | 16 / 0 / 0 (1) | 176 / 0 / 0 (77) |
+| Rule | fixtures |
+|---|---|
+| `clippy-double-parens` | 24 / 0 / 0 (1) |
+| `clippy-redundant-static-lifetimes` | 31 / 0 / 0 |
+| `clippy-else-if-without-else` | 4 / 0 / 0 |
+| `clippy-unnested-or-patterns` | 32 / 0 / 0 (3) |
+| `clippy-option-env-unwrap` | 5 / 2 / 2 |
+| `clippy-unreadable-literal` | 16 / 0 / 0 |
+| `clippy-unreadable-literal-no-fractions` | 1 / 0 / 0 |
+| `clippy-inconsistent-digit-grouping-no-fractions` | 1 / 0 / 0 |
+| `clippy-decimal-literal-representation` | 8 / 0 / 0 |
+| `clippy-decimal-literal-representation-threshold` | 1 / 0 / 0 |
+| `clippy-needless-raw-strings` | 15 / 0 / 0 |
+| `clippy-needless-raw-string-hashes-one-allowed` | 3 / 0 / 0 |
+| `clippy-redundant-field-names` | 8 / 0 / 0 (1) |
+| `clippy-single-char-lifetime-names` | 9 / 0 / 0 |
+| `clippy-allow-attributes` | 25 / 0 / 0 (1) |
+| `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) |
 
 ## Rule details
 
@@ -82,7 +77,7 @@ Port of Clippy 0.1.99's inconsistent_digit_grouping under unreadable-literal-lin
 
 ### `clippy-needless-raw-string-hashes-one-allowed`
 
-Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the recording enables and which then takes it.
+Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
 
 ### `clippy-needless-raw-strings`
 

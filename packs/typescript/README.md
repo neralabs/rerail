@@ -2,12 +2,15 @@
 
 24 code rules for TypeScript, ported from typescript-eslint 8.70.1 (on ESLint 10.11.0), each with its default
 options. 11 start off (`"on": false`): no approved typescript-eslint configuration turns them on, so they are
-experimental. Each is scored against the tool's own findings on the tool's test fixtures and on a pinned corpus
-(vscode), through the engine's production workspace path, with every disagreement declared in `divergences.json`:
-2 today, both `rerail-unknown`, each an upstream fixture the grammar reads with a syntax error. ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
+experimental. Each is scored against the tool's own findings on the tool's test fixtures and on their rename variants
+(`holds-under-rename`), and against the labelled lines of the tool's real-code samples
+([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
+disagreement declared in `divergences.json`: 2 today, both `rerail-unknown`, each an upstream fixture the grammar reads
+with a syntax error. The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the
+shipped rules. ESLint's core rules are in the [JavaScript pack](../javascript/README.md).
 
-Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only, and the vscode corpus is scored on
-its TypeScript files only (`exclude` in `conformance.json`). On JavaScript a port steers CommonJS files away from
+Every typescript-eslint rule runs on `.ts`, `.tsx`, `.mts` and `.cts` files only. On JavaScript a port steers CommonJS
+files away from
 `require` (`no-require-imports` on `jest.config.js`), and with both packs added a port with an ESLint core twin would
 report the same violation as the twin, which runs on JavaScript files only.
 
@@ -18,24 +21,28 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack type
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): each rule's document, title, group and, for a rule that starts off, `on`; one rule carries examples |
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
-| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools and the pinned corpus (vscode) |
+| `conformance.json` | Each ported rule's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with the tools |
-| `upstream/<tool>/` | The tool's copied tests (`fixtures/`) and its recordings (`fixtures.expected.json`, `corpus-vscode.expected.json`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the recorder holds and records like the copied ones |
-| `upstream/generate.mjs` | typescript-eslint's recorder; `upstream/eslint-plugin-vitest/generate.mjs` records @vitest/eslint-plugin |
-| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail a rule gate ([docs/port-readiness.md](../../docs/port-readiness.md)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the recordings do not have) and `no-explicit-any` (the fixtures recording does not cover it yet) is listed in `conformance.json`, scored and reported on the fixtures, never gated; the vscode recording covers the shipped rules only. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
+| `upstream/<tool>/` | The tool's copied tests (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `upstream/eslint-plugin-vitest/UPSTREAM.md` lists the fixtures Rerail wrote (`fixtures/*/rerail-*`), which the generator holds and lints like the copied ones |
+| `upstream/generate.mjs` | typescript-eslint's generator; `upstream/eslint-plugin-vitest/generate.mjs` is @vitest/eslint-plugin's |
+| `candidates/rules/` | Ports still being evaluated, never shipped: typescript-eslint and @vitest/eslint-plugin 1.6.27 ports that fail the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) or rerail's pack contract. Each but `prefer-optional-chain` (it requires type information, which the expected findings do not have) and `no-explicit-any` (the expected findings do not cover it yet) is listed in `conformance.json`, scored and reported, never gated. The three `vitest-*.json` documents are generated: edit `scripts/generate/packs/typescript-vitest-policies.mjs`, not the JSON, and run `node scripts/generate/packs/typescript-vitest-policies.mjs` from the repository root |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/typescript.ts`) runs each tool's recorder against the pinned tool versions, the upstream
-checkouts and the vscode corpus (the recorder's header lists them). The fixtures Rerail wrote (`fixtures/*/rerail-*`)
-are authored: a change to them goes in your pull request with `git add -f`.
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/typescript.ts`) runs each tool's generator
+against the pinned tool versions and the upstream checkouts (the generator's header lists them). The fixtures Rerail
+wrote (`fixtures/*/rerail-*`) are authored: a change to them is staged into `publish/` with the derived data.
+
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
+pause lifts.
 
 ```sh
 npm run fixtures:derive -- --pack typescript                                # every tool
 npm run fixtures:derive -- --pack typescript --tool eslint-plugin-vitest    # one
-npm run fixtures:push -- --pack typescript --tool eslint-plugin-vitest      # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack typescript --tool eslint-plugin-vitest     # copy what changed into upstream/eslint-plugin-vitest/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -47,8 +54,8 @@ node --import tsx conformance/languages/cli.ts --pack typescript --rule typescri
 ## Not ported: `no-restricted-types`
 
 typescript-eslint 8.70.1's `no-restricted-types` reports only the types a project lists in its `types` option, and that
-list is empty by default. At its default options it reports nothing, so there is nothing to port. A project that wants a type banned
-writes its own code rule.
+list is empty by default. At its default options it reports nothing, so there is nothing to port. A project that wants a
+type banned writes its own code rule.
 
 ## Rule details
 

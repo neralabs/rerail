@@ -1,0 +1,224 @@
+name: Upstream bump
+
+# The producer of the night's bump pull request (docs/upstream.md, "Bump pull requests"). The nightly
+# (upstream-releases.yml) lists the tool-packs behind their upstream's latest stable release, points the work branch
+# auto/bump-run/upstream at main's commit and dispatches this workflow on it once, with that list. Here each listed
+# tool-pack's pins move to its release (upstream:bump) in a leg of its own, and every tool-pack the bump made stale is
+# derived again on Linux and staged whole into its publish/ directory (fixtures:stage --all); each leg's result is one
+# artifact, `bump-<pack>--<tool>`: the patch (the pins and the staged data) and the bump's summary and JSON.
+# upstream-bump-publish.yml then checks each artifact on main, running the pin edits again with main's code and
+# admitting only the files deriving and staging write beside them, composes the verified patches into one commit per
+# tool-pack, opens one pull request and dispatches pack-data-publish.yml for it with replace, whose upload a code owner
+# approves after reading its summary; nothing merges itself.
+#
+# With `resnapshot`, the listed tool-packs are derived again at the release they already pin (each `version` must be
+# it): a generator or recipe change, a runtime pin's, or data only Linux makes, through the same pull request and
+# publish. A maintainer starts one by pointing auto/bump-run/upstream at main's head and dispatching this workflow there.
+#
+# The generators run upstream's code at a release nobody has reviewed, with unlocked transitive packages and Composer.
+# So this runs on the work branch, never main: whatever that code does with the run's cache token lands in the work
+# branch's cache scope, which no trusted run reads (the scope job empties it before each run), and the jobs that run it
+# hold no credential: no OIDC token, no write token. The test data they start from is pulled by a job of its own, which
+# runs only main's code.
+#
+# Paused, bumps and re-snapshots alike, until the generators write per-repo provenance (docs/upstream.md, "Derive and
+# bumps are paused"): the scope job's first step fails, so no other job starts. To resume, delete that step.
+
+# upstream-bump-publish.yml reads this title to tell a re-snapshot from a bump.
+run-name: ${{ inputs.resnapshot && 'Re-snapshot the upstream pins' || 'Bump the upstream releases' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tool-packs:
+        description: 'The tool-packs to bump, as JSON sorted by pack then tool: [{"pack": "<id>", "tool": "<tool>", "version": "<release>"}].'
+        required: true
+        type: string
+      resnapshot:
+        description: Derive the listed tool-packs again at the release each already pins (its `version`), rather than bump them.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-bump
+  cancel-in-progress: false
+
+jobs:
+  # Refuses any ref but the work branch, and any list but a sorted one of distinct tool-packs, then deletes every cache
+  # entry in the branch's scope: an earlier run's upstream code may have saved one there (under a key a later run
+  # restores, with files outside the paths it names), and the test-data job below holds an OIDC token. The concurrency
+  # group above means no earlier run is still going. It runs nothing from the checkout. Its output is the checked list,
+  # which the other jobs' matrices read.
+  scope:
+    name: Work branch
+    # Forks skip it; change the owner if the repository moves.
+    if: github.repository_owner == 'neralabs'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    outputs:
+      tool-packs: ${{ steps.check.outputs.tool-packs }}
+    steps:
+      - name: Refuse while derive and bumps are paused
+        run: |
+          echo "::error::derive and bumps are paused until the generators write per-repo provenance; see docs/upstream.md#derive-and-bumps-are-paused"
+          exit 1
+
+      - id: check
+        name: Check the work branch and the list, and empty the branch's cache scope
+        env:
+          TOOL_PACKS: ${{ inputs.tool-packs }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/auto/bump-run/upstream" ]; then
+            echo "::error::a bump runs only on its work branch, refs/heads/auto/bump-run/upstream, not $GITHUB_REF"
+            exit 1
+          fi
+          # 1 to 64 objects of exactly pack, tool and version, sorted by pack then tool, no tool-pack twice.
+          if ! jq -e '
+            type == "array" and length > 0 and length <= 64
+            and all(.[]; type == "object" and (keys == ["pack", "tool", "version"]) and all(.[]; type == "string"))
+            and . == unique_by([.pack, .tool])
+          ' <<< "$TOOL_PACKS" > /dev/null; then
+            echo "::error::the tool-packs input is not a JSON list of distinct {pack, tool, version}, sorted by pack then tool"
+            exit 1
+          fi
+          mapfile -t values < <(jq -r '.[] | .pack, .tool, .version' <<< "$TOOL_PACKS")
+          for value in "${values[@]}"; do
+            if ! [[ "$value" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+              echo "::error::'$value' is not a pack, tool or version this workflow takes"
+              exit 1
+            fi
+          done
+          echo "tool-packs=$(jq -c . <<< "$TOOL_PACKS")" >> "$GITHUB_OUTPUT"
+          mapfile -t ids < <(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?ref=$GITHUB_REF&per_page=100" --jq '.actions_caches[].id')
+          for id in "${ids[@]}"; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id" > /dev/null || echo "cache entry $id is already gone"
+          done
+          echo "deleted ${#ids[@]} cache entries in $GITHUB_REF's scope"
+
+  # Every tool-pack's archive, since a bump can make another tool-pack's data stale: from the cache, or from S3 under the
+  # read role on a miss, saved into the work branch's scope for the bump legs. Main's code only.
+  test-data:
+    name: Pull the test data
+    needs: scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "true"
+
+
+  # One leg per listed tool-pack, each failing alone: moves its pins to the release (upstream:bump), then derives every
+  # tool-pack the bump made stale on Linux and stages each one's whole derived set into its publish/, and keeps what
+  # changed in the tree as a patch. With resnapshot, the bump must find the pins already at the release, and the leg's
+  # own tool-pack is derived again. Only the bump step gets the read-only GITHUB_TOKEN, for GitHub's API (release tags),
+  # and it runs before any upstream code. The test data comes from the cache the test-data job filled, with no
+  # credentials.
+  bump:
+    name: Bump ${{ matrix.pack }}/${{ matrix.tool }} to ${{ matrix.version }}
+    needs: [scope, test-data]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # Before the bump moves anything: the archives main's test-data.lock files name, which deriving starts from and
+      # staging compares with.
+      - uses: ./.github/actions/pack-test-data
+        with:
+          fetch: "false"
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Build the package
+        run: npm run build:js
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+
+      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
+      - name: Set up the pinned PHP and Composer
+        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        uses: ./.github/actions/php
+
+      - name: Bump the pins
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: npm run upstream:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --summary "$RUNNER_TEMP/bump/summary.md" --json "$RUNNER_TEMP/bump/bump.json"
+
+      # The bump names the tool-packs whose test data it made stale (`derive`): its own, and any other whose upstream
+      # runs in a runtime it changed; a re-snapshot names its own alone. Each is derived from the pins (its UPSTREAM.md
+      # rows rewritten), then staged whole into its publish/ (`--all`: the publish replaces the archive with exactly
+      # this data, so a case upstream dropped is dropped too).
+      - name: Derive and stage the stale tool-packs
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+          VERSION: ${{ matrix.version }}
+          RESNAPSHOT: ${{ inputs.resnapshot }}
+        run: |
+          set -euo pipefail
+          changed="$(jq -r '.changed' "$RUNNER_TEMP/bump/bump.json")"
+          if [ "$RESNAPSHOT" = "true" ] && [ "$changed" = "true" ]; then
+            echo "::error::a re-snapshot derives at the pinned release, but $PACK/$TOOL does not pin $VERSION: list the release it pins"
+            exit 1
+          fi
+          mapfile -t legs < <(jq -r --arg resnapshot "$RESNAPSHOT" '
+            if .changed then ([{ pack: (.toolPack | split("/")[0]), tool: (.toolPack | split("/")[1]) }] + .derive | unique | .[] | "\(.pack) \(.tool)")
+            elif $resnapshot == "true" then .toolPack | split("/") | "\(.[0]) \(.[1])"
+            else empty end
+          ' "$RUNNER_TEMP/bump/bump.json")
+          for leg in "${legs[@]}"; do
+            read -r pack tool <<< "$leg"
+            npm run fixtures:derive -- --pack "$pack" --tool "$tool" --update
+            npm run fixtures:stage -- --pack "$pack" --tool "$tool" --all
+          done
+
+      # Only what git tracks: the pins, the UPSTREAM.md and licence files deriving rewrites, and each stale tool-pack's
+      # publish/. The test data in its pulled layout is ignored, and no lock changes here: the publish writes them.
+      - name: Keep the bump as a patch
+        run: |
+          set -euo pipefail
+          git add -A -- packs scripts/pack-data/runtimes
+          git diff --cached --binary > "$RUNNER_TEMP/bump/bump.patch"
+          git diff --cached --stat -- . ':(exclude)packs/*/upstream/*/publish/**'
+          echo "staged in publish/: $(git diff --cached --name-only -- 'packs/*/upstream/*/publish/**' | wc -l) file(s)"
+
+      - name: Upload the bump
+        uses: actions/upload-artifact@v7
+        with:
+          name: bump-${{ matrix.pack }}--${{ matrix.tool }}
+          path: ${{ runner.temp }}/bump/
+          if-no-files-found: error
+          retention-days: 14

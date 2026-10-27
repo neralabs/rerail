@@ -129,18 +129,22 @@ fetches. The test fails saying so without them.
 
 After changing the corpus, derive the TSV again (needs [uv](https://docs.astral.sh/uv/) on `PATH`):
 
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The command below derives it once the pause
+lifts.
+
 ```sh
 npm run fixtures:derive -- --pack complexity
 ```
 
 Its recipe runs `upstream/lizard/generate.mjs`, which runs `uvx --from lizard==1.24.0 lizard --csv` with and without
 `-m` on `upstream/lizard/fixtures/`, keeps the lower of the two counts for each function, and rewrites
-`upstream/lizard/lizard-1.24.0.tsv`, which is never committed. Check the changed corpus files into your pull request
-with `git add -f`; a new one needs its row in `upstream/lizard/UPSTREAM.md`, which is what makes it authored, and
-removing a corpus file is removing its row. Before merge a maintainer derives the TSV, away from any credential, and
-archives both from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`;
-[CONTRIBUTING.md](../../CONTRIBUTING.md#merging-maintainers)); CI then derives the TSV again and compares it with the
-archive (**Test data reproduces from the pins**).
+`upstream/lizard/lizard-1.24.0.tsv`, which is never committed. Stage the changed corpus files and the TSV into the
+tool-pack's publish request (`npm run fixtures:stage -- --pack complexity`, which copies them into
+`upstream/lizard/publish/`); a new corpus file needs its row in `upstream/lizard/UPSTREAM.md`, which is what makes it
+authored, and removing a corpus file is removing its row. A maintainer then runs the publish workflow for the pull
+request ([docs/upstream.md](../../docs/upstream.md#publishing-pack-data)), which uploads both once a code owner
+approves and commits the new `test-data.lock`.
 A new case lizard mis-scores needs an entry in the test's `DEVIATIONS` list and a line under "Deviations" above.
 
 ## Rule details

@@ -1,9 +1,12 @@
 # Rerail rule pack: JavaScript and TypeScript (ESLint core)
 
-71 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
-24 start on; 47 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
-Each shipped rule is scored against ESLint's own findings on ESLint's test cases, through the engine's production
-workspace path, with every disagreement declared in `divergences.json` (none today).
+72 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
+22 start on; 50 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
+Each shipped rule is scored against ESLint's own findings on ESLint's test cases and on their rename variants (each
+case with its identifiers and literal contents renamed, labelled by ESLint again: `holds-under-rename`), and against the
+labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
+production workspace path, with every disagreement declared in `divergences.json`. The conformance check
+([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules and reports the candidates.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack javascript"`, against the
 [pack structure and validation contract](../../docs/pack-format.md).
@@ -14,13 +17,13 @@ It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack java
 | `rules/` | The code-rule documents (`rerail.policy/v1`) |
 | `conformance.json` | Each ported rule's (and candidate's) upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned tools |
 | `divergences.json` | Declared disagreements with ESLint |
-| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`) and its recording (`fixtures.expected.json`) |
-| `upstream/generate.mjs` | ESLint's recorder |
-| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases, its recording and its recorder (`generate.mjs`) |
-| `upstream/<tool>/gates.yaml`, `recording.lock`, `goldens.tsv` | The port readiness gates' manifest for the tool, the lock naming its recordings (`recording.json`, `corpus.json`, kept out of git, by sha256) and its goldens ([docs/port-readiness.md](../../docs/port-readiness.md)) |
+| `upstream/eslint/` | ESLint's copied test cases (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `upstream/generate.mjs` | ESLint's generator |
+| `upstream/eslint-plugin-unicorn/` | eslint-plugin-unicorn's copied test cases with their rename variants, its expected findings, its generator (`generate.mjs`), and its real-code samples' `samples.lock` and `SAMPLES.md` |
+| `upstream/<tool>/gates.yaml` | The tool's upstream manifest: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports ([docs/upstream.md](../../docs/upstream.md)) |
 | `candidates/rules/` | Ports of ESLint and eslint-plugin-unicorn rules still being evaluated: listed in `conformance.json`, scored and reported, never gated, never shipped |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
-| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, listing every copied file |
+| `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 The pack is recommended for a repository with JavaScript or TypeScript source files. Files under test, script and
 fixture folders, test and spec files, and configuration files (`*.config.*`, `.*rc.*`) do not count.
@@ -33,15 +36,19 @@ TypeScript they report overloads, declaration merges and type names, and with bo
 port would report the same violation again. `no-loss-of-precision` and `prefer-spread`, which typescript-eslint leaves
 to the core rule on TypeScript, run on every ECMA file.
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/javascript.ts`) runs each tool's recorder against the pinned tool versions and upstream
-commit (the recorder's header lists them):
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/javascript.ts`) runs each tool's generator
+against the pinned tool versions and upstream commit (the generator's header lists them):
+
+Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
+([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
+pause lifts.
 
 ```sh
 npm run fixtures:derive -- --pack javascript                                 # every tool
 npm run fixtures:derive -- --pack javascript --tool eslint-plugin-unicorn    # one
-npm run fixtures:push -- --pack javascript --tool eslint-plugin-unicorn      # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack javascript --tool eslint-plugin-unicorn     # copy what changed into upstream/eslint-plugin-unicorn/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:
@@ -65,6 +72,10 @@ Port of ESLint capitalized-comments, default "always". Tests the first non-white
 ### `eslint-default-case`
 
 Port of ESLint default-case. Only non-empty switches; exempt when the last comment after the last case matches "no default" (case-insensitive, configurable via commentPattern).
+
+### `eslint-dot-notation`
+
+Port of ESLint dot-notation, default options (allowKeywords true). Keys: string, static template, boolean/null literal that is a valid identifier. Reported at the key; no fix when comments sit inside the brackets.
 
 ### `eslint-eqeqeq`
 
@@ -114,6 +125,10 @@ Port of ESLint 10.11.0 no-dupe-keys, default options. Static keys via ESLint's g
 
 Port of ESLint 10.11.0 no-duplicate-case, default options. A case test (inside any parentheses) is token-equal (ESLint's equalTokens, via `compare` text `tokens`) to an earlier case of the same switch.
 
+### `eslint-no-duplicate-imports`
+
+Port of ESLint no-duplicate-imports. With includeExports, re-exports are also checked. Only flags when ESLint's merge rules allow merging (namespace vs named, `export *`, type-only default vs named). Module names are paired by cooked value trimmed the way JavaScript trims (`transform` with `value: true`), and the message names the trimmed value. Options (includeExports, allowSeparateTypeImports) live in the `options` define; a variant is a config patch.
+
 ### `eslint-no-empty`
 
 Port of ESLint no-empty. Function bodies, class static blocks and TS module bodies are not checked; a block or switch with a comment is not empty. Option allowEmptyCatch in the `options` define.
@@ -134,6 +149,10 @@ Port of ESLint no-eq-null. Reports `==` and `!=` with a `null` operand, looking 
 
 Port of ESLint no-extend-native. Flags assignment to a property of `<Builtin>.prototype`, or passing it to Object.defineProperty/defineProperties, for the ECMAScript builtins ESLint lists, filtered by the configured ecmaVersion and globals (`ast.languageOptions`). The builtin must resolve to the global (`resolves`). Option exceptions (default []).
 
+### `eslint-no-extra-label`
+
+Port of ESLint no-extra-label. Fix removes the label when the statement holds no comment.
+
 ### `eslint-no-inline-comments`
 
 Port of ESLint no-inline-comments. A comment is reported when a token or comment ends on its start line before it, or starts on its end line after it (`layout` gaps, comments included). Exceptions: ESLint directive comments (isDirectiveComment prefixes), and a comment alone in a JSX expression container whose line holds only `{` before and `}` after. Option ignorePattern.
@@ -142,13 +161,9 @@ Port of ESLint no-inline-comments. A comment is reported when a token or comment
 
 Port of ESLint no-iterator. Member accesses whose static property name (getStaticPropertyName) is `__iterator__`: a non-computed name (identifier escapes decoded), or a string or substitution-free template index by its cooked value.
 
-### `eslint-no-labels`
+### `eslint-no-lonely-if`
 
-Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define.
-
-### `eslint-no-loss-of-precision`
-
-Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span.
+Port of ESLint no-lonely-if. Only when the else block's braces are not necessary; fixes to `else if` under ESLint's comment and ASI guards (ASI guard approximated conservatively).
 
 ### `eslint-no-multi-str`
 

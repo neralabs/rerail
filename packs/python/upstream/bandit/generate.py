@@ -3,14 +3,13 @@ Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upst
 under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
 
     python3.14 generate.py fixtures <Bandit checkout at tag 1.9.4> <bandit executable, 1.9.4>
-    python3.14 generate.py corpus <bandit executable, 1.9.4> <name>=<corpus checkout> [...]
 
 `fixtures` copies the examples each test fires in (`examples/<file>`; see TESTS) to fixtures/<file> (the pack's
 licenses/bandit/UPSTREAM.md lists them), writes Rerail's own cases (NOSEC, PROBES) to fixtures/rerail/ (listed in
-upstream/bandit/UPSTREAM.md), and runs Bandit with every ported test over every file. `corpus` runs the same
-tests over a corpus's pack paths, files CPython 3.14 does not parse left out. Both run as bare `bandit` does: `# nosec`
+upstream/bandit/UPSTREAM.md), and runs Bandit with every ported test over every file, as bare `bandit` does: `# nosec`
 honoured, every severity and confidence. A file Bandit reports an error for is skipped. Each finding is the test id,
-path, line and column (`col_offset` + 1: Bandit's is 0-based)."""
+path, line and column (`col_offset` + 1: Bandit's is 0-based). `source.units` names each copied example's origin: the
+tests TESTS lists it for (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
@@ -29,7 +28,7 @@ ORIGIN = "https://github.com/PyCQA/bandit@92ae8b82fb422a639f0ed8d99e96cea769594e
 
 # Each ported test, shipped or candidate, and the examples it fires in when `# nosec` is ignored (bare `bandit
 # --ignore-nosec` over every file of examples/): its examples include the lines `# nosec` suppresses, which the
-# recording, run as bare `bandit` honouring `# nosec`, keeps without a finding.
+# expected findings, run as bare `bandit` honouring `# nosec`, keeps without a finding.
 TESTS: dict[str, list[str]] = {
     "B101": ["assert.py"],
     "B102": ["exec.py"],
@@ -320,16 +319,8 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     findings, errors = bandit(executable, files, target)
     assert not errors, errors
     common.write(HERE / "fixtures.expected.json", "bandit", version,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files}, findings)
-
-
-def corpus(executable: str, name: str, root: pathlib.Path) -> None:
-    version = common.tool_version(executable, VERSION)
-    files = common.corpus_files(root, name)
-    skipped = set(common.unparsable(root, files))
-    findings, errors = bandit(executable, sorted(set(files) - skipped), root)
-    common.write(HERE / f"corpus-{name}.expected.json", "bandit", version,
-                 common.corpus_source(name, sorted(TESTS), sorted(skipped | errors)), findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files,
+                  "units": common.origins(TESTS)}, findings)
 
 
 def main() -> None:
@@ -337,9 +328,7 @@ def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), sys.argv[3])
     else:
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(sys.argv[2], name, pathlib.Path(path).resolve())
+        raise SystemExit(__doc__)
 
 
 if __name__ == "__main__":

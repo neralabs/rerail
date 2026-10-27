@@ -3,18 +3,17 @@
 PHP 8.5.11:
 
     python3 generate.py fixtures <tighten/tlint checkout at tag v9.7.0> <composer project with tightenco/tlint 9.7.0>
-    python3 generate.py corpus <composer project> <name>=<corpus checkout> [...]
 
 `fixtures` runs each ported lint's own test (tests/Linting/Linters/<Lint>Test.php) with read_tests.php: every
 template the test hands `new <Lint>(...)` is captured, and every assertion the test makes is checked against tlint's
 output on it. Each template is written to fixtures/<Lint>Test/<n>.blade.php (n counts the test class's templates in
 method order; the pack's licenses/tlint/UPSTREAM.md lists them, and LICENSE.md is copied beside it). run.php then runs every
-ported lint over every copy, as `tlint lint` runs a file, and the recording on a lint's own copy is required to be
+ported lint over every copy, as `tlint lint` runs a file, and the expected findings on a lint's own copy are required to be
 exactly the lines its test asserts, in order (`$lints[0]->getNode()->getLine()`, `$lints[1]`, ...; none where it
-asserts `assertEmpty($lints)`): so the recording is the upstream test's expectation, and on the other lints' copies
-the tool's output. `corpus` runs the same lints over a corpus's pack paths. Each finding is the lint's class name, the
-path and its node's line (the `line` of `tlint lint --json`). None of the lints takes configuration; tlint's `tighten`
-preset enables all six, its `laravel` preset the last three."""
+asserts `assertEmpty($lints)`): so the expected findings are the upstream test's expectation, and on the other lints' copies
+the tool's output. Each finding is the lint's class name, the path and its node's line (the `line` of
+`tlint lint --json`). `source.units` names each copy's origin: the lint whose test hands it the template. None of the
+lints takes configuration; tlint's `tighten` preset enables all six, its `laravel` preset the last three."""
 
 from __future__ import annotations
 
@@ -88,7 +87,8 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
         if reported != lines:
             raise SystemExit(f"{test}::{method} asserts lines {lines}; {lint} reports {reported} on {file}")
     common.write(HERE / "fixtures.expected.json", "tlint", VERSION,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": LINTS, "files": files}, findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": LINTS, "files": files,
+                  "units": {file: {"rules": [lint]} for file, lint, *_ in sorted(cases)}}, findings)
     write_licenses(checkout, cases)
 
 
@@ -101,7 +101,7 @@ def write_licenses(checkout: pathlib.Path, cases: list[tuple]) -> None:
 
 Upstream: [tighten/tlint](https://github.com/tighten/tlint/tree/{COMMIT}) at tag `v{VERSION}` (commit `{COMMIT}`). License: MIT (Copyright (c) Tighten Co.); [`LICENSE.md`](LICENSE.md) is the upstream license file, copied verbatim at that tag.
 
-The files listed below are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the recorders `upstream/common.py` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the recordings they write by running tlint {VERSION}.
+The files listed below are the templates the tests of the lints the Blade pack ports (the pack's `conformance.json`) hand those lints, and remain under tlint's license. Every other file in this pack is Rerail's. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of the validators and lints of stillat/blade-parser, Bladestan and tlint, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them. The rest is under the Apache License 2.0 (the pack's `LICENSE`): the generators `upstream/common.py` and `upstream/tlint/` (`generate.py`, `read_tests.php`, `run.php`), and the expected findings they write by running tlint {VERSION}.
 
 Paths are relative to the pack directory, `packs/blade/`. Each fixture is written by `upstream/tlint/generate.py fixtures`, which runs the test with the template captured as the linter receives it.
 
@@ -110,20 +110,9 @@ Paths are relative to the pack directory, `packs/blade/`. Each fixture is writte
 {rows}""")
 
 
-def corpus(project: pathlib.Path, name: str, root: pathlib.Path) -> None:
-    findings, skipped = run(project, root, common.corpus_files(root, name))
-    common.write(HERE / f"corpus-{name}.expected.json", "tlint", VERSION,
-                 common.corpus_source(name, LINTS, skipped), findings)
-
-
 def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve())
-    elif sys.argv[1] == "corpus":
-        project = pathlib.Path(sys.argv[2]).resolve()
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(project, name, pathlib.Path(path).resolve())
     else:
         raise SystemExit(__doc__)
 

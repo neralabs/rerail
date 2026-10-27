@@ -1,7 +1,7 @@
 # Rerail rule pack: Node.js, candidates
 
-The ports in `rules/` here are still being evaluated: scored and reported against the tools' recordings, never gated
-and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
+The ports in `rules/` here are still being evaluated: scored against the tools' expected findings and reported, never
+gated and never shipped. This file is not published; the pack's [README](../README.md) covers the rules it ships.
 
 ## Rule details
 
@@ -37,7 +37,7 @@ Default options, grouping off. A declarator counts as a require when initialised
 
 ### `n-no-path-concat`
 
-Flags `__dirname`/`__filename` or `import.meta.dirname|filename|url` as the left of `+` or a template substitution when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module, or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part.
+Flags `__dirname`/`__filename` or `import.meta.dirname|filename|url` as the left of `+` or a template substitution when the next part's first character is `/` (path.sep on the generator's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module, or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part.
 
 ### `n-no-process-env` / `n-no-process-exit` / `n-no-new-require`
 

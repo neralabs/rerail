@@ -64,12 +64,14 @@ describe("#2 rule document location", () => {
 
 describe("#3 fixture data location", () => {
   const lock = (fields = {}) => JSON.stringify({ format: 1, sha256: "a".repeat(64), files: 2, bytes: 10, ...fields });
-  const push = (pack, tool) => `npm run fixtures:push -- --pack ${pack} --tool ${tool}`;
+  const stage = (pack, tool) => `\`npm run fixtures:stage -- --pack ${pack} --tool ${tool}\``;
+  const workflow = "https://github.com/neralabs/rerail/actions/workflows/pack-data-publish.yml";
   const tracked = (pack, tool) =>
-    `the tool-pack's archive holds pack test data: before merge a maintainer runs \`${push(pack, tool)}\` and \`git rm --cached\` it`;
-  const unpinned = (pack, tool) => `the tool-pack's test data archive is unpinned: \`${push(pack, tool)}\` writes it`;
+    `pack test data is never tracked in the pulled layout: move it under packs/${pack}/upstream/${tool}/publish/ (${stage(pack, tool)}) to publish it`;
+  const unpinned = (pack, tool) =>
+    `the tool-pack's test data archive is unpinned: stage its data into packs/${pack}/upstream/${tool}/publish/ (${stage(pack, tool)}) and run the publish workflow (${workflow}), which writes the lock`;
 
-  it("flags recordings outside fixtures/ and packs/<id>/upstream/", () => {
+  it("flags expected findings outside fixtures/ and packs/<id>/upstream/", () => {
     const result = fixtureDataLocation(
       memoryRepo({
         "fixtures/php/scope/a.expected.json": "{}",
@@ -87,8 +89,6 @@ describe("#3 fixture data location", () => {
         "packs/php/upstream/phpcs/fixtures.expected.json": "{}",
         "packs/php/upstream/phpcs/gates.yaml": "",
         "packs/php/upstream/phpcs/generate.py": "",
-        "packs/php/upstream/phpcs/recording.lock": "{}",
-        "packs/php/upstream/phpcs/goldens.tsv": "",
         "packs/php/upstream/phpcs/UPSTREAM.md": "",
         "packs/php/upstream/phpcs/test-data.lock": lock(),
         "packs/complexity/upstream/lizard/lizard-1.24.0.tsv": "",
@@ -129,6 +129,25 @@ describe("#3 fixture data location", () => {
     expect(result.actual).toBe("0");
   });
 
+  it("blocks the merge once per tool-pack with a tracked publish/, naming its file count and first paths", () => {
+    const files = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`packs/sql/upstream/sqlfluff/publish/fixtures/rerail/${index}.sql`, ""]));
+    const result = fixtureDataLocation(
+      memoryRepo({
+        ...files,
+        "packs/sql/upstream/sqlfluff/test-data.lock": lock(),
+        "packs/new/upstream/tool/gates.yaml": "",
+        "packs/new/upstream/tool/publish/fixtures/a.js": "",
+      }),
+    );
+    expect(result.findings).toEqual([
+      { path: "packs/new/upstream/tool/publish/", message: `Pack data waiting to publish: run the publish workflow (${workflow}) for this pull request: 1 file(s), e.g. \`packs/new/upstream/tool/publish/fixtures/a.js\`` },
+      {
+        path: "packs/sql/upstream/sqlfluff/publish/",
+        message: `Pack data waiting to publish: run the publish workflow (${workflow}) for this pull request: 7 file(s), e.g. ${[0, 1, 2, 3, 4].map((index) => `\`packs/sql/upstream/sqlfluff/publish/fixtures/rerail/${index}.sql\``).join(", ")}`,
+      },
+    ]);
+  });
+
   const lockPath = "packs/php/upstream/phpcs/test-data.lock";
   it.each([
     ["bad JSON", "{", `${lockPath} is not JSON (`],
@@ -140,6 +159,16 @@ describe("#3 fixture data location", () => {
     const result = fixtureDataLocation(memoryRepo({ [lockPath]: text }));
     expect(paths(result)).toEqual([lockPath]);
     expect(result.findings[0].message).toContain(message);
+  });
+
+  it("passes a tool directory with no samples.lock or a well-formed one, and flags a malformed one with parseLock's message", () => {
+    const samplesPath = "packs/php/upstream/phpcs/samples.lock";
+    const pinned = { [lockPath]: `${lock()}\n` };
+    expect(fixtureDataLocation(memoryRepo(pinned)).findings).toEqual([]);
+    expect(fixtureDataLocation(memoryRepo({ ...pinned, [samplesPath]: `${lock()}\n` })).findings).toEqual([]);
+    const result = fixtureDataLocation(memoryRepo({ ...pinned, [samplesPath]: lock({ format: 2 }) }));
+    expect(paths(result)).toEqual([samplesPath]);
+    expect(result.findings[0].message).toContain(`${samplesPath} is malformed: its format is 2, not 1`);
   });
 
   it("sorts findings by path across kinds", () => {
@@ -244,7 +273,7 @@ describe("#5 test roots", () => {
 });
 
 describe("#6 generator locations", () => {
-  it("allows scripts/generate/, fixtures/ and pack recorders; flags generators in the engine source", () => {
+  it("allows scripts/generate/, fixtures/ and pack generators; flags generators in the engine source", () => {
     const result = generatorLocations(
       memoryRepo({
         "scripts/generate/value/ecma-builtins.mjs": "",
@@ -285,17 +314,17 @@ describe("#6 generator locations", () => {
       {
         path: "scripts/generate/README.md",
         line: 3,
-        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)",
+        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)",
       },
       {
         path: "src/engine/storage/schema-sql.generated.ts",
         line: 1,
-        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)",
+        message: "names generator src/engine/storage/schema-sql.ts, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)",
       },
       {
         path: "src/hosts/omp/tokens.ts",
         line: 1,
-        message: "names generator src/hosts/omp/tokens.mjs, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)",
+        message: "names generator src/hosts/omp/tokens.mjs, outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)",
       },
     ]);
     expect(result.actual).toBe("2");
@@ -374,64 +403,14 @@ SPDX-License-Identifier = "Apache-2.0"
     expect(paths(packLicences(memoryRepo(files("override"))))).toEqual(["packs/php/rules/a.json"]);
   });
 
-  describe("files an UPSTREAM.md lists as copied", () => {
-    const record = (rows) => `# tool 1.0\n\nUpstream: tool 1.0. License: MIT\n\n| File | Upstream path | Copy |\n|---|---|---|\n${rows}`;
-    const copied = (annotation) => ({
-      "REUSE.toml": reuse(annotation),
-      "packs/py/licenses/tool/UPSTREAM.md": record(
-        "| `upstream/tool/fixtures/a.py` | `tests/a.py` | verbatim |\n|`upstream/tool/fixtures/package.json`|none|Rerail's own, not copied|\n",
-      ),
-      "packs/py/upstream/tool/fixtures/a.py": "x = 1\n",
-      "packs/py/upstream/tool/fixtures/package.json": "{}\n",
-    });
-
-    it("fails a copied file the catch-all annotation covers, and skips a row whose upstream path is none", () => {
-      expect(packLicences(memoryRepo(copied(""))).findings).toEqual([
-        {
-          path: "packs/py/upstream/tool/fixtures/a.py",
-          message: "REUSE resolves Apache-2.0; packs/py/licenses/tool/UPSTREAM.md lists it as copied under MIT",
-        },
-      ]);
-    });
-
-    it("fails an upstream licence whose only copyright holder is Rerail", () => {
-      const annotation = `
-[[annotations]]
-path = "packs/py/upstream/tool/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "2026 Nera Software Inc."
-SPDX-License-Identifier = "MIT"
-`;
-      expect(packLicences(memoryRepo(copied(annotation))).findings).toEqual([
-        {
-          path: "packs/py/upstream/tool/fixtures/a.py",
-          message: "REUSE names only Nera Software Inc. as its copyright holder; packs/py/licenses/tool/UPSTREAM.md lists it as copied",
-        },
-      ]);
-    });
-
-    it("accepts the upstream's licence with the upstream's holder", () => {
-      const annotation = `
-[[annotations]]
-path = ["packs/py/upstream/tool/fixtures/a.py"]
-precedence = "override"
-SPDX-FileCopyrightText = ["2022 Tool Authors", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "Apache-2.0 AND MIT"
-`;
-      const result = packLicences(memoryRepo(copied(annotation)));
-      expect(result.findings).toEqual([]);
-      expect(result.actual).toBe("100% (1/1)");
-    });
-
-    it("accepts a dual-licensed upstream whose expression names the recorded licence", () => {
-      const annotation = `
-[[annotations]]
-path = "packs/py/upstream/tool/fixtures/**"
-precedence = "override"
-SPDX-FileCopyrightText = "The Tool Contributors"
-SPDX-License-Identifier = "MIT OR Apache-2.0"
-`;
-      expect(packLicences(memoryRepo(copied(annotation))).findings).toEqual([]);
-    });
+  it("counts rule documents only: a file a licenses/<project>/UPSTREAM.md names is no finding and no total", () => {
+    const result = packLicences(
+      memoryRepo({
+        "REUSE.toml": reuse(""),
+        "packs/py/licenses/tool/UPSTREAM.md": "# tool 1.0\n\nLicense: MIT\n\n| `upstream/tool/fixtures/**` | `tests/` | verbatim |\n",
+        "packs/py/upstream/tool/fixtures/a.py": "x = 1\n",
+      }),
+    );
+    expect(result).toEqual({ actual: "100% (0/0)", findings: [] });
   });
 });

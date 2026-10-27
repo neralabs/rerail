@@ -3,7 +3,8 @@
 Every test input and oracle the repository's tests read, in one place: language conformance data (inputs, the
 reports and values upstream tools record for them, `*.expected.json`, and the `generate_*` scripts that record each),
 the host tests' data and the pack validator's inputs. Nothing here is published as a package or shipped to users: no
-package's `files` includes this directory. A rule pack's own tool recordings live with the pack, in
+package's `files` includes this directory. A rule pack's own tool expected findings (`fixtures.expected.json`) and
+copied tests live with the pack, in
 `packs/<id>/upstream/<tool>/` ([pack format](../docs/pack-format.md)), and are not in git: that pack test data is one
 archive per tool-pack in S3, which the tool directory's `test-data.lock` names and `npm run fixtures:pull` fetches
 ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Everything else is here, in git.
@@ -24,7 +25,7 @@ kebab-case and name the part of the module that reads them (`php/compile/format-
 `compile/format_args/php.rs`). Three groups are not engine modules:
 
 - `<family>/licenses/<project>/`: third-party records (below).
-- `<family>/upstream/<tool>/`: a language's upstream linter recordings, recorded ahead of its pack (below).
+- `<family>/upstream/<tool>/`: a language's upstream linter tests and expected findings, made ahead of its pack (below).
 - `host/<area>/` and `packs/<pack>/`: not language families. `host/` holds the TypeScript host tests' data, one
   directory per area; `packs/` holds pack-shaped test inputs: the pack validator's and the conformance runner's
   ([README](packs/README.md)).
@@ -68,8 +69,8 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 
 `ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next, vue,
 complexity, sql, rust) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their
-upstream tools' copied tests and recordings, their candidates and their licence records.
-`../conformance/recorders/eslint-record.mjs` is the recorder the ESLint-based generators share.
+upstream tools' copied tests and expected findings, their candidates and their licence records.
+`../scripts/pack-data/eslint-expected.mjs` is the expected-findings helper the ESLint-based generators share.
 
 Each oracle stays whole inside its feature directory (generator, inputs and recorded output together), so every
 generator reads and writes relative to its own directory; a family's shared generator modules sit at the family's
