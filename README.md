@@ -56,9 +56,9 @@ The agent drafts the rule from your description, tests it against the repository
 3. **Steer.** Each rule has a mode. `log` records the violation. `steer` sends the agent the rule, the location, what is wrong and, where the rule has one, a suggested fix.
 4. **Record.** Sessions and violations are stored in one local SQLite database (`~/.rerail/rerail.sqlite`) and shown in the dashboard, so you can see what fired, where and why.
 
-![An OMP session: the agent writes isGuest(user) with user == null, Rerail steers it on the eslint-eqeqeq rule, and the agent rewrites the check with === null and === undefined and says why. Below, the Rerail footer reads "R E R A I L ● 25 rules · steered 1×"; each part links to Rerail's dashboard.](docs/images/session-steer.png)
+![An OMP session: the agent writes isGuest(user) with user == null; under the edit, the line "◆ R E R A I L · eslint-eqeqeq steered · why?" shows the steer, and the agent rewrites the check with === null and === undefined and says why. Below, the Rerail footer reads "R E R A I L ● 25 rules · steered 1×"; each part links to Rerail's dashboard.](docs/images/session-steer.png)
 
-A real session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascript` pack, the agent fixes its edit in the same turn, and the footer counts the steer. `R E R A I L`, the rule count and the steer count link to the session and the rules on your local dashboard.
+A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascript` pack, and the line under the edit says so, with `why?` opening the rule on your local dashboard. The agent fixes its edit in the same turn, and the footer counts the steer; `R E R A I L`, the rule count and the steer count link to the session and the rules on the dashboard.
 
 ## Capabilities
 
