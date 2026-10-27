@@ -1,5 +1,14 @@
 # @neralabs/rerail-pack-php
 
+## 0.1.4
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- c8d1afb: PHP pack: set-up no longer recommends the pack for a repository whose only PHP is tests (`test/`, `tests/`, `Test/`, `Tests/`, `spec/`, `*Test.php`, `*TestCase.php`), scripts and tooling (`scripts/`, `script/`, `bin/`, `tools/`, `ci/`, `.github/`), configuration (`config/`, `*.config.php`, dot-prefixed `.php` files such as `.php-cs-fixer.dist.php`, `rector.php`, `ecs.php`) or documentation (`docs/`, `doc/`), the way the Python and JavaScript packs already leave those out. Blade templates stay excluded. The reason set-up shows reads "PHP source files" instead of "*.php files". Installed packs are unaffected: the rules still run on every `.php` file.
+- 211e8b5: PHP pack: PHP_CodeSniffer, PHPStan and Psalm are gated by the port readiness gates, and the seven ports that pass every gate and the pack's conformance check ship: `phpcs-generic-php-lower-case-constant`, `phpstan-argument-sscanf` and `psalm-forbidden-code` on, `phpcs-generic-code-analysis-empty-statement`, `phpcs-generic-php-backtick-operator`, `phpcs-squiz-php-eval` and `phpstan-missing-function-return-type` off; the other 11 stay candidates. `phpcs-generic-php-backtick-operator` reports the closing backtick where it is, not after it, and `psalm-forbidden-code` reports Psalm's whole selection, not its start.
+- d0dd309: README: internal ticket references removed; no rule changes.
+
 ## 0.1.3
 
 ### Patch Changes
