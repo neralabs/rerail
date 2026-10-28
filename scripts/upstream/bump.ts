@@ -6,11 +6,8 @@
  * unreviewed release runs with no OIDC or write token, and outside main's cache scope. upstream-bump-publish.yml then,
  * on main, runs it again for each leg, composes the verified legs into a commit per tool-pack carrying its pins and its
  * publish/ together, opens one pull request, and dispatches pack-data-publish.yml for it, which publishes the data to
- * S3 once a code owner approves and commits the locks.
- *
- * Paused: the CLI refuses to apply a bump (`--dry-run` still plans one), and the summary's "Regenerate locally" section
- * points at the pause instead of giving derive commands, until the generators write per-repo provenance; see
- * docs/upstream.md, "Derive and bumps are paused".
+ * S3 once a code owner approves and commits the locks. A maintainer can run it the same way, and regenerate the rest as
+ * the pull request's "Regenerate locally" section says.
  *
  * A gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream in several places, all moved together:
  * - gates.yaml's `upstream.version` and `upstream.commit`, the commit being the one the release's tag names on GitHub
@@ -41,8 +38,7 @@
  * comments, UPSTREAM.md's text below the Source row, the derive recipes) is listed, not rewritten: the pull request's
  * reviewer decides it.
  *
- * Exit 0 when planned (`--dry-run`) or already at the release, 1 when the bump cannot be made or would be applied while
- * bumps are paused, 2 on bad arguments.
+ * Exit 0 when bumped or already at the release, 1 when the bump cannot be made, 2 on bad arguments.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -52,7 +48,6 @@ import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 
 import { gatedToolPacks, parseGatesManifest, readGatesManifest, type GatesManifest } from "../../conformance/languages/manifest.js";
-import { DERIVE_PAUSED } from "../pack-data/paused.js";
 import { RUNTIMES_DIRECTORY } from "../pack-data/runtimes.js";
 import { readUpstreamSources } from "../s3/pack-fixtures.mjs";
 import {
@@ -757,9 +752,9 @@ export function releaseLinks(bump: Bump): { release: string; releaseUrl: string;
 }
 
 /**
- * The bump as Markdown, for the pull request's body: the release, the pin diff, the tool-packs whose test data the bump
- * made stale, how to regenerate them (paused: a pointer to the pause, not derive commands), and what still names the old
- * release.
+ * The bump as Markdown, for the pull request's body: the release, the pin diff, what the nightly derived again, how to
+ * do that locally, and what still names the old release. The publish run adds the data each tool-pack stages in its
+ * publish/, which only exists once the nightly has derived it.
  */
 export function renderBump(bump: Bump): string {
   const links = releaseLinks(bump);
@@ -778,15 +773,26 @@ export function renderBump(bump: Bump): string {
     pinDiff(bump),
     "```",
     "",
-    "### Stale test data",
+    "### Derived again",
     "",
-    "The new pins make each tool-pack's test data stale:",
+    "The nightly derived each tool-pack's test data from the new pins, on Linux, and staged it whole in the tool-pack's `publish/`:",
     "",
     ...bump.derive.map((id) => `- \`${id}\``),
     "",
     "### Regenerate locally",
     "",
-    `Not yet: ${DERIVE_PAUSED}.`,
+    "From this branch, with the current test data pulled (`npm run fixtures:pull`), for each tool-pack above:",
+    "",
+    "```sh",
+    ...bump.derive.map((id) => {
+      const [pack, tool] = id.split("/");
+      const selector = `--pack ${pack!} --tool ${tool!}`;
+      return `npm run fixtures:derive -- ${selector} --update && npm run fixtures:stage -- ${selector} --all`;
+    }),
+    "```",
+    "",
+    "then commit each tool-pack's `publish/` and run the publish workflow (pack-data-publish.yml) for the pull request with replace.",
+    ...(bump.derive.includes("rust/clippy") ? ["", "Derive `rust/clippy` on Linux: Clippy's answers on macOS differ from the ones CI checks."] : []),
     "",
     `### Still naming ${bump.from.version}`,
     "",
@@ -855,11 +861,6 @@ export async function main(argv: string[], repositoryRoot: string, fetch: Fetch,
   const sources: Sources = { fetch, token: env.GH_TOKEN ?? env.GITHUB_TOKEN };
   const version = values.version ?? await latestRelease(root, pack, tool, fetch);
   const bump = await planBump(root, pack, tool, version, sources);
-  // Paused: a bump only plans (--dry-run); applying one would leave test data nothing may derive again.
-  if (bump !== null && !values["dry-run"]) {
-    process.stderr.write(`${pack}/${tool}: ${DERIVE_PAUSED}\n`);
-    return 1;
-  }
   const write = (file: string | undefined, text: string): void => {
     if (file === undefined) return;
     mkdirSync(dirname(resolve(file)), { recursive: true });
@@ -871,9 +872,10 @@ export async function main(argv: string[], repositoryRoot: string, fetch: Fetch,
     write(values.summary, `## \`${pack}/${tool}\` already pins ${version}\n`);
     return 0;
   }
+  if (!values["dry-run"]) applyBump(root, bump);
   const markdown = renderBump(bump);
   write(values.summary, markdown);
-  process.stdout.write(`would bump ${bump.toolPack} ${bump.from.version} → ${bump.to.version} in ${root}\n\n${markdown}`);
+  process.stdout.write(`${values["dry-run"] ? "would bump" : "bumped"} ${bump.toolPack} ${bump.from.version} → ${bump.to.version} in ${root}\n\n${markdown}`);
   return 0;
 }
 

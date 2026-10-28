@@ -10,7 +10,7 @@ names:
 
 | Pack data | Lock | What it holds | How it changes |
 | --- | --- | --- | --- |
-| Test data | `test-data.lock` | upstream's tests, the expected findings (`fixtures.expected.json`) and the cases Rerail wrote for the tool to score | authored cases by hand; derived data only by derive, which is paused ([Derive and bumps are paused](#derive-and-bumps-are-paused)) |
+| Test data | `test-data.lock` | upstream's tests, the expected findings (`fixtures.expected.json`) and the cases Rerail wrote for the tool to score | authored cases by hand; derived data only by derive ([Take a new snapshot](#take-a-new-snapshot)) |
 | Real-code samples | `samples.lock` (optional) | real files from open-source repositories, labelled per rule | the sample builders in `scripts/samples/`, a library API ([Samples](#samples)) |
 
 Either kind changes through a pull request that stages the new data, and reaches S3 through one workflow on main once
@@ -75,9 +75,7 @@ repository adds its entry, and the reviewer reads the repository's licence file 
 ## Take a new snapshot
 
 A snapshot of the derived test data changes only on purpose, in one of three ways, each ending in a pull request that
-carries the new data in `publish/`. All three are paused for now
-([Derive and bumps are paused](#derive-and-bumps-are-paused)); this section describes them as they run once the pause
-lifts:
+carries the new data in `publish/`:
 
 - **A bump** moves the pins to a newer upstream release and derives the data again
   ([Bump pull requests](#bump-pull-requests)); the nightly starts one for every tool-pack behind.
@@ -108,6 +106,18 @@ original. The conformance runner scores variants apart from the originals, as `h
 matches the test cases' names or literals instead of the construct fails it. A family without variants yet takes its
 overfit evidence from the samples alone.
 
+Last, each generator writes the tool-pack's per-file provenance through the shared writer,
+`scripts/pack-data/provenance.mjs` (`writeProvenance`, or `write_provenance` from Python): `provenance.json`, every pack
+test data file with its source, its upstream path and how it was made, and `LICENSES.md`, each source's licence and
+licence text, both in `packs/<id>/upstream/<tool>/` and archived with the data
+([pack-format.md, "UPSTREAM.md"](pack-format.md#upstreammd)). The generator names the files it copied from upstream;
+the writer classifies Rerail's own files itself (the tool's `UPSTREAM.md` listing, `authored/`, the tool's recorded
+output) and reads each source from its tracked `packs/<id>/licenses/<project>/UPSTREAM.md`. It writes neither file,
+and the derive fails, when anything disagrees with those records: a pack test data file with no entry, a file outside
+its source's "Taken from it" globs, a "Taken from it" glob matching no file, an upstream path under a "Not copied"
+prefix, or a checkout at a commit other than the one the Source row names. A generator that writes neither file fails
+the derive too.
+
 ### Runtimes
 
 `fixtures:derive` installs the runtimes a generator needs from `scripts/pack-data/runtimes/` (`runtimes.ts`): upstream's
@@ -128,7 +138,7 @@ PATH="$PWD/.rerail/php/8.5.11/bin:$PATH" npm run fixtures:derive -- --pack php -
 
 ### Derive in a sandbox
 
-Paused, like every derive. When a pull request changes a pin, a generator or a recipe, the derived data must be made
+When a pull request changes a pin, a generator or a recipe, the derived data must be made
 again. `fixtures:derive` runs the pull request's own generators and recipes, and the upstream code they fetch, so a
 maintainer reviews that code first and then runs it in a sandbox: a clone of its own, in a container or VM that can
 reach no AWS or GitHub credentials (no `AWS_*` variables, no `~/.aws` or `gh` login), on Linux for `rust/clippy`, whose
@@ -287,48 +297,6 @@ sha256s. To fetch one archive alone, take the key `rerail/archives/<pack>/<tool>
 `rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst`) from `s3://nera-test-fixtures/`; the sha256 is its tar's, so
 check it after `zstd -d`.
 
-## Derive and bumps are paused
-
-Pack test data derivation and upstream bumps are paused until the generators write per-repo provenance. Each
-`packs/<id>/licenses/<project>/UPSTREAM.md` records its repository, not each file
-([pack-format.md, "UPSTREAM.md"](pack-format.md#upstreammd)), and the per-file record is `provenance.json` in each
-test data archive, for audit. The generators still write per-file rows: an ECMA tool-pack's generator (javascript,
-typescript) would fail, and every other one would rewrite `UPSTREAM.md` back to per-file rows, which pack check 6
-rejects. So every path that derives refuses, with the message `derive and bumps are paused until the generators write
-per-repo provenance; see docs/upstream.md#derive-and-bumps-are-paused`:
-
-- `npm run fixtures:derive` refuses every tool-pack before it removes a file or runs a generator, and exits 1
-  (`scripts/pack-data/derive.ts`, `scripts/pack-data/paused.ts`);
-- `npm run upstream:bump` only plans a bump (`--dry-run`); asked to apply one, it refuses, writes nothing and exits 1.
-  Its summary's "Regenerate locally" section points here instead of giving derive commands;
-- `upstream-bump.yml`, dispatched by hand, bumps and re-snapshots (`resnapshot`) alike, fails at its `scope` job's first
-  step, so no other job starts;
-- `upstream-releases.yml`'s `bump-dispatch` job does not start bumps (`if: false && ...`). The release check still runs
-  and reports which tool-packs are behind.
-
-### What to do meanwhile
-
-The locked data stands, and everything that does not need a generator goes ahead as usual:
-
-- rule changes, scored on the locked data by the conformance check;
-- samples ([Samples](#samples));
-- a code corpus with its ground truth under `upstream/<tool>/authored/`, staged and published;
-- removing an authored file by removing its row ([Removing data](#removing-data)).
-
-Anything a generator makes waits: new upstream cases, expected findings (including those on the cases Rerail wrote,
-which the generator records by running the tool), a pin, generator or recipe change, and a new ported tool-pack's
-data. Running a pack's generator directly is no way round the pause, since it writes the per-file rows check 6
-rejects. Open the pull request or issue without the data and say it waits on the pause.
-
-### What resumes
-
-The generators are changed to write per-repo provenance: `licenses/<project>/UPSTREAM.md` records with patterns, the
-tool's own `UPSTREAM.md` listing what Rerail wrote, and each file's provenance in the archive's `provenance.json`. Then
-`refuseWhilePaused` is dropped from `deriveToolPack`, the CLI's refusal and the summary's pointer from
-`scripts/upstream/bump.ts`, the refusing step from `upstream-bump.yml` and the leading `false &&` from `bump-dispatch`.
-Local derives, re-snapshots and the nightly bumps then run as [Take a new snapshot](#take-a-new-snapshot) describes,
-and this section goes.
-
 ## Upstream releases
 
 A pin says which release the rules were ported against; `upstream-releases.yml` notices when upstream publishes a newer
@@ -361,9 +329,8 @@ with that list.
 
 ### Bump pull requests
 
-An upstream release is a pin change plus the test data derived from the new pins. Bumps are paused for now
-([Derive and bumps are paused](#derive-and-bumps-are-paused)); this section describes them as they run once the pause
-lifts. Each night `bump-dispatch` points the work branch `auto/bump-run/upstream` at main's commit and dispatches
+An upstream release is a pin change plus the test data derived from the new pins. Each night `bump-dispatch` points
+the work branch `auto/bump-run/upstream` at main's commit and dispatches
 `upstream-bump.yml` there once, with every tool-pack behind (`[{pack, tool, version}]`, sorted by pack then tool),
 leaving out each `<pack>/<tool>@<version>` a closed, unmerged bump pull request already declined.
 

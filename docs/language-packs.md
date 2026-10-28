@@ -405,9 +405,9 @@ tool it ports is a tool-pack, `upstream/<tool>/`, with its own pack data ([pack 
    `source.units`), through `npm run fixtures:derive -- --pack <id>`. That is derived pack test data, never in git:
    staged into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and published by the
    publish workflow, which commits the tool-pack's `test-data.lock`
-   ([docs/upstream.md](upstream.md#publishing-pack-data)). **Derive is paused**, so a new tool-pack's data waits
-   until it resumes ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)); the pack's rule documents,
-   `conformance.json` and records can land before it. Cases you write for the tool are authored: list each in the
+   ([docs/upstream.md](upstream.md#publishing-pack-data)). The generator writes the tool's `provenance.json` and
+   `LICENSES.md` last, from the pack's `licenses/<project>/UPSTREAM.md` records
+   ([docs/upstream.md](upstream.md#what-the-generators-write)). Cases you write for the tool are authored: list each in the
    tool's own `UPSTREAM.md`, or keep a corpus with its ground truth under `upstream/<tool>/authored/`. Get the other
    packs' data with `npm run fixtures:pull`.
 3. `licenses/<project>/`, one per upstream repository: its licence, verbatim, and `UPSTREAM.md` with a

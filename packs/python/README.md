@@ -30,10 +30,6 @@ over its fixtures, against the pinned tool versions, under CPython 3.14 (Bandit 
 CPython 3.13). The cases Rerail wrote (`fixtures/rerail/`) are authored: a change to them is staged into `publish/` with
 the derived data.
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack python                # every tool
 npm run fixtures:derive -- --pack python --tool ruff    # one

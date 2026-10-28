@@ -69,10 +69,7 @@ jobs:
   bump-dispatch:
     name: Start the bump of the tool-packs behind upstream
     needs: upstream-releases
-    # Paused until generators write per-repo provenance (follow-up to the per-repo provenance change): a derive would
-    # fail, or rewrite licenses/*/UPSTREAM.md back to per-file rows. The job above still reports what is behind. To
-    # resume, drop the leading `false &&`.
-    if: false && github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main' && needs.upstream-releases.outputs.behind != '' && needs.upstream-releases.outputs.behind != '[]'
+    if: github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main' && needs.upstream-releases.outputs.behind != '' && needs.upstream-releases.outputs.behind != '[]'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

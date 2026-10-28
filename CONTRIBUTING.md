@@ -344,8 +344,7 @@ Everything else in the tool directory is in git: `gates.yaml`, the generators, `
   `upstream/<tool>/UPSTREAM.md` lists as Rerail's, one row per file, and everything under `upstream/<tool>/authored/`
   (a code corpus and its ground truth, when the corpus is no public repository a pin can name).
 - **Derived**: upstream's tests, copied or derived (with the ECMA tool-packs' rename variants under
-  `fixtures/renamed/`), and the expected findings on them, which `npm run fixtures:derive` makes from the pins. Derive
-  is paused for now ([While derive and bumps are paused](#while-derive-and-bumps-are-paused)).
+  `fixtures/renamed/`), and the expected findings on them, which `npm run fixtures:derive` makes from the pins.
 
 What each archive holds, the lock format and what a pull checks are in
 [docs/pack-format.md, "Pack data"](docs/pack-format.md#pack-data); how data is snapshotted, published and read in CI
@@ -436,8 +435,8 @@ the tool's expected findings, its rename variants and its samples, and any diver
 
 **Test data.** Pull first (`npm run fixtures:pull`), then write the cases in the pulled layout: a code corpus with its
 ground truth under `upstream/<tool>/authored/`, or a case file under the tool directory with its row in the tool's
-`UPSTREAM.md`. A case file's expected findings are recorded by running the tool through its generator, which waits
-while derive is paused ([below](#while-derive-and-bumps-are-paused)). Then stage what changed and commit `publish/`:
+`UPSTREAM.md`. A case file's expected findings are recorded by running the tool through its generator
+(`npm run fixtures:derive`; **Derived data** below). Then stage what changed and commit `publish/`:
 
 ```sh
 npm run fixtures:stage -- --pack <id> --tool <tool>   # every file the locked archive lacks or holds differently
@@ -470,25 +469,12 @@ works the same, except that finish cannot push to your branch: the comment chang
 needed** and gives each new lock. Commit those locks, delete `publish/` and push
 ([docs/upstream.md, "Forks"](docs/upstream.md#forks)).
 
-#### While derive and bumps are paused
-
-`npm run fixtures:derive` refuses every tool-pack, `npm run upstream:bump` only plans a bump (`--dry-run`),
-`upstream-bump.yml` fails at its first step, and the nightly release check reports tool-packs behind but starts no
-bump, until the generators write per-repository provenance
-([docs/upstream.md, "Derive and bumps are paused"](docs/upstream.md#derive-and-bumps-are-paused)). Until then:
-
-- rule changes (scored on the locked data), candidates and promotions, samples, corpora with their ground truth under
-  `upstream/<tool>/authored/`, and removing authored rows go ahead as above;
-- anything a generator makes waits: upstream's cases taken again, expected findings (on Rerail's own cases too, which
-  the generator records by running the tool), a change to a pin, a generator or a recipe under
-  `scripts/pack-data/recipes/`, and a new ported tool-pack's data. Running a generator directly is no way round it: it
-  writes the per-file rows that pack check 6 rejects. Open the issue or the pull request without the data, and say
-  that it waits on the pause.
-
-When the pause lifts, derived data changes again through a pull request that changes the pins, a generator or a
-recipe, derived by a maintainer ([docs/upstream.md, "Take a new snapshot"](docs/upstream.md#take-a-new-snapshot)) or
-by the nightly bump ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)), and published
-like any other pack data.
+**Derived data.** Upstream's cases and the expected findings on them change through a pull request that changes the
+pins, a generator or a recipe under `scripts/pack-data/recipes/`, derived by a maintainer
+([docs/upstream.md, "Take a new snapshot"](docs/upstream.md#take-a-new-snapshot)) or by the nightly bump
+([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)), and published like any other pack
+data. The derive writes each tool's `provenance.json` and `LICENSES.md` from the pack's `UPSTREAM.md` records, and
+fails when a file disagrees with them ([docs/upstream.md, "What the generators write"](docs/upstream.md#what-the-generators-write)).
 
 ### Merging (maintainers)
 
@@ -526,8 +512,7 @@ licence check and the approval, so it is for maintainers only, to repair S3 outs
 whose archive S3 lacks; new data goes through the publish workflow
 ([docs/upstream.md, "fixtures:push"](docs/upstream.md#fixturespush)).
 
-While derive is paused, no bump pull requests are opened and `fixtures:derive` refuses. Once it lifts, a maintainer
-derives a pull request's data again in a sandbox without credentials
+A maintainer derives a pull request's data again in a sandbox without credentials
 ([docs/upstream.md, "Derive in a sandbox"](docs/upstream.md#derive-in-a-sandbox)), and reviews and merges the nightly
 bump pull requests ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)).
 

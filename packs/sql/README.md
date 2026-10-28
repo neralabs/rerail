@@ -111,10 +111,6 @@ Taking a new snapshot is a maintainer deriving the pack's test data from its pin
 under `upstream/sqlfluff/publish/`. The recipe (`scripts/pack-data/recipes/sql.ts`) runs `upstream/sqlfluff/generate.py`
 over the fixtures, against the pinned SQLFluff 4.4.0, in the venv that `fixtures/sql/common.py` pins:
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack sql
 npm run fixtures:stage -- --pack sql    # copy what changed into upstream/sqlfluff/publish/

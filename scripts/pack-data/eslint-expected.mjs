@@ -2,8 +2,7 @@
 // the generating machine out of fixtures, each unit's upstream origin and the ECMA rename variants, and
 // ESLint's findings in the expected-findings format `rerail/conformance/languages/pack.ts` reads (`expectedFindingsSchema`).
 // Run, through them, by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never
-// pull request CI). Paused for now: derive refuses until the generators write per-repo provenance
-// (docs/upstream.md#derive-and-bumps-are-paused).
+// pull request CI).
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
