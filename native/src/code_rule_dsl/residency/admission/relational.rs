@@ -1,33 +1,34 @@
 //! Bounded relational queries over native AST evidence. Policy queries read only
 //! their input tables and earlier stages in a fresh in-memory SQLite connection.
-use super::eval::{evidence::Rows, failure, violation_from_witness};
-use super::json::{hex_digest, invalid};
-use super::model::{CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot};
-use super::violations::{Captures, Witness};
+use crate::code_rule_dsl::eval::{evidence::Rows, failure, violation_from_witness};
+use crate::code_rule_dsl::json::{hex_digest, invalid};
+use crate::code_rule_dsl::model::{CompiledClause, CompiledCodeRule, Evaluation, FactQuery, Snapshot};
+use crate::code_rule_dsl::violations::{Captures, Witness};
 use napi::Result;
 use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::hooks::Authorization;
 mod authorizer;
+pub(in crate::code_rule_dsl) mod compile;
 mod pool;
 mod storage;
 
 mod admission;
 mod anchors;
 mod batch;
-pub(super) mod database;
+pub(in crate::code_rule_dsl) mod database;
 use database::Database;
-pub(super) mod deferred;
+pub(in crate::code_rule_dsl) mod deferred;
 mod forest;
 mod inputs;
 mod insert;
 mod producer;
 mod reachability;
-pub(super) mod schema;
+pub(in crate::code_rule_dsl) mod schema;
 mod source;
-pub(super) mod syntax;
+pub(in crate::code_rule_dsl) mod syntax;
 mod table;
-pub(super) use reachability::Reachability;
+pub(in crate::code_rule_dsl) use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
@@ -36,27 +37,27 @@ use std::sync::{
 };
 
 #[derive(Clone)]
-pub(super) struct Stage {
-    pub(super) name: String,
-    pub(super) query: String,
-    pub(super) indexes: Vec<Vec<String>>,
-    pub(super) reachability: Option<Reachability>,
-    pub(super) deferred: BTreeMap<String, String>,
-    pub(super) stored_columns: Vec<String>,
-    pub(super) output_columns: Vec<String>,
-    pub(super) declaration: Arc<str>,
+pub(in crate::code_rule_dsl) struct Stage {
+    pub(in crate::code_rule_dsl) name: String,
+    pub(in crate::code_rule_dsl) query: String,
+    pub(in crate::code_rule_dsl) indexes: Vec<Vec<String>>,
+    pub(in crate::code_rule_dsl) reachability: Option<Reachability>,
+    pub(in crate::code_rule_dsl) deferred: BTreeMap<String, String>,
+    pub(in crate::code_rule_dsl) stored_columns: Vec<String>,
+    pub(in crate::code_rule_dsl) output_columns: Vec<String>,
+    pub(in crate::code_rule_dsl) declaration: Arc<str>,
 }
 #[derive(Clone)]
-pub(super) struct References {
-    pub(super) query: super::model::Query,
-    pub(super) key: super::calls::contracts::Key,
+pub(in crate::code_rule_dsl) struct References {
+    pub(in crate::code_rule_dsl) query: crate::code_rule_dsl::model::Query,
+    pub(in crate::code_rule_dsl) key: crate::code_rule_dsl::calls::contracts::Key,
 }
 
 /// Source bytes per syntax node, at most: Python averages 7.9 bytes a token over the data-layer
 /// corpus (9,021 files), and a tree has more nodes than tokens.
 const SOURCE_BYTES_PER_NODE: usize = 8;
 
-pub(super) const REFERENCE_FIELDS: &[&str] = &[
+pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
     "target_path",
     "target_start",
     "target_end",
@@ -66,22 +67,22 @@ pub(super) const REFERENCE_FIELDS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub(super) struct Plan {
-    pub(super) require_nonempty: Option<usize>,
-    pub(super) syntax: Option<Arc<syntax::Spec>>,
-    pub(super) per_file: bool,
-    pub(super) references: Option<References>,
-    pub(super) locations: BTreeSet<String>,
-    pub(super) inputs: Vec<(String, FactQuery)>,
-    pub(super) stages: Vec<Stage>,
-    pub(super) query: String,
-    pub(super) key: Vec<String>,
-    pub(super) code: Option<String>,
-    pub(super) last_uses: BTreeMap<String, usize>,
-    pub(super) reads_source: bool,
+pub(in crate::code_rule_dsl) struct Plan {
+    pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
+    pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
+    pub(in crate::code_rule_dsl) per_file: bool,
+    pub(in crate::code_rule_dsl) references: Option<References>,
+    pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
+    pub(in crate::code_rule_dsl) inputs: Vec<(String, FactQuery)>,
+    pub(in crate::code_rule_dsl) stages: Vec<Stage>,
+    pub(in crate::code_rule_dsl) query: String,
+    pub(in crate::code_rule_dsl) key: Vec<String>,
+    pub(in crate::code_rule_dsl) code: Option<String>,
+    pub(in crate::code_rule_dsl) last_uses: BTreeMap<String, usize>,
+    pub(in crate::code_rule_dsl) reads_source: bool,
 }
 
-pub(super) fn identifier(value: &str) -> bool {
+pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && !value.starts_with("__")
@@ -97,7 +98,7 @@ fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
-pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+pub(in crate::code_rule_dsl) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
     let db = validation_connection(max_pattern, work)?;
     db.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA analysis_limit=1000;")
         .map_err(sql_error)?;
@@ -106,7 +107,7 @@ pub(super) fn connection(max_pattern: usize, work: Arc<AtomicUsize>) -> Result<D
 
 /// Compiler sessions prepare authored queries and retain only empty stage schemas.
 /// Runtime storage configuration belongs to `connection`, not schema validation.
-pub(super) fn validation_connection(
+pub(in crate::code_rule_dsl) fn validation_connection(
     max_pattern: usize,
     work: Arc<AtomicUsize>,
 ) -> Result<Database> {
@@ -196,7 +197,7 @@ fn configure(db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result
 /// Neither attached databases, metadata, pragmas, writes nor nondeterministic
 /// functions are available to a policy. CTEs and JSON table functions can join
 /// only the finite relations supplied here.
-pub(super) fn columns(
+pub(in crate::code_rule_dsl) fn columns(
     db: &Connection,
     query: &str,
     tables: &BTreeSet<String>,
@@ -204,7 +205,7 @@ pub(super) fn columns(
     inspect(db, query, tables).map(|(columns, _, _)| columns)
 }
 
-pub(super) fn inspect(
+pub(in crate::code_rule_dsl) fn inspect(
     db: &Connection,
     query: &str,
     tables: &BTreeSet<String>,
@@ -212,8 +213,8 @@ pub(super) fn inspect(
     inspect_fields(db, query, tables)
         .map(|(columns, fields, source)| (columns, fields.into_keys().collect(), source))
 }
-pub(super) type FieldReads = BTreeMap<String, BTreeSet<String>>;
-pub(super) fn inspect_fields(
+pub(in crate::code_rule_dsl) type FieldReads = BTreeMap<String, BTreeSet<String>>;
+pub(in crate::code_rule_dsl) fn inspect_fields(
     db: &Connection,
     query: &str,
     tables: &BTreeSet<String>,
@@ -249,14 +250,14 @@ pub(super) fn inspect_fields(
     result
 }
 
-pub(super) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
+pub(in crate::code_rule_dsl) fn create_input(db: &Database, name: &str, fields: &[String]) -> Result<()> {
     db.storage
         .borrow_mut()
         .declare(db, name, input_schema(name, fields), true)
         .map_err(sql_error)?;
     Ok(())
 }
-pub(super) fn input_schema(name: &str, fields: &[String]) -> String {
+pub(in crate::code_rule_dsl) fn input_schema(name: &str, fields: &[String]) -> String {
     format!(
         "CREATE TABLE {} (__path TEXT NOT NULL, __start INTEGER NOT NULL, __end INTEGER NOT NULL{})",
         quote(name),
@@ -266,7 +267,7 @@ pub(super) fn input_schema(name: &str, fields: &[String]) -> String {
             .collect::<String>()
     )
 }
-pub(super) fn create_stage(
+pub(in crate::code_rule_dsl) fn create_stage(
     db: &Database,
     stage: &Stage,
     materialize: bool,
@@ -277,7 +278,7 @@ pub(super) fn create_stage(
     }
     #[cfg(feature = "code-rule-profile")]
     if materialize && std::env::var_os("RERAIL_SQL_QUERY_PLANS").is_some() {
-        let mut span = super::profile::trace::Span::start("sql-plan", &stage.name);
+        let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-plan", &stage.name);
         let plan = (|| -> rusqlite::Result<Vec<Value>> {
             let mut statement = db.prepare(&format!("EXPLAIN QUERY PLAN {}", stage.query))?;
             statement
@@ -295,7 +296,7 @@ pub(super) fn create_stage(
         });
     }
     #[cfg(feature = "code-rule-profile")]
-    let mut span = super::profile::trace::Span::start("sql-materialize", &stage.name);
+    let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-materialize", &stage.name);
     #[cfg(feature = "code-rule-profile")]
     let work_before = work.load(Ordering::Relaxed);
     let physical = if materialize {
@@ -370,7 +371,7 @@ pub(super) fn create_stage(
     if materialize && inserted != 0 {
         for (index, fields) in stage.indexes.iter().enumerate() {
             #[cfg(feature = "code-rule-profile")]
-            let _span = super::profile::trace::Span::start("sql-index", &stage.name);
+            let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-index", &stage.name);
             // Index names are global: name them after the physical table, which a stage that
             // defers columns (`__stage_<name>`) and one that defers none (`<name>`) do not share.
             let name = format!("__{}_{}", physical, index);
@@ -396,7 +397,7 @@ pub(super) fn create_stage(
     }
     if materialize && !stage.indexes.is_empty() {
         #[cfg(feature = "code-rule-profile")]
-        let _span = super::profile::trace::Span::start("sql-analyze", &stage.name);
+        let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-analyze", &stage.name);
         db.storage
             .borrow_mut()
             .analyze(db, &physical, inserted)
@@ -426,19 +427,19 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     })
 }
 
-pub(super) struct Job<'a> {
+pub(in crate::code_rule_dsl) struct Job<'a> {
     pub code_rule: &'a CompiledCodeRule,
     pub clause: &'a CompiledClause,
     pub inputs: Inputs,
-    pub budget: super::budget::Context,
+    pub budget: crate::code_rule_dsl::budget::Context,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Preparation {
+pub(in crate::code_rule_dsl) enum Preparation {
     Gate,
     Body,
 }
 
-pub(super) struct Inputs {
+pub(in crate::code_rule_dsl) struct Inputs {
     pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
     pub facts: syntax::Files,
@@ -466,14 +467,14 @@ impl<'a> Session<'a> {
         code_rule: &'a CompiledCodeRule,
         clause: &'a CompiledClause,
         mut inputs: Inputs,
-        metrics: &mut super::model::Metrics,
+        metrics: &mut crate::code_rule_dsl::model::Metrics,
         pool: &pool::Pool,
     ) -> Result<Self> {
         let snapshot = &inputs.snapshot;
         let supplied = inputs.facts;
         let limits = &code_rule.capabilities.limits;
         admission::limits(code_rule, snapshot)?;
-        let super::model::ClauseKind::Relational(plan) = &clause.kind else {
+        let crate::code_rule_dsl::model::ClauseKind::Relational(plan) = &clause.kind else {
             return Err(invalid("expected relational job"));
         };
         // Input writes spend one work unit per row. Adjust to the exact row/node allowance
@@ -492,9 +493,8 @@ impl<'a> Session<'a> {
         let rows = match inputs.rows {
             Some(rows) => rows,
             None => {
-                let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
                 let _calls = if inputs.file_local {
-                    super::eval::stateless_calls(
+                    crate::code_rule_dsl::eval::stateless_calls(
                         code_rule,
                         snapshot,
                         std::slice::from_ref(clause),
@@ -511,6 +511,7 @@ impl<'a> Session<'a> {
                             return Ok(inputs.gate.take().expect("admitted gate"));
                         }
                         let fields = input
+                            .ast
                             .project
                             .iter()
                             .map(|p| p.field.clone())
@@ -616,6 +617,7 @@ impl<'a> Session<'a> {
                 );
             }
             let fields = input
+                .ast
                 .project
                 .iter()
                 .map(|project| project.field.clone())
@@ -625,42 +627,28 @@ impl<'a> Session<'a> {
                 continue;
             }
             create_input(&db, name, &fields)?;
-            // Bind projection positions once per shared schema, never search field names per row.
-            let mut layouts = HashMap::new();
-            for witness in &rows.witnesses {
-                if let Some(projected) = witness.captures.projection() {
-                    layouts
-                        .entry(projected.schema_identity())
-                        .or_insert_with(|| {
-                            fields
-                                .iter()
-                                .map(|f| projected.index(f))
-                                .collect::<Vec<_>>()
-                        });
-                }
-            }
             let before = db.total_changes();
+            // W's witnesses carry their projection as one JSON object (P's were typed columns).
             insert::insert_rows(
                 &db,
                 name,
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
-                    use rusqlite::types::ValueRef;
-                    let location = super::violations::anchored_span(&input.anchor, witness).0;
+                    let location = crate::code_rule_dsl::violations::anchored_span(
+                        &crate::code_rule_dsl::model::Anchor::Span,
+                        witness,
+                    )
+                    .0;
                     let projected = witness.captures.projection();
-                    let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
-                        ValueRef::Text(witness.path.as_bytes()),
-                        ValueRef::Integer(location.start_byte as i64),
-                        ValueRef::Integer(location.end_byte as i64),
+                        rusqlite::types::Value::Text(witness.path.clone()),
+                        rusqlite::types::Value::Integer(location.start_byte as i64),
+                        rusqlite::types::Value::Integer(location.end_byte as i64),
                     ]
                     .into_iter()
-                    .chain(fields.iter().enumerate().map(move |(i, _)| {
-                        projected
-                            .zip(layout.and_then(|l| l[i]))
-                            .map_or(ValueRef::Null, |(row, index)| row.sql(index))
+                    .chain(fields.iter().map(move |field| {
+                        inputs::sql(projected.and_then(|value| value.get(field)))
                     }))
-                    .map(insert::Borrowed)
                 }),
                 &work,
                 "relational input row budget exceeded",
@@ -671,56 +659,10 @@ impl<'a> Session<'a> {
             tables.insert(name.clone());
             // SQL owns the copied values; only compact anchors remain necessary.
         }
-        if let Some(reference) = &plan.references {
-            let graph = super::calls::reference_rows(reference.key)
-                .ok_or_else(|| invalid("No native reference graph is installed"))?;
-            if graph
-                .incomplete
-                .iter()
-                .any(|path| code_rule.scope.matches(path))
-            {
-                return Err(invalid("The native reference graph is incomplete"));
-            }
-            create_input(
-                &db,
-                "reference_edges",
-                &REFERENCE_FIELDS
-                    .iter()
-                    .map(|field| (*field).to_owned())
-                    .collect::<Vec<_>>(),
-            )?;
-            let before = db.total_changes();
-            insert::insert_rows(
-                &db,
-                "reference_edges",
-                9,
-                graph
-                    .edges
-                    .iter()
-                    .filter(|edge| code_rule.scope.matches(&edge.path))
-                    .map(|edge| {
-                        use rusqlite::types::Value as Sql;
-                        [
-                            Sql::Text(edge.path.to_string()),
-                            Sql::Integer(edge.source.start as i64),
-                            Sql::Integer(edge.source.end as i64),
-                            Sql::Text(edge.target_path.to_string()),
-                            Sql::Integer(edge.target.start as i64),
-                            Sql::Integer(edge.target.end as i64),
-                            Sql::Text(edge.source_name.text().to_owned()),
-                            Sql::Text(edge.target_name.text().to_owned()),
-                            Sql::Integer(i64::from(
-                                edge.target.flags & super::calls::summary::CLASS != 0,
-                            )),
-                        ]
-                    }),
-                &work,
-                "native reference row budget exceeded",
-            )?;
-            db.storage
-                .borrow_mut()
-                .written("reference_edges", db.total_changes() != before);
-            tables.insert("reference_edges".to_owned());
+        // P's native reference graph (`calls::reference_rows`, its `references` call mode) is not
+        // ported: a plan that reads `reference_edges` fails closed (open item O18).
+        if plan.references.is_some() {
+            return Err(invalid("No native reference graph is installed"));
         }
         db.execute_batch("COMMIT").map_err(sql_error)?;
         let guard = Arc::clone(&work);
@@ -731,7 +673,7 @@ impl<'a> Session<'a> {
             64,
             Some(move || {
                 #[cfg(feature = "code-rule-profile")]
-                if super::profile::sql::explaining() {
+                if crate::code_rule_dsl::profile::sql::explaining() {
                     return false;
                 }
                 guard
@@ -739,7 +681,7 @@ impl<'a> Session<'a> {
                         left.checked_sub(1)
                     })
                     .is_err()
-                    || super::budget::step_budget_exhausted()
+                    || crate::code_rule_dsl::budget::step_budget_exhausted()
             }),
         )
         .map_err(sql_error)?;
@@ -841,7 +783,7 @@ impl<'a> Session<'a> {
             ..
         } = self;
         #[cfg(feature = "code-rule-profile")]
-        let _span = super::profile::trace::Span::start("sql-result", "query");
+        let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-result", "query");
         let names = columns(db, &plan.query, tables)?;
         let mut statement = db.prepare(&plan.query).map_err(sql_error)?;
         let mut query = statement.query([]).map_err(sql_error)?;
@@ -889,7 +831,7 @@ impl<'a> Session<'a> {
                 })
                 .or_else(|| {
                     (start == 0 && end == 0 && plan.locations.contains(path))
-                        .then_some((super::violations::Span::default(), false))
+                        .then_some((crate::code_rule_dsl::violations::Span::default(), false))
                 })
                 .ok_or_else(|| {
                     invalid("relational results must anchor to an input witness span")
@@ -935,6 +877,7 @@ impl<'a> Session<'a> {
                 message: None,
                 fix: None,
                 ignored: false,
+                sql_violation: None,
             };
             let mut finding = violation_from_witness(code_rule, &output_clause, witness);
             finding["id"] = json!(format!(
@@ -994,7 +937,7 @@ impl Drop for Session<'_> {
     }
 }
 
-pub(super) fn evaluate(
+pub(in crate::code_rule_dsl) fn evaluate(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     _plan: &Plan,
@@ -1012,23 +955,23 @@ pub(super) fn evaluate(
             facts: Vec::new(),
             snapshot: snapshot.clone(),
         },
-        budget: super::budget::Context::capture(),
+        budget: crate::code_rule_dsl::budget::Context::capture(),
     }])
     .pop()
     .unwrap_or_default()
 }
 
 /// SQL remains the consumer; capacity partitions bound suspended sessions.
-pub(super) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
-    use super::phase_clock;
+pub(in crate::code_rule_dsl) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
+    use crate::code_rule_dsl::phase_clock;
     phase_clock::timed(&phase_clock::RELATIONAL, || batch::evaluate(jobs))
 }
 
 /// Restore documents only when the scheduler prepares this consumer.
-pub(super) fn evaluate_prepared(
+pub(in crate::code_rule_dsl) fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
     prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause, Preparation) -> Result<()>,
 ) -> Vec<Evaluation> {
-    use super::phase_clock;
+    use crate::code_rule_dsl::phase_clock;
     phase_clock::timed(&phase_clock::RELATIONAL, || batch::evaluate_prepared(jobs, prepare))
 }

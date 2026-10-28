@@ -82,7 +82,7 @@ impl Forest {
     }
 }
 
-pub(super) fn materialize(
+pub(in crate::code_rule_dsl) fn materialize(
     db: &Connection,
     prefix: &str,
     batch_size: usize,

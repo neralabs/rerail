@@ -6,13 +6,13 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 mod completed;
-pub(super) mod layout;
+pub(in crate::code_rule_dsl) mod layout;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
-pub(super) struct ReadOnly;
+pub(in crate::code_rule_dsl) struct ReadOnly;
 impl ReadOnly {
-    pub(super) fn enter() -> Self {
+    pub(in crate::code_rule_dsl) fn enter() -> Self {
         READERS.set(READERS.get() + 1);
         Self
     }
@@ -23,12 +23,12 @@ impl Drop for ReadOnly {
     }
 }
 #[derive(Default)]
-pub(super) struct Allowance {
+pub(in crate::code_rule_dsl) struct Allowance {
     used: usize,
     resident: Resident,
 }
 impl Allowance {
-    pub(super) fn clear_resident(&mut self) {
+    pub(in crate::code_rule_dsl) fn clear_resident(&mut self) {
         self.resident = Resident::default();
     }
     fn admit_retained(&mut self, demands: &[Demand]) {
@@ -54,17 +54,17 @@ impl Allowance {
 /// All offsets are checked scalar indices. No source, path, or host pointer is a request field.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(super) struct Root {
+pub(in crate::code_rule_dsl) struct Root {
     pub file: u32,
     pub node: u32,
     pub expand: u32,
 }
 #[derive(Clone)]
-pub(super) struct Tree {
+pub(in crate::code_rule_dsl) struct Tree {
     pub facts: Arc<super::syntax::Facts>,
     pub visible: Arc<Vec<u32>>,
 }
-pub(super) struct Demand {
+pub(in crate::code_rule_dsl) struct Demand {
     pub roots: Vec<Root>,
     pub trees: Vec<Tree>,
     pub paths: Vec<String>,
@@ -76,7 +76,7 @@ struct Output {
     files: Vec<u32>,
 }
 /// Constructed only after all passes succeed for this relation.
-pub(super) struct Completed {
+pub(in crate::code_rule_dsl) struct Completed {
     output: Output,
     paths: Vec<String>,
 }
@@ -100,7 +100,7 @@ struct Resident {
     retained: Vec<Tree>,
     resident_bytes: usize,
 }
-pub(super) const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub(in crate::code_rule_dsl) const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 fn capacity(bytes: Option<usize>, limit: usize) -> Result<usize> {
     bytes
         .filter(|&n| n <= limit)
@@ -208,7 +208,7 @@ impl Resident {
         Ok(start as usize + a..start as usize + b)
     }
 }
-pub(super) fn execute(
+pub(in crate::code_rule_dsl) fn execute(
     pending: Vec<(usize, Demand)>,
     contexts: &mut [crate::code_rule_dsl::budget::Context],
     allowance: &mut Allowance,

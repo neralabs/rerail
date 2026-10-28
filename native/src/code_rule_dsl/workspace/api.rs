@@ -202,6 +202,9 @@ impl CodeRuleDslWorkspace {
                             .insert((index, clause.id.clone()), vec![id]);
                     }
                     ClauseKind::Llm => {}
+                    // P's workspace path for relational clauses is not ported (open item O18).
+                    #[cfg(test)]
+                    ClauseKind::Relational(_) => {}
                 }
             }
             state.globals.insert(index, globals);
@@ -568,6 +571,11 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
+        #[cfg(test)]
+        ClauseKind::Relational(plan) => plan
+            .inputs
+            .iter()
+            .any(|(_, input)| in_manifest_family(&input.ast.query)),
     })
 }
 

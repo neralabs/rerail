@@ -8,8 +8,8 @@ use std::{
 };
 const READERS: usize = 4;
 #[derive(Default, Clone)]
-pub(super) struct Pool(Rc<RefCell<Vec<Database>>>);
-pub(super) struct Lease {
+pub(in crate::code_rule_dsl) struct Pool(Rc<RefCell<Vec<Database>>>);
+pub(in crate::code_rule_dsl) struct Lease {
     db: Option<Database>,
     pool: Pool,
     pub reusable: Cell<bool>,

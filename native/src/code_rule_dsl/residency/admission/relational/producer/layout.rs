@@ -3,7 +3,7 @@ use super::{Demand, Resident};
 use std::{collections::HashSet, sync::Arc};
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl::relational) struct Footprint {
+pub(in crate::code_rule_dsl::residency::admission::relational) struct Footprint {
     documents: HashSet<usize>,
     selectors: HashSet<(usize, usize)>,
     bytes: usize,
@@ -16,7 +16,7 @@ impl Footprint {
             bytes: resident.resident_bytes,
         }
     }
-    pub(in crate::code_rule_dsl::relational) fn admit(
+    pub(in crate::code_rule_dsl::residency::admission::relational) fn admit(
         &mut self,
         demand: &Demand,
         limit: usize,
@@ -50,7 +50,7 @@ mod tests {
     use super::*;
     use crate::code_rule_dsl::{
         model::FileInput,
-        relational::{
+        residency::admission::relational::{
             producer::{Root, Tree},
             syntax::Facts,
         },

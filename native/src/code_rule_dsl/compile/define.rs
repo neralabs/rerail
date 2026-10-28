@@ -18,13 +18,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The constraint forms a clause other than a define holds.
+#[cfg(not(test))]
 pub(super) const CLAUSE_KINDS: [&str; 4] = ["forbid", "require_each", "budget", "llm"];
+/// Tests also compile P's relational clauses (`residency::admission::relational`, open item O18).
+#[cfg(test)]
+pub(super) const CLAUSE_KINDS: [&str; 5] = ["forbid", "require_each", "budget", "relational", "llm"];
 
 /// Each language's shared utilities, by id.
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
 
 /// What the document's defines hold: shared utilities and options.
-pub(super) struct Defines<'a> {
+pub(in crate::code_rule_dsl) struct Defines<'a> {
     pub(super) utils: SharedUtils<'a>,
     pub(super) options: Options,
 }

@@ -101,7 +101,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 | `Facts::build` | M `spikes/facts-a/src/facts.rs` (+ tests) | `facts/core.rs` | Change the visibility of W `tape::TapeDoc`/`Grammar`/`LineTable`, since it lives inside `native/`. Remove the hard-coded `"python"`. Outputs become tape sidecars (`par`, `cidx`, line starts, `tid`) and narrow fact families with derivation rows. No per-node SQL rows. |
 | Supertypes | N `cr/tape.rs` TMPTAPE5 delta (da080ae1, cd981e90) | W `cr/tape.rs` | Port the delta onto W's v7 as a new format version with abstract node classes. Lock v9np later (G8, X) using P `experiments/tape-v8/src/{main.rs, sql.rs}` (copy into `cr/tape/v9np.rs` when its 4 measurements pass). |
 
-**Status (2026-10-27): done, except v9np (O8, conditional).**
+**Status (2026-10-28): done; v9np placed as `tape::v9np` (`03a7b0d9`), locking it as the format still waits on O8.**
 
 - Tape v8 (`c3dd82e4`): N's TMPTAPE5 supertypes delta ported onto W's v7.
 - Core facts (`f5ccdfd8` copy, `0417cd7e`, `baff0c35`): facts-a's `Facts::build` reads any dialect's tape; kinds are atoms `tag·1024 + code`; supertype postings; sidecars `par`, `cidx`, `cidx_named`, line starts; a content digest.
@@ -130,7 +130,8 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 
 - Anchor store (`8165bd54` copy, `d24a2231`, `21028281`): rows in the content store keyed by `tape_id` (`prefilter_sets`, `tape_kind_counts`, `kind_freq`, `term_postings`, `term_freq`, `term_coverage`), cascading from `tape_objects`; `nera_postings` on every store connection; `ftsk` folded into `search_kind_fts` with kind-atom tokens (`POSITIONAL_INDEX_VERSION` 3). Five store tests ported. Nothing publishes the rows from the scan yet (with O2). `reader.rs`, `session.rs`, `preparation_tests.rs` and the lowering tests were dropped here and return with the lowering row.
 - Lowering + vocabulary (`0afc80d4`, `45fa3c1f` copies; next commit): `prefilter::select(store, lang, plans, tapes)` lowers a batch of plans to one scheduled SQL program over the store's tape-keyed rows. Decoded steps (relations, pattern parent hops, uncovered-text confirmation) became inexact supersets narrowed per tape; transducers confirm (§7). Vocabulary tables in the store schema, regex functions on every connection. Deferred: `nera_tree` for the §17 SQL fallback, atom-keyed vocabulary, `R[tid]` (Phase 4 (g)), `plan_feedback` (row 8). Nothing calls `select` yet (O2).
-- `nera_tree` (`fca88c9f` copy, with `reader.rs`, its closure): outside the module tree until the §17 SQL fallback is built.
+- `nera_tree` (`fca88c9f` copy, with `reader.rs`, its closure): placed as `prefilter::{tree, reader}` (`f1595c57`) with P's `tape/{index,wire}.rs`; the §17 SQL fallback that calls it is not built.
+- Lab audit (`prefilter/lower/audit.rs`): placed (`4357b74d`) with its napi method and host script.
 - Probes (`daebe5db`): `matcher/anchors/text.rs` → `prefilter/probes.rs`, with suffixes, required literals and prefix ranges; the vocabulary fill seeks anchored predicates by range and probes before every regex.
 - Kind vocabulary (`19980059`): N's `search_kind_vocab` and frequency-ordered kind probes, as is.
 - Plan-input statistics (`ac32af4e` copy; next commit): D's batched `Statistics::read`/`choose` over `kind_freq` (now `kind_size`), `term_node_freq`, `term_kind_freq` (`PREFILTER_VERSION` 3); `pattern()` orders requirements by estimated rows instead of a run-time `count(*)`. `edge_freq` and `kind_size` come with row 7.
@@ -170,7 +171,7 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 | Plan identity | N `cr/query/plan/identity.rs` | `stats/identity.rs` | Key for `compiled_plans`. |
 | Reusable from N's SQL lowering | N `query/plan/sql_ast.rs` (typed SQL AST), `typed_boundary.rs`, `physical.rs` `FactFamilyContract` | `logic/sql/` | Copy these. **Do not copy** `relational_ir.rs`/`relational.rs` (tree axes in SQL). |
 
-**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`, `1fa55934`); rows 1 (`1e951cea`), 3 (`4c54f94d`) and 4 (`5feaaddd`) adapted; row 2 adapted (`aa9d1f9a`).**
+**Status (2026-10-27): copies done (`b132cef3`, `cd149f23`, `4d6f724c`, `65183b55`, `1fa55934`); rows 1 (`1e951cea`), 3 (`4c54f94d`) and 4 (`5feaaddd`) adapted; row 2 adapted (`aa9d1f9a`). 2026-10-28: N's contract suites placed with N's catalog and lowering as the test-only `demand::driver::catalog` (`d9ab616c`; O17).**
 
 - Batch vtab: `demand::vtab` on the packed runtime. The CPU `ast_grep` fact post-pass, the navigation producer and their relations are gone, which leaves batch status, producer status, terminal matches, captures and document maps. Row estimates come from `fact_stats` for each relation, which the driver fills when it merges match facts (row 2). Capture rows still compute N's `semanticPlain` structural key with the CPU value adapter; that moves to the findings layer's equality (Phase 8). Inputs from `prefilter/` candidate sets and the slab cache wait on Phases 7 and 9.
 - Driver: `demand::driver::drive(store, batch, statements, files)` runs lowered statements over a registered batch in one transaction on the content store and decodes violation and failure rows. N's catalog lowering (`SqlPlans::compile` over `relational_ir`) is not copied, per the table, so the driver takes statements from the logic planner (Phase 6). For the same reason N's two contract suites (`production_contract_tests.rs`, `policy_lowering_tests.rs`), which Phase 4's check names, cannot run until Phase 6 lowers rule catalogs; they stay outside the tree until then.
@@ -214,7 +215,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Contract | S `cr/query/plan/contract.rs` | `findings/contract.rs` | Copy as-is (`FindingKey`, Complete/Unknown, `Truth`). Move consolidation (S `async_reference.rs` ~711–748) into the one SQL findings layer. |
 | Oracle | S `async_reference.rs`, `native_oracle.rs`, `tests.rs` | `findings/tests/` | Kept as test oracle only. |
 
-**Status (2026-10-27): copies done (`69371b1c`, `0689eb25`, `6c0e860e`, `8190c8fa`, `0e4a64c3`); adaptations outstanding. S's oracle lives in `query/plan/async_reference/{native_oracle.rs, tests.rs}`, not beside `async_reference.rs`. Placed in the module tree with path changes only: rows 1 (`40ef4d49`, `facts::producers::python`), 3 (`4514b3f4`, `findings::shape`) and 4 (`be038523`, `findings::contract`). Row 5 (oracle) is blocked on S's matcher deltas, which no row copies (O15).**
+**Status (2026-10-27): copies done (`69371b1c`, `0689eb25`, `6c0e860e`, `8190c8fa`, `0e4a64c3`); adaptations outstanding. S's oracle lives in `query/plan/async_reference/{native_oracle.rs, tests.rs}`, not beside `async_reference.rs`. Placed in the module tree with path changes only: rows 1 (`40ef4d49`, `facts::producers::python`), 3 (`4514b3f4`, `findings::shape`) and 4 (`be038523`, `findings::contract`). Row 5 (oracle) placed test-only as `findings::async_reference` (`3d260c7a`), compared against W's matcher (O15).**
 
 ### Phase 9: residency and the pinned GPU cache (§5; F3–F8, K1)
 
@@ -224,7 +225,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
 | Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
 
-**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). `residency::admission::census` (`2d41e7d2`), over W's JSON projections. Outside the tree: `batch.rs`, P's admission loop for relational-stage jobs, which W does not have (provenance).**
+**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). `residency::admission::census` (`2d41e7d2`), over W's JSON projections. `batch.rs` placed test-only with P's relational stage as `residency::admission::relational` (O18).**
 
 - Row 1 placement differs from the table: G's `metal_backend.rs` (`MappedRegion`, `MappedBuffer`, the guard, the pipeline cache) is the same file Phase 4 row 3 merged, so it lives once, as `transducer/packed/metal_backend.rs` (`bb4c9605`). The `residency/metal.rs` copy was removed there. The row's adaptations (one retained buffer per 64 MiB slab, `PrivateInputUpload`) apply to that file.
 

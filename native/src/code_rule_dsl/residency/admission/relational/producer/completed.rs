@@ -1,6 +1,6 @@
 //! Indexed access to completed output. No producer runs in callbacks.
 use super::{Completed, MAX_OUTPUT_BYTES, Output, capacity, source, sql_error};
-use crate::code_rule_dsl::relational::{syntax::Source, table};
+use crate::code_rule_dsl::residency::admission::relational::{syntax::Source, table};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::sync::{
     Arc,
@@ -122,7 +122,7 @@ impl Source for CompletedSource {
         self.meter.charge(n)
     }
 }
-pub(super) fn publish(
+pub(in crate::code_rule_dsl) fn publish(
     completed: Completed,
     db: &Connection,
     name: &str,

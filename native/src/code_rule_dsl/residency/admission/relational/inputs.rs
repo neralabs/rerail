@@ -1,107 +1,31 @@
-//! Stream sealed projection columns into batched SQLite writes. Keep only diagnostic metadata.
+//! Write an input relation's projected rows into batched SQLite writes.
 use super::{FactQuery, Rows, insert};
 use crate::code_rule_dsl::{
     eval,
-    model::{CompiledClause, CompiledCodeRule, Metrics, Snapshot},
-    violations::{Witness, anchored_span, projection::Row},
+    model::{Anchor, CompiledClause, CompiledCodeRule, Metrics, Snapshot},
+    violations::anchored_span,
 };
 use napi::Result;
-use rusqlite::{Connection, types::ValueRef};
-use std::{
-    cell::RefCell,
-    sync::{Arc, atomic::AtomicUsize},
-};
+use rusqlite::Connection;
+use std::sync::{Arc, atomic::AtomicUsize};
 
-#[cfg(test)]
-mod tests;
 
-struct Pending {
-    path: Arc<str>,
-    start: i64,
-    end: i64,
-    projection: Option<Row>,
-}
-struct Sink<'a> {
-    db: &'a Connection,
-    table: &'a str,
-    input: &'a FactQuery,
-    work: &'a Arc<AtomicUsize>,
-    pending: Vec<Pending>,
-    path: Arc<str>,
-    error: Option<napi::Error>,
-    rows: usize,
-    peak: usize,
-    batches: usize,
-}
-impl Sink<'_> {
-    fn flush(&mut self) -> Result<()> {
-        let published = self
-            .pending
-            .iter()
-            .take_while(|p| p.projection.as_ref().is_none_or(Row::published))
-            .count();
-        if published == 0 {
-            return Ok(());
-        }
-        insert::insert_rows(
-            self.db,
-            self.table,
-            self.input.project.len() + 3,
-            self.pending[..published].iter().map(|p| {
-                [
-                    ValueRef::Text(p.path.as_bytes()),
-                    ValueRef::Integer(p.start),
-                    ValueRef::Integer(p.end),
-                ]
-                .into_iter()
-                .chain((0..self.input.project.len()).map(|i| {
-                    p.projection
-                        .as_ref()
-                        .map_or(ValueRef::Null, |row| row.sql(i))
-                }))
-                .map(insert::Borrowed)
-            }),
-            self.work,
-            "relational input row budget exceeded",
-        )?;
-        self.pending.drain(..published);
-        self.batches += 1;
-        Ok(())
-    }
-    fn emit(&mut self, mut witness: Witness) -> Witness {
-        // The matcher completes the current column chunk before calling this sink.
-        // SQLite errors invalidate this entire session, including already inserted batches.
-        let projection = witness.captures.take_projection();
-        if self.error.is_some() {
-            return witness;
-        }
-        if self.path.as_ref() != witness.path {
-            self.path = Arc::from(witness.path.as_str());
-        }
-        let location = anchored_span(&self.input.anchor, &witness).0;
-        self.pending.push(Pending {
-            path: Arc::clone(&self.path),
-            start: location.start_byte as i64,
-            end: location.end_byte as i64,
-            projection,
-        });
-        self.rows += 1;
-        self.peak = self.peak.max(self.pending.len());
-        if (self.pending.len() >= 256
-            || self
-                .pending
-                .first()
-                .is_some_and(|p| p.projection.as_ref().is_some_and(Row::published)))
-            && let Err(e) = self.flush()
-        {
-            self.error = Some(e);
-        }
-
-        witness
+/// A JSON projected value as the SQL value its column stores.
+pub(super) fn sql(value: Option<&serde_json::Value>) -> rusqlite::types::Value {
+    use rusqlite::types::Value as Sql;
+    use serde_json::Value;
+    match value {
+        None | Some(Value::Null) => Sql::Null,
+        Some(Value::Bool(b)) => Sql::Integer(i64::from(*b)),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .map_or_else(|| Sql::Real(n.as_f64().unwrap_or(f64::NAN)), Sql::Integer),
+        Some(Value::String(s)) => Sql::Text(s.clone()),
+        Some(other) => Sql::Text(other.to_string()),
     }
 }
 #[allow(clippy::too_many_arguments)]
-pub(super) fn stream(
+pub(in crate::code_rule_dsl) fn stream(
     db: &Connection,
     table: &str,
     input: &FactQuery,
@@ -113,35 +37,39 @@ pub(super) fn stream(
 ) -> Result<Rows> {
     #[cfg(feature = "code-rule-profile")]
     let mut trace = crate::code_rule_dsl::profile::trace::Span::start("input-stream", table);
-    let mut sink = Sink {
-        db,
-        table,
-        input,
-        work,
-        pending: Vec::new(),
-        path: Arc::from(""),
-        error: None,
-        rows: 0,
-        peak: 0,
-        batches: 0,
-    };
-    let mut output = |w| sink.emit(w);
-    let rows = eval::stateless_rows_to(
+    // W's witnesses carry their projection as one JSON object (P streamed typed column chunks
+    // through `stateless_rows_to`): the rows are written once the relation is read.
+    let rows = eval::stateless_rows(
         code_rule,
         clause,
         (input, eval::evidence::Side::Counted),
         snapshot,
         metrics,
-        Some(&RefCell::new(&mut output)),
     )?;
-    if let Some(e) = sink.error.take() {
-        return Err(e);
-    }
-    sink.flush()?;
-    if !sink.pending.is_empty() {
-        return Err(super::invalid("unpublished relational input columns"));
-    }
-    #[cfg(feature="code-rule-profile")]
-    trace.detail(|| serde_json::json!({"rows":sink.rows,"peakBufferedRows":sink.peak,"columnBatches":sink.batches,"retainedProjectionRows":rows.witnesses.iter().filter(|w|w.captures.projection().is_some()).count(),"incompleteFiles":rows.incomplete.len()}));
+    let project = &input.ast.project;
+    insert::insert_rows(
+        db,
+        table,
+        project.len() + 3,
+        rows.witnesses.iter().map(|witness| {
+            let location = anchored_span(&Anchor::Span, witness).0;
+            let projected = witness.captures.projection();
+            [
+                rusqlite::types::Value::Text(witness.path.clone()),
+                rusqlite::types::Value::Integer(location.start_byte as i64),
+                rusqlite::types::Value::Integer(location.end_byte as i64),
+            ]
+            .into_iter()
+            .chain(
+                project
+                    .iter()
+                    .map(move |p| sql(projected.and_then(|value| value.get(&p.field)))),
+            )
+        }),
+        work,
+        "relational input row budget exceeded",
+    )?;
+    #[cfg(feature = "code-rule-profile")]
+    trace.detail(|| serde_json::json!({"rows":rows.witnesses.len(),"incompleteFiles":rows.incomplete.len()}));
     Ok(rows)
 }

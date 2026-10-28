@@ -340,3 +340,28 @@ abstract supertype kinds such as `expression` (N lowered them through tape class
 committed `source-partial` oracle. Closure: decide whether W adopts N's semantics (supertype
 lowering, error-region reporting), then re-enable or update the goldens. Also decide whether the
 relational lowering stays test-only or replaces `demand::vtab`'s lowering.
+
+## O18. P's relational stage, placed test-only
+
+Placing P's `batch.rs` (Phase 9 row 2) brought its closure: P's relational stage (`relational.rs`,
+`relational/**`, `compile/relational.rs`), now `residency::admission::relational` under
+`cfg(test)`, with `ClauseKind::Relational` and the `relational` clause form compiled only under
+test. A relational clause carries SQL, which rules do not (the findings contract), so it is not a
+production form. Mutations to fit W, each failing closed where W lacks P's piece:
+- inputs are written from W's JSON projections (`Captures::projection`, `AstRelation::project`),
+  not P's typed column chunks streamed through `stateless_rows_to`. P's sink tests
+  (`inputs/tests.rs`) and `narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas`
+  (P keeps the projection off the shared AST, W does not) are removed, and so is the half of
+  `sql_facts_keep_typed_values…` that sets `FactQuery::anchor`;
+- every input anchors at the witness span (P's `FactQuery::{anchor, each, closure}` are not in W);
+- `references` (P's native reference graph, `calls::reference_rows` and the `references` call
+  mode) is refused at compile time;
+- no `CorpusSlot` or `TapeCacheSlot` (W's matcher builds per-file anchor indexes and has no tape
+  cache); the workspace path (P's `workspace/global.rs`) is not ported, so a workspace ignores the
+  clause.
+P's `"syntax":"valid"` AST gate (S's and P's `invalid_syntax`) is not in W's DSL, so the copied
+test policies drop it, and W keeps captures an input's anchor does not need (one assertion
+removed). `calls/contracts.rs` and `violations/projection.rs` are placed test-only and unused. Closure: decide
+whether any of the stage survives as an engine-internal consumer (Phase 11 row 1, B2, rewrites the
+admission loop rather than copies it) or is removed once the census and admission rules are carried
+by Phase 7's chunked loop.

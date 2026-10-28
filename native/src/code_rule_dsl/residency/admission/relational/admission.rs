@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     model::{ClauseKind, CompiledClause, CompiledCodeRule, Metrics, Snapshot},
 };
 
-pub(super) fn limits(rule: &CompiledCodeRule, snapshot: &Snapshot) -> Result<()> {
+pub(in crate::code_rule_dsl) fn limits(rule: &CompiledCodeRule, snapshot: &Snapshot) -> Result<()> {
     let (files, bytes) = snapshot
         .files
         .iter()
@@ -21,7 +21,7 @@ pub(super) fn limits(rule: &CompiledCodeRule, snapshot: &Snapshot) -> Result<()>
     Ok(())
 }
 
-pub(super) fn check(
+pub(in crate::code_rule_dsl) fn check(
     rule: &CompiledCodeRule,
     clause: &CompiledClause,
     inputs: &mut Inputs,
@@ -41,7 +41,6 @@ pub(super) fn check(
         inputs.gate = Some(match &mut inputs.rows {
             Some(rows) => std::mem::take(&mut rows[slot]),
             None => {
-                let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
                 let _calls = if inputs.file_local {
                     eval::stateless_calls(
                         rule,
@@ -85,7 +84,7 @@ mod tests {
         sync::{Arc, atomic::AtomicBool},
     };
     fn rule() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-        CodeRuleDslRuntime::compile(serde_json::json!({"format":"rerail.policy/v1","id":"gate","revision":1,"mode":"log","clauses":[{"id":"gate","relational":{"requireNonemptyInput":"gate","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","syntax":"valid","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte FROM gate"},"violation":{"code":"GATE","message":"Gate","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../capabilities.json").into()).unwrap()
+        CodeRuleDslRuntime::compile(serde_json::json!({"format":"rerail.policy/v1","id":"gate","revision":1,"mode":"log","clauses":[{"id":"gate","relational":{"requireNonemptyInput":"gate","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte FROM gate"},"violation":{"code":"GATE","message":"Gate","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../../capabilities.json").into()).unwrap()
     }
     fn cached() -> Inputs {
         Inputs {

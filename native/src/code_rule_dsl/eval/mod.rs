@@ -287,6 +287,8 @@ pub(super) fn evaluate_clauses(
         clauses: covered,
     };
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
+    #[cfg(test)]
+    let mut relational_jobs = Vec::new();
     for clause in clauses {
         match &clause.kind {
             ClauseKind::Forbid(query) => {
@@ -393,6 +395,38 @@ pub(super) fn evaluate_clauses(
                     evidence::budget(code_rule, clause, query, rows),
                 );
             }
+            // P's relational clauses (test-only, open item O18): one job per file where per-file.
+            #[cfg(test)]
+            ClauseKind::Relational(plan) => {
+                let partitions = if plan.per_file {
+                    snapshot
+                        .files
+                        .iter()
+                        .filter(|file| code_rule.scope.matches(&file.path))
+                        .map(|file| Snapshot {
+                            revision: snapshot.revision,
+                            files: vec![file.clone()],
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![snapshot.clone()]
+                };
+                for partition in partitions {
+                    relational_jobs.push(crate::code_rule_dsl::residency::admission::relational::Job {
+                        code_rule,
+                        clause,
+                        inputs: crate::code_rule_dsl::residency::admission::relational::Inputs {
+                            gate: None,
+                            file_local: false,
+                            read_bytes: 0,
+                            rows: None,
+                            facts: Vec::new(),
+                            snapshot: partition,
+                        },
+                        budget: super::budget::Context::capture(),
+                    });
+                }
+            }
             ClauseKind::Llm => evaluation.failures.push(failure(
                 &clause.id,
                 "missing-capability",
@@ -400,6 +434,10 @@ pub(super) fn evaluate_clauses(
                 None,
             )),
         }
+    }
+    #[cfg(test)]
+    for result in crate::code_rule_dsl::residency::admission::relational::evaluate_batch(relational_jobs) {
+        merge(&mut evaluation, result);
     }
     if evaluation.metrics.witnesses > limits.max_witnesses
         && !evaluation.failures.iter().any(|failure| {
@@ -423,9 +461,33 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+/// Each input relation's rows of a relational clause (P's, test-only, open item O18).
+#[cfg(test)]
+pub(super) fn relational_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &crate::code_rule_dsl::residency::admission::relational::Plan,
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+) -> Result<Vec<evidence::Rows>> {
+    let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            stateless_rows(
+                code_rule,
+                clause,
+                (input, evidence::Side::Counted),
+                snapshot,
+                metrics,
+            )
+        })
+        .collect()
+}
+
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
-fn stateless_rows(
+pub(in crate::code_rule_dsl) fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
@@ -493,7 +555,7 @@ fn stateless_rows(
 /// spends the evaluation's work budget (`metrics.visited_nodes`); seed witnesses are no violation,
 /// so each seed evaluation has its own witness budget, as a workspace's seed producer has per
 /// file, and spends none of the clauses'.
-fn stateless_calls(
+pub(in crate::code_rule_dsl) fn stateless_calls(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     clauses: &[CompiledClause],

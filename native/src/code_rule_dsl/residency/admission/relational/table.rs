@@ -33,7 +33,7 @@ struct Table {
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
-pub(super) fn register(
+pub(in crate::code_rule_dsl) fn register(
     db: &Connection,
     name: &str,
     source: Arc<dyn Source>,

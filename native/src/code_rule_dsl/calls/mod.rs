@@ -5,6 +5,10 @@
 //! runs per file as the term's seed query; the callee's subtree is never walked at query time.
 
 pub(crate) mod closure;
+/// P's authored delegation contracts, for P's relational clauses under test (open item O18).
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
 pub(crate) mod rust;

@@ -5,10 +5,10 @@ mod binding_tests;
 mod binds;
 mod compare;
 pub(crate) mod config;
-mod define;
+pub(super) mod define;
 mod dialect;
 pub(crate) mod documents;
-mod evidence;
+pub(super) mod evidence;
 #[cfg(test)]
 mod examples_tests;
 mod format_args;
@@ -357,7 +357,11 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        &["id", "forbid", "require_each", "budget", "llm", "violation"],
+        if cfg!(test) {
+            &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"]
+        } else {
+            &["id", "forbid", "require_each", "budget", "llm", "violation"]
+        },
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -497,6 +501,16 @@ fn compile_clause(
                 distinct,
             }
         }
+        #[cfg(test)]
+        "relational" => ClauseKind::Relational(
+            crate::code_rule_dsl::residency::admission::relational::compile::compile(
+                &clause["relational"],
+                &format!("{path}/relational"),
+                capabilities,
+                defines,
+                required_ast,
+            )?,
+        ),
         "llm" => {
             *requires_llm = true;
             ClauseKind::Llm
@@ -522,7 +536,7 @@ fn compile_clause(
     })
 }
 
-fn compile_query(
+pub(in crate::code_rule_dsl) fn compile_query(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,

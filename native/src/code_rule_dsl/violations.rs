@@ -23,6 +23,10 @@ use super::model::{
 };
 #[cfg(test)]
 use super::test_support::{Walk, record_walk};
+/// P's column batches for projected facts, for P's relational clauses under test (open item O18).
+#[cfg(test)]
+#[allow(dead_code)]
+pub(super) mod projection;
 mod semantic;
 mod suppression;
 pub(crate) use super::lines::Span;
@@ -389,6 +393,8 @@ pub(super) fn bind(
     let query = match kind {
         ClauseKind::Forbid(query) => Some(emitting(query)),
         ClauseKind::RequireEach { .. } | ClauseKind::Budget { .. } | ClauseKind::Llm => None,
+        #[cfg(test)]
+        ClauseKind::Relational(_) => None,
     };
     let mut names = BTreeSet::new();
     // The values counts bind (`as`): text a message alone may interpolate.

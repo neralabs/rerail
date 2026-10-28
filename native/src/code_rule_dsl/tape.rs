@@ -133,6 +133,14 @@ impl Grammar {
         self.lang.get_ts_language()
     }
 
+    #[cfg(test)]
+    pub(super) fn field_code(&self, name: &str) -> Option<u16> {
+        self.kinds.field_id(name)
+    }
+    #[cfg(test)]
+    pub(super) fn has_field(&self, name: &str) -> bool {
+        self.kinds.field_id(name).is_some()
+    }
     pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {

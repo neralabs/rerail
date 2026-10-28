@@ -6,7 +6,7 @@ pub(in crate::code_rule_dsl) struct Database {
     #[cfg(feature = "code-rule-profile")]
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
-    pub(super) storage: std::cell::RefCell<super::storage::Storage>,
+    pub(in crate::code_rule_dsl) storage: std::cell::RefCell<super::storage::Storage>,
 }
 
 impl Database {

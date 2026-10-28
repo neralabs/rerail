@@ -49,6 +49,12 @@ pub(in crate::code_rule_dsl) fn plans<'a>(
                     query(&input.ast.query, &mut out, &mut seen)
                 }
                 ClauseKind::Llm => {}
+                #[cfg(test)]
+                ClauseKind::Relational(plan) => {
+                    for (_, input) in &plan.inputs {
+                        query(&input.ast.query, &mut out, &mut seen);
+                    }
+                }
             }
         }
     }

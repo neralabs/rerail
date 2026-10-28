@@ -68,10 +68,10 @@ fn advance(
         }
     }
 }
-pub(super) fn evaluate(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
+pub(in crate::code_rule_dsl) fn evaluate(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
     run(jobs, producer::MAX_RESIDENT_BYTES, SQL_RESIDENT_BYTES).0
 }
-pub(super) fn evaluate_prepared(
+pub(in crate::code_rule_dsl) fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
     prepare: impl FnMut(
         &mut Inputs,
@@ -151,8 +151,6 @@ fn run_prepared(
                         "producer-prepare",
                         "admitted-session",
                     );
-                    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
-                    let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
                     let crate::code_rule_dsl::model::ClauseKind::Relational(plan) =
                         &job.clause.kind
                     else {

@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(super) trait Source: Send + Sync {
+pub(in crate::code_rule_dsl) trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -73,7 +73,7 @@ pub(super) trait Source: Send + Sync {
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
 }
 #[derive(Default)]
-pub(super) struct Counters {
+pub(in crate::code_rule_dsl) struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
@@ -191,12 +191,12 @@ impl Facts {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.rows.len()
     }
-    pub(super) fn read_ignores(&self) -> crate::code_rule_dsl::suppress::RerailIgnores {
+    pub(in crate::code_rule_dsl) fn read_ignores(&self) -> crate::code_rule_dsl::suppress::RerailIgnores {
         use ast_grep_core::Doc;
         let target = ast_grep_core::AstGrep::doc(self.doc.clone());
         crate::code_rule_dsl::suppress::RerailIgnores::read(&target.root(), self.doc.get_source())
     }
-    pub(super) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
+    pub(in crate::code_rule_dsl) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
         // The preorder table is ordered by source start. Check only equal-start nodes.
         let at = self
             .rows
@@ -259,7 +259,7 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(super) fn subtree_ends(&self) -> &[u32] {
+    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
@@ -866,8 +866,8 @@ impl Source for Union {
         self.sources[i].column(r - self.offsets[i], c, ctx)
     }
 }
-pub(super) type Files = Vec<(String, Arc<Facts>)>;
-pub(super) fn load(
+pub(in crate::code_rule_dsl) type Files = Vec<(String, Arc<Facts>)>;
+pub(in crate::code_rule_dsl) fn load(
     db: &Connection,
     spec: &Spec,
     files: &Files,
@@ -905,7 +905,7 @@ pub(super) fn load(
     Ok(names)
 }
 
-pub(super) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
+pub(in crate::code_rule_dsl) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
     files
         .iter()
         .map(|(_, facts)| {
@@ -916,7 +916,7 @@ pub(super) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::p
         })
         .collect()
 }
-pub(super) fn demand(
+pub(in crate::code_rule_dsl) fn demand(
     db: &Connection,
     spec: &super::Reachability,
     prepared: &[super::producer::Tree],

@@ -595,6 +595,10 @@ pub(super) enum ClauseKind {
         distinct: Vec<String>,
     },
     Llm,
+    /// P's relational clause, compiled only under test (`residency::admission::relational`,
+    /// open item O18).
+    #[cfg(test)]
+    Relational(crate::code_rule_dsl::residency::admission::relational::Plan),
 }
 
 #[derive(Clone)]
@@ -656,6 +660,11 @@ impl CompiledCodeRule {
             }
             ClauseKind::Budget { query, .. } => query.ast.query.reads_server_graph(),
             ClauseKind::Llm => false,
+            #[cfg(test)]
+            ClauseKind::Relational(plan) => plan
+                .inputs
+                .iter()
+                .any(|(_, input)| input.ast.query.reads_server_graph()),
         })
     }
 }
