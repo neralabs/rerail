@@ -101,3 +101,5 @@ fn a_collected_last_root_relists_every_path_but_rebinds_only_changes() {
     assert_eq!(changed, [tree_name(WS, ""), path_name(WS, "b.py")]);
     assert_eq!(trees_read, 1);
 }
+
+mod recovery;

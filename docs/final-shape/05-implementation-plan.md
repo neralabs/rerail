@@ -92,6 +92,7 @@ Check: unit tests for an edit to one blob → exact frontier, cutoff on unchange
 
 - Modules: `content_store/{atoms, derivation, facts_memo, tree_diff, tree_pages}.rs` and `code_rule_dsl/facts/{observe, propagate, memo, pages, runs, overlay}.rs`; provenance in `provenance.md`.
 - Open items carried forward: O1–O6 in `open-items.md`. O1 (stale-fact detection after a crash) must be validated before the overlay is used outside tests.
+- 2026-10-27: O1 closed. The push marker, `invalid_derivations` and `observe::recover` are in, and crash points through the store and the overlay are validated (`facts/observe/tests/recovery.rs`). O2–O6 remain open.
 
 ### Phase 2: core facts from the tape
 

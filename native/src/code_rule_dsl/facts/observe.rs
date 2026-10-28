@@ -50,10 +50,41 @@ pub(crate) fn push_root(
     max_waves: u32,
     recompute: impl FnMut(&[Derivation]) -> StoreResult<Vec<DerivationRecord>>,
 ) -> StoreResult<Push> {
+    // Until `end_push`, SQLite may hold any prefix of this push's writes; an error leaves the
+    // push marked unended, and `recover` finishes it.
+    store.begin_push()?;
     let (changed, trees_read) = observe_root(store, scope, new)?;
     let rebound = changed.len();
     let work = propagate(store, changed, max_waves, recompute)?;
+    store.end_push()?;
     Ok(Push { trees_read, rebound, work })
+}
+
+/// Finishes a push that did not end (open-items O1): called on open, before any push. Observed
+/// names are never recomputed: the observer re-diffs from its bound root, and a write-back prefix
+/// binds a root only with the names it rebound. Every derivation an unwritten write would have
+/// recomputed is invalid by the validity join, so the invalid derivations are the first wave and
+/// `propagate` carries their changes as on any push. None: the store was clean.
+pub(crate) fn recover(
+    store: &(impl Graph + ?Sized),
+    max_waves: u32,
+    mut recompute: impl FnMut(&[Derivation]) -> StoreResult<Vec<DerivationRecord>>,
+) -> StoreResult<Option<Work>> {
+    if store.store().push_clean()? {
+        return Ok(None);
+    }
+    let frontier = store.store().invalid_derivations()?;
+    let mut work = Work::default();
+    if !frontier.is_empty() {
+        let records = recompute(&frontier)?;
+        work.rerun = records.len() as u64;
+        let changed = store.record_derivations(&records)?;
+        work.changed = changed.len() as u64;
+        let rest = propagate(store, changed, max_waves.saturating_sub(1), recompute)?;
+        work = Work { waves: 1 + rest.waves, rerun: work.rerun + rest.rerun, changed: work.changed + rest.changed };
+    }
+    store.end_push()?;
+    Ok(Some(work))
 }
 
 #[cfg(test)]

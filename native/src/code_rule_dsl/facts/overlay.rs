@@ -304,6 +304,22 @@ impl Overlay {
     }
 }
 
+#[cfg(test)]
+impl Overlay {
+    /// A crash: the writer stops where it is and nothing still in memory or spilled is written.
+    /// Returns what the overlay did, as it stopped.
+    pub(crate) fn crash(mut self) -> Counters {
+        self.shared.lock().failed = Some("crashed".to_owned());
+        self.shared.wake.notify_all();
+        if let Some(writer) = self.writer.take() {
+            let _ = writer.join();
+        }
+        let counters = self.counters();
+        std::mem::forget(self);
+        counters
+    }
+}
+
 impl Drop for Overlay {
     fn drop(&mut self) {
         let _ = self.flush();
@@ -443,6 +459,16 @@ impl Graph for Overlay {
             }
         }
         Ok(true)
+    }
+
+    fn begin_push(&self) -> StoreResult<()> {
+        // The previous push's end flushed, so no layer of an earlier push is still unwritten.
+        self.shared.store.begin_push()
+    }
+
+    fn end_push(&self) -> StoreResult<()> {
+        self.flush()?;
+        self.shared.store.end_push()
     }
 }
 

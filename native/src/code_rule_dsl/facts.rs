@@ -38,6 +38,10 @@ pub(crate) trait Graph {
     /// Every derivation that read one of `names`, each once, ordered by output.
     fn derivations_reading(&self, names: &[String]) -> StoreResult<Vec<Derivation>>;
     fn derivation_valid(&self, output: &str) -> StoreResult<bool>;
+    /// Marks a push begun in SQLite before the push writes anything (open-items O1).
+    fn begin_push(&self) -> StoreResult<()>;
+    /// Marks the push ended once all its writes are in SQLite.
+    fn end_push(&self) -> StoreResult<()>;
 }
 
 impl Graph for ContentStore {
@@ -58,5 +62,11 @@ impl Graph for ContentStore {
     }
     fn derivation_valid(&self, output: &str) -> StoreResult<bool> {
         ContentStore::derivation_valid(self, output)
+    }
+    fn begin_push(&self) -> StoreResult<()> {
+        ContentStore::begin_push(self)
+    }
+    fn end_push(&self) -> StoreResult<()> {
+        ContentStore::end_push(self)
     }
 }

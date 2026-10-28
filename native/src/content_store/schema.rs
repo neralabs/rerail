@@ -323,6 +323,12 @@ CREATE TABLE IF NOT EXISTS derivation_inputs (
     PRIMARY KEY (output_atom, ordinal)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_atom);
+-- A push in progress (open-items O1): the row is committed before a push writes anything and
+-- deleted after its last write reaches SQLite, so a store that holds it may hold a prefix of a
+-- push's writes and is recovered before the next push.
+CREATE TABLE IF NOT EXISTS push_pending (
+    pending INTEGER PRIMARY KEY CHECK(pending = 1)
+) STRICT;
 -- Collection keeps pages some binding names (tree_pages.rs).
 CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
 

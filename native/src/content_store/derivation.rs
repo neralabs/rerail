@@ -165,6 +165,55 @@ impl ContentStore {
             .map_err(StoreError::from)
     }
 
+    /// Marks a push begun, committed before the push writes anything (open-items O1).
+    pub fn begin_push(&self) -> StoreResult<()> {
+        self.immediate_transaction(|transaction| {
+            transaction.execute("INSERT OR IGNORE INTO push_pending(pending) VALUES (1)", [])?;
+            Ok(())
+        })
+    }
+
+    /// Marks the push ended: called only once every write of the push is in SQLite.
+    pub fn end_push(&self) -> StoreResult<()> {
+        self.immediate_transaction(|transaction| {
+            transaction.execute("DELETE FROM push_pending", [])?;
+            Ok(())
+        })
+    }
+
+    /// Whether every push begun on this store ended; false after a crash mid-push.
+    pub fn push_clean(&self) -> StoreResult<bool> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        connection
+            .prepare_cached("SELECT NOT EXISTS (SELECT 1 FROM push_pending)")?
+            .query_row([], |row| row.get(0))
+            .map_err(StoreError::from)
+    }
+
+    /// Every stored derivation that is not valid (the validity join over all derivations), ordered
+    /// by output: what an unclean push left behind. One scan of `derivation_inputs`.
+    pub fn invalid_derivations(&self) -> StoreResult<Vec<Derivation>> {
+        let rows = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            connection
+                .prepare_cached(
+                    "SELECT a.value,d.producer,d.status,d.cost FROM derivations d \
+                     JOIN atoms a ON a.atom=d.output_atom \
+                     WHERE EXISTS (SELECT 1 FROM derivation_inputs i \
+                     LEFT JOIN name_bindings b ON b.name_atom=i.name_atom \
+                     WHERE i.output_atom=d.output_atom AND i.name_atom IS NOT NULL \
+                     AND coalesce(b.digest,?1)<>i.digest) ORDER BY a.value",
+                )?
+                .query_map([&ABSENT[..]], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        rows.into_iter()
+            .map(|(output, producer, status, cost)| Ok(Derivation { output, producer: digest(&producer)?, status, cost }))
+            .collect()
+    }
+
     /// The digest the atom `name` is bound to, if any.
     pub fn binding_of(&self, name: Sym) -> StoreResult<Option<[u8; 32]>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");

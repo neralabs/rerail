@@ -6,7 +6,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 
 | Id | Found | Item | Status |
 |---|---|---|---|
-| O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | **open, validation required** |
+| O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated |
 | O2 | Phase 1 | Nothing calls the push path yet | open |
 | O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
@@ -78,6 +78,26 @@ recomputation was lost, leaves readers that no rebound name will ever reach agai
   binding without the path and tree bindings bound in the same or earlier writes.
 
 Until (1)–(3) pass, the overlay must not be used outside tests.
+
+**Closure (2026-10-27).** Built as proposed:
+
+- `push_pending` (schema): the marker. `ContentStore::begin_push` commits its row before a push writes
+  anything. `end_push` deletes it; the overlay's `end_push` flushes first. `push_root` calls both, so a
+  push that fails or crashes leaves the row.
+- `ContentStore::invalid_derivations`: the validity join over all derivations, one statement.
+- `observe::recover`: when the marker is set, the invalid derivations are the first wave, then
+  `propagate` from the outputs that changed, then `end_push`. Called on open, before any push.
+- Tests, `facts/observe/tests/recovery.rs`. The push from V1 to V2 takes four waves, and each run
+  crashes at one of them.
+  - Through the store: covers a crash between observe and propagate, and between waves.
+  - Through the overlay, with every write freezing one layer: layers kept in memory, spilled,
+    written back one or two behind, and written by the background writer.
+  - After each crash: (1) SQLite equals the direct push after exactly `written` of its writes.
+    (2) Recovery's frontier equals the brute-force set of derivations whose recorded digests differ
+    from the bindings. After recovery and the push run again, every derivation is valid and the
+    store equals a push that never crashed. With recovery's frontier emptied, both tests fail.
+
+Still open: spill files left by a crash are not removed (O4). Recovery does not read them.
 
 ## O2. The push path is not wired
 
