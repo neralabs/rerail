@@ -179,7 +179,6 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 - [docs/rule-packs.md](docs/rule-packs.md) and [docs/pack-format.md](docs/pack-format.md): how packs work and what each must prove.
 - [packs/complexity/rules/](packs/complexity/rules/): real rules to copy when writing your own.
 - [src/README.md](src/README.md): the layers and which may import which.
-- [docs/vision.md](docs/vision.md): where Rerail is going beyond code rules, and the principles behind it.
 
 ## Contributing
 

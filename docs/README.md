@@ -36,7 +36,6 @@
   (`npm run check:structure`) that enforces them
 
 ## Design notes
-- [vision.md](vision.md): the coordination problem, the semantic monitor, and Rerail's design principles
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and
