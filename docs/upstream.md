@@ -279,6 +279,14 @@ Every commit names its data by sha256, and S3 keeps every object ever published 
 what a commit's rules were judged on, check it out and run `npm run fixtures:pull`: it fetches the archives its locks
 name, verifies them, and extracts them as that commit's CI did.
 
+A CI run also lists the archives it used. Each `.github/actions/pack-test-data` step sets an `archives` output, one
+`<pack> <tool> <kind> <sha256>` line per archive (kind `test-data` or `samples`), and its pull adds the same lines as a
+table to the job's summary; a fetching job that hits the cache runs no pull, so its output lists the locks its cache key
+names. To replay a run from that output, check out the run's commit and `npm run fixtures:pull`: its locks name those
+sha256s. To fetch one archive alone, take the key `rerail/archives/<pack>/<tool>/<sha256>.tar.zst` (a samples archive:
+`rerail/archives/samples/<pack>/<tool>/<sha256>.tar.zst`) from `s3://nera-test-fixtures/`; the sha256 is its tar's, so
+check it after `zstd -d`.
+
 ## Derive and bumps are paused
 
 Pack test data derivation and upstream bumps are paused until the generators write per-repo provenance. Each

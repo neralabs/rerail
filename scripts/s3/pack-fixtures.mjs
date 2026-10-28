@@ -59,7 +59,8 @@
 // samples.lock, test-data.lock, and, while a pull request publishes data, publish/.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -1040,6 +1041,33 @@ function publishedTestData(root, toolPack) {
 }
 
 /**
+ * One line per archive a run used, `<pack> <tool> <kind> <sha256>` (kind `test-data` or `samples`, by the tar's
+ * sha256), sorted: what replaying the run fetches again (CONTRIBUTING.md, "Pack test data").
+ */
+export function archiveLines(archives) {
+  return archives.map(({ toolPack, kind, sha256: digest }) => `${toolPack.pack} ${toolPack.tool} ${kind} ${digest}`).sort(byBytes);
+}
+
+/**
+ * Reports `lines` (archiveLines's) to GitHub Actions through `env` (the process's environment, in a command): as the
+ * step's multiline `archives` output when `env.GITHUB_OUTPUT` is set, and, with `summary`, as a table appended to
+ * `env.GITHUB_STEP_SUMMARY` when it is set (none for no archive). Outside Actions it writes nothing.
+ */
+export function reportArchives(lines, { env = {}, summary = true } = {}) {
+  if (env.GITHUB_OUTPUT) {
+    const delimiter = `archives_${randomUUID()}`;
+    appendFileSync(env.GITHUB_OUTPUT, `archives<<${delimiter}\n${lines.map((line) => `${line}\n`).join("")}${delimiter}\n`);
+  }
+  if (summary && env.GITHUB_STEP_SUMMARY && lines.length > 0) {
+    const rows = lines.map((line) => {
+      const [pack, tool, kind, digest] = line.split(" ");
+      return `| ${pack} | ${tool} | ${kind} | \`${digest}\` |\n`;
+    });
+    appendFileSync(env.GITHUB_STEP_SUMMARY, `### Pack data archives used\n\n| Pack | Tool | Kind | sha256 |\n|---|---|---|---|\n${rows.join("")}\n`);
+  }
+}
+
+/**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
  * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory, then lays the
  * tool-pack's publish/ test data (a pull request's publish request) over it, so the checkout holds what publishing it
@@ -1049,8 +1077,10 @@ function publishedTestData(root, toolPack) {
  * that neither the archive nor publish/ holds are deleted (a stale derivation); authored ones are kept and reported. The
  * samples archive each selected tool-pack's samples.lock names is put into ARCHIVE_CACHE and verified with the test
  * data archives, before anything is extracted, then extracted into its tree outside the tool directory (samples).
+ * Then each archive it used is reported to GitHub Actions through `env` (reportArchives; the command passes its own
+ * environment, a caller that passes none reports nothing).
  */
-export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log, env = {} } = {}) {
   const selected = selectToolPacks(root, pack, tool);
   const locked = selected.map((toolPack) => {
     const published = publishedTestData(root, toolPack);
@@ -1119,6 +1149,10 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
     log(`${toolPack.directory}: ${entries.length} file(s) from ${from}${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
   }
   extractSamples(root, fetchedSamples, { dryRun, log });
+  reportArchives(archiveLines([
+    ...fetched.filter(({ lock }) => lock !== undefined).map(({ toolPack, lock }) => ({ toolPack, kind: "test-data", sha256: lock.sha256 })),
+    ...fetchedSamples.map(({ toolPack, lock }) => ({ toolPack, kind: "samples", sha256: lock.sha256 })),
+  ]), { env });
   return {
     toolPacks: fetched.map(({ toolPack, source, published }) => ({ ...toolPack, source, published: published.entries.length })),
     samples: fetchedSamples.map(({ toolPack, source }) => ({ ...toolPack, source })),
@@ -1886,7 +1920,7 @@ export function push({ root = ROOT, pack: packId, tool, dryRun = false, tags, aw
 
 /**
  * CI's cache entry for the selected tool-packs' archives and their samples archives: its key (from the locked sha256s
- * alone) and its paths.
+ * alone), its paths, and `archives`, the archiveLines of the locks it keys on (what a job that hits it uses).
  */
 export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
   const selected = selectToolPacks(root, packId, tool);
@@ -1904,7 +1938,11 @@ export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
       ...(samplesLock === undefined ? [] : [samplesArchiveCachePath(root, toolPack, samplesLock.sha256)]),
     ]),
   ];
-  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")) };
+  const archives = archiveLines(locked.flatMap(({ toolPack, lock, samplesLock }) => [
+    { toolPack, kind: "test-data", sha256: lock.sha256 },
+    ...(samplesLock === undefined ? [] : [{ toolPack, kind: "samples", sha256: samplesLock.sha256 }]),
+  ]));
+  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")), archives };
 }
 
 /**
@@ -1942,7 +1980,8 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
 
 const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [--tool <tool>]] [--dry-run]
   pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and their
-              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them
+              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them;
+              in GitHub Actions, list each archive used (pack tool kind sha256) as the step's archives output and summary
   stage       --pack <id> [--tool <tool>] [--all]: copy the pack test data on disk that the locked archive lacks or
               holds differently into the tool-pack's ${PUBLISH_DIRECTORY}/ (--all: all of it, for a replace publish)
   push        maintainer with write credentials: pack, then upload (tagged)
@@ -1961,7 +2000,8 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
               holds them, read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive the selected tool-packs' locks name
               (head-object only; nothing is downloaded)
-  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON
+  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON,
+              and the archives they are (pack tool kind sha256) as the step's archives output in GitHub Actions
 Every upload is tagged: --commit (default HEAD), --pr (default none), --run-id (default local) and --uploader (default
 the gh CLI's login).`;
 
@@ -1989,7 +2029,7 @@ const TAGS = ["commit", "pr", "run-id", "uploader"];
 
 /** Each command's options, and how it runs with the parsed `values`. */
 const COMMANDS = {
-  pull: { options: SELECT, run: (values) => pull(values) },
+  pull: { options: SELECT, run: (values) => pull({ ...values, env: process.env }) },
   stage: { options: [...SELECT, "all"], run: (values) => stage(values) },
   push: { options: [...SELECT, ...TAGS], run: (values) => push({ ...values, tags: values.dryRun ? undefined : commandTags(values) }) },
   pack: {
@@ -2028,7 +2068,15 @@ const COMMANDS = {
   samples: { options: SELECT, run: (values) => samples(values) },
   "samples push": { options: ["pack", "tool", ...TAGS], run: (values) => samplesPush({ ...values, tags: commandTags(values) }) },
   check: { options: ["pack", "tool"], run: (values) => check(values) },
-  cache: { options: ["pack", "tool"], run: (values) => console.log(JSON.stringify(archiveCache(values))) },
+  cache: {
+    options: ["pack", "tool"],
+    run: (values) => {
+      const entry = archiveCache(values);
+      // A fetching job that hits the cache runs no pull: the archives it keys on are the ones the run uses.
+      reportArchives(entry.archives, { env: process.env, summary: false });
+      console.log(JSON.stringify(entry));
+    },
+  },
 };
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

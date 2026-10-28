@@ -14,6 +14,7 @@ import {
   archiveCache,
   archiveCachePath,
   archiveKey,
+  archiveLines,
   authoredListing,
   BUCKET,
   check,
@@ -37,6 +38,7 @@ import {
   readLock,
   readSamplesLock,
   readUpstreamSources,
+  reportArchives,
   requireAws,
   SAMPLES_LOCK,
   samples,
@@ -577,7 +579,7 @@ describe("archiveCache", () => {
   it("keys one tool-pack's entry by its lock's sha256", () => {
     const { root } = published();
     const { sha256: digest } = readLock(root, T);
-    expect(archiveCache({ root, pack: "p", tool: "t" })).toEqual({ key: `pack-test-data-p-t-${digest}`, paths: [`${ARCHIVE_CACHE}/p/t/${digest}.tar.zst`] });
+    expect(archiveCache({ root, pack: "p", tool: "t" })).toEqual({ key: `pack-test-data-p-t-${digest}`, paths: [`${ARCHIVE_CACHE}/p/t/${digest}.tar.zst`], archives: [`p t test-data ${digest}`] });
   });
 
   it("changes the key for several tool-packs when any lock changes", () => {
@@ -945,6 +947,7 @@ describe("archiveCache with samples", () => {
     expect(archiveCache({ root, pack: "p", tool: "t" })).toEqual({
       key: `pack-test-data-p-t-${digest}-samples-${sample.sha256}`,
       paths: [`${ARCHIVE_CACHE}/p/t/${digest}.tar.zst`, `${ARCHIVE_CACHE}/samples/p/t/${sample.sha256}.tar.zst`],
+      archives: [`p t samples ${sample.sha256}`, `p t test-data ${digest}`],
     });
   });
 
@@ -958,6 +961,81 @@ describe("archiveCache with samples", () => {
     expect(new Set([before.key, added.key, changed.key]).size).toBe(3);
     expect(added.paths).toEqual([...before.paths, `${ARCHIVE_CACHE}/samples/q/u/${first.sha256}.tar.zst`]);
     expect(changed.paths).toContain(`${ARCHIVE_CACHE}/samples/q/u/${second.sha256}.tar.zst`);
+  });
+});
+
+/** The multiline `archives` outputs written to the GITHUB_OUTPUT file `file`, each as its lines. */
+function archivesOutputs(file) {
+  const text = readFileSync(file, "utf8");
+  const outputs = [...text.matchAll(/^archives<<(archives_[0-9a-f-]{36})\n([^]*?)^\1\n/gmu)].map((match) => lines(match[2]));
+  expect(text.replace(/^archives<<(archives_[0-9a-f-]{36})\n[^]*?^\1\n/gmu, "")).toBe("");
+  return outputs;
+}
+
+/** Empty GITHUB_OUTPUT and GITHUB_STEP_SUMMARY files in `directory`, as Actions gives a step. */
+function actionsFiles(directory) {
+  mkdirSync(directory, { recursive: true });
+  const env = { GITHUB_OUTPUT: join(directory, "github-output"), GITHUB_STEP_SUMMARY: join(directory, "github-step-summary") };
+  for (const file of Object.values(env)) writeFileSync(file, "");
+  return env;
+}
+
+describe("the archives a run used", () => {
+  const A = "a".repeat(64);
+  const B = "b".repeat(64);
+
+  it("lists one line per archive, pack tool kind sha256, sorted", () => {
+    expect(archiveLines([{ toolPack: U, kind: "test-data", sha256: B }, { toolPack: T, kind: "test-data", sha256: A }, { toolPack: T, kind: "samples", sha256: B }])).toEqual([
+      `p t samples ${B}`,
+      `p t test-data ${A}`,
+      `q u test-data ${B}`,
+    ]);
+  });
+
+  it("appends a multiline archives output and a summary table, and writes nothing outside Actions", () => {
+    const { root } = setUp();
+    const env = actionsFiles(dirname(root));
+    writeFileSync(env.GITHUB_OUTPUT, "key=k\n");
+    reportArchives([`p t samples ${B}`, `p t test-data ${A}`], { env });
+    expect(readFileSync(env.GITHUB_OUTPUT, "utf8")).toMatch(new RegExp(`^key=k\\narchives<<(archives_[0-9a-f-]{36})\\np t samples ${B}\\np t test-data ${A}\\n\\1\\n$`, "u"));
+    expect(readFileSync(env.GITHUB_STEP_SUMMARY, "utf8")).toBe(`### Pack data archives used\n\n| Pack | Tool | Kind | sha256 |\n|---|---|---|---|\n| p | t | samples | \`${B}\` |\n| p | t | test-data | \`${A}\` |\n\n`);
+
+    // No summary when asked for none, or for no archive; the output is still written.
+    const quiet = actionsFiles(join(dirname(root), "quiet"));
+    reportArchives([`p t test-data ${A}`], { env: quiet, summary: false });
+    reportArchives([], { env: quiet });
+    expect(archivesOutputs(quiet.GITHUB_OUTPUT)).toEqual([[`p t test-data ${A}`], []]);
+    expect(readFileSync(quiet.GITHUB_STEP_SUMMARY, "utf8")).toBe("");
+    expect(() => reportArchives([`p t test-data ${A}`], { env: {} })).not.toThrow();
+  });
+
+  it("pull reports each locked test data and samples archive it used, and none on a dry run", () => {
+    const { root, aws, write } = published();
+    const sample = lockSamples(write, T);
+    putFile(sample.local(root), sample.bytes);
+    const env = actionsFiles(dirname(root));
+    pull({ root, aws, dryRun: true, env, log: () => {} });
+    expect(readFileSync(env.GITHUB_OUTPUT, "utf8")).toBe("");
+    pull({ root, aws, env, log: () => {} });
+    const expected = [`p t samples ${sample.sha256}`, ...LOCKS.map((label) => {
+      const [, id, , tool] = label.split("/");
+      return `${id} ${tool} test-data ${readLock(root, { pack: id, tool, directory: dirname(label) }).sha256}`;
+    })].sort();
+    expect(archivesOutputs(env.GITHUB_OUTPUT)).toEqual([expected]);
+    expect(lines(readFileSync(env.GITHUB_STEP_SUMMARY, "utf8")).filter((line) => line.startsWith("| ") && !line.startsWith("| Pack "))).toHaveLength(expected.length);
+  });
+
+  it("the cache command writes the archives the key names as its output, and no summary", () => {
+    const { root, write } = published();
+    copyScripts(root);
+    const sample = lockSamples(write, T);
+    const env = actionsFiles(dirname(root));
+    const run = spawnSync(process.execPath, ["scripts/s3/pack-fixtures.mjs", "cache", "--pack", "p", "--tool", "t"], { cwd: root, encoding: "utf8", env: { ...process.env, ...env } });
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    expect(archivesOutputs(env.GITHUB_OUTPUT)).toEqual([[`p t samples ${sample.sha256}`, `p t test-data ${readLock(root, T).sha256}`]]);
+    expect(JSON.parse(run.stdout).key).toBe(`pack-test-data-p-t-${readLock(root, T).sha256}-samples-${sample.sha256}`);
+    expect(readFileSync(env.GITHUB_STEP_SUMMARY, "utf8")).toBe("");
   });
 });
 

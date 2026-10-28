@@ -367,6 +367,10 @@ changes a lock: without the data, the pack tests (`npm test`, `npm run test:conf
 generators fail, saying to pull. To see what any commit was judged on, check it out and pull
 ([docs/upstream.md, "Replay a commit"](docs/upstream.md#replay-a-commit)).
 
+A CI run names the archives it used: the `pack-test-data` action's `archives` output (and the job's summary) has one
+`<pack> <tool> <kind> <sha256>` line each. To replay the run, check out its commit and pull; those are the sha256s its
+locks name ([docs/upstream.md, "Replay a commit"](docs/upstream.md#replay-a-commit)).
+
 ### How pack data is published
 
 Nobody needs S3 credentials to change pack data. A tool-pack's `packs/<pack>/upstream/<tool>/publish/` is a tracked
