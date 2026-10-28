@@ -357,11 +357,12 @@ jobs:
       #   licence-checks and summarises, and a code owner approves;
       # - upstream/<tool>/UPSTREAM.md: the generators' list of the cases Rerail wrote (packs/python/upstream/common.py
       #   write_record, the next, vitest and vue generators);
-      # - licenses/<project>/UPSTREAM.md, <project> being gates.yaml's rerail.project (its Source row and heading are the
-      #   bump's own edits, compared above with the rest of the pins): the per-repo record of what is
-      #   copied (bumps are paused until the generators write it rather than per-file rows; docs/upstream.md);
-      # - any other file directly in licenses/<project>/: upstream's licence text, which the generators copy verbatim
-      #   from upstream's checkout at the pinned commit (LICENSE, LICENSE.md, license.md, licence.txt, COPYRIGHT, ...).
+      # - any file directly in licenses/<project>/ but UPSTREAM.md, <project> being gates.yaml's rerail.project:
+      #   upstream's licence text, which the generators copy verbatim from upstream's checkout at the pinned commit
+      #   (LICENSE, LICENSE.md, license.md, licence.txt, COPYRIGHT, ...).
+      # licenses/<project>/UPSTREAM.md is not among them: no generator writes it, and its Source row and heading are the
+      # bump's own edits, so it must be main's bump byte for byte. The bump leg ran upstream's code, and that record is
+      # what decides what may be copied and under which licence.
       # Any other difference fails.
       - id: compare
         name: Compare the patch with main's bump
@@ -414,6 +415,7 @@ jobs:
                 "packs/$pack/upstream/$tool/publish/"* | "packs/$pack/upstream/$tool/UPSTREAM.md")
                   allowed=true
                   ;;
+                "packs/$pack/licenses/$project/UPSTREAM.md") ;;
                 "packs/$pack/licenses/$project/"*)
                   [[ "${path#"packs/$pack/licenses/$project/"}" == */* ]] || allowed=true
                   ;;
