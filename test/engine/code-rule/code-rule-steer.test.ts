@@ -14,8 +14,8 @@ function violation(overrides: Partial<CodeRuleViolation> = {}): CodeRuleViolatio
 }
 
 // One rule: the feedback command names it; several: a placeholder for the rule the agent declines.
-const FIX_IT = "Fix it, or tell the user in one line why you won't and run `rerail feedback p \"<that line>\"`.";
-const FIX_THESE = "Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> \"<that line>\"`.";
+const FIX_IT = "Fix it, or tell the user in one line why you won't and run `rerail feedback p '<that line>'`.";
+const FIX_THESE = "Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.";
 
 describe("renderSteer", () => {
   it("renders one violation as the agent's steer: the edit's lead, the finding with its location and rule, the latitude", () => {

@@ -425,6 +425,8 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
       for (const table of schema.SESSION_HISTORY_TABLES) {
         database.run(sql`DELETE FROM ${table} WHERE ${table.sessionId} IN (${schema.sessionsOfRepository(repositoryId)})`);
       }
+      // A note names its repository as well as any session, so one recorded where no session was steered goes too.
+      database.run(sql`DELETE FROM ${schema.steerFeedback} WHERE ${schema.steerFeedback.repositoryId} = ${repositoryId}`);
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
       database.run(sql`DELETE FROM ${schema.sessions} WHERE ${schema.sessions.sessionId} IN (${ended})`);

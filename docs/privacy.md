@@ -43,17 +43,26 @@ activation code, a device public key, your platform and architecture, and the Re
 ## Steer feedback
 
 When a coding agent decides not to follow a steer, it records its one-line reason with `rerail feedback`
-(`src/cli/feedback-cli.ts`). The note is kept in the database. With no standing answer, the agent is told to ask you
-whether Rerail may send it, and not to answer for you: **yes** sends that note, **always** sends it and every later
-one, **no** keeps every note on your computer and stops the question. `rerail feedback sharing ask|always|never`
-changes the answer later.
+(`src/cli/feedback-cli.ts`). The note is kept in the database. With no standing answer, the agent is told to show you
+that line word for word, to ask whether Rerail may send it, and not to answer for you: **yes** sends that note,
+**always** sends it and every later one, **no** keeps every note on your computer, the ones approved but not yet sent
+included, and stops the question. `rerail feedback sharing ask|always|never` changes the answer later; `never` also
+holds back every note still waiting to go.
+
+The answer is a command the agent runs, so it rests on the agent relaying your words. The agent cannot make a note
+say something other than what the command prints back, and nothing is ever sent while the answer is `never`; but an
+agent that disobeys its instructions could answer in your place. Check `rerail feedback sharing` if in doubt, and
+set it to `never` to be sure.
 
 A note you approved is sent over HTTPS to Nera's feedback API, `https://nera-rerail-feedback.azurewebsites.net/api/feedback`
-(an Azure Function in Canada Central), by a background `rerail feedback flush`. It carries the rule id, the rule's pack
-and pack version, the coding agent's name (such as `claude-code`), the reason, the Rerail version, when the note was
-made and a random note id. It never carries the session, the repository, file paths, code or anything else Rerail
-records. The reason is the agent's own sentence, so it can name what it was doing: that is what you are asked to
-approve.
+(an Azure Function in Canada Central, whose storage stays in that region), by a background `rerail feedback flush`.
+It carries the rule id, the rule's pack and pack version, the coding agent's name (such as `claude-code`), the reason,
+the Rerail version, when the note was made and a random note id. It never carries the session, the repository, file
+paths, code or anything else Rerail records; a reason holding control characters is refused. The reason is the agent's
+own sentence, so it can name what it was doing: that is what you are asked to approve. Nera's function stores only
+those fields; its platform request logs keep the region a request came from, not the note. `RERAIL_FEEDBACK_URL`
+(for testing) sends notes elsewhere: it must be `https`, or `http` on this computer, and the agent is told, and tells
+you, where a yes would send the note.
 
 ## Your coding agent's provider
 

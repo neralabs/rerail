@@ -5,4 +5,4 @@
     <dim>Rerail found 2 problems in your last edit:</dim>
     <dim>- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]</dim>
     <dim>- web/src/features/orders/useOrders.ts:12:5 — Await the promise, return it, or mark it with void. [typescript-eslint-no-floating-promises]</dim>
-    <dim>Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> "<that line>"`.</dim>
+    <dim>Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.</dim>

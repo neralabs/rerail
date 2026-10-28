@@ -9,7 +9,7 @@ describe("guidance review data", () => {
     for (const rule of pack?.rules ?? []) {
       const caught = rule.cases.find(item => item.kind === "example");
       // Verbatim what the agent reads after an edit: the lead, each finding with its location and rule, the latitude.
-      expect(caught?.guidance).toMatch(new RegExp(`^Rerail found 1 problem in your last edit:\\n- \\S+:\\d+:\\d+ — \`grade\` has cyclomatic complexity \\d+, over the ceiling of 6\\. .* \\[${rule.id}\\]\\nFix it, or tell the user in one line why you won't and run \`rerail feedback ${rule.id} "<that line>"\`\\.$`, "u"));
+      expect(caught?.guidance).toMatch(new RegExp(`^Rerail found 1 problem in your last edit:\\n- \\S+:\\d+:\\d+ — \`grade\` has cyclomatic complexity \\d+, over the ceiling of 6\\. .* \\[${rule.id}\\]\\nFix it, or tell the user in one line why you won't and run \`rerail feedback ${rule.id} '<that line>'\`\\.$`, "u"));
       expect(rule.cases.find(item => item.kind === "passes")?.guidance).toBe("");
       expect(rule.digest).toMatch(/^[0-9a-f]{16}$/u);
     }

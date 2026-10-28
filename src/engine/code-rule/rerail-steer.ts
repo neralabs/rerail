@@ -10,7 +10,7 @@ import type { RuleMode } from "../catalog/rule-mode.js";
  *     - src/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]
  *     - src/useOrders.ts:9:5 — Await the call or hand its promise on. [typescript-eslint-no-floating-promises]
  *       Suggested fix: replace 9:5–9:17 with `await load()`
- *     Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> "<that line>"`.
+ *     Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.
  *
  * Nothing in it is Rerail's own vocabulary (state, mode, rule pack, link), and nothing parses it: the person's one
  * line per rule (`steerHeadlines`, `headlineText`) is built from the rules the delivery carries (`SteerRule`).
@@ -52,17 +52,24 @@ function steerLead(trigger: SteerTrigger, count: number): string {
   }
 }
 
+/** A rule id that stands in a shell command as it is; any other is left to the agent to quote. */
+const SHELL_SAFE_RULE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]*$/u;
+
+/** The command that records a declined steer's reason: single-quoted, so the agent's own sentence is never run by its shell. */
+export const FEEDBACK_COMMAND_HINT = "rerail feedback <rule-id> '<that line>'";
+
 /**
  * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
- * with `rerail feedback` under the rule (named, when the steer has one); a Log is recorded only.
+ * with `rerail feedback` under the rule (named, when the steer has one and the id is a plain word); a Log is recorded only.
  */
 function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[]): string {
   if (findings.every(finding => finding.mode === "log")) return "Recorded only.";
   // Blocking is not built yet, so a Block-mode rule steers.
   const one = findings.length === 1;
   const verb = trigger.kind === "tool" ? "Follow" : "Fix";
-  const rule = new Set(findings.map(finding => finding.ruleId)).size === 1 ? findings[0]!.ruleId : "<rule-id>";
-  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`rerail feedback ${rule} "<that line>"\`.`;
+  const ids = new Set(findings.map(finding => finding.ruleId));
+  const rule = ids.size === 1 && SHELL_SAFE_RULE_ID.test(findings[0]!.ruleId) ? findings[0]!.ruleId : "<rule-id>";
+  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\`.`;
 }
 
 /** `- <location> — <message> [<rule>]`, a multi-line message's later lines indented under the bullet, then any fix. */
@@ -226,7 +233,7 @@ export function sessionStartNote(origin: string | undefined, host: RerailHost, s
   return [
     `Rerail is on in this repo${rules.ruleCount === null ? "" : `: ${rulesOn(rules.ruleCount)}`}. It checks your work against this repo's rules and stays silent until one is broken.`,
     `When one is, you get a message starting "Rerail found" that lists each problem with its location, what to do, and the rule id in brackets.`,
-    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with \`rerail feedback <rule-id> "<that line>"\`, and carry on.`,
+    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with \`${FEEDBACK_COMMAND_HINT}\`, and carry on.`,
     "If the user asks why Rerail flagged something, answer from that message: the rule id and what it matched. The user can open the rule from the why? link on their own line.",
     "Before you turn a Rerail rule off or change its mode, name the rule and ask the user: Off, Log (kept on record, you are not told), or leave it.",
     `Never turn a rule off or stop Rerail on your own to get past a rule. ${sigil}rerail-stop is the user's own command: run it without asking.`,

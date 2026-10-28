@@ -3,4 +3,4 @@
     <dim>why?</dim> <link http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any><mdLink>http://127.0.0.1:4737/?repository=acme-web#rule/typescript-eslint-no-explicit-any</mdLink></link>
     <dim>Rerail found 1 problem in your last edit:</dim>
     <dim>- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]</dim>
-    <dim>Fix it, or tell the user in one line why you won't and run `rerail feedback typescript-eslint-no-explicit-any "<that line>"`.</dim>
+    <dim>Fix it, or tell the user in one line why you won't and run `rerail feedback typescript-eslint-no-explicit-any '<that line>'`.</dim>

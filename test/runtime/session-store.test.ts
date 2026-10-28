@@ -715,6 +715,11 @@ describe("resetRepositoryHistory", () => {
       other.closeSession("elsewhere", 80);
       upsertLibraryRule(rules, loadRuleCatalog(), MOCK_CONVERSATION_RULES[0], "conversation");
       preferences.upsert({ repository: "", host: "", presence: "silent" });
+      // Feedback notes: one on alpha's ended session, one alpha recorded with no steered session, one on beta.
+      const note = (id: string, repositoryId: string, sessionId: string | null) => ({
+        id, ruleId: "r", sessionId, repositoryId, reason: id, rerailVersion: "0", recordedAt: 1, sharing: "ask" as const,
+      });
+      rules.insert(schema.steerFeedback).values([note("on-session", "alpha", "finished"), note("no-session", "alpha", null), note("kept", "beta", "elsewhere")]).run();
       const inode = (await stat(path)).ino;
 
       expect(resetRepositoryHistory(path, "alpha")).toEqual({ sessions: 1, openSessions: 1 });
@@ -727,6 +732,7 @@ describe("resetRepositoryHistory", () => {
         expect.objectContaining({ sessionId: "running", repositoryId: "alpha", startedAt: 100, endedAt: null, eventCount: 0 }),
       ]);
       expect(reader.workLinks("finished")).toEqual([]);
+      expect(rules.select({ id: schema.steerFeedback.id }).from(schema.steerFeedback).all()).toEqual([{ id: "kept" }]);
 
       // The running session keeps recording through its existing connection.
       writer.append({ sessionId: "running", eventId: "before", kind: "user-prompt", observedAt: 130, payload: { text: "again" } });

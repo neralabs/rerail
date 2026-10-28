@@ -21,7 +21,7 @@
     "Codex invokes Rerail commands as `$rerail-…`; every other coding agent as `/rerail-…`. `/rerail` lists them all.",
     "Rules belong to one repository. Create one with `/rerail-create`: test the draft with `rerail rules test <draft.json>` and run `rerail rules add <draft.json>` only after the person confirms it.",
     "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
-    "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> \"<that line>\"`.",
+    "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> '<that line>'`.",
     "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`."
   ]
 }

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** In the Rerail home: the person's answers about what Rerail may do with what it records. */
@@ -33,7 +33,11 @@ export function readConsent(home: string): Consent {
   return consent;
 }
 
-/** Record `change` of the answers in `home`, keeping the others; with no answer left, the file goes. */
+/**
+ * Record `change` of the answers in `home`, keeping the others; with no answer left, the file goes. The file is
+ * written whole then renamed over the old one, so a crash leaves the old answers, never half a file, and it is
+ * readable by its owner only whatever mode an earlier copy had.
+ */
 export function updateConsent(home: string, change: (consent: Consent) => Consent): void {
   const path = join(home, CONSENT_FILE);
   const next = change(readConsent(home));
@@ -42,5 +46,8 @@ export function updateConsent(home: string, change: (consent: Consent) => Consen
     return;
   }
   mkdirSync(home, { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  const staging = `${path}.${process.pid}.tmp`;
+  writeFileSync(staging, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  chmodSync(staging, 0o600);
+  renameSync(staging, path);
 }

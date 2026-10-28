@@ -104,15 +104,15 @@ The daemon serves every repository on the machine. Its listings — sessions, au
 
 ### Steer feedback
 
-A steer ends by asking the coding agent to fix the problem, or to tell the user in one line why it won't and record that line with `rerail feedback <rule-id> "<that line>"`. The note is kept in `steer_feedback` with the rule's pack and version and the coding agent the rule last steered in this repository, so pushback on a rule can be read back when tuning it. Nothing is sent until the user says so:
+A steer ends by asking the coding agent to fix the problem, or to tell the user in one line why it won't and record that line with `rerail feedback <rule-id> '<that line>'` (the rule's id is put in the command only when it is a plain word a shell reads as one). The note is kept in `steer_feedback` with the rule's pack and version, the repository, and the coding agent and session the rule last steered in this repository, so pushback on a rule can be read back when tuning it. Nothing is sent until the user says so; with no standing answer the command prints the note back and tells the agent to show the user that line and ask:
 
 ```sh
 rerail feedback <rule-id> <reason>                 # keep the note; with no standing answer, print the question for the agent to ask
-rerail feedback answer <note-id> yes|always|no     # yes: send this note; always: send it and every later one; no: keep every note local, and stop asking
-rerail feedback sharing [ask|always|never]         # show or change the standing answer (kept in $RERAIL_HOME/consent.json)
+rerail feedback answer <note-id> yes|always|no     # yes: send this note; always: send it and every later one; no: keep every note local, the ones waiting to go included, and stop asking
+rerail feedback sharing [ask|always|never]         # show or change the standing answer (kept in $RERAIL_HOME/consent.json); never holds back every note waiting to go
 ```
 
-An approved note is sent by a detached `rerail feedback flush` to Nera's feedback API (`https://nera-rerail-feedback.azurewebsites.net/api/feedback`; `RERAIL_FEEDBACK_URL` overrides it), so the agent's command returns at once. It carries the rule id, pack id and version, the coding agent's name, the reason, the Rerail version and when the note was made: never the session, the repository, paths or code. A note the API refuses as malformed is not retried; one it could not reach stays queued for the next flush. See [Privacy](privacy.md#steer-feedback).
+An approved note is sent by a detached `rerail feedback flush` to Nera's feedback API (`https://nera-rerail-feedback.azurewebsites.net/api/feedback`; `RERAIL_FEEDBACK_URL` overrides it for testing, `https` or local `http` only, and the agent is told where a yes would send the note), so the agent's command returns at once. It carries the rule id, pack id and version, the coding agent's name, the reason, the Rerail version and when the note was made: never the session, the repository, paths or code; control characters are refused in both the rule id and the reason. A flush sends nothing while the answer is `never`, reads each note's state again just before it goes, and follows no redirect. A note the API refuses as malformed is not retried; one it could not reach stays queued for the next flush. See [Privacy](privacy.md#steer-feedback).
 
 ## Install
 

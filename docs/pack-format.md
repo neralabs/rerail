@@ -155,7 +155,7 @@ Rerail found 2 problems in your last edit:
 - src/grade.js:1:8 — <message> [complexity-cyclomatic-javascript]
   Suggested fix: delete 14:3–14:12
 - src/api.py:42:5 — <message> [bandit-b113-request-without-timeout]
-Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> "<that line>"`.
+Fix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.
 ```
 
 The block already gives the location, the rule id, the lead and the latitude ("fix or explain"), so the message only

@@ -106,7 +106,7 @@ id and "fix it, or tell the user why you won't":
 ```
 Rerail found 1 problem in your last edit:
 - src/api/orders.ts:2:3 — <message> [local:use-the-logger]
-Fix it, or tell the user in one line why you won't and run `rerail feedback local:use-the-logger "<that line>"`.
+Fix it, or tell the user in one line why you won't and run `rerail feedback local:use-the-logger '<that line>'`.
 ```
 
 So the message tells the agent what to change and, when the change could be wrong, when not to.

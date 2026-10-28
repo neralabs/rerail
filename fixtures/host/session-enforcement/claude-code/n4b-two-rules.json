@@ -2,6 +2,6 @@
   "systemMessage": "\n◆ <mark>R E R A I L</mark> · typescript-eslint-no-explicit-any  steered  ·  \u001b]8;;http://127.0.0.1:4737/#rule/typescript-eslint-no-explicit-any\u0007why?\u001b]8;;\u0007\n◆ <mark>R E R A I L</mark> · typescript-eslint-no-floating-promises  steered  ·  \u001b]8;;http://127.0.0.1:4737/#rule/typescript-eslint-no-floating-promises\u0007why?\u001b]8;;\u0007",
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "Rerail found 2 problems in your last edit:\n- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]\n- web/src/features/orders/useOrders.ts:9:5 — Await the call or hand its promise on; a dropped promise swallows its errors. [typescript-eslint-no-floating-promises]\nFix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> \"<that line>\"`."
+    "additionalContext": "Rerail found 2 problems in your last edit:\n- web/src/features/orders/useOrders.ts:1:33 — Use unknown or a real type in exported signatures. [typescript-eslint-no-explicit-any]\n- web/src/features/orders/useOrders.ts:9:5 — Await the call or hand its promise on; a dropped promise swallows its errors. [typescript-eslint-no-floating-promises]\nFix these, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`."
   }
 }

@@ -48,12 +48,14 @@ async function steeredRepository() {
     requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
     return new Response(null, { status: next });
   });
+  const env: NodeJS.ProcessEnv = { RERAIL_HOME: home };
   async function run(...args: string[]): Promise<string> {
     let out = "";
     await runFeedbackCommand(args, () => "usage", {
       home,
       packageVersion: "9.9.9",
       cwd: workspace,
+      env,
       stdout: { write: (text: string) => (out += text) },
       startFlush: flushes,
       fetch: fetch as typeof globalThis.fetch,
@@ -69,7 +71,7 @@ async function steeredRepository() {
     }
   };
   const idIn = (output: string): string => /note ([0-9a-f-]{36})/u.exec(output)![1]!;
-  return { home, run, notes, idIn, flushes, requests, respond: (...next: Array<number | "offline">) => { responses = next; } };
+  return { home, run, notes, idIn, flushes, requests, env, respond: (...next: Array<number | "offline">) => { responses = next; } };
 }
 
 describe("rerail feedback", () => {
@@ -86,15 +88,29 @@ describe("rerail feedback", () => {
       packVersion: JSON.parse(readFileSync(join("packs", "python", "package.json"), "utf8")).version,
       host: "claude-code",
       sessionId: "steered",
+      repositoryId: expect.stringMatching(/^clone:/u),
       reason: "pytest asserts are the repo convention",
       rerailVersion: "9.9.9",
       sharing: "ask",
       sentAt: null,
     })]);
+    // The person is shown the very line that would go, and every field the request carries.
+    expect(output).toContain("\n  pytest asserts are the repo convention\n");
+    expect(output).toContain("send it to Nera");
+    expect(output).toContain(`the rule id (${RULE}), its rule pack python`);
+    expect(output).toContain("your coding agent's name (claude-code), the reason below word for word, the Rerail version (9.9.9), the time, and a random note id");
     expect(output).toContain(`rerail feedback answer ${id} yes`);
     expect(output).toContain(`rerail feedback answer ${id} always`);
     expect(output).toContain(`rerail feedback answer ${id} no`);
     expect(flushes).not.toHaveBeenCalled();
+  });
+
+  it("refuses control characters in the reason or the rule id, keeping nothing", async () => {
+    const { run, notes } = await steeredRepository();
+
+    await expect(run(RULE, "clear\u001b[2Jthe screen")).rejects.toThrow(/control characters/u);
+    await expect(run(`${RULE}\u0007`, "a reason")).rejects.toThrow(/control characters/u);
+    expect(notes()).toEqual([]);
   });
 
   it("refuses a rule Rerail does not know, keeping nothing", async () => {
@@ -147,6 +163,51 @@ describe("rerail feedback", () => {
     expect(flushes).not.toHaveBeenCalled();
     expect(next).not.toContain("rerail feedback answer");
     expect(asked).toContain("rerail feedback answer");
+  });
+
+  it("holds back every note still waiting to go once the answer is never, and a flush sends none", async () => {
+    const { run, notes, respond, requests } = await steeredRepository();
+    await run("sharing", "always");
+    await run(RULE, "queued while offline");
+    await run(RULE, "also queued");
+    await run("sharing", "ask");
+    await run(RULE, "waiting for an answer");
+
+    const said = await run("sharing", "never");
+    respond(202, 202, 202);
+    await run("flush");
+
+    expect(said).toContain("never asks");
+    expect(notes().map(note => note.sharing)).toEqual(["local", "local", "local"]);
+    expect(requests).toEqual([]);
+  });
+
+  it("answering no to one note also keeps the others that were waiting, and says so", async () => {
+    const { run, notes, idIn, respond, requests } = await steeredRepository();
+    const first = idIn(await run(RULE, "first"));
+    await run("answer", first, "yes");
+    const second = idIn(await run(RULE, "second"));
+
+    const said = await run("answer", second, "no");
+    respond(202);
+    await run("flush");
+
+    expect(said).toContain("as 1 other note that had not gone yet");
+    expect(notes().map(note => note.sharing)).toEqual(["local", "local"]);
+    expect(requests).toEqual([]);
+  });
+
+  it("sends only where RERAIL_FEEDBACK_URL is https or local http, and names the override to the person", async () => {
+    const { run, notes, idIn, env } = await steeredRepository();
+
+    env.RERAIL_FEEDBACK_URL = "http://evil.example/collect";
+    await expect(run(RULE, "x")).rejects.toThrow(/must be https, or http on this computer/u);
+    expect(notes()).toEqual([]);
+    env.RERAIL_FEEDBACK_URL = "http://127.0.0.1:9/feedback";
+    const output = await run(RULE, "local test");
+    expect(output).toContain("send it to 127.0.0.1:9 (RERAIL_FEEDBACK_URL, not Nera)");
+    const id = idIn(output);
+    expect(await run("answer", id, "yes")).toContain("to 127.0.0.1:9 (RERAIL_FEEDBACK_URL, not Nera)");
   });
 
   it("flushes approved notes only, without the session, never retries one the API refused, and keeps the rest queued while it is unreachable", async () => {
