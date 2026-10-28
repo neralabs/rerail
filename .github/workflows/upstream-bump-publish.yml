@@ -955,8 +955,10 @@ jobs:
   # Commits the composed bumps on their branch (auto/bump-upstream, or auto/resnapshot-upstream for a re-snapshot), one
   # commit per tool-pack from the commit of main the run job checked, opens or updates the pull request with the
   # neralabs-ci app's token (a pull request opened with GITHUB_TOKEN would run no CI) and the body the compose job built,
-  # then dispatches pack-data-publish.yml for it with replace (the token's actions: write), the one path its publish/
-  # data reaches S3 by. It runs on a fresh runner, takes only the trees the compose job named, confined to the packs and
+  # then dispatches pack-data-publish.yml for it with replace with the job's own GITHUB_TOKEN (actions: write; a
+  # workflow_dispatch is the one event GITHUB_TOKEN may start a run with, as bump-dispatch in upstream-releases.yml
+  # does), the one path its publish/ data reaches S3 by. The app is asked for only what it holds: contents and pull
+  # requests. It runs on a fresh runner, takes only the trees the compose job named, confined to the packs and
   # the runtimes, and never merges: a maintainer reviews the pin diffs, the data, the upstream facts and the prose the
   # bumps left naming the old releases, reads the pull request's own conformance report, and approves it like any pull
   # request. Idempotent: a branch that already holds exactly these commits on that same commit of main, with or
@@ -971,7 +973,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: read
+      # actions: read for the composed artifact; write to dispatch the publish.
+      actions: write
     steps:
       - name: Download the composed bumps
         uses: actions/download-artifact@v8
@@ -987,7 +990,6 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-          permission-actions: write
 
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -1157,7 +1159,7 @@ jobs:
       - name: Dispatch the publish
         if: steps.commit.outputs.pushed == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           PR: ${{ steps.pull.outputs.number }}
         run: |
           set -euo pipefail
