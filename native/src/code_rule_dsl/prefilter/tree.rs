@@ -175,3 +175,6 @@ unsafe impl VTabCursor for Cursor {
         Ok(self.nodes[self.at])
     }
 }
+
+#[cfg(test)]
+mod tests;

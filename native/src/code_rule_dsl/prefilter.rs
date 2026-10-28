@@ -21,6 +21,11 @@ mod lab;
 mod lower;
 pub(crate) mod plans;
 pub(crate) mod probes;
+// P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback.
+#[allow(dead_code)]
+mod reader;
+#[allow(dead_code)]
+mod tree;
 mod values;
 
 pub(crate) use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;

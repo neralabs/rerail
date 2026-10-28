@@ -23,7 +23,6 @@ use std::ops::Range;
 use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
-const WIDTH: usize = 6;
 pub(super) const TAPE_FORMAT_VERSION: u32 = 8;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAPE8";
 /// The image header: magic, language, reserved bytes, version, source length and digest, and
@@ -33,11 +32,19 @@ const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
 const NONE: u32 = u32::MAX;
-const CHECKPOINT_STRIDE: usize = 16;
 const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
 const ERROR_CODE: u16 = 0;
+
+// P's index columns, read by `prefilter`'s `nera_tree` (the §17 SQL fallback, tests only so far).
+#[allow(dead_code)]
+mod index;
+#[allow(unused_imports)]
+pub(in crate::code_rule_dsl) use index::IndexImage;
+mod wire;
+pub(super) use wire::index_span;
+use wire::{CHECKPOINT_STRIDE, WIDTH, read_varint};
 const ERROR_SYMBOL: u16 = u16::MAX;
 // QueryCursor uses the same fixed capacity in the pinned Tree-sitter query runtime.
 const MAX_NODE_SUPERTYPES: usize = 8;
@@ -606,22 +613,6 @@ fn varint(mut value: u32, output: &mut Vec<u8>) {
             break;
         }
     }
-}
-
-fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
-    let mut result = 0u32;
-    for shift in (0..=28).step_by(7) {
-        let byte = *bytes.get(*at).ok_or("truncated tape span")?;
-        *at += 1;
-        if shift == 28 && byte > 0x0f {
-            return Err("span varint overflow".into());
-        }
-        result |= u32::from(byte & 127) << shift;
-        if byte & 128 == 0 {
-            return Ok(result);
-        }
-    }
-    Err("span varint overflow".into())
 }
 
 fn checkpoint(value: usize, bytes: &mut Vec<u8>) -> Result<(), String> {
@@ -1545,6 +1536,9 @@ struct Rec {
     extra: bool,
     error: bool,
     missing: bool,
+    /// The first child under its field (P's `rec` flag bit 4); read by `index_image`.
+    #[allow(dead_code)]
+    first_field: bool,
 }
 
 #[derive(Clone)]
@@ -1816,7 +1810,7 @@ impl TapeDoc {
         let mut nodes: Vec<Rec> = Vec::with_capacity(count);
         let mut at = 0usize;
         let mut previous = 0i64;
-        let mut parent_stack: Vec<usize> = Vec::new();
+        let mut parent_stack: Vec<(usize, u64)> = Vec::new();
         let mut unwound = 0usize;
         for index in 0..count {
             if index % 256 == 0 {
@@ -1881,7 +1875,7 @@ impl TapeDoc {
             previous = i64::from(start);
             while parent_stack
                 .last()
-                .is_some_and(|&parent| index >= parent + nodes[parent].size as usize)
+                .is_some_and(|&(parent, _)| index >= parent + nodes[parent].size as usize)
             {
                 if unwound.is_multiple_of(256) {
                     checked(budget)?;
@@ -1895,7 +1889,7 @@ impl TapeDoc {
                 }
                 NONE
             } else {
-                let enclosing = *parent_stack.last().ok_or("orphan tape node")?;
+                let enclosing = parent_stack.last().ok_or("orphan tape node")?.0;
                 if pd == 0
                     || pd as usize > index
                     || index - pd as usize != enclosing
@@ -1909,6 +1903,13 @@ impl TapeDoc {
                 }
                 enclosing as u32
             };
+            let first_field = field != 0
+                && parent_stack.last_mut().is_some_and(|(_, fields)| {
+                    let bit = 1_u64 << field;
+                    let first = *fields & bit == 0;
+                    *fields |= bit;
+                    first
+                });
             let extra = image.extra.binary_search(&(index as u32)).is_ok();
             nodes.push(Rec {
                 kind,
@@ -1924,8 +1925,9 @@ impl TapeDoc {
                 extra,
                 error,
                 missing,
+                first_field,
             });
-            parent_stack.push(index);
+            parent_stack.push((index, 0));
         }
         if at != image.spans.len() {
             return Err("trailing span bytes".into());
