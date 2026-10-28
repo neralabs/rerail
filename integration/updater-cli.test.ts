@@ -133,6 +133,8 @@ process.exit(1);
 }
 
 describe("Rerail managed launcher", () => {
+  // npm packs the whole package (about 20 MB with the native engine and the model) and installs it from the registry,
+  // then runs the CLI a dozen times: about 50 s on a CI runner, so it gets the heavy tests' 180 s.
   test("installs the packaged launcher and accepts then rejects deterministic local updates", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
     temporaryDirectories.push(root);
@@ -236,7 +238,7 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 60_000);
+  }, 180_000);
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
