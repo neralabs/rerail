@@ -1,9 +1,10 @@
 # Rerail rule pack: Node.js
 
 24 ports of eslint-plugin-n 18.4.1 rules with its default options. A port starts in `candidates/rules/` and moves to
-`rules/` and `pack.json` once it passes the conformance check ([conformance/README.md](../../conformance/README.md#the-gate));
-eslint-plugin-n has no upstream manifest (`upstream/eslint-plugin-n/gates.yaml`) yet, so the check gates none of its
-ports: every port is a candidate today, `pack.json` lists no rules, and the pack ships none and is never recommended.
+`rules/` and `pack.json` once it passes the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)).
+eslint-plugin-n is a gated tool-pack: `upstream/eslint-plugin-n/gates.yaml` is its upstream manifest (the pins, the
+file types upstream lints and each rule's declared upstream facts), so the check judges every port. None is promoted
+yet: every port is a candidate today, `pack.json` lists no rules, and the pack ships none and is never recommended.
 Each port is scored against the plugin's own findings on its rule tests and on their rename variants
 (`holds-under-rename`), and against the labelled lines of real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
@@ -19,7 +20,7 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `pack.json` | The pack (`rerail.rule-pack/v1`); it lists no rules while every port is a candidate |
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin |
 | `divergences.json` | Declared disagreements with the plugin |
-| `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `scripts/pack-data/eslint-expected.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `upstream/eslint-plugin-n/` | The plugin's upstream manifest (`gates.yaml`), its copied rule tests (`tests/`), one file per test case (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `scripts/pack-data/eslint-expected.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `candidates/` | Every port (`rules/`, listed in `conformance.json`; `n-no-deprecated-api` and `n-hashbang` in `candidates/conformance.json`) and the Node probes (`probes/`), scored, never shipped; `node_policies.py` writes every document but the hand-written `n-no-process-exit` |
 | `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
@@ -40,7 +41,8 @@ Taking a new snapshot is a maintainer deriving the pack's test data from its pin
 ([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
 under `upstream/eslint-plugin-n/publish/`. The recipe
 (`scripts/pack-data/recipes/node.ts`) runs `upstream/eslint-plugin-n/generate.mjs` against the pinned tools (eslint
-10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0).
+10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0; the same packages
+`scripts/pack-data/runtimes/eslint-plugin-n-18.4.1/` pins for the release check and `npm run upstream:bump`).
 Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
 Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
