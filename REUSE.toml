@@ -214,6 +214,20 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
+# ESLint v10.11.0 and v10.12.0's tests/lib/rules/no-loss-of-precision.js, recorded verbatim for the nightly report's case diff test
+[[annotations]]
+path = "fixtures/host/upstream-watch/eslint-*.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "OpenJS Foundation and other contributors, <www.openjsf.org>"
+SPDX-License-Identifier = "MIT"
+
+# typescript-eslint v8.71.2 and v8.72.0's no-extraneous-class test, recorded verbatim for the nightly report's case diff test
+[[annotations]]
+path = "fixtures/host/upstream-watch/typescript-eslint-*.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "2019 typescript-eslint and other contributors"
+SPDX-License-Identifier = "MIT"
+
 # laravel/framework e5f3d6265f (php/licenses/laravel/UPSTREAM.md): derived or excerpted
 [[annotations]]
 path = "fixtures/php/literal/laravel/phpdoc.expected.json"
