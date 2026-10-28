@@ -383,9 +383,14 @@ function filesUnder(root: string, directory: string): string[] {
 /** The derive recipes: each names the inputs it derives with, and none may still name the old release. */
 const RECIPES_DIRECTORY = "scripts/pack-data/recipes";
 
-/** The files a pack pins its reference tools in by hand, outside its generators (fixtures/vue/tools.mjs, fixtures/sql/common.py). */
+/**
+ * Those of the files a pack pins its reference tools in by hand, outside its generators, that the checkout at `root`
+ * has. They are repository paths: bump edits the checkout's tracked copies, so these are not oracle reads through the
+ * fixtures root (test/support/oracles.ts).
+ */
 function referenceToolPins(root: string, pack: string): string[] {
-  return ["tools.mjs", "common.py"].map((name) => `fixtures/${pack}/${name}`).filter((path) => existsSync(join(root, path)));
+  const paths = [`fixtures/${pack}/tools.mjs`, `fixtures/${pack}/common.py`];
+  return paths.filter((path) => existsSync(join(root, path)));
 }
 
 /** A project's record of where its test data is taken from (docs/pack-format.md). */

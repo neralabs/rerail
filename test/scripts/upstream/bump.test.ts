@@ -250,7 +250,8 @@ test("an npm tool-pack's bump follows annotated tags, moves the scope's packages
     "",
   ].join("\n"));
   assert.ok(bump.leftovers.includes(`${RUNTIMES_DIRECTORY}/typescript-eslint-8.72.0/package.json:4: "description": "typescript-eslint 8.70.1",`));
-  assert.equal(readFileSync(join(root, "fixtures/ts/tools.mjs"), "utf8"), 'export const TOOLS = {\n  "@typescript-eslint/parser": "8.72.0",\n  "eslint": "8.70.1",\n};\n');
+  const tools = "fixtures/ts/tools.mjs";
+  assert.equal(readFileSync(join(root, tools), "utf8"), 'export const TOOLS = {\n  "@typescript-eslint/parser": "8.72.0",\n  "eslint": "8.70.1",\n};\n');
   assert.equal(readFileSync(join(root, "packs/ts/licenses/typescript-eslint/UPSTREAM.md"), "utf8"), upstreamRecord("typescript-eslint 8.72.0", TSE, "`v8.72.0`", "a4c2603d3e4fd43b33bc25b82457716e9f7cef71"));
 });
 
@@ -561,7 +562,8 @@ ${popularity()}`,
   assert.deepEqual(bump.leftovers, []);
   applyBump(root, bump);
   assert.equal(readFileSync(join(root, "packs/scratch/licenses/bandit/UPSTREAM.md"), "utf8"), upstreamRecord("Bandit 1.9.5", "PyCQA/bandit", "`1.9.5`", BANDIT_NEXT));
-  assert.equal(readFileSync(join(root, "fixtures/scratch/common.py"), "utf8"), `TOOLS = {\n    "bandit": "1.9.5",\n}\nCORPORA = {\n    "bandit-cases": {\n        "repository": "https://github.com/PyCQA/bandit",\n        "commit": "${BANDIT_NEXT}",\n        "tag": "1.9.5",\n    },\n}\n`);
+  const common = "fixtures/scratch/common.py";
+  assert.equal(readFileSync(join(root, common), "utf8"), `TOOLS = {\n    "bandit": "1.9.5",\n}\nCORPORA = {\n    "bandit-cases": {\n        "repository": "https://github.com/PyCQA/bandit",\n        "commit": "${BANDIT_NEXT}",\n        "tag": "1.9.5",\n    },\n}\n`);
   assert.deepEqual(upstreamPins(root).find((pin) => pin.toolPack === "scratch/bandit")!.disagreements, []);
   assert.match(renderBump(bump), /Nothing else in the tool-pack's pins, scripts, README, conformance\.json, UPSTREAM\.md \(whose Source row and heading the bump moved\) or the derive recipes names it\./u);
 });
