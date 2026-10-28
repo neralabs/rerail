@@ -8,8 +8,8 @@ the pinned venv (fixtures/sql/common.py):
 of the pinned sqlfluff checkout, tag 4.4.0) that the port can reproduce: the case's dialect is one the pack targets
 (ansi, postgres, mysql, sqlite), its rule configuration is the port's (RULES; SQLFluff's defaults except where
 noted) and its SQL holds no Jinja (Rerail reads raw SQL; the cases run here with the `raw` templater). Each case's
-`pass_str` or `fail_str` becomes `fixtures/<dialect>/<CODE>/<case>.sql` (licenses/sqlfluff/UPSTREAM.md lists
-them). SQLFluff then lints every copy with every chosen rule, and the run is required to reproduce the upstream test
+`pass_str` or `fail_str` becomes `fixtures/<dialect>/<CODE>/<case>.sql` (provenance.json names its YAML file and case).
+SQLFluff then lints every copy with every chosen rule, and the run is required to reproduce the upstream test
 on a rule's own cases: no finding of the rule on a `pass_str`, at least one on a `fail_str`, and exactly the
 `violations` positions (or `line_numbers`) where the case lists them. So the expected findings on a rule's own cases are the
 upstream test's expectation, and on the other rules' cases the tool's output. `source.units` names each upstream copy's
@@ -215,7 +215,7 @@ def write_expected_findings(path: pathlib.Path, source: dict, findings: list[dic
 def fixtures() -> None:
     target = HERE / "fixtures"
     shutil.rmtree(target, ignore_errors=True)
-    files, findings, cases, left_out, units = [], [], [], {}, {}
+    files, findings, cases, left_out, units, copies = [], [], [], {}, {}, {}
     for code in RULES:
         kept, left = load_cases(code)
         left_out[code] = left
@@ -246,6 +246,9 @@ def fixtures() -> None:
             files.append(relative)
             if not case.get("own"):
                 units[relative] = {"rules": [code]}
+                copies[f"fixtures/{relative}"] = {
+                    "source": TOOL, "from": f"{CASES}/{code}.yml", "how": "extracted",
+                    "detail": f"case `{case['case']}`; `{case['expect']}_str`, verbatim"}
             findings += [{"rule": f["rule"], "path": relative, "line": f["line"], "column": f["column"]}
                          for f in found]
     write_expected_findings(HERE / "fixtures.expected.json",
@@ -255,6 +258,7 @@ def fixtures() -> None:
         {"tool": TOOL, "version": common.TOOLS["sqlfluff"], "origin": ORIGIN, "portConfiguration": RULES,
          "leftOut": left_out, "cases": cases}, indent=1, ensure_ascii=False) + "\n")
     pack_fixtures.written(HERE / "fixtures.cases.json")
+    pack_fixtures.write_provenance("sql", TOOL, copies, {TOOL: common.CORPORA["sqlfluff-dialects"]["commit"]})
     print(f"{len(files)} fixture files, {len(findings)} findings", file=sys.stderr)
 
 
