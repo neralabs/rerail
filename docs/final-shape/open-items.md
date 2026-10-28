@@ -348,10 +348,12 @@ Placing P's `batch.rs` (Phase 9 row 2) brought its closure: P's relational stage
 `cfg(test)`, with `ClauseKind::Relational` and the `relational` clause form compiled only under
 test. A relational clause carries SQL, which rules do not (the findings contract), so it is not a
 production form. Mutations to fit W, each failing closed where W lacks P's piece:
-- inputs are written from W's JSON projections (`Captures::projection`, `AstRelation::project`),
-  not P's typed column chunks streamed through `stateless_rows_to`. P's sink tests
-  (`inputs/tests.rs`) and `narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas`
-  (P keeps the projection off the shared AST, W does not) are removed, and so is the half of
+- inputs go through P's typed sink (`inputs.rs`, restored in `b6380d7c`), fed from
+  `stateless_rows`' witnesses after the relation is read rather than streamed through P's
+  `stateless_rows_to`; W's JSON projection reaches the sink as a typed row
+  (`Captures::take_projection`, test-only). P's sink tests pass. Still outstanding, to restore
+  with P's `FactQuery` shape: `narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas`
+  (P keeps the projection off the shared AST, W does not) and the half of
   `sql_facts_keep_typed_values…` that sets `FactQuery::anchor`;
 - every input anchors at the witness span (P's `FactQuery::{anchor, each, closure}` are not in W);
 - `references` (P's native reference graph, `calls::reference_rows` and the `references` call
