@@ -71,6 +71,8 @@ Each phase ends with a short targeted check, not a corpus run.
 - **Adapt.** Drop the `bench-backends` gate on Metal. Keep W's `bundled` and `limits`.
 - **Interner (C12).** Decide where the single u32 atom table lives (§10.6) before Phase 1 writes atoms. Write new: one `atoms` table in the content store, append-only and dense, shared by `text_vocab`/`tid`, fact atoms, paths and type terms. The CAS `strings` table maps into it.
 
+**Status (2026-10-27): done except `mimalloc`: W already runs a tuned jemalloc as its global allocator, so the swap is a decision (O16). `block` added with Phase 4 row 3 (`bb4c9605`).**
+
 ### Phase 1: fact store, derivations, overlay, push path (C1–C19)
 
 | Copy | From | To | Adaptations |

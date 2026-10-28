@@ -21,6 +21,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | open, **plan gap** |
+| O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | open, **decision needed** |
 
 ## O1. Stale-fact detection after a crash
 
@@ -273,3 +274,17 @@ row of the plan lists them. So the oracle stays outside the module tree (an atte
 its other imports is in the stash `wolfeel-oracle-placement-attempt-2026-10-27`). The fixture
 paths in `tests.rs` also need one `..` fewer. Closure: add a row for S's matcher deltas that the
 oracle needs, or replace `Native` with W's matcher as the comparison.
+
+## O16. `mimalloc` against W's jemalloc
+
+Phase 0 lists `mimalloc` among the dependency deltas. G installs it as the global allocator on
+unix (`static GLOBAL_ALLOCATOR: mimalloc::MiMalloc`, `mimalloc =0.1.52` without default features,
+and `cranelift-jit` with `selinux-fix` so JIT code gets its own mappings). W already has a global
+allocator: jemalloc on non-Windows (`native/src/lib.rs`), with `dirty_decay_ms:1000,
+muzzy_decay_ms:0` (immediate decay cost a tenth of the data-layer benchmark's CPU), a purge after
+every apply and again when its response is freed, and Tree-sitter's allocator routed through it
+(the system allocator served a parse at 10%). A crate has one global allocator, so this is a
+choice, not a port. Keeping jemalloc until it is decided: replacing it means measuring CPU and RSS
+on the data-layer gate (M1) with each, including the purge behaviour that keeps nothing dirty at
+rest. Closure: keep jemalloc and drop `mimalloc` from 05, or measure and switch.
+
