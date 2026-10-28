@@ -1,5 +1,5 @@
 /**
- * The bump the nightly opens a pull request for (scripts/upstream/bump.ts): each pin of a tool-pack
+ * The bump a maintainer starts and upstream-bump-publish.yml opens a pull request for (scripts/upstream/bump.ts): each pin of a tool-pack
  * moved to a newer release, in a throwaway checkout. GitHub's, npm's and Rust's answers are trimmed copies of real ones,
  * recorded on 2026-10-22 (typescript-eslint's annotated tags, Rust 1.99.0 and 1.99.1); nothing reaches the network.
  */
@@ -123,7 +123,7 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/generate.py"), "utf8"), `"""Records Bandit 1.9.4 for the demo pack."""\nVERSION = "1.9.5"\nORIGIN = "https://github.com/PyCQA/bandit@${BANDIT_NEXT}"\nPYYAML = "1.9.4.1"\n`);
   // UPSTREAM.md's Source row and heading follow the pins; its prose below them is the reviewer's.
   assert.equal(readFileSync(join(root, "packs/demo/licenses/bandit/UPSTREAM.md"), "utf8"), upstreamRecord("Bandit 1.9.5", "PyCQA/bandit", "`1.9.5`", BANDIT_NEXT));
-  // The pins now agree at 1.9.5, as the nightly's check reads them.
+  // The pins now agree at 1.9.5, as upstream:releases reads them.
   const pin = upstreamPins(root).find((entry) => entry.toolPack === "demo/bandit")!;
   assert.deepEqual([pin.version, pin.disagreements], ["1.9.5", []]);
 

@@ -1,12 +1,13 @@
 /**
- * `npm run upstream:bump`: move one tool-pack's pins to a newer upstream release. With every tool-pack
- * `upstream:releases` finds behind, the nightly (upstream-releases.yml) dispatches upstream-bump.yml once on the work
- * branch auto/bump-run/upstream, whose leg per tool-pack runs it, then on Linux derives again every tool-pack the bump
- * made stale and stages each one's whole derived set into its publish/ (fixtures:stage --all); that upstream code at an
- * unreviewed release runs with no OIDC or write token, and outside main's cache scope. upstream-bump-publish.yml then,
- * on main, runs it again for each leg, composes the verified legs into a commit per tool-pack carrying its pins and its
- * publish/ together, opens one pull request, and dispatches pack-data-publish.yml for it, which publishes the data to
- * S3 once a code owner approves and commits the locks.
+ * `npm run upstream:bump`: move one tool-pack's pins to a newer upstream release. A maintainer starts bumps by hand with
+ * upstream-bump-start.yml, which resolves each tool-pack's versions (`upstream:releases --json`) and dispatches
+ * upstream-bump.yml once on the work branch auto/bump-run/upstream, whose leg per tool-pack runs it, then on Linux
+ * derives again every tool-pack the bump made stale and stages each one's whole derived set into its publish/
+ * (fixtures:stage --all); that upstream code at an unreviewed release runs with no OIDC or write token, and outside
+ * main's cache scope. upstream-bump-publish.yml then, on main, runs it again for each leg, composes the verified legs
+ * into a commit per tool-pack carrying its pins and its publish/ together, and opens one pull request. It does not
+ * publish the data: a maintainer runs Publish pack data for the pull request, which publishes it to S3 once a code
+ * owner approves and commits the locks.
  *
  * Paused: the CLI refuses to apply a bump (`--dry-run` still plans one), and the summary's "Regenerate locally" section
  * points at the pause instead of giving derive commands, until the generators write per-repo provenance; see
@@ -119,7 +120,7 @@ export interface Sources {
 /** How long one request may take. */
 const REQUEST_TIMEOUT_MS = 60_000;
 
-const GITHUB_API = "https://api.github.com";
+export const GITHUB_API = "https://api.github.com";
 
 /** A regular expression matching `text` literally. */
 function literal(text: string): string {
@@ -145,7 +146,8 @@ async function getText(sources: Sources, url: string, headers: Record<string, st
   return await response.text();
 }
 
-function githubHeaders(sources: Sources): Record<string, string> {
+/** The headers of a GitHub REST API request, with the token when there is one. */
+export function githubHeaders(sources: Sources): Record<string, string> {
   return {
     accept: "application/vnd.github+json",
     "x-github-api-version": "2022-11-28",
@@ -423,6 +425,29 @@ export function bumpUpstreamRecord(path: string, text: string, change: { commits
   return after;
 }
 
+/**
+ * The pinned release of a tool-pack and its release `version`, each as a tag and the commit the tag names: what a bump
+ * moves between and what the nightly report compares (scripts/upstream/watch.ts). Reads the checkout and asks GitHub;
+ * writes nothing, and does not check that `version` is newer. Throws when a tag cannot be found.
+ */
+export async function resolveRelease(root: string, pack: string, tool: string, version: string, sources: Sources): Promise<{ repository: string; from: Release; to: Release; notes: string[] }> {
+  if (readGatesManifest(root, pack, tool).adapter === "clippy") return await resolveClippyRelease(root, pack, version, sources);
+  return await resolveGatedRelease(root, pack, tool, version, sources);
+}
+
+/** A gated tool-pack's pinned release and its release `version`: the tag form whose pinned tag names the pinned commit, filled with each. */
+async function resolveGatedRelease(root: string, pack: string, tool: string, version: string, sources: Sources): Promise<{ repository: string; from: Release; to: Release; notes: string[] }> {
+  const manifest = readGatesManifest(root, pack, tool);
+  const pin = gatedPin(root, pack, tool);
+  const repository = githubRepository(manifest.upstream.repository);
+  const template = await pinnedTagTemplate(sources, repository, tagTemplates(manifest), { version: manifest.upstream.version, commit: manifest.upstream.commit });
+  const from: Release = { version: manifest.upstream.version, tag: fillTag(template, manifest.upstream.version), commit: manifest.upstream.commit };
+  const toTag = fillTag(template, version);
+  const toCommit = await tagCommit(sources, repository, toTag);
+  if (toCommit === null) throw new Error(`${repository} has no tag ${toTag}: ${ECOSYSTEM_NAMES[pin.ecosystem]} publishes ${pin.package} ${version}, but the commit it was cut from is unknown`);
+  return { repository, from, to: { version, tag: toTag, commit: toCommit }, notes: [] };
+}
+
 /** Plan the bump of a gated tool-pack to `version`; null when it already pins it. */
 export async function planGatedBump(root: string, pack: string, tool: string, version: string, sources: Sources): Promise<Bump | null> {
   const toolPack = `${pack}/${tool}`;
@@ -433,13 +458,7 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
   const ecosystem = pin.ecosystem;
   if (!isNewer(pin.version, version, toolPack)) return null;
 
-  const repository = githubRepository(manifest.upstream.repository);
-  const template = await pinnedTagTemplate(sources, repository, tagTemplates(manifest), { version: pin.version, commit: manifest.upstream.commit });
-  const from: Release = { version: pin.version, tag: fillTag(template, pin.version), commit: manifest.upstream.commit };
-  const toTag = fillTag(template, version);
-  const toCommit = await tagCommit(sources, repository, toTag);
-  if (toCommit === null) throw new Error(`${repository} has no tag ${toTag}: ${ECOSYSTEM_NAMES[ecosystem]} publishes ${pin.package} ${version}, but the commit it was cut from is unknown`);
-  const to: Release = { version, tag: toTag, commit: toCommit };
+  const { repository, from, to } = await resolveGatedRelease(root, pack, tool, version, sources);
   const notes: string[] = [];
 
   const edits = new Edits(root);
@@ -603,6 +622,24 @@ function pythonConstant(text: string, name: string, path: string): string {
   return value;
 }
 
+/** The rust-lang/rust-clippy tag common.py's docstring says CLIPPY_COMMIT is at, or null when it names none. */
+function clippyPinnedTag(text: string): string | null {
+  return /at tag `(rust-[0-9.]+)`/u.exec(text)?.[1] ?? null;
+}
+
+/**
+ * Clippy's pinned source (common.py's toolchain, the rust-clippy tag it names, `rust-<toolchain>` when it names none, and
+ * CLIPPY_COMMIT) and the source Rust `version`'s Clippy comes from (clippySource).
+ */
+async function resolveClippyRelease(root: string, pack: string, version: string, sources: Sources): Promise<{ repository: string; from: Release; to: Release; notes: string[] }> {
+  const common = `packs/${pack}/upstream/common.py`;
+  const text = readFileSync(join(root, common), "utf8");
+  const toolchain = pythonConstant(text, "TOOLCHAIN", common);
+  const from: Release = { version: toolchain, tag: clippyPinnedTag(text) ?? `rust-${toolchain}`, commit: pythonConstant(text, "CLIPPY_COMMIT", common) };
+  const source = await clippySource(sources, version);
+  return { repository: "rust-lang/rust-clippy", from, to: { version, tag: source.tag, commit: source.commit }, notes: source.note === null ? [] : [source.note] };
+}
+
 /** Plan the bump of the Rust pack's Clippy to Rust `version`; null when it already pins it. */
 export async function planClippyBump(root: string, version: string, sources: Sources): Promise<Bump | null> {
   const manifest = readGatesManifest(root, "rust", "clippy");
@@ -621,7 +658,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
   // The pinned strings must be what the pinned release's manifest says, or the new ones cannot be read the same way.
   const old = rustToolchain(await channelManifest(sources, pinned.toolchain));
   if (old.rustc !== pinned.rustc || old.clippy !== pinned.clippy) throw new Error(`${common} pins \`${pinned.rustc}\` and \`${pinned.clippy}\`, but Rust ${pinned.toolchain}'s channel manifest says \`${old.rustc}\` and \`${old.clippy}\``);
-  const oldTag = /at tag `(rust-[0-9.]+)`/u.exec(text)?.[1] ?? null;
+  const oldTag = clippyPinnedTag(text);
   const fresh = rustToolchain(await channelManifest(sources, version));
   const source = await clippySource(sources, version);
   const minor = releaseParts(version)![1]!;
@@ -801,7 +838,7 @@ export function renderBump(bump: Bump): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** What the nightly reads back: the bump without the file texts. */
+/** What upstream-bump-publish.yml reads back: the bump without the file texts. */
 export function bumpJson(bump: Bump | null, toolPack: string, version: string): unknown {
   if (bump === null) return { toolPack, version, changed: false };
   const { files, ...rest } = bump;
@@ -877,7 +914,7 @@ export async function main(argv: string[], repositoryRoot: string, fetch: Fetch,
   return 0;
 }
 
-// Imported by its tests, run as a script by the nightly: only the second runs.
+// Imported by its tests, run as a script by the bump legs: only the second runs.
 const invoked = (() => {
   try {
     return process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
