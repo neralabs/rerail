@@ -19,6 +19,7 @@ import {
   RUFF_RULES,
   clippyAnnotatedLints,
   clippyDeclaredLints,
+  phpNamedFiles,
   ruffCodes,
   ruffTestCases,
   type RuffRule,
@@ -186,10 +187,32 @@ async function testChanges(github: GitHubClient, comparison: WatchComparison, ch
   return { files, cases };
 }
 
-/** The watched files' changes between `comparison.from` and `comparison.to`. */
-export async function compareWatch(github: GitHubClient, comparison: WatchComparison): Promise<WatchChanges> {
+/**
+ * `comparison.watch` with the files each named test (`namedTests`) names at either commit added to its tests, each
+ * for that test's rules: a file the test stops or starts naming is still compared.
+ */
+async function withNamedTests(github: GitHubClient, comparison: WatchComparison): Promise<ExpandedWatch> {
   const { watch } = comparison;
-  if (comparison.from === comparison.to) return { tests: { files: [], cases: comparison.ruleTester ? { added: 0, removed: 0, changed: 0, unresolved: 0 } : null }, code: { rules: [], files: [] }, shared: { files: [] }, newTests: [] };
+  const named = await Promise.all(Object.entries(watch.namedTests).map(async ([test, rules]) => {
+    const texts = await Promise.all([comparison.from, comparison.to].map((commit) => github.file(comparison.repository, commit, test)));
+    return { rules, files: texts.flatMap((text) => (text === null ? [] : phpNamedFiles(test, text))) };
+  }));
+  if (named.length === 0) return watch;
+  const byRule = new Map(Object.entries(watch.tests.byRule).map(([rule, patterns]) => [rule, [...patterns]]));
+  for (const { rules, files } of named) for (const rule of rules) byRule.set(rule, [...(byRule.get(rule) ?? []), ...files]);
+  const tests: WatchPatternSet = {
+    paths: sortedUnique([...watch.tests.paths, ...named.flatMap(({ files }) => files)]),
+    globs: watch.tests.globs,
+    byRule: Object.fromEntries([...byRule.keys()].sort(byBytes).map((rule) => [rule, sortedUnique(byRule.get(rule)!)])),
+  };
+  return { ...watch, tests };
+}
+
+/** The watched files' changes between `request.from` and `request.to`. */
+export async function compareWatch(github: GitHubClient, request: WatchComparison): Promise<WatchChanges> {
+  if (request.from === request.to) return { tests: { files: [], cases: request.ruleTester ? { added: 0, removed: 0, changed: 0, unresolved: 0 } : null }, code: { rules: [], files: [] }, shared: { files: [] }, newTests: [] };
+  const comparison: WatchComparison = { ...request, watch: await withNamedTests(github, request) };
+  const { watch } = comparison;
   const indexes = await Promise.all(watch.code.indexes.map((index) => (index === "ruff-codes" ? ruffIndex(github, comparison) : clippyIndex(github, comparison))));
   const patterns = sortedUnique([watch.tests, watch.code, watch.shared, watch.newTests].flatMap((set) => [...set.paths, ...set.globs]).concat(indexes.flatMap((index) => index.patterns)));
   const [before, after] = await Promise.all([blobsMatching(github, comparison.repository, comparison.from, patterns), blobsMatching(github, comparison.repository, comparison.to, patterns)]);

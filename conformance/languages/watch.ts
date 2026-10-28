@@ -25,6 +25,11 @@ export interface ExpandedWatch {
   rules: string[];
   /** The tests the generator reads. */
   tests: WatchPatternSet;
+  /**
+   * Tests (`{ named-by }`) whose named files (`__DIR__ . '<relative path>'`) the generator reads, by test path, each
+   * with the rules it is read for. The report reads them at both commits and adds the files they name to `tests`.
+   */
+  namedTests: Record<string, string[]>;
   /** The ported rules' code, and the upstream index files that locate it per rule. */
   code: WatchPatternSet & { indexes: WatchIndex[] };
   /** Code every ported rule depends on. */
@@ -118,8 +123,9 @@ function expandPatterns(set: PatternSet, patterns: readonly string[], rules: rea
  * The `watch:` block of `packs/<pack>/upstream/<tool>/gates.yaml` (`manifest`) expanded under `root`, or undefined when
  * it has none. `{rule}` stands for each ported rule (conformance.json's `upstream.rule` for `tool`, without
  * `rule-prefix`, plus `extra-rules`); a rule under `rules:` takes its own `tests` or `code` in place of the `{rule}`
- * patterns; a `{ file }` entry adds each rule's paths from that data file beside the generator. Throws on a rule the
- * watch names that is not watched.
+ * patterns; a `{ file }` entry adds each rule's paths from that data file beside the generator, and with `with` each
+ * path with its extension replaced by every listed one; a `{ named-by }` entry records that data file's paths as
+ * `namedTests`. Throws on a rule the watch names that is not watched.
  */
 export function expandWatch(root: string, pack: string, tool: string, manifest: GatesManifest): ExpandedWatch | undefined {
   const watch = manifest.watch;
@@ -135,11 +141,20 @@ export function expandWatch(root: string, pack: string, tool: string, manifest: 
   const tests = new PatternSet();
   const testPatterns = watch.tests.filter((entry): entry is string => typeof entry === "string");
   expandPatterns(tests, testPatterns, rules, new Map(overrides.map(([rule, own]) => [rule, own.tests])));
+  const namedTests = new Map<string, Set<string>>();
   for (const entry of watch.tests) {
     if (typeof entry === "string") continue;
-    for (const [rule, paths] of Object.entries(readRuleFile(join(root, "packs", pack, "upstream", tool), entry.file, label))) {
-      if (!known.has(rule)) throw new Error(`${label}: ${entry.file} lists ${rule}, which is no watched rule`);
-      for (const path of paths) tests.add(path, rule);
+    const file = "file" in entry ? entry.file : entry["named-by"];
+    for (const [rule, paths] of Object.entries(readRuleFile(join(root, "packs", pack, "upstream", tool), file, label))) {
+      if (!known.has(rule)) throw new Error(`${label}: ${file} lists ${rule}, which is no watched rule`);
+      for (const path of paths) {
+        if ("file" in entry) {
+          // The file name's extension (`[^./]` keeps it within the last segment) replaced by each of `with`.
+          for (const watched of [path, ...(entry.with ?? []).map((extension) => path.replace(/\.[^./]*$/u, "") + extension)]) tests.add(watched, rule);
+        } else {
+          namedTests.set(path, new Set([...(namedTests.get(path) ?? []), rule]));
+        }
+      }
     }
   }
 
@@ -155,6 +170,7 @@ export function expandWatch(root: string, pack: string, tool: string, manifest: 
   return {
     rules,
     tests: tests.result(),
+    namedTests: Object.fromEntries([...namedTests.keys()].sort(byBytes).map((path) => [path, sortedUnique(namedTests.get(path)!)])),
     code: { ...code.result(), indexes },
     shared: { paths: shared.filter((pattern) => !isGlob(pattern)), globs: shared.filter(isGlob) },
     newTests: newTests.result(),

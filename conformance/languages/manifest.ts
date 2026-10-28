@@ -68,8 +68,20 @@ function watchPattern(withRule: boolean) {
   );
 }
 
-/** A data file beside the generator, `{ "rules": { "<ported rule>": ["<upstream path>", …] } }`, whose paths are watched. */
-const watchFileSchema = z.strictObject({ file: z.string().regex(/^[A-Za-z0-9._-]+\.json$/u, "a JSON file beside the generator") });
+/** A JSON data file beside the generator, `{ "rules": { "<ported rule>": ["<upstream path>", …] } }`. */
+const dataFile = z.string().regex(/^[A-Za-z0-9._-]+\.json$/u, "a JSON file beside the generator");
+
+/**
+ * A data file whose paths are watched; `with` also watches each path with its extension replaced by each of these
+ * (`tests/ui/x.rs` with `.stderr` is `tests/ui/x.stderr`, the expected output the generator reads beside the test).
+ */
+const watchFileSchema = z.strictObject({
+  file: dataFile,
+  with: unique(z.string().regex(/^(?:\.[A-Za-z0-9_-]+)+$/u, "an extension such as .stderr")).min(1).optional(),
+});
+
+/** A data file listing PHPStan-style tests: the files each names as `__DIR__ . '<relative path>'` are watched. */
+const watchNamedBySchema = z.strictObject({ "named-by": dataFile });
 
 /** One rule's own paths, in place of the `{rule}` patterns of the kinds it names. */
 const watchRuleSchema = z.strictObject({
@@ -86,7 +98,7 @@ const watchRuleSchema = z.strictObject({
 const watchSchema = z.strictObject({
   "rule-prefix": nonEmpty.optional(),
   "extra-rules": unique(nonEmpty).min(1).optional(),
-  tests: unique(z.union([watchPattern(true), watchFileSchema])),
+  tests: unique(z.union([watchPattern(true), watchFileSchema, watchNamedBySchema])),
   code: unique(z.union([watchPattern(true), z.strictObject({ index: z.enum(WATCH_INDEXES) })])),
   shared: unique(watchPattern(false)),
   "new-tests": unique(watchPattern(true)).min(1).optional(),

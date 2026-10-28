@@ -28,7 +28,7 @@ function patterns(paths: string[], globs: string[] = [], byRule: Record<string, 
 
 /** A watch with nothing in it but `parts`. */
 function watchOf(parts: Partial<ExpandedWatch> & { rules: string[] }): ExpandedWatch {
-  return { tests: patterns([]), code: { ...patterns([]), indexes: [] }, shared: { paths: [], globs: [] }, newTests: patterns([]), ...parts };
+  return { tests: patterns([]), namedTests: {}, code: { ...patterns([]), indexes: [] }, shared: { paths: [], globs: [] }, newTests: patterns([]), ...parts };
 }
 
 /** An ESLint RuleTester file for `rule` with `valid` cases. */
@@ -137,6 +137,34 @@ test("Clippy: a lint's module from declared_lints.rs, and an added UI test annot
   assert.deepEqual(changes.newTests, [{ rule: "double_parens", path: "tests/ui/parens_in_macros.rs" }]);
 });
 
+test("PHPStan: the files a named-by test names at either commit are its read tests, nothing else in their directories", async () => {
+  const testFile = "tests/PHPStan/Rules/Variables/DefinedVariableRuleTest.php";
+  const names = (files: string[]) => `$this->analyse([${files.map((file) => `__DIR__ . '${file}'`).join(", ")}], []);\n`;
+  const { github } = fakeGitHub({
+    pin: {
+      [testFile]: names(["/data/a.php", "/../../Analyser/nsrt/bug-1.php"]),
+      "tests/PHPStan/Rules/Variables/data/a.php": "a",
+      "tests/PHPStan/Rules/Variables/data/unread.php": "a",
+      "tests/PHPStan/Analyser/nsrt/bug-1.php": "a",
+    },
+    next: {
+      [testFile]: names(["/data/a.php", "/data/b.php"]),
+      "tests/PHPStan/Rules/Variables/data/a.php": "b",
+      "tests/PHPStan/Rules/Variables/data/b.php": "b",
+      "tests/PHPStan/Rules/Variables/data/unread.php": "b",
+      "tests/PHPStan/Analyser/nsrt/bug-1.php": "b",
+    },
+  });
+  const watch = watchOf({ rules: ["variable.undefined"], namedTests: { [testFile]: ["variable.undefined"] } });
+  const changes = await compareWatch(github, { repository: "phpstan/phpstan-src", ruleTester: false, watch, from: "pin", to: "next" });
+  assert.deepEqual(changes.tests.files.map((file) => [file.path, file.change, file.rule]), [
+    ["tests/PHPStan/Analyser/nsrt/bug-1.php", "modified", "variable.undefined"],
+    ["tests/PHPStan/Rules/Variables/data/a.php", "modified", "variable.undefined"],
+    ["tests/PHPStan/Rules/Variables/data/b.php", "added", "variable.undefined"],
+  ]);
+  assert.deepEqual(changes.shared.files, []);
+});
+
 test("directory reads: one per directory, a directory below another folded into a recursive read of it", () => {
   const rules = ["no-a", "no-b"];
   const reads = directoryReads([
@@ -160,8 +188,11 @@ test("releases between the pin and the latest: stable ones only, from each regis
 const PIN = "a".repeat(40);
 const NEXT = "b".repeat(40);
 
-/** A demo pack with ESLint-family tool-packs, each pinned at 1.0.0 and watching `tests/{rule}.js`. */
-function checkout(tools: string[]): string {
+/**
+ * A demo pack with ESLint-family tool-packs, each pinned at 1.0.0 and watching `tests/{rule}.js`; its runtime pins the
+ * package at 1.0.0, or at `runtimePins[tool]`.
+ */
+function checkout(tools: string[], runtimePins: Record<string, string> = {}): string {
   const root = mkdtempSync(join(tmpdir(), "upstream-watch-"));
   roots.push(root);
   const files: Record<string, string> = {
@@ -199,7 +230,7 @@ eslint:
     tag: v1.0.0
     installed: "${tool}"
 `;
-    files[`${RUNTIMES_DIRECTORY}/${tool}-1.0.0/package.json`] = JSON.stringify({ dependencies: { [tool]: "1.0.0" } });
+    files[`${RUNTIMES_DIRECTORY}/${tool}-1.0.0/package.json`] = JSON.stringify({ dependencies: { [tool]: runtimePins[tool] ?? "1.0.0" } });
   }
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -253,6 +284,19 @@ test("each tool-pack's status, one tool-pack's error leaving the others' rows", 
   assert.ok(reads.every((read) => !read.includes("demo/current@")));
   assert.match(untagged!.error!, /has no tag v1\.1\.0/u);
   const markdown = renderWatch(reports);
-  assert.match(markdown, /\| `demo\/changed` \| changed \| 1\.0\.0 → 1\.1\.0 \| 1 \| 1 file, \+1 −0 ~0 \| `no-foo` \| — \| — \|/u);
+  assert.match(markdown, /\| `demo\/changed` \| changed \| 1\.0\.0 → 1\.1\.0 \| 1 \| — \| 1 file, \+1 −0 ~0 \| `no-foo` \| — \| — \|/u);
   assert.match(markdown, /- Error: .*has no tag v1\.1\.0/u);
+});
+
+test("pins that disagree are reported with the tool-pack, which is still compared", async () => {
+  const root = checkout(["skewed"], { skewed: "1.0.1" });
+  const fetch = registryAndTags({ skewed: "1.1.0" }, { skewed: ["v1.0.0", "v1.1.0"] });
+  const { github } = fakeGitHub({ [PIN]: { "tests/no-foo.js": ruleTest("no-foo", ["a;"]) }, [NEXT]: { "tests/no-foo.js": ruleTest("no-foo", ["a;", "b;"]) } });
+  const [report] = await watchUpstreams(root, [{ pack: "demo", tool: "skewed" }], { fetch, github });
+  assert.deepEqual(report!.disagreements, [`gates.yaml upstream.version is 1.0.0 but ${RUNTIMES_DIRECTORY}/skewed-1.0.0/package.json pins skewed 1.0.1`]);
+  assert.equal(report!.status, "changed");
+  assert.deepEqual(report!.tests.cases, { added: 1, removed: 0, changed: 0, unresolved: 0 });
+  const markdown = renderWatch([report!]);
+  assert.match(markdown, /\| `demo\/skewed` \| changed \| 1\.0\.0 → 1\.1\.0 \| 1 \| ⚠️ 1 disagree \|/u);
+  assert.match(markdown, /- Pins that disagree \(1\):\n {2}- gates\.yaml upstream\.version is 1\.0\.0 but .*pins skewed 1\.0\.1/u);
 });

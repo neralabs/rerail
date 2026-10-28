@@ -67,6 +67,7 @@ test("{rule} expands over the tool's ports without rule-prefix, plus extra-rules
       globs: [],
       byRule: { a: ["tests/a.py"], b: ["tests/b.py"], z: ["tests/z.py"] },
     },
+    namedTests: {},
     code: {
       paths: ["src/alpha.py", "src/b.py", "src/z.py"],
       globs: ["src/*/b.py", "src/*/z.py"],
@@ -96,6 +97,27 @@ test("a { file } entry watches each rule's paths from the data file beside the g
   assert.deepEqual(watch.code.indexes, ["ruff-codes"]);
   const watched = watchMatcher(watch.tests);
   assert.deepEqual(["examples/exec.py", "examples/auxiliary/a/b.rs", "examples/other.py"].map(watched), [true, true, false]);
+});
+
+test("{ file, with } also watches each listed path with its extension replaced; { named-by } records the tests whose named files are watched", () => {
+  const root = checkout([["bandit", "B101"], ["bandit", "B102"]], {
+    "fixtures.json": { rules: { B101: ["tests/ui/assert.rs", "tests/ui-toml/a/assert.rs"], B102: ["tests/ui/exec.rs"] } },
+    "tests.json": { rules: { B101: ["tests/Rules/AssertTest.php"], B102: ["tests/Rules/AssertTest.php", "tests/Rules/ExecTest.php"] } },
+  });
+  const watch = expand(root, gates(`watch:
+  tests: [{ file: fixtures.json, with: [".stderr", ".fixed"] }, { named-by: tests.json }]
+  code: []
+  shared: []
+`))!;
+  assert.deepEqual(watch.tests.byRule, {
+    B101: ["tests/ui-toml/a/assert.fixed", "tests/ui-toml/a/assert.rs", "tests/ui-toml/a/assert.stderr", "tests/ui/assert.fixed", "tests/ui/assert.rs", "tests/ui/assert.stderr"],
+    B102: ["tests/ui/exec.fixed", "tests/ui/exec.rs", "tests/ui/exec.stderr"],
+  });
+  assert.deepEqual(watch.namedTests, { "tests/Rules/AssertTest.php": ["B101", "B102"], "tests/Rules/ExecTest.php": ["B102"] });
+  // The named-by tests themselves are not watched by that entry; a { file } entry lists them where they are.
+  assert.equal(watchMatcher(watch.tests)("tests/Rules/AssertTest.php"), false);
+  assert.throws(() => gates(`watch:\n  tests: [{ file: fixtures.json, with: ["stderr"] }]\n  code: []\n  shared: []\n`), /extension/u);
+  assert.throws(() => gates(`watch:\n  tests: [{ named-by: tests.json, with: [".stderr"] }]\n  code: []\n  shared: []\n`));
 });
 
 test("a rule the watch names must be watched, and a port must carry rule-prefix", () => {

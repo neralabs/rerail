@@ -2,8 +2,10 @@
  * The upstream source files the nightly report (scripts/upstream/watch.ts) reads to find a ported rule's code and the
  * tests upstream adds for it, where no path convention says: Ruff's rule registry (`codes.rs`, `registry.rs`) and test
  * lists (`#[test_case(Rule::X, Path::new("…"))]` in a plugin's `mod.rs`), and Clippy's lint index
- * (`clippy_lints/src/declared_lints.rs`) and test annotations (`//~ <lint>`). Text only; nothing upstream is built or run.
+ * (`clippy_lints/src/declared_lints.rs`) and test annotations (`//~ <lint>`), and the files a PHPStan test names. Text
+ * only; nothing upstream is built or run.
  */
+import { posix } from "node:path";
 
 /** Ruff's rule registry. */
 export const RUFF_CODES = "crates/ruff_linter/src/codes.rs";
@@ -76,4 +78,19 @@ export function clippyAnnotatedLints(text: string): Set<string> {
   const lints = new Set<string>();
   for (const match of text.matchAll(/\/\/~[\^v|]*\s*(?:(?:ERROR|WARN(?:ING)?|NOTE|HELP)\b:?\s*)?(?:clippy::)?([a-z][a-z0-9_]*)/gu)) lints.add(match[1]!);
   return lints;
+}
+
+/**
+ * The files a PHPStan-style test names as `__DIR__ . '<relative path>'` (the files its `$this->analyse([…])` calls
+ * analyse, as packs/php/upstream/phpstan/read_tests.php reads them), resolved against `test`'s directory, byte-sorted.
+ * A path that climbs out of the repository is left out.
+ */
+export function phpNamedFiles(test: string, text: string): string[] {
+  const directory = posix.dirname(test);
+  const named = new Set<string>();
+  for (const match of text.matchAll(/__DIR__\s*\.\s*(['"])([^'"\\$]+)\1/gu)) {
+    const path = posix.normalize(posix.join(directory, match[2]!));
+    if (!path.startsWith("../") && path !== "..") named.add(path);
+  }
+  return [...named].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
 }

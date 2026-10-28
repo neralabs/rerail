@@ -151,7 +151,7 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   watch:
     rule-prefix: "unicorn/"          # optional: removed from upstream.rule to give {rule}
     extra-rules: [NoArgumentsValidator]  # optional: rules the generator reads that conformance.json does not port
-    tests: ["test/{rule}.js"]        # the tests the generator reads; or { file: fixtures.json }
+    tests: ["test/{rule}.js"]        # the tests the generator reads; or { file: fixtures.json [, with: [".stderr"]] } or { named-by: fixtures.json }
     code: ["rules/{rule}.js"]        # each ported rule's code; or { index: clippy-declared-lints | ruff-codes }
     shared: ["rules/utils/**"]       # code every ported rule depends on; no {rule}
     new-tests: ["tests/{rule}/**"]   # optional: where upstream adds tests for a ported rule that the generator does not read
@@ -161,11 +161,18 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 
   `{ file: fixtures.json }` watches the paths a data file beside the generator lists for each rule
   (`{ "rules": { "<rule>": ["<upstream path>", …] } }`), for a generator that keeps its tests in a list rather than
-  by convention. `{ index: … }` names the upstream file the report reads to find each rule's code
+  by convention; `with: [".stderr"]` also watches each listed path with its extension replaced by each one given (a
+  Clippy test's expected output, `tests/ui/x.rs` → `tests/ui/x.stderr`), so a change there is a test change.
+  `{ named-by: fixtures.json }` takes that data file's paths as PHPStan-style tests and watches exactly the files each
+  names as `__DIR__ . '<relative path>'` (its `$this->analyse([…])` files): the report reads the tests at both commits
+  and watches the files either names, for the test's rules; the tests themselves are watched only where another entry
+  lists them. `{ index: … }` names the upstream file the report reads to find each rule's code
   (`clippy_lints/src/declared_lints.rs`, `crates/ruff_linter/src/codes.rs`). `expandWatch` in
   `conformance/languages/watch.ts` resolves the block. A `new-tests` glob may cover tests the generator reads too; a
   file counts as a new test only when `tests` does not cover it. `test/scripts/upstream/watch-coverage.test.ts` checks
-  that `tests` covers every upstream file the tool-pack's pulled `provenance.json` records as read.
+  that `tests` covers every upstream file the tool-pack's pulled `provenance.json` records as read; which files a
+  `named-by` test names is upstream's text, which it does not read, so it counts any file under that test's top
+  directory (`tests/`) as covered.
 - `upstream/<tool>/test-data.lock`, `samples.lock` and `SAMPLES.md`: the pins of the tool-pack's pack data
   ([Pack data](#pack-data)).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,

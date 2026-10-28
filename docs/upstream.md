@@ -319,10 +319,15 @@ The job summary (or `--summary`, and `--json` for the same as data) has one row 
 - **Status**: up to date, behind with nothing relevant changed (how many releases; shared code alone counts as nothing
   relevant), changed, or an error (a tool-pack it could not read; the others are still reported).
 - **Gap**: from the pin to the latest release, a breaking one flagged.
-- **Tests**: the changed test files the generator reads. For the ESLint family, the RuleTester cases added, removed
-  and changed; for the other tools a changed file counts as changed fixtures.
-- **Rule code**: the ported rules whose code changed. psalm, phpstan and bladestan have no per-rule file, so they
-  report shared code only.
+- **Pins**: ⚠️ with a count when the tool-pack's pins disagree (gates.yaml's `upstream.version` and the release its
+  runtime installs, or for Clippy the Rust toolchain's pins; the release check below), each listed in the details.
+  The tool-pack is compared all the same, from gates.yaml's pinned commit.
+- **Tests**: the changed test files the generator reads, a Clippy test's expected `.stderr` included. For the ESLint
+  family, the RuleTester cases added, removed and changed; for the other tools a changed file counts as changed
+  fixtures. For phpstan these are exactly the files its tests name, read from the tests at both commits.
+- **Rule code**: the ported rules whose code changed. psalm's is each issue's class and the analyzers that raise it,
+  phpstan's each identifier's rule class; bladestan's rules are phpstan's, in another repository, so it reports shared
+  code only.
 - **Shared**: shared code that changed, a weaker signal than the two above: it is listed, but on its own it leaves the
   status at "behind, nothing relevant changed".
 - **New tests not read**: tests upstream added for a ported rule that the generator does not read (a ruff

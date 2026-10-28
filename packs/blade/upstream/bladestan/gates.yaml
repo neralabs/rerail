@@ -73,6 +73,7 @@ watch:
   tests:
     - "tests/Rules/**"
     - "tests/skeleton/**"
+  # No rule code here: the ported identifiers' rules are phpstan/phpstan-src's, which packs/php/upstream/phpstan watches.
   code: []
   shared:
     - "composer.json"

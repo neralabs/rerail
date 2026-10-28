@@ -124,12 +124,12 @@ rules:
     deprecated: null
     recommended: { config: "default", options: [] }
 # What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
-# "watch"). The generator reads fixtures.json's tests, the auxiliary crates they build and the clippy.toml files; each
-# lint's code file is found through clippy_lints/src/declared_lints.rs. A new test file annotating a ported lint
-# shows up under tests/ui or tests/ui-toml.
+# "watch"). The generator reads fixtures.json's tests with each one's expected output (`.stderr`), the auxiliary crates
+# they build and the clippy.toml files; each lint's code file is found through clippy_lints/src/declared_lints.rs. A new
+# test file annotating a ported lint shows up under tests/ui or tests/ui-toml.
 watch:
   tests:
-    - { file: "fixtures.json" }
+    - { file: "fixtures.json", with: [".stderr"] }
     - "tests/clippy.toml"
     - "tests/ui-toml/*/clippy.toml"
     - "tests/ui/auxiliary/**"
