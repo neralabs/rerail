@@ -27,6 +27,8 @@ mod phase_clock;
 mod php_literal;
 mod php_view;
 mod placement;
+#[allow(dead_code)]
+mod producers;
 // Published from the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 pub(crate) mod prefilter;

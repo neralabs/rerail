@@ -15,9 +15,15 @@ use rusqlite::types::Value;
 use std::collections::{BTreeSet, HashMap};
 #[path = "access.rs"]
 mod access;
+#[path = "decode.rs"]
+#[allow(dead_code)]
+mod decode;
+use decode::Property;
 #[path = "lower/render.rs"]
 mod render;
 use render::Definitions;
+#[allow(dead_code)]
+mod children;
 pub(super) mod lifetime;
 pub(super) mod ownership;
 mod waves;
@@ -107,9 +113,13 @@ struct Lower {
     limit: usize,
     indexed: BTreeSet<String>,
     reuse: Reuse,
+    decoding: HashMap<String, decode::Demand>,
     predicates: HashMap<String, (String, String)>,
     /// Plan inputs read before lowering (`stats::inputs`); empty statistics keep pattern order.
     statistics: Statistics,
+    producers: crate::code_rule_dsl::producers::Registry<u32>,
+    consumer: usize,
+    producer_bindings: HashMap<Property, usize>,
 }
 
 /// SQL set identities, independent of the matcher's conservative exactness metadata.
@@ -124,6 +134,7 @@ struct Reuse {
     integers: HashMap<i64, usize>,
     values: HashMap<(String, bool, Option<BTreeSet<u16>>), Set>,
     terms: HashMap<(String, bool), String>,
+    decoded: HashMap<(String, usize), String>,
     kinds: HashMap<String, BTreeSet<u16>>,
 }
 
@@ -138,8 +149,12 @@ impl Lower {
             limit: 256,
             indexed: BTreeSet::new(),
             reuse: Reuse::default(),
+            decoding: HashMap::new(),
             predicates: HashMap::new(),
             statistics: Statistics::default(),
+            producers: Default::default(),
+            consumer: 0,
+            producer_bindings: HashMap::new(),
         }
     }
     fn parameter(&mut self, value: impl Into<Value>) -> String {
