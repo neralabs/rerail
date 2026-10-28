@@ -2,12 +2,13 @@ name: Upstream bump (publish)
 
 # Publishes what an upstream-bump.yml run produced (docs/upstream.md, "Bump pull requests"): each of its legs'
 # patches is checked on its own, the verified ones are composed into one commit per tool-pack on main's head, and the
-# commits are proposed as one pull request, which carries each stale tool-pack's derived data in its publish/ directory;
-# then pack-data-publish.yml is dispatched for that pull request with replace, the one path pack data reaches S3 by:
-# its prep packs and summarises the data, a code owner approves the upload, and its finish commits the locks and
-# removes publish/. A maintainer reviews and merges the pull request like any other; nothing merges itself. Then the
-# run's work branch auto/bump-run/upstream is deleted. A run whose legs all failed, changed nothing, or that main's head
-# has moved past, publishes nothing, and its work branch is deleted all the same.
+# commits are proposed as one pull request, which carries each stale tool-pack's derived data in its publish/ directory.
+# A maintainer then runs pack-data-publish.yml for that pull request with replace, the one path pack data reaches S3
+# by, as for any pull request with data to publish: its prep packs and summarises the data, a code owner approves the
+# upload, and its finish commits the locks and removes publish/. A maintainer reviews and merges the pull request like
+# any other; nothing merges itself. Then the run's work branch auto/bump-run/upstream is deleted. A run whose legs all
+# failed, changed nothing, or that main's head has moved past, publishes nothing, and its work branch is deleted all
+# the same.
 #
 # A workflow_run run is main's: main's workflow file and checkout, in main's cache scope. The bump run's artifacts are
 # the output of upstream code at an unreviewed release, so they are data here, never code: no job runs a file from
@@ -32,7 +33,7 @@ permissions:
 jobs:
   # Checks the bump run before any of its artifacts is read, with a read-only token alone (GitHub's API and fetching the
   # bump's commit): the run is a dispatch on the work branch, started at most 24 hours ago, at a commit of main whose
-  # code main's head has not changed since. The nightly dispatches the bump at main's head, and main may move on while
+  # code main's head has not changed since. The bump start dispatches the bump at main's head, and main may move on while
   # it runs. A run whose leg failed ends in failure and is still published: its other legs stand alone. Its outputs are
   # main's head, the legs that produced an artifact (the verify matrix) and every leg the run had, with how it ended
   # (for the pull request's summary).
@@ -58,7 +59,7 @@ jobs:
       # names the run).
       resnapshot: ${{ steps.main.outputs.resnapshot }}
     steps:
-      # Anyone who can push could put an edited bump workflow on an auto/bump-run/ branch and dispatch it. The nightly
+      # Anyone who can push could put an edited bump workflow on an auto/bump-run/ branch and dispatch it. The bump start
       # points the work branch at main's head and dispatches the bump there, so the run published here must be at a
       # commit of main: then the code that made the artifacts is main's reviewed code (the upstream code it ran is still
       # untrusted, and checked below as data). Main may have moved on since; the code step checks what moved.
@@ -80,7 +81,7 @@ jobs:
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the bump run's commit $HEAD_SHA is not a commit id"; exit 1; }
           started="$(date -u -d "$STARTED" +%s)" || { echo "::error::the bump run's start time '$STARTED' is not a time"; exit 1; }
           if [ $(( $(date -u +%s) - started )) -gt 86400 ]; then
-            echo "::error::the bump run started at $STARTED, more than 24 hours ago: only a recent bump is published. The next nightly bumps again from main's head."
+            echo "::error::the bump run started at $STARTED, more than 24 hours ago: only a recent bump is published. Start the bump again from main's head (upstream-bump-start.yml)."
             exit 1
           fi
           main="$(gh api "repos/$REPO/branches/main" --jq .commit.sha)"
@@ -90,7 +91,7 @@ jobs:
           case "$status" in
             identical | ahead) ;;
             *)
-              echo "::error::the bump ran $HEAD_SHA, which is not a commit of main: main's head $main compares to it as '$status'. Only a bump the nightly dispatched at main's head is published."
+              echo "::error::the bump ran $HEAD_SHA, which is not a commit of main: main's head $main compares to it as '$status'. Only a bump started at main's head (upstream-bump-start.yml) is published."
               exit 1
               ;;
           esac
@@ -126,7 +127,7 @@ jobs:
       #   the reference tools a pack pins by hand (fixtures/<pack>/tools.mjs, fixtures/<pack>/common.py), which the bump
       #   moves and the vue and sql recipes install, and conformance manifests.
       # The build (npm run build:js) writes only dist/, which none of these read. When any of them moved, the whole run
-      # is skipped, not failed: the next nightly bumps again from main's head.
+      # is skipped, not failed: start the bump again from main's head (upstream-bump-start.yml).
       - id: code
         name: Check main's head runs the bump's code
         env:
@@ -158,7 +159,7 @@ jobs:
             )
             changed="$(git diff --name-only --no-renames "$HEAD_SHA" "$BASE" -- "${code[@]}")"
             if [ -n "$changed" ]; then
-              echo "::notice::main moved from the bump's $HEAD_SHA to $BASE and changed code the bump ran, so its patches and derived data may not be what main's head makes; the next nightly bumps again from main's head"
+              echo "::notice::main moved from the bump's $HEAD_SHA to $BASE and changed code the bump ran, so its patches and derived data may not be what main's head makes; start the bump again from main's head (upstream-bump-start.yml)"
               echo "changed since the bump's commit ($(wc -l <<< "$changed") file(s), the first 50):"
               head -n 50 <<< "$changed"
               exit 0
@@ -293,8 +294,8 @@ jobs:
           fi
 
       # Applied into a separate index (the checkout stays main's head for the trusted bump below), confined as the
-      # compose and pull-request jobs confine it. A patch that no longer applies to main's head is left out: the
-      # next nightly bumps again from there.
+      # compose and pull-request jobs confine it. A patch that no longer applies to main's head is left out: start its
+      # bump again from there (upstream-bump-start.yml).
       - id: patch
         name: Apply the patch to main's head
         if: steps.bump.outputs.status == ''
@@ -305,7 +306,7 @@ jobs:
           # --whitespace=nowarn: git apply would otherwise echo the patch's lines into the log, where a line could be a
           # workflow command.
           if ! git apply --cached --binary --whitespace=nowarn "$RUNNER_TEMP/bump/bump.patch"; then
-            echo "::notice::the bump's patch does not apply to main's head; the next nightly bumps again from there"
+            echo "::notice::the bump's patch does not apply to main's head; start its bump again from there (upstream-bump-start.yml)"
             echo "status=not-applying" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -664,9 +665,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # The whole pull request body, before anything is pushed:
-      # - for a bump, a marker per composed bump, `<!-- bump: <pack>/<tool>@<version> -->`, first: closing the pull
-      #   request without merging it keeps the nightly from starting exactly these again (upstream-releases.yml,
-      #   bump-dispatch); a re-snapshot carries none;
       # - what this workflow checked: the summary of every leg (tool-pack, release, breaking or not, bumped or why not),
       #   then per commit the pins, the data staged in publish/, the gates.yaml `rules:` facts to review and how to
       #   regenerate, then how the data publishes and what checks it;
@@ -714,14 +712,6 @@ jobs:
             local each=$(( $1 / count ))
             echo $(( each > $2 ? each : $2 ))
           }
-
-          : > "$parts/markers.md"
-          if [ "$RESNAPSHOT" != "true" ]; then
-            for entry in "${included[@]}"; do
-              IFS=$'\t' read -r pack tool version _ <<< "$entry"
-              echo "<!-- bump: $pack/$tool@$version -->"
-            done > "$parts/markers.md"
-          fi
 
           {
             if [ "$RESNAPSHOT" = "true" ]; then
@@ -880,21 +870,21 @@ jobs:
           {
             echo "## Publishing, and what checks the test data"
             echo
-            echo "This run dispatched the [publish workflow]($PUBLISH_URL) for this pull request with replace. Its prep packs each \`publish/\` from this branch's blobs with main's code, checks every file's licence and summarises what changed against the locked archive; a code owner reads that summary and approves the \`test-data-upload\` deployment; its finish then commits the new \`test-data.lock\` files and removes \`publish/\`. Until then this pull request cannot merge. If that run fails or is rejected, the sticky comment on this pull request says how to run it again."
+            echo "Publish this pull request's data by hand: run the [publish workflow]($PUBLISH_URL) on \`main\` for this pull request with **replace** on (\`gh workflow run pack-data-publish.yml -f pr=<this pull request's number> -f replace=true\`; the sticky comment below gives it with the number). Its prep packs each \`publish/\` from this branch's blobs with main's code, checks every file's licence and summarises what changed against the locked archive; a code owner reads that summary and approves the \`test-data-upload\` deployment; its finish then commits the new \`test-data.lock\` files and removes \`publish/\`. Until then this pull request cannot merge. Run it again after any push that changes \`publish/\`."
             echo
             echo "This pull request's own CI judges the data, not the bump run's reports below: the conformance check scores every rule on the derived test data."
             echo
             echo "---"
             if [ "$RESNAPSHOT" = "true" ]; then
-              echo "Made by an [upstream re-snapshot run]($BUMP_URL), checked and opened by [its publish run]($RUN_URL); nothing merges it."
+              echo "Made by an [upstream re-snapshot run]($BUMP_URL), checked and opened by [its publish run]($RUN_URL); nothing merges it. The next re-snapshot started by hand replaces this pull request's commits with its own."
             else
-              echo "Made by an [upstream bump run]($BUMP_URL), checked and opened by [its publish run]($RUN_URL); the nightly updates this pull request while these releases are the latest, and never merges it. Closing it without merging keeps the nightly from proposing these releases again."
+              echo "Made by an [upstream bump run]($BUMP_URL), checked and opened by [its publish run]($RUN_URL); nothing merges it. The next bump started by hand replaces this pull request's commits with its own."
             fi
             echo
           } > "$parts/checks.md"
 
           trusted="$parts/trusted.md"
-          cat "$parts/markers.md" "$parts/summary.md" "$parts/commits.md" "$parts/checks.md" > "$trusted"
+          cat "$parts/summary.md" "$parts/commits.md" "$parts/checks.md" > "$trusted"
 
           # Each composed leg's report, sharing what room is left; none when too little is.
           room=$((60000 - $(wc -c < "$trusted") - 600 * count))
@@ -953,16 +943,16 @@ jobs:
           overwrite: true
 
   # Commits the composed bumps on their branch (auto/bump-upstream, or auto/resnapshot-upstream for a re-snapshot), one
-  # commit per tool-pack from the commit of main the run job checked, opens or updates the pull request with the
-  # neralabs-ci app's token (a pull request opened with GITHUB_TOKEN would run no CI) and the body the compose job built,
-  # then dispatches pack-data-publish.yml for it with replace (the token's actions: write), the one path its publish/
-  # data reaches S3 by. It runs on a fresh runner, takes only the trees the compose job named, confined to the packs and
-  # the runtimes, and never merges: a maintainer reviews the pin diffs, the data, the upstream facts and the prose the
-  # bumps left naming the old releases, reads the pull request's own conformance report, and approves it like any pull
-  # request. Idempotent: a branch that already holds exactly these commits on that same commit of main, with or
-  # without the publish's commit on top, is not pushed or published again; a branch whose tip someone else pushed is
-  # left alone; and a bump a maintainer closed without merging is not proposed again. Only the app's own
-  # same-repository pull requests count.
+  # commit per tool-pack from the commit of main the run job checked, and opens or updates the pull request with the
+  # neralabs-ci app's token (a pull request opened with GITHUB_TOKEN would run no CI) and the body the compose job built.
+  # It publishes nothing: a maintainer runs pack-data-publish.yml for the pull request with replace, the one path its
+  # publish/ data reaches S3 by, as the pull request's body and its sticky comment (pack-data-publish-request.yml) say,
+  # so the app needs no Actions permission. It runs on a fresh runner, takes only the trees the compose job named,
+  # confined to the packs and the runtimes, and never merges: a maintainer reviews the pin diffs, the data, the upstream
+  # facts and the prose the bumps left naming the old releases, reads the pull request's own conformance report, and
+  # approves it like any pull request. Idempotent: a branch that already holds exactly these commits on that same commit
+  # of main, with or without the publish's commit on top, is not pushed again, and a branch whose tip someone else
+  # pushed is left alone. Only the app's own same-repository pull requests count.
   pull-request:
     name: Bump pull request
     needs: [run, compose]
@@ -987,7 +977,6 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-          permission-actions: write
 
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -1011,34 +1000,6 @@ jobs:
           if [ "$RESNAPSHOT" = "true" ]; then branch="auto/resnapshot-upstream"; else branch="auto/bump-upstream"; fi
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
           count="$(jq length <<< "$COMMITS")"
-          mapfile -t entries < <(jq -r '.[] | "\(.pack)/\(.tool)@\(.version)"' <<< "$COMMITS")
-
-          # The app's own pull requests from this repository's branch, in a state: anyone can open one from a fork's
-          # branch of the same name, or push to this one and open it themselves.
-          app_pulls() {
-            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?head=$GITHUB_REPOSITORY_OWNER:$branch&state=$1&per_page=100" \
-              | jq -s -c --arg repo "$GITHUB_REPOSITORY" --arg login "${APP_SLUG}[bot]" \
-                '[(add // [])[] | select(.head.repo.full_name == $repo and .user.type == "Bot" and .user.login == $login)]'
-          }
-
-          # A maintainer closed a pull request carrying one of these bumps without merging it, after the nightly that
-          # started them looked (upstream-releases.yml, bump-dispatch): the bumps it carried are the markers its body
-          # starts with. The next nightly leaves them out. A re-snapshot was asked for by hand, and carries no marker.
-          closed=()
-          [ "$RESNAPSHOT" = "true" ] || mapfile -t closed < <(app_pulls closed | jq -r '
-            .[] | select(.merged_at == null) | (.body // "") | split("\n") | map(rtrimstr("\r")) as $lines
-            | ([$lines | to_entries[] | select(.value | test("^<!-- bump: [a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]* -->$") | not) | .key][0] // ($lines | length)) as $end
-            | $lines[0:$end][] | capture("^<!-- bump: (?<entry>[^ ]+) -->$").entry
-          ')
-          for entry in "${entries[@]}"; do
-            for gone in "${closed[@]}"; do
-              if [ "$entry" = "$gone" ]; then
-                echo "::notice::a bump pull request carrying $entry was closed without merging; not proposing it again"
-                echo "skip=true" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-            done
-          done
 
           # The compose job's commits, one per tool-pack on main's head, each making the tree it named.
           git fetch --quiet --no-tags "$RUNNER_TEMP/composed/composed.bundle" "refs/heads/composed:refs/composed"
@@ -1098,7 +1059,7 @@ jobs:
 
           # The branch already holds these bumps only if its last $count commits are the app's, on the same commit of
           # main, with the same messages and trees, under at most the publish's own commit (pack-data-publish.yml's
-          # finish, the app's too: `chore(pack-data): publish ...`): then nothing is pushed or published again. An author
+          # finish, the app's too: `chore(pack-data): publish ...`): then nothing is pushed again. An author
           # email is easily forged, so a commit under it beneath them, or commits on another base, are replaced, not
           # adopted. A tip the app did not commit is left alone.
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
@@ -1115,17 +1076,17 @@ jobs:
             if [ "$(git rev-parse --verify --quiet "$bumps~$count" || true)" = "$BASE" ] \
               && [ "$(git log --format='%ae %ce' -n "$count" "$bumps" | sort -u)" = "$email $email" ] \
               && [ "$(git log --format='%T %B' -n "$count" "$bumps")" = "$(git log --format='%T %B' -n "$count" "$head")" ]; then
-              echo "$branch already makes these bumps on $BASE; not publishing them again"
+              echo "$branch already makes these bumps on $BASE; not pushing them again"
               exit 0
             fi
             lease="$(git rev-parse "origin/$branch")"
           fi
           git "${git_auth[@]}" push --force-with-lease="refs/heads/$branch:$lease" origin "$head:refs/heads/$branch"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      # The body the compose job built and checked before anything was pushed.
-      - id: pull
-        name: Open or update the pull request
+      # The body the compose job built and checked before anything was pushed. The job summary says how to publish the
+      # pull request's data: by hand, as for any pull request (pack-data-publish.yml, with replace: each tool-pack's
+      # archive becomes exactly its derived set).
+      - name: Open or update the pull request
         if: steps.commit.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -1149,24 +1110,17 @@ jobs:
             number="$(open_pull)"
           fi
           [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::no open pull request of the app's on $BRANCH"; exit 1; }
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-
-      # The one upload path: the publish workflow, on main, packs this pull request's publish/ (replace: each
-      # tool-pack's archive becomes exactly its derived set), and a code owner approves its upload. Only after a push:
-      # a branch that already held these bumps had its publish dispatched by the run that pushed them.
-      - name: Dispatch the publish
-        if: steps.commit.outputs.pushed == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR: ${{ steps.pull.outputs.number }}
-        run: |
-          set -euo pipefail
-          gh workflow run pack-data-publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f pr="$PR" -f replace=true
-          echo "dispatched pack-data-publish.yml for #$PR with replace"
+          {
+            echo "Opened or updated #$number from \`$BRANCH\`. Publish its data with replace, after reading its diff:"
+            echo
+            echo '```sh'
+            echo "gh workflow run pack-data-publish.yml --repo $GITHUB_REPOSITORY --ref main -f pr=$number -f replace=true"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # The work branch has served its run: after the pull request job, or straight after the compose job (or the run job)
   # when there is nothing to publish: every leg failed or changed nothing, nothing composed, or main's head moved past
-  # the run. It is deleted only while it still names the run's commit, so a branch the next nightly already pointed
+  # the run. It is deleted only while it still names the run's commit, so a branch a later bump start already pointed
   # elsewhere for a newer run stays; already gone is fine. No checkout, nothing from the artifacts.
   work-branch:
     name: Delete the work branch

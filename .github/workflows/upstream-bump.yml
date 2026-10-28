@@ -1,19 +1,19 @@
 name: Upstream bump
 
-# The producer of the night's bump pull request (docs/upstream.md, "Bump pull requests"). The nightly
-# (upstream-releases.yml) lists the tool-packs behind their upstream's latest stable release, points the work branch
-# auto/bump-run/upstream at main's commit and dispatches this workflow on it once, with that list. Here each listed
-# tool-pack's pins move to its release (upstream:bump) in a leg of its own, and every tool-pack the bump made stale is
-# derived again on Linux and staged whole into its publish/ directory (fixtures:stage --all); each leg's result is one
-# artifact, `bump-<pack>--<tool>`: the patch (the pins and the staged data) and the bump's summary and JSON.
+# The producer of a bump pull request (docs/upstream.md, "Bump pull requests"). A maintainer starts it by hand with
+# upstream-bump-start.yml, which resolves the tool-packs they name to their upstream's latest stable release, points the
+# work branch auto/bump-run/upstream at main's commit and dispatches this workflow on it once, with that list. Here each
+# listed tool-pack's pins move to its release (upstream:bump) in a leg of its own, and every tool-pack the bump made
+# stale is derived again on Linux and staged whole into its publish/ directory (fixtures:stage --all); each leg's result
+# is one artifact, `bump-<pack>--<tool>`: the patch (the pins and the staged data) and the bump's summary and JSON.
 # upstream-bump-publish.yml then checks each artifact on main, running the pin edits again with main's code and
 # admitting only the files deriving and staging write beside them, composes the verified patches into one commit per
-# tool-pack, opens one pull request and dispatches pack-data-publish.yml for it with replace, whose upload a code owner
-# approves after reading its summary; nothing merges itself.
+# tool-pack and opens one pull request; a maintainer then runs pack-data-publish.yml for it with replace, whose upload
+# a code owner approves after reading its summary; nothing merges itself.
 #
 # With `resnapshot`, the listed tool-packs are derived again at the release they already pin (each `version` must be
 # it): a generator or recipe change, a runtime pin's, or data only Linux makes, through the same pull request and
-# publish. A maintainer starts one by pointing auto/bump-run/upstream at main's head and dispatching this workflow there.
+# publish. upstream-bump-start.yml starts one too, with its `resnapshot` input.
 #
 # The generators run upstream's code at a release nobody has reviewed, with unlocked transitive packages and Composer.
 # So this runs on the work branch, never main: whatever that code does with the run's cache token lands in the work
