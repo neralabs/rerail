@@ -9,6 +9,8 @@ use std::{
     ffi::{CStr, CString, c_int},
 };
 pub(crate) mod cache;
+#[allow(dead_code)]
+pub(crate) mod inference;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Column {
