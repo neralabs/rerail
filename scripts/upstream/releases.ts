@@ -291,7 +291,8 @@ export const BREAKING_GAPS: Record<ReleaseGap, boolean> = { current: false, patc
 
 /**
  * Whether an ecosystem's pins follow upstream's major.minor only. Clippy's version is 0.1.<minor> for every Rust
- * 1.<minor>.<patch>, so a Rust patch release ships no Clippy to port: it is not behind, and the nightly does not bump it.
+ * 1.<minor>.<patch>, so a Rust patch release ships no Clippy to port: it is not behind, and the bump start's `all`
+ * leaves it.
  */
 const FOLLOWS_MINOR: Record<Ecosystem, boolean> = { npm: false, pypi: false, packagist: false, rust: true };
 

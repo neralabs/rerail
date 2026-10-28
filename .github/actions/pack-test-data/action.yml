@@ -6,7 +6,7 @@ description: >-
   laid over it (`fixtures:pull`), and the real-code samples archive its samples.lock names, when it has one, verified
   and extracted under .rerail/pack-data/samples/. The archives come from the Actions cache, keyed by the locks, and
   reach it from s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here:
-  a pin change reaches CI only as the archives and locks the nightly producer's pull request commits. Use it right after
+  a pin change reaches CI only as the archives and locks the upstream bump's pull request commits. Use it right after
   `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of job. The fetching job
   (`fetch: "true"`) only fills the cache: it looks the key up without restoring it and, on a miss, pulls the archives
   from S3 and saves them; it needs `id-token: write` and `contents: read` (a reusable workflow's caller must grant

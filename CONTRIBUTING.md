@@ -487,7 +487,7 @@ bump, until the generators write per-repository provenance
 
 When the pause lifts, derived data changes again through a pull request that changes the pins, a generator or a
 recipe, derived by a maintainer ([docs/upstream.md, "Take a new snapshot"](docs/upstream.md#take-a-new-snapshot)) or
-by the nightly bump ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)), and published
+by a bump a maintainer starts ([docs/upstream.md, "Start a bump"](docs/upstream.md#start-a-bump)), and published
 like any other pack data.
 
 ### Merging (maintainers)
@@ -504,7 +504,9 @@ first: its pack data is reviewed like its code ([REVIEW.md](REVIEW.md#what-block
 
    Leave `replace` off to lay `publish/` over the locked archive (the files the pull request's `UPSTREAM.md` stopped
    listing are dropped). Turn it on when the pull request stages a whole set with `--all`, to remove files or
-   regenerate the set.
+   regenerate the set. An upstream bump or re-snapshot pull request (`auto/bump-upstream`, `auto/resnapshot-upstream`)
+   stages whole sets, so it publishes with `replace`, and only this way
+   ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)).
 2. If prep fails, nothing is asked of the approver: its log says what it refused. Fix the pull request and dispatch
    again.
 3. A code owner approves the `test-data-upload` deployment
@@ -528,8 +530,9 @@ whose archive S3 lacks; new data goes through the publish workflow
 
 While derive is paused, no bump pull requests are opened and `fixtures:derive` refuses. Once it lifts, a maintainer
 derives a pull request's data again in a sandbox without credentials
-([docs/upstream.md, "Derive in a sandbox"](docs/upstream.md#derive-in-a-sandbox)), and reviews and merges the nightly
-bump pull requests ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)).
+([docs/upstream.md, "Derive in a sandbox"](docs/upstream.md#derive-in-a-sandbox)), starts the upstream bumps worth
+making after reading the nightly report, and reviews, publishes and merges their pull requests
+([docs/upstream.md, "Start a bump"](docs/upstream.md#start-a-bump)).
 
 ### Approving a data upload (code owners)
 
