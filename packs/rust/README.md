@@ -61,10 +61,6 @@ under `upstream/clippy/publish/`. The recipe (`scripts/pack-data/recipes/rust.ts
 against Clippy 0.1.99 and Rust 1.99.0 (installed with `rustup`) over the fixtures. The probes Rerail wrote
 (`fixtures/rerail/`) are authored: a change to them is staged into `publish/` with the derived data.
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack rust
 npm run fixtures:stage -- --pack rust    # copy what changed into upstream/clippy/publish/

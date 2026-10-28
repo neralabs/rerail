@@ -19,8 +19,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `pack-data/`: the derivation of the packs' derived test data from their pins (`derive.ts`, `npm run fixtures:derive`),
   with one recipe per pack in `recipes/`, the runtimes it installs (`runtimes/`, `runtimes.ts`), the ESLint
   expected-findings helper the ESLint-based generators share (`eslint-expected.mjs`) and the renamer that writes the
-  ECMA rename variants (`rename/`); a maintainer's sandbox and the bump workflow run it, never pull request CI. Derive
-  and bumps are paused for now (`paused.ts`; docs/upstream.md, "Derive and bumps are paused").
+  ECMA rename variants (`rename/`), and the writer of each tool's `provenance.json` and `LICENSES.md` the generators
+  call last (`provenance.mjs`); a maintainer's sandbox and the bump workflow run it, never pull request CI.
 - `release/`: the release. The Release pull request (`.github/workflows/release-pr.yml`): every package's version,
   core's when what it ships changed, and core's tag on merge. The rule packs' release
   (`.github/workflows/release-packs.yml`): which packs to publish, the publish gate and packing, publishing under

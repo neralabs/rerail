@@ -20,6 +20,9 @@
 // parse is left out. Each kept file is one analysis unit. `source.units` names each file's origin, the rule whose test
 // file it came from; each such file also gets a rename variant under <tool>/fixtures/renamed/
 // (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted like any file and marked `renamedFrom` it.
+// <tool>/provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`) record each kept file as
+// extracted from its rule's test file (packages/eslint-plugin/tests/rules/…), each rename variant as renamed from its
+// original, and fixtures.expected.json as Rerail's.
 //
 // Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
 import { execFileSync } from "node:child_process";
@@ -28,6 +31,7 @@ import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isVariantPath, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
 import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -320,7 +324,8 @@ async function recordFixtures(tool) {
     count.unparsed = (count.unparsed ?? 0) + 1;
   }
   const kept = files.filter(file => !unparsedSet.has(file));
-  const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
+  const recorded = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
+  const { files: units, units: origin, findings } = recorded;
   const source = CHECKOUTS[tool];
   writeJson(join(HERE, tool, "fixtures.expected.json"), {
     tool,
@@ -328,6 +333,10 @@ async function recordFixtures(tool) {
     source: { kind: "fixtures", origin: `${source.repository}@${source.commit}`, rules: RULES.get(tool), files: units, units: origin },
     findings,
   });
+  // Each kept file is extracted from its rule's test file (`<rule>/<n>.<ext>`); its variant is renamed from it.
+  const fromOf = file => relative(options[tool], testFile(tool, `${PLUGIN_PREFIX}${file.split("/")[0]}`)).split(sep).join("/");
+  const extracted = new Map(kept.map(file => [`fixtures/${file}`, { source: tool, from: fromOf(file), how: "extracted" }]));
+  writeProvenance({ pack: PACK.pack, tool, entries: new Map([...extracted, ...variantEntries(extracted, recorded)]), commits: { [tool]: source.commit } });
   console.log(`${tool} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }

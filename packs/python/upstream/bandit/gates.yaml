@@ -262,3 +262,90 @@ rules:
   "B704":
     deprecated: null
     recommended: { config: "default", options: [{"allowed_calls":[],"extend_markup_names":[]}] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads fixtures.json's examples/ files; a file added to examples/ may fire a ported test. Each
+# test's code is the plugin that declares its id (B3xx and B4xx: the blacklists).
+watch:
+  tests:
+    - { file: "fixtures.json" }
+  code: []
+  shared:
+    - "bandit/core/**"
+  new-tests:
+    - "examples/**"
+  rules:
+    "B101": { code: ["bandit/plugins/asserts.py"] }
+    "B102": { code: ["bandit/plugins/exec.py"] }
+    "B103": { code: ["bandit/plugins/general_bad_file_permissions.py"] }
+    "B104": { code: ["bandit/plugins/general_bind_all_interfaces.py"] }
+    "B105": { code: ["bandit/plugins/general_hardcoded_password.py"] }
+    "B106": { code: ["bandit/plugins/general_hardcoded_password.py"] }
+    "B107": { code: ["bandit/plugins/general_hardcoded_password.py"] }
+    "B108": { code: ["bandit/plugins/general_hardcoded_tmp.py"] }
+    "B110": { code: ["bandit/plugins/try_except_pass.py"] }
+    "B112": { code: ["bandit/plugins/try_except_continue.py"] }
+    "B113": { code: ["bandit/plugins/request_without_timeout.py"] }
+    "B201": { code: ["bandit/plugins/app_debug.py"] }
+    "B202": { code: ["bandit/plugins/tarfile_unsafe_members.py"] }
+    "B301": { code: ["bandit/blacklists/calls.py"] }
+    "B302": { code: ["bandit/blacklists/calls.py"] }
+    "B303": { code: ["bandit/blacklists/calls.py"] }
+    "B304": { code: ["bandit/blacklists/calls.py"] }
+    "B305": { code: ["bandit/blacklists/calls.py"] }
+    "B306": { code: ["bandit/blacklists/calls.py"] }
+    "B307": { code: ["bandit/blacklists/calls.py"] }
+    "B308": { code: ["bandit/blacklists/calls.py"] }
+    "B310": { code: ["bandit/blacklists/calls.py"] }
+    "B311": { code: ["bandit/blacklists/calls.py"] }
+    "B312": { code: ["bandit/blacklists/calls.py"] }
+    "B313": { code: ["bandit/blacklists/calls.py"] }
+    "B314": { code: ["bandit/blacklists/calls.py"] }
+    "B315": { code: ["bandit/blacklists/calls.py"] }
+    "B316": { code: ["bandit/blacklists/calls.py"] }
+    "B317": { code: ["bandit/blacklists/calls.py"] }
+    "B318": { code: ["bandit/blacklists/calls.py"] }
+    "B319": { code: ["bandit/blacklists/calls.py"] }
+    "B321": { code: ["bandit/blacklists/calls.py"] }
+    "B323": { code: ["bandit/blacklists/calls.py"] }
+    "B324": { code: ["bandit/plugins/hashlib_insecure_functions.py"] }
+    "B401": { code: ["bandit/blacklists/imports.py"] }
+    "B402": { code: ["bandit/blacklists/imports.py"] }
+    "B403": { code: ["bandit/blacklists/imports.py"] }
+    "B404": { code: ["bandit/blacklists/imports.py"] }
+    "B405": { code: ["bandit/blacklists/imports.py"] }
+    "B406": { code: ["bandit/blacklists/imports.py"] }
+    "B407": { code: ["bandit/blacklists/imports.py"] }
+    "B408": { code: ["bandit/blacklists/imports.py"] }
+    "B409": { code: ["bandit/blacklists/imports.py"] }
+    "B411": { code: ["bandit/blacklists/imports.py"] }
+    "B412": { code: ["bandit/blacklists/imports.py"] }
+    "B413": { code: ["bandit/blacklists/imports.py"] }
+    "B415": { code: ["bandit/blacklists/imports.py"] }
+    "B501": { code: ["bandit/plugins/crypto_request_no_cert_validation.py"] }
+    "B502": { code: ["bandit/plugins/insecure_ssl_tls.py"] }
+    "B503": { code: ["bandit/plugins/insecure_ssl_tls.py"] }
+    "B504": { code: ["bandit/plugins/insecure_ssl_tls.py"] }
+    "B505": { code: ["bandit/plugins/weak_cryptographic_key.py"] }
+    "B506": { code: ["bandit/plugins/yaml_load.py"] }
+    "B507": { code: ["bandit/plugins/ssh_no_host_key_verification.py"] }
+    "B508": { code: ["bandit/plugins/snmp_security_check.py"] }
+    "B509": { code: ["bandit/plugins/snmp_security_check.py"] }
+    "B601": { code: ["bandit/plugins/injection_paramiko.py"] }
+    "B602": { code: ["bandit/plugins/injection_shell.py"] }
+    "B603": { code: ["bandit/plugins/injection_shell.py"] }
+    "B604": { code: ["bandit/plugins/injection_shell.py"] }
+    "B605": { code: ["bandit/plugins/injection_shell.py"] }
+    "B606": { code: ["bandit/plugins/injection_shell.py"] }
+    "B607": { code: ["bandit/plugins/injection_shell.py"] }
+    "B608": { code: ["bandit/plugins/injection_sql.py"] }
+    "B609": { code: ["bandit/plugins/injection_wildcard.py"] }
+    "B610": { code: ["bandit/plugins/django_sql_injection.py"] }
+    "B611": { code: ["bandit/plugins/django_sql_injection.py"] }
+    "B612": { code: ["bandit/plugins/logging_config_insecure_listen.py"] }
+    "B613": { code: ["bandit/plugins/trojansource.py"] }
+    "B614": { code: ["bandit/plugins/pytorch_load.py"] }
+    "B615": { code: ["bandit/plugins/huggingface_unsafe_download.py"] }
+    "B701": { code: ["bandit/plugins/jinja2_templates.py"] }
+    "B702": { code: ["bandit/plugins/mako_templates.py"] }
+    "B703": { code: ["bandit/plugins/django_xss.py"] }
+    "B704": { code: ["bandit/plugins/markupsafe_markup_xss.py"] }

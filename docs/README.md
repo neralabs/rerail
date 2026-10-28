@@ -20,7 +20,7 @@
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
 - [pack-format.md](pack-format.md): the pack layout, its pack data and provenance records, and its validation contract
-- [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots (paused), the
+- [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots, the
   publish workflow, upstream releases and bumps, and CI
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
   request comment, divergences, and promoting a candidate

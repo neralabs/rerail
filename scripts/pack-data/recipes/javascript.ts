@@ -1,8 +1,8 @@
 /**
  * The javascript pack: ESLint core's and eslint-plugin-unicorn's answers on the cases of their own rule tests, recorded by
  * packs/javascript/upstream/generate.mjs (ESLint) and eslint-plugin-unicorn/generate.mjs. Each runs on the npm runtime
- * its gates.yaml names (scripts/pack-data/runtimes/eslint-10.11.0, runtimes/eslint-plugin-unicorn-76.0.0: the
- * versions the generator's VERSIONS/PINS check) and on upstream's repository at the gates.yaml commit, whose test files
+ * its gates.yaml names (under scripts/pack-data/runtimes/, at the versions the generator's VERSIONS/PINS check) and on
+ * upstream's repository at the gates.yaml commit, whose test files
  * it reads; both generators refuse any other version or commit.
  */
 import { join } from "node:path";

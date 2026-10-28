@@ -5,7 +5,7 @@ with PHP 8.5.11:
     python3 generate.py fixtures <PHP_CodeSniffer checkout at tag 4.0.4> <composer project with squizlabs/php_codesniffer 4.0.4>
 
 `fixtures` copies each sniff's own test files (`src/Standards/<Standard>/Tests/<Category>/<Sniff>UnitTest*.inc`) to
-fixtures/<Standard>/<Category>/<file>.php (the runner reads `.php`; the pack's licenses/php_codesniffer/UPSTREAM.md lists them),
+fixtures/<Standard>/<Category>/<file>.php (the runner reads `.php`; provenance.json records each copy's upstream path),
 runs PHP_CodeSniffer with every ported sniff (ruleset.xml: the sniffs alone, with their default properties) over every
 copy, and requires its reports on a sniff's own files to be,
 line by line, the counts its test's getErrorList() and getWarningList() expect: so the expected findings on a sniff's own
@@ -37,6 +37,15 @@ SNIFFS = [
     "Squiz.PHP.Eval",
 ]
 ORIGIN = "https://github.com/PHPCSStandards/PHP_CodeSniffer@bbdc3d0532623e21838b7041a4364383a8126f96"
+PROJECT = "php_codesniffer"  # its directory under the pack's licenses/
+RENAMED = "verbatim, renamed with a `.php` suffix so the host routes it to PHP"
+
+
+def provenance(copies: dict[str, str]) -> dict[str, dict]:
+    """The provenance entries of the copies: `copies` maps each copy (under fixtures/) to the upstream path, relative
+    to the checkout, it is a verbatim copy of."""
+    return {f"fixtures/{copy}": {"source": PROJECT, "from": source, "how": "verbatim", "detail": RENAMED}
+            for copy, source in copies.items()}
 
 
 def phpcs(project: pathlib.Path, paths: list[str], cwd: pathlib.Path) -> tuple[list[dict], set[str]]:
@@ -74,6 +83,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
     shutil.rmtree(target, ignore_errors=True)
     owned: dict[str, str] = {}
     tests: dict[str, pathlib.Path] = {}
+    copies: dict[str, str] = {}  # copy -> its upstream path
     for sniff in SNIFFS:
         standard, category, name = sniff.split(".")
         test = checkout / "src/Standards" / standard / "Tests" / category / f"{name}UnitTest.php"
@@ -83,6 +93,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
             shutil.copyfile(source, target / copy)
             owned[copy.as_posix()] = sniff
             tests[copy.as_posix()] = test
+            copies[copy.as_posix()] = source.relative_to(checkout).as_posix()
     files = sorted(owned)
     findings, unanalysed = phpcs(project, files, target)
     assert not unanalysed, unanalysed
@@ -97,6 +108,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
     common.write(HERE / "fixtures.expected.json", "phpcs", version(project),
                  {"kind": "fixtures", "origin": ORIGIN, "rules": SNIFFS, "files": files,
                   "units": {file: {"rules": [owned[file]]} for file in files}}, findings)
+    common.write_provenance("phpcs", PROJECT, ORIGIN, provenance(copies))
 
 
 def main() -> None:

@@ -76,6 +76,8 @@ export const ARCHIVE_PREFIX: string;
 export const ARCHIVE_CACHE: string;
 export const AUTHORED_CORPUS_PATTERN: string;
 export const PACK_FIXTURE_PATTERNS: readonly string[];
+/** The `format` of every test-data archive's `upstream/<tool>/provenance.json`. */
+export const PROVENANCE_FORMAT: "rerail.pack-provenance/v1";
 export const PULL_INSTRUCTION: string;
 export const PUBLISH_DIRECTORY: "publish";
 export const PUBLISH_WORKFLOW: string;
@@ -118,7 +120,15 @@ export function verifiedEntries(compressed: Buffer, lock: Lock, key: string, dir
 export const TREE_MARKER: string;
 export function treeReady(directory: string, lock: Pick<Lock, "sha256" | "files" | "bytes">): boolean;
 export function extractTree(directory: string, entries: readonly { path: string; bytes: Buffer }[], lock: Pick<Lock, "sha256" | "files" | "bytes">): void;
-export function pull(options?: CommandOptions): {
+/** The GitHub Actions files reportArchives appends to, when set. */
+export interface ActionsEnvironment {
+  GITHUB_OUTPUT?: string;
+  GITHUB_STEP_SUMMARY?: string;
+}
+/** `<pack> <tool> <kind> <sha256>` per archive, sorted. */
+export function archiveLines(archives: readonly { toolPack: Pick<ToolPack, "pack" | "tool">; kind: "test-data" | "samples"; sha256: string }[]): string[];
+export function reportArchives(lines: readonly string[], options?: { env?: ActionsEnvironment; summary?: boolean }): void;
+export function pull(options?: CommandOptions & { env?: ActionsEnvironment }): {
   /** Each selected tool-pack, where its archive came from, and how many publish/ files were laid over it. */
   toolPacks: (ToolPack & { source: "cache" | "S3" | "publish/"; published: number })[];
   /** The selected tool-packs with a samples.lock, and where each one's samples archive came from. */
@@ -164,4 +174,5 @@ export function confirm(options: { objects: unknown; uploaded?: readonly string[
 };
 /** Throws, listing each missing key with its lock and remedy, unless S3 holds every archive the locks name. */
 export function check(options?: Omit<CommandOptions, "dryRun">): { checked: string[] };
-export function archiveCache(options?: Omit<CommandOptions, "aws" | "dryRun" | "log">): { key: string; paths: string[] };
+/** `archives`: archiveLines of the locks the key names. */
+export function archiveCache(options?: Omit<CommandOptions, "aws" | "dryRun" | "log">): { key: string; paths: string[]; archives: string[] };

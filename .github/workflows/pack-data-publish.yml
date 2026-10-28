@@ -84,11 +84,15 @@ jobs:
             exit 1
           fi
           same_repo="$([ "$head_repo" = "$GITHUB_REPOSITORY" ] && echo true || echo false)"
-          # finish pushes to the head branch: never to the default branch or a protected one.
+          # finish pushes to the head branch: never to the default branch or a protected one. The one exception is the
+          # neralabs-ci app's own bump pull request, from this repository, on auto/bump-upstream or
+          # auto/resnapshot-upstream (upstream-bump-publish.yml names them): finish pushes with that app's token, which
+          # the ruleset protecting auto/bump-* lets through.
           if [ "$same_repo" = "true" ]; then
             default_branch="$(jq -r .base.repo.default_branch <<< "$pull")"
             protected="$(gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -rn --arg ref "$head_ref" '$ref | @uri')" --jq .protected)"
-            if [ "$head_ref" = "$default_branch" ] || [ "$protected" != "false" ]; then
+            app_bump="$(jq -r '.user.login == "neralabs-ci[bot]" and .user.type == "Bot" and (.head.ref == "auto/bump-upstream" or .head.ref == "auto/resnapshot-upstream")' <<< "$pull")"
+            if [ "$head_ref" = "$default_branch" ] || { [ "$protected" != "false" ] && [ "$app_bump" != "true" ]; }; then
               echo "::error::pull request #$PR's head is $head_ref, the default or a protected branch: publish from a feature branch"
               exit 1
             fi

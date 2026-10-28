@@ -59,7 +59,8 @@
 // samples.lock, test-data.lock, and, while a pull request publishes data, publish/.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -112,6 +113,8 @@ export const PACK_FIXTURE_PATTERNS = Object.freeze([
   "packs/*/upstream/*/LICENSES.md",
   AUTHORED_CORPUS_PATTERN,
 ]);
+/** The `format` of every test-data archive's `upstream/<tool>/provenance.json`. */
+export const PROVENANCE_FORMAT = "rerail.pack-provenance/v1";
 
 /** What every consumer tells a contributor whose checkout lacks the data. */
 export const PULL_INSTRUCTION =
@@ -322,7 +325,7 @@ function tableCells(line, unquote = false) {
  * of its "Taken from it" table with each one's copy kind (copyKind of its How cell), its "Not copied" lines (the
  * upstream prefix and, when the line has one, the pack-path glob), and `malformed`: the list items that mean to be
  * "Not copied" lines but are not spelled `- Not copied: …`. Pack check 6 and the publish licence check both read it;
- * neither reads an archive's provenance.json.
+ * neither reads an archive's provenance.json for a licence (prep checks only its `files` key set, checkProvenance).
  */
 export function readUpstreamSources(text) {
   let source;
@@ -1038,6 +1041,33 @@ function publishedTestData(root, toolPack) {
 }
 
 /**
+ * One line per archive a run used, `<pack> <tool> <kind> <sha256>` (kind `test-data` or `samples`, by the tar's
+ * sha256), sorted: what replaying the run fetches again (CONTRIBUTING.md, "Pack test data").
+ */
+export function archiveLines(archives) {
+  return archives.map(({ toolPack, kind, sha256: digest }) => `${toolPack.pack} ${toolPack.tool} ${kind} ${digest}`).sort(byBytes);
+}
+
+/**
+ * Reports `lines` (archiveLines's) to GitHub Actions through `env` (the process's environment, in a command): as the
+ * step's multiline `archives` output when `env.GITHUB_OUTPUT` is set, and, with `summary`, as a table appended to
+ * `env.GITHUB_STEP_SUMMARY` when it is set (none for no archive). Outside Actions it writes nothing.
+ */
+export function reportArchives(lines, { env = {}, summary = true } = {}) {
+  if (env.GITHUB_OUTPUT) {
+    const delimiter = `archives_${randomUUID()}`;
+    appendFileSync(env.GITHUB_OUTPUT, `archives<<${delimiter}\n${lines.map((line) => `${line}\n`).join("")}${delimiter}\n`);
+  }
+  if (summary && env.GITHUB_STEP_SUMMARY && lines.length > 0) {
+    const rows = lines.map((line) => {
+      const [pack, tool, kind, digest] = line.split(" ");
+      return `| ${pack} | ${tool} | ${kind} | \`${digest}\` |\n`;
+    });
+    appendFileSync(env.GITHUB_STEP_SUMMARY, `### Pack data archives used\n\n| Pack | Tool | Kind | sha256 |\n|---|---|---|---|\n${rows.join("")}\n`);
+  }
+}
+
+/**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
  * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory, then lays the
  * tool-pack's publish/ test data (a pull request's publish request) over it, so the checkout holds what publishing it
@@ -1047,8 +1077,10 @@ function publishedTestData(root, toolPack) {
  * that neither the archive nor publish/ holds are deleted (a stale derivation); authored ones are kept and reported. The
  * samples archive each selected tool-pack's samples.lock names is put into ARCHIVE_CACHE and verified with the test
  * data archives, before anything is extracted, then extracted into its tree outside the tool directory (samples).
+ * Then each archive it used is reported to GitHub Actions through `env` (reportArchives; the command passes its own
+ * environment, a caller that passes none reports nothing).
  */
-export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log, env = {} } = {}) {
   const selected = selectToolPacks(root, pack, tool);
   const locked = selected.map((toolPack) => {
     const published = publishedTestData(root, toolPack);
@@ -1117,6 +1149,10 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
     log(`${toolPack.directory}: ${entries.length} file(s) from ${from}${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
   }
   extractSamples(root, fetchedSamples, { dryRun, log });
+  reportArchives(archiveLines([
+    ...fetched.filter(({ lock }) => lock !== undefined).map(({ toolPack, lock }) => ({ toolPack, kind: "test-data", sha256: lock.sha256 })),
+    ...fetchedSamples.map(({ toolPack, lock }) => ({ toolPack, kind: "samples", sha256: lock.sha256 })),
+  ]), { env });
   return {
     toolPacks: fetched.map(({ toolPack, source, published }) => ({ ...toolPack, source, published: published.entries.length })),
     samples: fetchedSamples.map(({ toolPack, source }) => ({ ...toolPack, source })),
@@ -1461,6 +1497,50 @@ function archiveChanges(base, next) {
   };
 }
 
+/** A test data archive's record of where each of its files came from, and the licence texts it embeds (scripts/pack-data/provenance.mjs writes both). */
+const PROVENANCE_FILE = "provenance.json";
+const PROVENANCE_LICENSES = "LICENSES.md";
+/** How many of the extra and of the missing paths a provenance refusal names. */
+const PROVENANCE_PATHS_SHOWN = 5;
+
+/** `paths` as a refusal shows them: the first PROVENANCE_PATHS_SHOWN, then how many more. */
+const someOf = (paths) => `${paths.slice(0, PROVENANCE_PATHS_SHOWN).join(", ")}${paths.length > PROVENANCE_PATHS_SHOWN ? ` and ${paths.length - PROVENANCE_PATHS_SHOWN} more` : ""}`;
+
+/**
+ * Throws unless the test data archive `entries` (of `toolPack`, from the commit `at` describes) holds provenance.json
+ * and LICENSES.md, and provenance.json is a PROVENANCE_FORMAT record whose `files` keys are exactly the archive's other
+ * paths: an overlay that adds or drops files without its provenance restaged, or a replace without one, is refused.
+ * Only the key set is read; licences are decided by the tracked records alone (sourcesAt).
+ */
+function checkProvenance(toolPack, entries, at) {
+  const label = `${toolPack.directory}/${PROVENANCE_FILE} at ${at}`;
+  const remedy = `derive the tool-pack again so its ${PROVENANCE_FILE} and ${PROVENANCE_LICENSES} describe its files, then ${publishInstruction(toolPack)}`;
+  const byPath = new Map(entries.map(({ path, bytes }) => [path, bytes]));
+  const missing = [PROVENANCE_FILE, PROVENANCE_LICENSES].filter((path) => !byPath.has(path));
+  if (missing.length > 0) throw new Error(`${toolPack.directory}'s archive from ${at} would hold no ${missing.join(" or ")}, which every test data archive carries: ${remedy}`);
+  let record;
+  try {
+    record = JSON.parse(byPath.get(PROVENANCE_FILE).toString("utf8"));
+  } catch (error) {
+    throw new Error(`${label} is not JSON (${error instanceof Error ? error.message : String(error)}): ${remedy}`);
+  }
+  if (record === null || typeof record !== "object" || record.format !== PROVENANCE_FORMAT) {
+    throw new Error(`${label} has format ${JSON.stringify(record?.format)}, not ${JSON.stringify(PROVENANCE_FORMAT)}: ${remedy}`);
+  }
+  const { files } = record;
+  if (files === null || typeof files !== "object" || Array.isArray(files)) throw new Error(`${label} has no \`files\` object: ${remedy}`);
+  const recorded = new Set(Object.keys(files));
+  const archived = [...byPath.keys()].filter((path) => path !== PROVENANCE_FILE && path !== PROVENANCE_LICENSES);
+  const extra = [...recorded].filter((path) => !byPath.has(path) || path === PROVENANCE_FILE || path === PROVENANCE_LICENSES).sort(byBytes);
+  const absent = archived.filter((path) => !recorded.has(path)).sort(byBytes);
+  if (extra.length === 0 && absent.length === 0) return;
+  const problems = [
+    ...(extra.length > 0 ? [`it records ${extra.length} path(s) the archive would not hold (${someOf(extra)})`] : []),
+    ...(absent.length > 0 ? [`it does not record ${absent.length} path(s) the archive would hold (${someOf(absent)})`] : []),
+  ];
+  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${remedy}`);
+}
+
 /** The format of `pack --from`'s manifest. */
 export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
 
@@ -1477,7 +1557,8 @@ export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
  * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, then laid over the
  *   archive the commit's samples.lock names, or alone with `replace`.
  *
- * Base archives come from ARCHIVE_CACHE or S3 (a read). Every file going to S3 must be under a licence the allowlist
+ * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
+ * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
  * takes (licenceAllowed): test data by sourcesAt, and samples by their labels' `source.license`; a failure lists every
  * file and licence before anything is written. Then each archive is written compressed under `out` (its key less
  * ARCHIVE_PREFIX), the manifest (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to
@@ -1575,6 +1656,7 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       }
       for (const { path, bytes } of published) next.set(path, bytes);
       const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
+      if (kind === "test-data") checkProvenance(toolPack, entries, at);
       const archive = buildArchive(entries);
       const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
       const compressed = compressArchive(archive.tar);
@@ -1838,7 +1920,7 @@ export function push({ root = ROOT, pack: packId, tool, dryRun = false, tags, aw
 
 /**
  * CI's cache entry for the selected tool-packs' archives and their samples archives: its key (from the locked sha256s
- * alone) and its paths.
+ * alone), its paths, and `archives`, the archiveLines of the locks it keys on (what a job that hits it uses).
  */
 export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
   const selected = selectToolPacks(root, packId, tool);
@@ -1856,7 +1938,11 @@ export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
       ...(samplesLock === undefined ? [] : [samplesArchiveCachePath(root, toolPack, samplesLock.sha256)]),
     ]),
   ];
-  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")) };
+  const archives = archiveLines(locked.flatMap(({ toolPack, lock, samplesLock }) => [
+    { toolPack, kind: "test-data", sha256: lock.sha256 },
+    ...(samplesLock === undefined ? [] : [{ toolPack, kind: "samples", sha256: samplesLock.sha256 }]),
+  ]));
+  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")), archives };
 }
 
 /**
@@ -1894,7 +1980,8 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
 
 const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [--tool <tool>]] [--dry-run]
   pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and their
-              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them
+              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them;
+              in GitHub Actions, list each archive used (pack tool kind sha256) as the step's archives output and summary
   stage       --pack <id> [--tool <tool>] [--all]: copy the pack test data on disk that the locked archive lacks or
               holds differently into the tool-pack's ${PUBLISH_DIRECTORY}/ (--all: all of it, for a replace publish)
   push        maintainer with write credentials: pack, then upload (tagged)
@@ -1913,7 +2000,8 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
               holds them, read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive the selected tool-packs' locks name
               (head-object only; nothing is downloaded)
-  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON
+  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON,
+              and the archives they are (pack tool kind sha256) as the step's archives output in GitHub Actions
 Every upload is tagged: --commit (default HEAD), --pr (default none), --run-id (default local) and --uploader (default
 the gh CLI's login).`;
 
@@ -1941,7 +2029,7 @@ const TAGS = ["commit", "pr", "run-id", "uploader"];
 
 /** Each command's options, and how it runs with the parsed `values`. */
 const COMMANDS = {
-  pull: { options: SELECT, run: (values) => pull(values) },
+  pull: { options: SELECT, run: (values) => pull({ ...values, env: process.env }) },
   stage: { options: [...SELECT, "all"], run: (values) => stage(values) },
   push: { options: [...SELECT, ...TAGS], run: (values) => push({ ...values, tags: values.dryRun ? undefined : commandTags(values) }) },
   pack: {
@@ -1980,7 +2068,15 @@ const COMMANDS = {
   samples: { options: SELECT, run: (values) => samples(values) },
   "samples push": { options: ["pack", "tool", ...TAGS], run: (values) => samplesPush({ ...values, tags: commandTags(values) }) },
   check: { options: ["pack", "tool"], run: (values) => check(values) },
-  cache: { options: ["pack", "tool"], run: (values) => console.log(JSON.stringify(archiveCache(values))) },
+  cache: {
+    options: ["pack", "tool"],
+    run: (values) => {
+      const entry = archiveCache(values);
+      // A fetching job that hits the cache runs no pull: the archives it keys on are the ones the run uses.
+      reportArchives(entry.archives, { env: process.env, summary: false });
+      console.log(JSON.stringify(entry));
+    },
+  },
 };
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

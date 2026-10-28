@@ -41,10 +41,6 @@ Taking a new snapshot is a maintainer deriving the pack's test data from its pin
 under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/javascript.ts`) runs each tool's generator
 against the pinned tool versions and upstream commit (the generator's header lists them):
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack javascript                                 # every tool
 npm run fixtures:derive -- --pack javascript --tool eslint-plugin-unicorn    # one

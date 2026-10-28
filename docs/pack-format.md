@@ -123,8 +123,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json`: the expected findings, what the tool reported on its own tests, written by
   the generator in the same directory and run through `npm run fixtures:derive` (each tool-pack's recipe in
-  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored),
-  which is paused for now ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Where a tool's tests state
+  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored)
+  ([docs/upstream.md](upstream.md#take-a-new-snapshot)). Where a tool's tests state
   their expected findings (as markup in the test files), the generator reads them instead of running the tool: the
   tool's own test suite requires it to report exactly those. The ESLint-based generators share
   `scripts/pack-data/eslint-expected.mjs`. Its `source` block names the upstream `origin` (repository `@` commit), the
@@ -142,6 +142,37 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
+  Its `watch:` block says what the nightly upstream report ([docs/upstream.md](upstream.md)) compares between the
+  pinned commit and upstream's latest release. Every path is relative to upstream's repository root; a glob takes `*`
+  within a path segment and `**` across segments; `{rule}` stands for each ported rule, which is conformance.json's
+  `upstream.rule` for this tool without `rule-prefix`, plus `extra-rules`:
+
+  ```yaml
+  watch:
+    rule-prefix: "unicorn/"          # optional: removed from upstream.rule to give {rule}
+    extra-rules: [NoArgumentsValidator]  # optional: rules the generator reads that conformance.json does not port
+    tests: ["test/{rule}.js"]        # the tests the generator reads; or { file: fixtures.json [, with: [".stderr"]] } or { named-by: fixtures.json }
+    code: ["rules/{rule}.js"]        # each ported rule's code; or { index: clippy-declared-lints | ruff-codes }
+    shared: ["rules/utils/**"]       # code every ported rule depends on; no {rule}
+    new-tests: ["tests/{rule}/**"]   # optional: where upstream adds tests for a ported rule that the generator does not read
+    rules:                           # optional: a rule's own tests or code, in place of the {rule} patterns
+      DebugDirectiveValidator: { tests: ["tests/Validation/DebugDirectiveTest.php", "src/Compiler/**"] }
+  ```
+
+  `{ file: fixtures.json }` watches the paths a data file beside the generator lists for each rule
+  (`{ "rules": { "<rule>": ["<upstream path>", …] } }`), for a generator that keeps its tests in a list rather than
+  by convention; `with: [".stderr"]` also watches each listed path with its extension replaced by each one given (a
+  Clippy test's expected output, `tests/ui/x.rs` → `tests/ui/x.stderr`), so a change there is a test change.
+  `{ named-by: fixtures.json }` takes that data file's paths as PHPStan-style tests and watches exactly the files each
+  names as `__DIR__ . '<relative path>'` (its `$this->analyse([…])` files): the report reads the tests at both commits
+  and watches the files either names, for the test's rules; the tests themselves are watched only where another entry
+  lists them. `{ index: … }` names the upstream file the report reads to find each rule's code
+  (`clippy_lints/src/declared_lints.rs`, `crates/ruff_linter/src/codes.rs`). `expandWatch` in
+  `conformance/languages/watch.ts` resolves the block. A `new-tests` glob may cover tests the generator reads too; a
+  file counts as a new test only when `tests` does not cover it. `test/scripts/upstream/watch-coverage.test.ts` checks
+  that `tests` covers every upstream file the tool-pack's pulled `provenance.json` records as read; which files a
+  `named-by` test names is upstream's text, which it does not read, so it counts any file under that test's top
+  directory (`tests/`) as covered.
 - `upstream/<tool>/test-data.lock`, `samples.lock` and `SAMPLES.md`: the pins of the tool-pack's pack data
   ([Pack data](#pack-data)).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
@@ -509,10 +540,15 @@ request ([docs/upstream.md](upstream.md#removing-data)). An `authored/` corpus n
 
 ### provenance.json and LICENSES.md
 
-Each test data archive holds `upstream/<tool>/provenance.json`, every file with its upstream path and how it was made
-(a snapshot taken when the records moved from per-file rows to patterns), and `upstream/<tool>/LICENSES.md`, the
-licence texts. They are for audit: no check, workflow or tool reads them. A samples archive's `LICENSES.md` lists
-each source repository, its licence and the files taken from it ([docs/upstream.md](upstream.md#sample-licences)).
+Each test data archive holds `upstream/<tool>/provenance.json`, every file with its source, its upstream path and how
+it was made, and `upstream/<tool>/LICENSES.md`, each source's licence and licence text. Both are derive output: the
+generator writes them last, through `scripts/pack-data/provenance.mjs`, which refuses to write either when the files
+disagree with the pack's `UPSTREAM.md` records ([docs/upstream.md](upstream.md#what-the-generators-write)). A
+`snapshot` key appears only in archives bootstrapped by the one-off snapshot taken when the records moved from per-file
+rows to patterns, until the tool-pack is derived again. They are for audit: no licence check reads them. The publish
+workflow's prep reads only the key set of provenance.json's `files`, to refuse an archive whose files it does not
+describe. A samples archive's `LICENSES.md` lists each source repository, its licence and the files taken from it
+([docs/upstream.md](upstream.md#sample-licences)).
 
 ### Licence of each file
 

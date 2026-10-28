@@ -29,8 +29,8 @@ A pull request that changes a pack adds a changeset (`npx changeset`); see
 A pull request that adds or changes pack data stages it into the tool-pack's tracked `upstream/<tool>/publish/`
 directory (`npm run fixtures:stage -- --pack <id> --tool <tool>`); a maintainer runs the publish workflow
 (`pack-data-publish.yml`) for it, a code owner approves the upload, and the workflow commits the new locks and removes
-`publish/` ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Deriving test data from the pins is paused for now
-([docs/upstream.md](../docs/upstream.md#derive-and-bumps-are-paused)).
+`publish/` ([CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data)). Derived test data is made from the pins by
+`npm run fixtures:derive` ([docs/upstream.md](../docs/upstream.md#take-a-new-snapshot)).
 
 ## Pack layout
 

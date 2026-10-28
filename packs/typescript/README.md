@@ -35,10 +35,6 @@ under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/typescr
 against the pinned tool versions and the upstream checkouts (the generator's header lists them). The fixtures Rerail
 wrote (`fixtures/*/rerail-*`) are authored: a change to them is staged into `publish/` with the derived data.
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack typescript                                # every tool
 npm run fixtures:derive -- --pack typescript --tool eslint-plugin-vitest    # one

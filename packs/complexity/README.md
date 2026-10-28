@@ -129,10 +129,6 @@ fetches. The test fails saying so without them.
 
 After changing the corpus, derive the TSV again (needs [uv](https://docs.astral.sh/uv/) on `PATH`):
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The command below derives it once the pause
-lifts.
-
 ```sh
 npm run fixtures:derive -- --pack complexity
 ```

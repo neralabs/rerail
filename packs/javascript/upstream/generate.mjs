@@ -22,12 +22,16 @@
 // variant, renamed/<rule>/<n>.<ext> (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`): its identifiers
 // and string and number literal contents renamed, in the original's language, linted like any file, and marked
 // `renamedFrom` the original.
+// eslint/provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`) record each kept file as
+// extracted from its rule's tests/lib/rules/<rule>.js, each rename variant as renamed from its original, and
+// fixtures.expected.json as Rerail's.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isVariantPath, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
 import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -303,12 +307,16 @@ for (const path of linted.unparsed.filter(path => !isVariantPath(path))) {
   count.unparsed = (count.unparsed ?? 0) + 1;
 }
 const kept = files.filter(file => !unparsedSet.has(file));
-const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
+const recorded = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
+const { files: units, units: origin, findings } = recorded;
 writeJson(join(HERE, TOOL, "fixtures.expected.json"), {
   tool: TOOL,
   version: VERSION,
   source: { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin },
   findings,
 });
+// Each kept file is extracted from its rule's test file (`<rule>/<n>.<ext>`); its variant is renamed from it.
+const extracted = new Map(kept.map(file => [`fixtures/${file}`, { source: TOOL, from: `tests/lib/rules/${file.split("/")[0]}.js`, how: "extracted" }]));
+writeProvenance({ pack: PACK.pack, tool: TOOL, entries: new Map([...extracted, ...variantEntries(extracted, recorded)]), commits: { [TOOL]: CHECKOUT.commit } });
 console.log(`${TOOL} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
 for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
