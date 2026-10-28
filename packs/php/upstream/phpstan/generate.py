@@ -9,7 +9,7 @@ A finding belongs to a ported rule class by its identifier and, where another cl
 ported identifiers are recorded (`IDENTIFIERS`).
 
 `fixtures` reads each ported class's RuleTestCase statically (read_tests.php) and copies the files its test
-methods analyse to fixtures/<path under tests/PHPStan> (the pack's licenses/phpstan/UPSTREAM.md lists them). A file several
+methods analyse to fixtures/<path under tests/PHPStan> (provenance.json records each copy's upstream path). A file several
 methods analyse with different rule options takes the method whose options are PHPStan's defaults at level max.
 Each analysis unit (a method's files, analysed together) is recorded as:
   - for the identifiers of the class whose test analyses it, the test's own expectation (message, line). A
@@ -40,6 +40,7 @@ sys.path.insert(0, str(HERE.parent))
 import common  # noqa: E402
 
 ORIGIN = "https://github.com/phpstan/phpstan-src@08e3736efd29631ab8f32596c5dd2362dec8dc26"
+PROJECT = "phpstan"  # its directory under the pack's licenses/
 AGENT_VARIABLES = ("AGENT", "CLAUDECODE", "OMPCODE", "ORCA_OPENCODE_AGENT")
 
 # Ported identifier -> the message pattern of the ported class (None: no other class reports the identifier).
@@ -90,6 +91,14 @@ DEFAULTS = {
     "treatPhpDocTypesAsCertain": True,
     "checkNonStringableDynamicAccess": False,
 }
+
+
+def provenance(files: list[str | list[str]]) -> dict[str, dict]:
+    """The provenance entries of the copies `files` names (as `source.files` does: a unit's file, or a multi-file
+    unit's list): each a verbatim copy of the file at its path under tests/PHPStan."""
+    copies = [copy for unit in files for copy in ([unit] if isinstance(unit, str) else unit)]
+    return {f"fixtures/{copy}": {"source": PROJECT, "from": f"tests/PHPStan/{copy}", "how": "verbatim"}
+            for copy in copies}
 
 
 def environment() -> dict[str, str]:
@@ -212,6 +221,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path, dump: pathlib.Path |
                  {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files,
                   "units": dict(sorted((unit["files"][0], {"rules": sorted(unit["identifiers"])}) for unit in units))},
                  [{key: finding[key] for key in ("rule", "path", "line")} for finding in findings])
+    common.write_provenance("phpstan", PROJECT, ORIGIN, provenance(files))
 
 
 def main() -> None:
