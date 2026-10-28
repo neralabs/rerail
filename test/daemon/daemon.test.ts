@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { createServer, request as httpRequest } from "node:http";
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -48,11 +48,20 @@ describe("daemon bind host", () => {
   });
 });
 
+/** The capability every test daemon requires; the helpers below send it unless a test names another. */
+const ACCESS = "test-access-capability";
+const ACCESS_HEADER = "x-rerail-access";
+
 describe("Rerail daemon", () => {
   let root: string;
   const daemons: RerailDaemon[] = [];
 
-  async function start(overrides: Partial<RerailDaemonOptions> = {}): Promise<RerailDaemon> {
+  /** `fetch` against a test daemon carries its capability, as every Rerail client and a browser holding the cookie does. */
+  const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
+    globalThis.fetch(input, { ...init, headers: { [ACCESS_HEADER]: ACCESS, ...init.headers } });
+
+  /** A daemon requiring `ACCESS`, unless `minted`: then it records or mints its own, as a real start does. */
+  async function start(overrides: Partial<RerailDaemonOptions> = {}, minted = false): Promise<RerailDaemon> {
     process.env.RERAIL_HOME = join(root, "home");
     const daemon = await RerailDaemon.start({
       version: "0.0.0-test",
@@ -60,6 +69,7 @@ describe("Rerail daemon", () => {
       workspaceRoot: root,
       port: 0,
       nativeHealth: healthyNative,
+      ...(minted ? {} : { accessToken: ACCESS }),
       ...overrides,
     });
     daemons.push(daemon);
@@ -98,6 +108,7 @@ describe("Rerail daemon", () => {
       method,
       setHost: false,
       headers: {
+        [ACCESS_HEADER]: ACCESS,
         ...(body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) }),
         ...headers,
       },
@@ -696,6 +707,7 @@ describe("Rerail daemon", () => {
         databasePath: join(root, "rerail.sqlite"),
         workspaceRoot: root,
         nativeHealth: healthyNative,
+        accessToken: ACCESS,
       });
       daemons.push(daemon);
       expect(daemon.port).not.toBe(DEFAULT_DAEMON_PORT);
@@ -820,7 +832,8 @@ describe("Rerail daemon", () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     const client = new Client({ name: "rerail-test", version: "0.0.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL("/mcp", daemon.url)) as Parameters<Client["connect"]>[0]);
+    const transport = new StreamableHTTPClientTransport(new URL("/mcp", daemon.url), { requestInit: { headers: { [ACCESS_HEADER]: ACCESS } } });
+    await client.connect(transport as Parameters<Client["connect"]>[0]);
     try {
       const tools = await client.listTools();
       expect(tools.tools.map(tool => tool.name).sort()).toEqual(operations.map(operation => operation.id).sort());
@@ -985,5 +998,63 @@ describe("Rerail daemon", () => {
     expect(probed.status).toBe(200);
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "0.0.0.0:4737" } })).toMatchObject({ status: 200 });
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "evil.example" } })).toEqual({ status: 421, body: { error: "host-not-allowed" } });
+  });
+
+  it("requires its access capability on every request, on loopback too", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const daemon = await start();
+    const host = "127.0.0.1";
+    const refused = { status: 401, body: { error: "access-required", message: expect.stringContaining("x-rerail-access") } };
+    // `Host: 127.0.0.1` and a matching `Origin` are only claims; without the capability nothing answers, not even health.
+    for (const [path, method] of [["/healthz", "GET"], ["/api/sessions", "GET"], ["/openapi.json", "GET"], ["/", "GET"], ["/mcp", "POST"], ["/native/session", "POST"]] as const) {
+      const body = method === "POST" ? { body: "{}" } : {};
+      expect(await rawRequest(daemon, path, { method, headers: { host, origin: `http://${host}`, [ACCESS_HEADER]: "" }, ...body })).toEqual(refused);
+      expect(await rawRequest(daemon, path, { method, headers: { host, [ACCESS_HEADER]: `${ACCESS}x` }, ...body })).toEqual(refused);
+    }
+    expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
+    expect((await rawRequest(daemon, "/api/sessions", { headers: { host, [ACCESS_HEADER]: "", cookie: `other=1; rerail-access=${ACCESS}` } })).status).toBe(200);
+    // The capability guards the native bridge too, on top of that bridge's own bearer token.
+    expect((await rawRequest(daemon, "/native/session", { method: "POST", headers: { host }, body: "{}" })).body).toEqual({ error: "native-authorization-invalid" });
+
+    // The printed link sets the cookie and drops the capability from the address, staying on this daemon.
+    const linked = Promise.withResolvers<IncomingMessage>();
+    httpRequest({ host, port: daemon.port, path: `//evil.example/session?repository=r&rerail-access=${ACCESS}` }, linked.resolve)
+      .on("error", linked.reject).end();
+    const link = await linked.promise;
+    link.resume();
+    expect(link.statusCode).toBe(303);
+    expect(link.headers.location).toBe("/evil.example/session?repository=r");
+    expect(link.headers["set-cookie"]).toEqual([`rerail-access=${ACCESS}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`]);
+    // A browser that already holds the cookie still has the capability taken out of its address bar.
+    expect((await rawRequest(daemon, `/?rerail-access=${ACCESS}`, { headers: { host, [ACCESS_HEADER]: "", cookie: `rerail-access=${ACCESS}` } })).status).toBe(303);
+    // Behind an https proxy the cookie is marked Secure.
+    const forwarded = Promise.withResolvers<IncomingMessage>();
+    httpRequest({ host, port: daemon.port, path: `/?rerail-access=${ACCESS}`, headers: { "x-forwarded-proto": "https" } }, forwarded.resolve)
+      .on("error", forwarded.reject).end();
+    const secure = await forwarded.promise;
+    secure.resume();
+    expect(secure.headers["set-cookie"]).toEqual([`rerail-access=${ACCESS}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure`]);
+    // Only a page load takes it from the query; a write must hold the capability already.
+    expect((await rawRequest(daemon, `/api/presentation-preferences?repository=&host=&rerail-access=${ACCESS}`, { method: "DELETE", headers: { host, [ACCESS_HEADER]: "" } })).status).toBe(401);
+  });
+
+  it("keeps a loopback daemon's capability in its home across restarts, and mints one per start off loopback", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    await mkdir(join(root, "home"), { recursive: true });
+    const accessTokenFile = join(root, "home", "access-token");
+    const first = await start({ accessTokenFile }, true);
+    const token = first.state().accessToken!;
+    expect(token).toMatch(/^[\w-]{43}$/u);
+    expect((await readFile(accessTokenFile, "utf8")).trim()).toBe(token);
+    if (process.platform !== "win32") expect((await stat(accessTokenFile)).mode & 0o777).toBe(0o600);
+    await first.close();
+    const second = await start({ accessTokenFile }, true);
+    expect(second.state().accessToken).toBe(token);
+    expect((await rawRequest(second, "/healthz", { headers: { host: "127.0.0.1", [ACCESS_HEADER]: token } })).status).toBe(200);
+    await second.close();
+    // Reachable from other machines, the capability is per launch and the kept one is left alone.
+    const remote = await start({ accessTokenFile, host: "0.0.0.0" }, true);
+    expect(remote.state().accessToken).not.toBe(token);
+    expect((await readFile(accessTokenFile, "utf8")).trim()).toBe(token);
   });
 });

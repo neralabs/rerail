@@ -1,8 +1,9 @@
 /**
- * The dashboard's Playwright fixtures. `rerail` (worker-scoped) seeds a scenario the first time a test of the worker
- * asks for it, runs the daemon over it and stops every daemon when the worker ends; `page` runs at the seed clock, so
- * Today / 7 days / 30 days read the same on every run. Import `test` and `expect` from here, not from
- * `@playwright/test`.
+ * The dashboard's Playwright fixtures. `scenarios` (worker-scoped) seeds a scenario the first time a test of the worker
+ * asks for it, runs the daemon over it and stops every daemon when the worker ends; `rerail` (test-scoped) hands the
+ * test's browser each daemon's access capability as the `rerail-access` cookie, as the printed link would; `page` runs
+ * at the seed clock, so Today / 7 days / 30 days read the same on every run. Import `test` and `expect` from here, not
+ * from `@playwright/test`.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,8 +34,8 @@ interface TestOptions {
   readonly freezeClock: boolean;
 }
 
-export const test = base.extend<TestOptions, { rerail: RerailScenarios }>({
-  rerail: [async ({}, use) => {
+export const test = base.extend<TestOptions & { rerail: RerailScenarios }, { scenarios: RerailScenarios }>({
+  scenarios: [async ({}, use) => {
     const root = mkdtempSync(join(tmpdir(), "rerail-e2e-"));
     const running = new Map<ScenarioName, Promise<RunningScenario>>();
     const scenario = (name: ScenarioName): Promise<RunningScenario> => {
@@ -63,6 +64,23 @@ export const test = base.extend<TestOptions, { rerail: RerailScenarios }>({
       rmSync(root, { recursive: true, force: true });
     }
   }, { scope: "worker", timeout: 180_000 }],
+
+  rerail: async ({ scenarios, context }, use) => {
+    // Every daemon requires its capability; the browser (and `page.request`, which shares the context) holds it as
+    // the cookie the printed link sets, so a test navigates and reads as a person who opened that link once.
+    const admitted = async (name: ScenarioName): Promise<RunningScenario> => {
+      const started = await scenarios.scenario(name);
+      await context.addCookies([{ name: "rerail-access", value: started.accessToken, url: started.origin }]);
+      return started;
+    };
+    await use({
+      scenario: admitted,
+      async dashboard(name, options) {
+        await admitted(name);
+        return scenarios.dashboard(name, options);
+      },
+    });
+  },
 
   freezeClock: [true, { option: true }],
 

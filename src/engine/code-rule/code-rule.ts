@@ -1,6 +1,7 @@
 import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { steerBlock, steerRules, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
@@ -1466,15 +1467,28 @@ function suggestedFix(fix: CodeRuleViolationFix): string {
 /** Where each rule a steer names was added from; undefined when the rule's provenance is not recorded. */
 export type SteerSourceOf = (ruleId: string) => SteerRuleSource | undefined;
 
-/** Each violation as a steer finding, in the order given: its location, message and any fix. */
+/**
+ * What a steer says of a finding in a file named like one holding secrets (`secrets.yaml`, `.aws/credentials`):
+ * the rule and the place, not the message, which may carry the file's text through the rule's metavariables, and not
+ * the fix, which is a replacement of that text. The person reads the finding whole in the dashboard.
+ */
+export const SECRET_FILE_FINDING_MESSAGE = "A finding here; its message and fix are withheld from this conversation because the file is named like one holding secrets. Open the rule in the dashboard for its guidance.";
+
+/**
+ * Each violation as a steer finding, in the order given: its location, message and any fix; by rule and place only
+ * in a file that is secret-like by name.
+ */
 function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[] {
-  return violations.map(violation => ({
-    ruleId: violation.ruleId,
-    mode: violation.mode,
-    message: violation.message,
-    location: violationLocation(violation),
-    fix: violation.fix === undefined ? undefined : suggestedFix(violation.fix),
-  }));
+  return violations.map(violation => {
+    const secret = violation.path !== undefined && sensitiveByName(violation.path);
+    return {
+      ruleId: violation.ruleId,
+      mode: violation.mode,
+      message: secret ? SECRET_FILE_FINDING_MESSAGE : violation.message,
+      location: violationLocation(violation),
+      fix: secret || violation.fix === undefined ? undefined : suggestedFix(violation.fix),
+    };
+  });
 }
 
 /** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */

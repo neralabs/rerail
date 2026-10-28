@@ -65,6 +65,7 @@ function ruleExecutionConfig(
 export default async function playgroundHarness(api: ExtensionAPI): Promise<void> {
   const runInputPath = process.env.RERAIL_PLAYGROUND_INPUT;
   const daemonUrl = process.env.RERAIL_PLAYGROUND_DAEMON_URL;
+  const daemonAccess = process.env.RERAIL_PLAYGROUND_DAEMON_ACCESS;
   const cwd = process.cwd();
   await initializeWorkerChannel();
 
@@ -392,7 +393,7 @@ export default async function playgroundHarness(api: ExtensionAPI): Promise<void
       url.searchParams.set("sessionId", context.sessionManager.getSessionId());
       url.searchParams.set("limit", "100");
       const list = async () => {
-        const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+        const response = await fetch(url, { headers: daemonAccess === undefined ? {} : { "x-rerail-access": daemonAccess }, signal: AbortSignal.timeout(5_000) });
         if (!response.ok) throw new Error(`Policy history unavailable (${response.status})`);
         return (await response.json() as { audits: AuditRecord[] }).audits;
       };

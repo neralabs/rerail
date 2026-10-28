@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { DAEMON_STATE_FILE, probeDaemon, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, daemonAccessHeaders, probeDaemon, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import { CALLER_CWD_HEADER } from "../engine/catalog/repository-model.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -89,16 +89,17 @@ class DaemonLocator {
 
   constructor(private readonly home: string, private readonly fetchImpl: RerailMcpBridgeFetch) {}
 
-  async endpoint(): Promise<URL> {
+  /** The `/mcp` endpoint of the home's live daemon and the headers that admit a request to it. */
+  async endpoint(): Promise<{ url: URL; headers: Record<string, string> }> {
     const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE));
     if (state === undefined || !processAlive(state.pid)) throw new Error(DAEMON_NOT_RUNNING);
     if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) {
       this.#confirmed = undefined;
-      const health = await probeDaemon(state.url, this.fetchImpl);
+      const health = await probeDaemon(state, this.fetchImpl);
       if (health?.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
       this.#confirmed = state;
     }
-    return new URL("/mcp", state.url);
+    return { url: new URL("/mcp", state.url), headers: daemonAccessHeaders(state) };
   }
 
   /** After a request failed to connect: checks the home's daemon again, and throws when none answers. */
@@ -118,9 +119,9 @@ async function relay(
   const endpoint = await daemon.endpoint();
   let response: Response;
   try {
-    response = await fetchImpl(endpoint, {
+    response = await fetchImpl(endpoint.url, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders },
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders, ...endpoint.headers },
       body: request,
       signal: AbortSignal.timeout(30_000),
     });

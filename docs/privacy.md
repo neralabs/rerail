@@ -66,7 +66,13 @@ The daemon serves the dashboard, its API and an MCP endpoint for your coding age
 `421` to any request whose `Host` header is not loopback or a name you allowed, which blocks DNS rebinding, and `403`
 to a cross-origin write to its API (`src/api/http.ts`).
 
-The API has no login: any program running on your machine can call it, as it can read your files.
+Every request needs the daemon's access capability, a random value kept readable by your user only (`access-token`
+in `~/.rerail`, and `daemon.json`); anything without it is answered `401`. Your browser gets it from the link
+`rerail daemon start` prints or `rerail manage` opens, as a cookie. So another user of the same computer, or a
+sandboxed program that may reach localhost, cannot read your history or change your rules through the daemon. A
+program running as you can read that file, as it can read your files; the capability is not a boundary against it.
+A daemon started with `--allow-remote` or `--public-host` can be reached from other machines and makes a fresh
+capability on each start.
 
 ## Deleting your data
 

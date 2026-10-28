@@ -98,6 +98,8 @@ export {
 } from "./native/native.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
+export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
+export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT } from "./transcript-boundary.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export {
   databaseInstalledAt,

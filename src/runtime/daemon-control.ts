@@ -31,6 +31,22 @@ export interface DaemonState {
   workspaceRoot?: string;
   /** Same-user capability for normal native sessions; never exposed by health/API responses. */
   nativeToken?: string;
+  /**
+   * The capability every request must carry: kept in the home across restarts for a loopback daemon, minted on every
+   * start for one reachable off loopback. Absent only in a state file an older daemon wrote. Never exposed by
+   * health/API responses.
+   */
+  accessToken?: string;
+}
+
+/** Header a Rerail process sends the daemon's {@link DaemonState.accessToken} in. */
+export const DAEMON_ACCESS_HEADER = "x-rerail-access";
+/** The cookie a browser holds that capability in, and the query parameter of the access link that sets it. */
+export const DAEMON_ACCESS_COOKIE = "rerail-access";
+
+/** The headers that admit a request to the daemon `state` records: its access capability, when it has one. */
+export function daemonAccessHeaders(state: Pick<DaemonState, "accessToken">): Record<string, string> {
+  return state.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: state.accessToken };
 }
 
 export type NativeStatus = { ok: true; kernelVersion: string } | { ok: false; error: string };
@@ -141,6 +157,7 @@ function hasDaemonStateFields(value: unknown): value is Record<string, unknown> 
     && typeof record.version === "string"
     && (record.ui === "bundled" || record.ui === "dev")
     && (record.nativeToken === undefined || typeof record.nativeToken === "string")
+    && (record.accessToken === undefined || typeof record.accessToken === "string")
     && typeof record.startedAt === "number"
     && typeof record.packageRoot === "string"
     && (record.workspaceRoot === undefined || typeof record.workspaceRoot === "string");
@@ -176,13 +193,18 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
   }
 }
 
-/** The health the daemon at `url` reports; `fetchImpl` lets a client with its own transport, such as the MCP bridge, probe through it. */
+/**
+ * The health the daemon `state` records reports; `fetchImpl` lets a client with its own transport, such as the MCP
+ * bridge, probe through it.
+ */
 export async function probeDaemon(
-  url: string,
+  state: Pick<DaemonState, "url" | "accessToken">,
   fetchImpl: (endpoint: URL, init: RequestInit) => Promise<Response> = fetch,
 ): Promise<DaemonHealth | undefined> {
   try {
-    const response = await fetchImpl(new URL("/healthz", url), { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    const response = await fetchImpl(new URL("/healthz", state.url), {
+      headers: daemonAccessHeaders(state), signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
     if (!response.ok) return undefined;
     const body = await response.json() as DaemonHealth;
     return body.status === "ok" ? body : undefined;
@@ -199,7 +221,7 @@ export async function lookupDaemon(home: string): Promise<DaemonLookup> {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
-  const health = await probeDaemon(state.url);
+  const health = await probeDaemon(state);
   if (health === undefined) return { status: "unresponsive", state };
   if (health.pid !== state.pid) {
     // Something else answers on that URL; the recorded daemon is not the listener.
@@ -459,7 +481,7 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
     }
     const state = await readDaemonState(stateFile);
     if (state !== undefined && state.pid === pid) {
-      const health = await probeDaemon(state.url);
+      const health = await probeDaemon(state);
       if (health?.pid === state.pid) return { started: true, daemon: { state, health } };
     }
     await sleep(POLL_INTERVAL_MS);
@@ -574,15 +596,30 @@ export function orcaExecutable(candidates: readonly string[] = ORCA_EXECUTABLES)
 }
 
 /**
- * Opens a page as a tab in the current Orca window when running under Orca (`ORCA_TAB_ID` set and
- * an Orca CLI installed at one of its fixed locations), otherwise in the desktop browser. Never
- * throws: an Orca failure falls back to the desktop browser.
+ * `url` with the home daemon's access capability attached when it has one and the page is that daemon's: the
+ * browser then sets its cookie and drops the capability from the address. Only for a page about to open in the
+ * person's browser; a link handed to a coding agent never carries it.
+ */
+export async function dashboardAccessLink(url: string, home: string): Promise<string> {
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE)).catch(() => undefined);
+  if (state?.accessToken === undefined) return url;
+  const page = new URL(url);
+  if (page.origin !== new URL(state.url).origin) return url;
+  page.searchParams.set(DAEMON_ACCESS_COOKIE, state.accessToken);
+  return page.href;
+}
+
+/**
+ * Opens a page of the home daemon's dashboard, with its access capability when it needs one, as a tab in the current
+ * Orca window when running under Orca (`ORCA_TAB_ID` set and an Orca CLI installed at one of its fixed locations),
+ * otherwise in the desktop browser. Never throws: an Orca failure falls back to the desktop browser.
  */
 export async function openDashboard(
-  url: string,
+  page: string,
   env: NodeJS.ProcessEnv = process.env,
   candidates: readonly string[] = ORCA_EXECUTABLES,
 ): Promise<PageOpening> {
+  const url = await dashboardAccessLink(page, defaultRerailHome(env));
   const orca = env.ORCA_TAB_ID === undefined || env.ORCA_TAB_ID === "" ? undefined : orcaExecutable(candidates);
   if (orca === undefined) {
     openInBrowser(url);

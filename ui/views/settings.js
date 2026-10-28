@@ -57,8 +57,9 @@ function general() {
       installed === null ? null : row("Installed", null, h("span.val", null, installed)),
       historyRow(),
       ui.scope === null ? null : row("Follow .gitignore",
-        ["Files git ignores (", h("code", null, ".gitignore"), ", ", h("code", null, ".git/info/exclude"), ", your global excludes) are not checked in ",
-          repoName() || "this repo", ". Applies to sessions started after the change."],
+        ["Files git ignores (", h("code", null, ".gitignore"), ", ", h("code", null, ".git/info/exclude"), ", your global excludes) are not checked, or read by ",
+          h("code", null, "rerail rules test"), ", in ", repoName() || "this repo",
+          ". Applies to sessions started after the change. Only you can turn it off; a coding agent cannot."],
         data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"))));
 }
 

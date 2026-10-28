@@ -14,7 +14,7 @@ import { startEngineService, type EngineService } from "../runtime/engine-servic
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
-import { createRerailApi, hostAllowlist, publicHostSet } from "../api/http.js";
+import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, sameSecret } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
@@ -43,6 +43,13 @@ export interface RerailDaemonOptions {
   port?: number;
   /** Where the port the daemon listens on is remembered, so dashboard links outlive a restart. */
   portFile?: string;
+  /**
+   * Where a loopback daemon keeps its access capability across restarts; omitted, or off loopback, every start mints
+   * a new one.
+   */
+  accessTokenFile?: string;
+  /** The access capability to require, in place of a recorded or minted one; embedding and tests pass their own. */
+  accessToken?: string;
   /** Directory holding the page. Omit to serve `/api` and `/healthz` alone. */
   uiRoot?: string;
   /** `uiRoot` is the committed `ui/` source rather than the packaged copy; reported as `ui: "dev"`. */
@@ -153,6 +160,42 @@ async function rememberPort(portFile: string, port: number): Promise<void> {
   }
 }
 
+/** In the Rerail home: the access capability a loopback daemon keeps across restarts, so a browser's cookie outlives them. */
+export const DAEMON_ACCESS_TOKEN_FILE = "access-token";
+const ACCESS_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
+
+/** A fresh 256-bit capability, URL-safe. */
+function newAccessToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+/**
+ * The capability recorded in `file`, minted and written (mode 0600, the file's whole content) when there is none
+ * or it is unreadable. A write that fails leaves a per-launch capability: the daemon still runs, every request still
+ * needs it, and the browser asks for a new link after the next restart.
+ */
+async function persistentAccessToken(file: string): Promise<string> {
+  try {
+    const recorded = (await readFile(file, "utf8")).trim();
+    if (ACCESS_TOKEN_PATTERN.test(recorded)) return recorded;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      process.stderr.write(`rerail daemon: could not read ${file}: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+  const token = newAccessToken();
+  const temporaryFile = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporaryFile, `${token}\n`, { mode: 0o600 });
+    await rename(temporaryFile, file);
+  } catch (error) {
+    process.stderr.write(`rerail daemon: could not keep the access capability in ${file}: ${error instanceof Error ? error.message : String(error)}\n`);
+  } finally {
+    await rm(temporaryFile, { force: true });
+  }
+  return token;
+}
+
 async function closeHttpServer(server: Server): Promise<void> {
   server.closeIdleConnections();
   const closed = Promise.withResolvers<void>();
@@ -177,10 +220,11 @@ export class RerailDaemon {
   readonly kernelSocketPath: string;
   readonly #nativeServer: NativeSessionServer;
   readonly #nativeToken: string;
+  readonly #accessToken: string;
   #closed = false;
 
   private constructor({
-    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
+    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
   }: {
     server: Server;
     engineService: EngineService;
@@ -193,6 +237,7 @@ export class RerailDaemon {
     workspaceRoot: string;
     nativeServer: NativeSessionServer;
     nativeToken: string;
+    accessToken: string;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
@@ -210,17 +255,27 @@ export class RerailDaemon {
     this.#workspaceRoot = workspaceRoot;
     this.#nativeServer = nativeServer;
     this.#nativeToken = nativeToken;
+    this.#accessToken = accessToken;
   }
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
     const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
+    const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
     // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
     // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
     // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
     const publicHosts = publicHostSet([
       ...(options.publicHosts ?? []),
-      ...(LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase()) ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
+      ...(loopbackBind ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
     ]);
+    // Every request carries the daemon's access capability: `Host`/`Origin` are only what a client claims, and on
+    // loopback another user of the machine, or a sandboxed process allowed localhost, reaches the socket as the person
+    // would. A loopback daemon keeps its capability in the home across restarts, so the browser's cookie outlives
+    // them; one reachable off loopback (`--allow-remote`, or a `--public-host` a reverse proxy forwards) mints a new
+    // one on every start.
+    const remote = !loopbackBind || (options.publicHosts ?? []).length > 0;
+    const accessToken = options.accessToken
+      ?? (remote || options.accessTokenFile === undefined ? newAccessToken() : await persistentAccessToken(options.accessTokenFile));
     const uiRoot = options.uiRoot === undefined ? undefined : realpathSync(options.uiRoot);
     const ui: DaemonState["ui"] = uiRoot === undefined || options.dev === true ? "dev" : "bundled";
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
@@ -254,13 +309,14 @@ export class RerailDaemon {
       const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
       const app = new Hono();
       app.use("*", hostAllowlist(publicHosts));
+      app.use("*", accessCapability(accessToken));
       app.get("/healthz", context => context.json(daemon!.health()));
 
       app.post("/native/session", async (context) => {
         // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
         if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
         if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
-        if (context.req.header("authorization") !== `Bearer ${nativeToken}`) {
+        if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
           return context.json({ error: "native-authorization-invalid" }, 403);
         }
         let body: unknown;
@@ -300,7 +356,7 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken,
+        nativeServer: sessions, nativeToken, accessToken,
       });
       if (options.stateFile !== undefined) {
         const temporaryStateFile = `${options.stateFile}.${process.pid}.tmp`;
@@ -353,6 +409,7 @@ export class RerailDaemon {
       packageRoot: PACKAGE_ROOT,
       workspaceRoot: this.#workspaceRoot,
       nativeToken: this.#nativeToken,
+      accessToken: this.#accessToken,
     };
   }
 
@@ -545,6 +602,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     publicHosts: arguments_.publicHosts,
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
     portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
+    accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
     ...services,

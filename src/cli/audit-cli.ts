@@ -1,4 +1,4 @@
-import { findRunningDaemon } from "../runtime/daemon-control.js";
+import { daemonAccessHeaders, findRunningDaemon } from "../runtime/daemon-control.js";
 
 import {
   auditSettingsPatchSchema, auditSettingsSchema, type AuditControls, type AuditSettings, type AuditSettingsPatch, type AuditRequest,
@@ -96,18 +96,25 @@ function parseCommon(args: readonly string[]): ParsedCommon {
   };
 }
 
-/** The Rerail home's daemon serves every session recorded in its database, whichever repository ran it. */
-async function targetDaemon(options: AuditCliOptions): Promise<URL> {
-  const daemon = await findRunningDaemon(options.home);
-  if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
-  return new URL(daemon.state.url);
+/** Where the daemon listens, and the headers that admit a request to it. */
+interface DaemonEndpoint {
+  url: URL;
+  headers: Record<string, string>;
 }
 
-async function api<T>(base: URL, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {
-  const response = await fetch(new URL(path, base), {
+/** The Rerail home's daemon serves every session recorded in its database, whichever repository ran it. */
+async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
+  const daemon = await findRunningDaemon(options.home);
+  if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
+  return { url: new URL(daemon.state.url), headers: daemonAccessHeaders(daemon.state) };
+}
+
+async function api<T>(base: DaemonEndpoint, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {
+  const response = await fetch(new URL(path, base.url), {
     signal: AbortSignal.timeout(WAIT_TIMEOUT_MS),
     method,
-    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    headers: { ...base.headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const payload = await response.json() as T | { error?: string; message?: string };
   if (!response.ok) {
@@ -127,7 +134,7 @@ function describeAuditRequest(request: AuditRequest): string {
   return `Scan ${request.id}: ${request.status} (${request.scope}/${request.mode}; ${result})${error}`;
 }
 
-async function waitForAuditRequest(base: URL, sessionId: string, id: string): Promise<AuditRequest> {
+async function waitForAuditRequest(base: DaemonEndpoint, sessionId: string, id: string): Promise<AuditRequest> {
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   for (;;) {
     const { auditRequests } = await api<{ auditRequests: AuditRequest[] }>(base, `/api/sessions/${encodeURIComponent(sessionId)}/audit-requests`, "GET");
@@ -153,7 +160,7 @@ function settingsPatch(parsed: ParsedCommon): AuditSettingsPatch {
 }
 
 async function runSettingsCommand(
-  base: URL,
+  base: DaemonEndpoint,
   session: string,
   patch: AuditSettingsPatch,
   json: boolean,
@@ -170,7 +177,7 @@ async function runSettingsCommand(
 
 /** Internal testing: `rerail scan`, an explicit full-repository or git-diff audit of one session's checkout. */
 async function runAuditRequestCommand(
-  base: URL,
+  base: DaemonEndpoint,
   session: string,
   parsed: ParsedCommon,
   options: AuditCliOptions,

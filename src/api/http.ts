@@ -1,7 +1,8 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
+import { getCookie } from "hono/cookie";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import {
   codeRuleAstRelationSchema,
@@ -19,6 +20,7 @@ import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-s
 
 import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
 import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
+import { DAEMON_ACCESS_COOKIE, DAEMON_ACCESS_HEADER } from "../runtime/daemon-control.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
@@ -168,6 +170,58 @@ export function hostAllowlist(publicHosts: PublicHosts): MiddlewareHandler {
   return async (context, next) => {
     if (!allowedHost(context.req.header("host"), publicHosts)) return context.json({ error: "host-not-allowed" }, 421);
     await next();
+  };
+}
+
+/** Whether `presented` is `token`, in time independent of where they differ. */
+export function sameSecret(presented: string | undefined, token: string): boolean {
+  if (presented === undefined) return false;
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  return timingSafeEqual(digest(presented), digest(token));
+}
+
+const ACCESS_REQUIRED = "Every request to the Rerail daemon needs its access capability. "
+  + "Open the link rerail manage or rerail daemon start prints, or send the x-rerail-access header with the accessToken in daemon.json.";
+
+/** How long a browser keeps the capability: a loopback daemon's lasts across restarts, and a remote one's changes on each. */
+const ACCESS_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * The capability every request must carry: the `x-rerail-access` header from a Rerail process, or the `rerail-access`
+ * cookie from a browser. `Host` and `Origin` say where a request claims to come from, which any client can write, and
+ * on loopback another user of the machine or a sandboxed process allowed localhost reaches the socket too; this says
+ * the caller was given the capability, which lives in the person's 0600 home. A page `GET` carrying
+ * `?rerail-access=<token>` (the link `rerail manage` and `rerail daemon start` print) sets the cookie and redirects to
+ * the same page without it, whether or not the browser already holds the cookie, so the capability never stays in
+ * the address bar, history, or a `Referer`. `SameSite=Lax`: a link followed from another site still opens the
+ * dashboard, while another site's scripted request carries no cookie. `Secure` when the page was reached over https
+ * (directly or through a proxy that says so), so the cookie never rides a plain-http request to the same name.
+ */
+export function accessCapability(token: string): MiddlewareHandler {
+  return async (context, next) => {
+    const url = new URL(context.req.url);
+    const offered = url.searchParams.get(DAEMON_ACCESS_COOKIE) ?? undefined;
+    const pageLoad = context.req.method === "GET" || context.req.method === "HEAD";
+    if (pageLoad && offered !== undefined && sameSecret(offered, token)) {
+      url.searchParams.delete(DAEMON_ACCESS_COOKIE);
+      // A path of `//host` would be a protocol-relative redirect off this daemon.
+      const location = `/${url.pathname.replace(/^\/+/u, "")}${url.search}`;
+      const https = url.protocol === "https:" || context.req.header("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase() === "https";
+      return new Response(null, {
+        status: 303,
+        headers: {
+          location,
+          "set-cookie": `${DAEMON_ACCESS_COOKIE}=${token}; Path=/; Max-Age=${ACCESS_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${https ? "; Secure" : ""}`,
+          "cache-control": "no-store",
+          "referrer-policy": "no-referrer",
+        },
+      });
+    }
+    if (sameSecret(context.req.header(DAEMON_ACCESS_HEADER), token) || sameSecret(getCookie(context, DAEMON_ACCESS_COOKIE), token)) {
+      await next();
+      return;
+    }
+    return context.json({ error: "access-required", message: ACCESS_REQUIRED }, 401);
   };
 }
 

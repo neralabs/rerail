@@ -351,6 +351,7 @@ async function run(version: number): Promise<void> {
       env: sandbox.env,
     });
     sandbox.env.RERAIL_PLAYGROUND_DAEMON_URL = started.daemon.state.url;
+    if (started.daemon.state.accessToken !== undefined) sandbox.env.RERAIL_PLAYGROUND_DAEMON_ACCESS = started.daemon.state.accessToken;
     const profile = await prepareReplay(sandbox, hostHome, input.selection.mode === "agent");
     if (runWasCancelled(version)) {
       await sandbox.remove();
