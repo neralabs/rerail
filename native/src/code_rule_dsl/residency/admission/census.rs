@@ -54,10 +54,6 @@ pub(crate) struct WitnessMemory {
     pub projection_references: usize,
     pub unique_projections: usize,
     pub projection: JsonMemory,
-    pub typed_projection_bytes: usize,
-    pub typed_projection_batches: usize,
-    pub typed_projection_fields: usize,
-    pub shared_source_bytes_referenced: usize,
     #[serde(skip)]
     seen: HashSet<usize>,
 }
@@ -75,13 +71,10 @@ impl WitnessMemory {
         }
         if let Some(value) = witness.captures.projection() {
             self.projection_references += 1;
-            if self.seen.insert(value.identity()) {
-                let (bytes, rows, columns, source_bytes) = value.memory();
-                self.unique_projections += rows;
-                self.typed_projection_bytes += bytes;
-                self.typed_projection_batches += 1;
-                self.typed_projection_fields += rows * columns;
-                self.shared_source_bytes_referenced += source_bytes;
+            if self.seen.insert(std::ptr::from_ref(value) as usize) {
+                self.unique_projections += 1;
+                self.owned_bytes_estimate += size_of::<Value>() + 2 * size_of::<usize>();
+                self.projection.visit(value);
             }
         }
     }
