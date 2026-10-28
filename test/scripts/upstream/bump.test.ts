@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test, vi } from "vitest";
 
-import { DERIVE_PAUSED } from "../../../scripts/pack-data/paused.js";
 import { RUNTIMES_DIRECTORY } from "../../../scripts/pack-data/runtimes.js";
 import { applyBump, main, planBump, renderBump, type Sources } from "../../../scripts/upstream/bump.js";
 import { upstreamPins, type Fetch } from "../../../scripts/upstream/releases.js";
@@ -140,11 +139,9 @@ test("a PyPI tool-pack's bump moves gates.yaml, renames the runtime, and moves c
   assert.match(markdown, /\[1\.9\.4\.\.\.1\.9\.5\]\(https:\/\/github\.com\/PyCQA\/bandit\/compare\/1\.9\.4\.\.\.1\.9\.5\)/u);
   assert.ok(markdown.includes(`rename ${RUNTIMES_DIRECTORY}/bandit-1.9.4/ → ${RUNTIMES_DIRECTORY}/bandit-1.9.5/`), markdown);
   assert.ok(markdown.includes(`--- packs/demo/upstream/bandit/gates.yaml\n@@ 9\n-  commit: ${BANDIT_COMMIT}\n+  commit: ${BANDIT_NEXT}\n@@ 10\n-  version: 1.9.4\n+  version: 1.9.5\n`), markdown);
-  // Derive and bumps are paused: the summary lists the stale data and points at the pause, with no derive command.
-  assert.ok(markdown.includes("### Stale test data\n\nThe new pins make each tool-pack's test data stale:\n\n- `demo/bandit`\n"), markdown);
-  assert.ok(markdown.includes(`### Regenerate locally\n\nNot yet: ${DERIVE_PAUSED}.\n`), markdown);
-  assert.ok(markdown.includes("docs/upstream.md#derive-and-bumps-are-paused"), markdown);
-  assert.doesNotMatch(markdown, /fixtures:derive|fixtures:stage/u);
+  // The data publishes through publish/: derived again and staged whole, never recorded or pushed.
+  assert.ok(markdown.includes("### Derived again\n\nThe bump run derived each tool-pack's test data from the new pins, on Linux, and staged it whole in the tool-pack's `publish/`:\n\n- `demo/bandit`\n"), markdown);
+  assert.ok(markdown.includes("npm run fixtures:derive -- --pack demo --tool bandit --update && npm run fixtures:stage -- --pack demo --tool bandit --all\n"), markdown);
   assert.doesNotMatch(markdown, /recording|port-readiness|fixtures:push/u);
 });
 
@@ -497,19 +494,18 @@ test("the CLI: --dry-run writes the summary and the JSON and moves no pin, and a
   assert.deepEqual(JSON.parse(readFileSync(join(out, "again.json"), "utf8")), { toolPack: "demo/bandit", version: "1.9.5", changed: false });
 });
 
-test("while derive and bumps are paused the CLI refuses to apply a bump, pointing at the pause, and writes nothing", async () => {
+test("the CLI applies a bump: it moves the pins and writes the summary", async () => {
   const root = banditCheckout();
   const { sources } = recorded(BANDIT_TAGS);
-  const gates = readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8");
   const out = join(root, "out");
-  const run = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--summary", join(out, "bump.md"), "--json", join(out, "bump.json")], root, sources.fetch);
-  assert.equal(run.code, 1);
-  assert.equal(run.stderr, `demo/bandit: ${DERIVE_PAUSED}\n`);
-  assert.match(run.stderr, /docs\/upstream\.md#derive-and-bumps-are-paused/u);
-  assert.equal(run.stdout, "");
-  assert.equal(readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8"), gates);
-  assert.ok(existsSync(join(root, RUNTIMES_DIRECTORY, "bandit-1.9.4")));
-  assert.ok(!existsSync(out));
+  const run = await cli(["--pack", "demo", "--tool", "bandit", "--version", "1.9.5", "--summary", join(out, "bump.md")], root, sources.fetch);
+  assert.equal(run.code, 0);
+  assert.equal(run.stderr, "");
+  assert.match(run.stdout, /^bumped demo\/bandit 1\.9\.4 → 1\.9\.5/u);
+  assert.match(readFileSync(join(root, "packs/demo/upstream/bandit/gates.yaml"), "utf8"), /version: 1\.9\.5/u);
+  assert.ok(existsSync(join(root, RUNTIMES_DIRECTORY, "bandit-1.9.5")));
+  assert.ok(!existsSync(join(root, RUNTIMES_DIRECTORY, "bandit-1.9.4")));
+  assert.match(readFileSync(join(out, "bump.md"), "utf8"), /^## `demo\/bandit`: `bandit` 1\.9\.4 → 1\.9\.5\n/u);
 });
 
 test("without --version the CLI plans the bump to the registry's latest stable release", async () => {

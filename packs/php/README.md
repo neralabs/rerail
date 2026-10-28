@@ -108,10 +108,6 @@ under `upstream/<tool>/publish/`. The recipe (`scripts/pack-data/recipes/php.ts`
 its tests, against the pinned tool versions, with the pinned PHP 8.5.11 (`scripts/pack-data/runtimes/php/build.sh`)
 and Composer:
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack php                 # every tool
 npm run fixtures:derive -- --pack php --tool psalm    # one

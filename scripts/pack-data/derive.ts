@@ -13,10 +13,6 @@
  *   3. fails when a tracked file changed (a licence record's UPSTREAM.md), an authored file changed, or an untracked
  *      file appeared beside them: a derivation of a commit makes the derived data and nothing else. `--update` (a pin
  *      bump) keeps those changes for the commit instead, and reports them.
- *
- * Paused: every tool-pack refuses before its generator runs (DerivePausedError) until the generators write per-repo
- * provenance; see docs/upstream.md, "Derive and bumps are paused". Some generators still write per-file UPSTREAM.md
- * rows, which pack check 6 rejects.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
@@ -31,7 +27,6 @@ import { ProcessCommandRunner } from "../../conformance/process.js";
 import { createContext, type DeriveRecipe } from "./context.js";
 import { RECIPES } from "./recipes/index.js";
 import { assertProvenanceWritten } from "./provenance.mjs";
-import { DerivePausedError } from "./paused.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_CACHE = join(ROOT, ".rerail", "pack-data");
@@ -102,14 +97,8 @@ export interface DeriveResult {
   notes: string[];
 }
 
-/** Throws for every tool-pack while derive and bumps are paused (docs/upstream.md, "Derive and bumps are paused"). */
-function refuseWhilePaused(label: string): void {
-  throw new DerivePausedError(label);
-}
-
 export async function deriveToolPack(recipe: DeriveRecipe, options: DeriveOptions): Promise<DeriveResult> {
   const label = toolPath(recipe);
-  refuseWhilePaused(label);
   const started = Date.now();
   const problems: string[] = [];
   const notes: string[] = [];
@@ -196,7 +185,7 @@ async function main(): Promise<number> {
     try {
       results.push(await deriveToolPack(recipe, options));
     } catch (error) {
-      const report = error instanceof DerivePausedError ? error.message : error instanceof Error ? error.stack ?? error.message : String(error);
+      const report = error instanceof Error ? error.stack ?? error.message : String(error);
       results.push({ label: toolPath(recipe), derived: 0, authored: 0, problems: [report], changed: [], notes: [] });
     }
   }

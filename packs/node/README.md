@@ -45,10 +45,6 @@ under `upstream/eslint-plugin-n/publish/`. The recipe
 `scripts/pack-data/runtimes/eslint-plugin-n-18.4.1/` pins for the release check and `npm run upstream:bump`).
 Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The derive and stage commands below take a
-snapshot once the pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack node
 npm run fixtures:stage -- --pack node    # copy what changed into upstream/eslint-plugin-n/publish/

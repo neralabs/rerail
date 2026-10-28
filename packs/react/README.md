@@ -38,10 +38,6 @@ against the pinned tools (eslint 9.39.5, @typescript-eslint/parser 8.70.1, types
 checkouts. The fixtures Rerail wrote (`UPSTREAM.md`) are authored: a change to them is staged into `publish/` with the
 derived data.
 
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The commands below take a snapshot once the
-pause lifts.
-
 ```sh
 npm run fixtures:derive -- --pack react                                     # both plugins
 npm run fixtures:derive -- --pack react --tool eslint-plugin-react-hooks    # one

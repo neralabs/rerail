@@ -122,8 +122,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json`: the expected findings, what the tool reported on its own tests, written by
   the generator in the same directory and run through `npm run fixtures:derive` (each tool-pack's recipe in
-  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored),
-  which is paused for now ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Where a tool's tests state
+  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored)
+  ([docs/upstream.md](upstream.md#take-a-new-snapshot)). Where a tool's tests state
   their expected findings (as markup in the test files), the generator reads them instead of running the tool: the
   tool's own test suite requires it to report exactly those. The ESLint-based generators share
   `scripts/pack-data/eslint-expected.mjs`. Its `source` block names the upstream `origin` (repository `@` commit), the
@@ -528,10 +528,15 @@ request ([docs/upstream.md](upstream.md#removing-data)). An `authored/` corpus n
 
 ### provenance.json and LICENSES.md
 
-Each test data archive holds `upstream/<tool>/provenance.json`, every file with its upstream path and how it was made
-(a snapshot taken when the records moved from per-file rows to patterns), and `upstream/<tool>/LICENSES.md`, the
-licence texts. They are for audit: no check, workflow or tool reads them. A samples archive's `LICENSES.md` lists
-each source repository, its licence and the files taken from it ([docs/upstream.md](upstream.md#sample-licences)).
+Each test data archive holds `upstream/<tool>/provenance.json`, every file with its source, its upstream path and how
+it was made, and `upstream/<tool>/LICENSES.md`, each source's licence and licence text. Both are derive output: the
+generator writes them last, through `scripts/pack-data/provenance.mjs`, which refuses to write either when the files
+disagree with the pack's `UPSTREAM.md` records ([docs/upstream.md](upstream.md#what-the-generators-write)). A
+`snapshot` key appears only in archives bootstrapped by the one-off snapshot taken when the records moved from per-file
+rows to patterns, until the tool-pack is derived again. They are for audit: no licence check reads them. The publish
+workflow's prep reads only the key set of provenance.json's `files`, to refuse an archive whose files it does not
+describe. A samples archive's `LICENSES.md` lists each source repository, its licence and the files taken from it
+([docs/upstream.md](upstream.md#sample-licences)).
 
 ### Licence of each file
 
