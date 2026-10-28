@@ -4,7 +4,7 @@
 use crate::code_rule_dsl::{
     CompiledCodeRuleDsl,
     language::GrammarDialect,
-    matcher::{self, Corpus, CorpusSlot, FileAnchorIndex, FileGates, FileScopeSlot, Stopped},
+    matcher::{self, FileAnchorIndex, FileGates, FileScopeSlot, Selection, Stopped},
     model::{Anchor, ClauseKind, FileInput, Query},
     module_path::ModulePath,
     origin::InFile,
@@ -27,8 +27,9 @@ pub(super) struct Native<'a> {
     compiled: &'a CompiledCodeRuleDsl,
     paths: &'a [String],
     modules: &'a BTreeMap<u32, ModulePath>,
-    corpus: Arc<Corpus>,
-    /// CPU time publishing the input tapes into one reusable production index.
+    /// CPU time publishing the input tapes into one reusable production index. W's anchor index
+    /// is built per file while matching (`FileAnchorIndex::build`), so this is zero and `run`'s
+    /// `prepare_ns` counts the index.
     pub index_ns: u64,
     pub index_wall_ns: u64,
 }
@@ -74,22 +75,12 @@ impl<'a> Native<'a> {
                 "native oracle supports Python tapes only"
             );
         }
-        let started = super::cpu_ns();
-        let wall = Instant::now();
-        let corpus = Arc::new(Corpus::default());
-        for (root, path) in parsed.iter().zip(paths) {
-            corpus
-                .put(path, root.root().get_doc(), &|| false)
-                .expect("publish native oracle tape");
-        }
-        let index_ns = super::cpu_ns().saturating_sub(started);
-        let index_wall_ns = wall.elapsed().as_nanos() as u64;
+        let (index_ns, index_wall_ns) = (0, 0);
         Self {
             parsed,
             compiled,
             paths,
             modules,
-            corpus,
             index_ns,
             index_wall_ns,
         }
@@ -100,17 +91,22 @@ impl<'a> Native<'a> {
         let started = super::cpu_ns();
         let roots_before = matcher::roots_matched();
         let compile_before = phase_clock::ANCHOR_COMPILE.load(Ordering::Relaxed);
-        let preparing = super::cpu_ns();
-        let plans = matcher::anchor_plans([self.compiled.inner.as_ref()]);
-        self.corpus
-            .prepare(&plans)
-            .expect("prepare native oracle anchors");
-        let prepare_total = super::cpu_ns().saturating_sub(preparing);
         let compile_ns = phase_clock::ANCHOR_COMPILE
             .load(Ordering::Relaxed)
             .saturating_sub(compile_before);
-        let prepare_ns = prepare_total.saturating_sub(compile_ns);
-        let _corpus = CorpusSlot::install(self.corpus.clone());
+        let mut prepare_ns = 0;
+        let file_plans: Vec<_> = self
+            .compiled
+            .inner
+            .clauses
+            .iter()
+            .filter_map(|clause| match &clause.kind {
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers),
+                _ => None,
+            })
+            .flatten()
+            .map(|grammar| grammar.anchors.as_ref())
+            .collect();
         let mut keys = BTreeSet::new();
         for (doc, root) in self.parsed.iter().enumerate() {
             let path = &self.paths[doc];
@@ -139,8 +135,13 @@ impl<'a> Native<'a> {
                 FileScopeSlot::install(Vec::new(), file.module.clone(), errors.hide_bindings())
                     .file(&file);
             let gates = FileGates::new(&file, root.root());
-            let file_plans: Vec<_> = plans.values().flatten().map(Arc::as_ref).collect();
-            let index = FileAnchorIndex::build_at(root, &file_plans, CLAUSE_WORK, || false, path);
+            let preparing = super::cpu_ns();
+            let index = FileAnchorIndex::build(root, &file_plans, CLAUSE_WORK, || false);
+            prepare_ns += super::cpu_ns().saturating_sub(preparing);
+            assert!(
+                index.complete(),
+                "native oracle requires a complete anchor index; refusing silent full scan"
+            );
             let place = InFile::tape(tape);
             matcher::with_file_memo(root, || {
                 for clause in &self.compiled.inner.clauses {
@@ -172,11 +173,12 @@ impl<'a> Native<'a> {
                                 condition.holds(path, file.module.as_deref(), None)
                             })
                             || !gates.admit(grammar)
-                            || !grammar.admits_source(
-                                &file.source,
-                                &errors,
-                                &mut rustc_hash::FxHashMap::default(),
-                            )
+                            || !grammar.text.as_ref().is_none_or(|text| {
+                                text.holds_with(&file.source, &mut |source: &str, literal| {
+                                    memchr::memmem::find(source.as_bytes(), literal.as_bytes())
+                                        .is_some()
+                                })
+                            })
                         {
                             continue;
                         }
@@ -184,16 +186,16 @@ impl<'a> Native<'a> {
                             !errors.incomplete(grammar),
                             "native oracle requires complete clauses; syntax-error input is incomplete"
                         );
-                        let selected = if grammar.anchors.needs_index() {
-                            let selected = index.selected(&grammar.anchors);
-                            assert!(
-                                selected.is_some(),
-                                "native oracle requires prepared candidate roots; refusing silent full scan"
-                            );
-                            selected
-                        } else {
-                            None
-                        };
+                        let selected: Option<Arc<[u32]>> =
+                            match index.select(&grammar.anchors) {
+                                Selection::All => None,
+                                Selection::Roots(roots) => Some(
+                                    roots
+                                        .iter()
+                                        .map(|&ordinal| index.node(ordinal).node_id() as u32)
+                                        .collect(),
+                                ),
+                            };
                         let mut work = CLAUSE_WORK;
                         let result = matcher::run_clause(
                             root,
@@ -203,9 +205,7 @@ impl<'a> Native<'a> {
                             &mut work,
                             |ordinal, _env, _work| -> Result<bool, Infallible> {
                                 let node = matcher::node_at(root, ordinal);
-                                if grammar.invalid_syntax == Some(true)
-                                    || !errors.meets(&place.place(&node))
-                                {
+                                if !errors.meets(&place.place(&node)) {
                                     keys.insert((
                                         clause.violation.code.clone(),
                                         doc as u32,

@@ -2,15 +2,18 @@
 //! This is deliberately hand-authored reference SQL, not a rule-ID compiler.
 //! The generic compiler must later produce and qualify against this shape.
 use super::{
-    call_batch,
     contract::{Coverage, FindingKey, Findings},
-    import_screen::Imports,
-    python_structure::{ContextKind, NodeRef},
-    relation::Relation,
+    shape::generated_shape,
 };
+use crate::code_rule_dsl::facts::producers::python::{
+    call_batch,
+    import_screen::Imports,
+    python_facts::{self, Fact, NodeFacts, Qualification},
+    python_structure::{ContextKind, NodeRef},
+};
+use crate::code_rule_dsl::facts::vtab::{self, Modules, Relation, Source};
 use crate::code_rule_dsl::{
     language::GrammarDialect,
-    matcher::python_facts::{self, Fact, NodeFacts, Qualification},
     module_path::ModulePath,
     scope::{
         Reading, ScopeTable,
@@ -124,6 +127,17 @@ struct Run {
     findings: Findings,
     metrics: Metrics,
 }
+/// S's bound `Relation`: the merged vtab's binding (whose `scans` counter is S's `filters`) and its rows.
+struct Bound {
+    binding: vtab::Binding,
+    len: usize,
+}
+fn bind(modules: &Modules, db: &Connection, name: &str, relation: Relation) -> Bound {
+    let len = relation.len();
+    modules.bind(db, name, std::sync::Arc::new(relation)).unwrap();
+    Bound { binding: modules.get(name).unwrap(), len }
+}
+
 fn cpu_ns() -> u64 {
     let mut time = libc::timespec {
         tv_sec: 0,
@@ -521,6 +535,7 @@ fn execute_sql<'t>(
         }
     }
     let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
     let mut relations = Vec::new();
     for (name, relation) in [
         ("call_sites", sites),
@@ -531,7 +546,7 @@ fn execute_sql<'t>(
         ("wanted_symbol", wanted),
         ("receiver", receivers),
     ] {
-        relations.push((name, relation.bind(&db, name).unwrap()));
+        relations.push((name, bind(&modules, &db, name, relation)));
     }
     let prep = cpu_ns();
     let mut query = db.prepare(queries[0]).unwrap();
@@ -677,7 +692,7 @@ fn execute_sql<'t>(
             semantic.qualified(&mut atoms, value_demand.iter().map(|r| (r.doc, r.node_id))),
         ),
     ] {
-        relations.push((name, relation.bind(&db, name).unwrap()));
+        relations.push((name, bind(&modules, &db, name, relation)));
     }
     let p_wait = atoms.get("os.P_WAIT");
     let path = atoms.get("pathlib.Path");
@@ -704,9 +719,9 @@ fn execute_sql<'t>(
     for (name, rows) in relations {
         metrics.filters.insert(
             name.into(),
-            rows.filters.load(std::sync::atomic::Ordering::Relaxed),
+            rows.binding.counters().scans.load(std::sync::atomic::Ordering::Relaxed),
         );
-        metrics.rows.insert(name.into(), rows.len());
+        metrics.rows.insert(name.into(), rows.len);
     }
     let mut by_domain: BTreeMap<(usize, u32), Vec<usize>> = BTreeMap::new();
     for (label, doc, node) in matches {
@@ -767,8 +782,6 @@ fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
-#[cfg(test)]
-mod generated_shape;
 #[cfg(test)]
 mod native_oracle;
 #[cfg(test)]

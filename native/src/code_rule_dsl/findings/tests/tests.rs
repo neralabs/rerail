@@ -284,8 +284,8 @@ async def shadow(open, rq, P):
 #[test]
 fn complete_async_family_matches_existing_path_fixtures() {
     check(vec![
-        include_str!("../../../../../../fixtures/python/value/ruff/ASYNC230.py").into(),
-        include_str!("../../../../../../fixtures/python/value/ruff/ASYNC230-unpacking.py").into(),
+        include_str!("../../../../../fixtures/python/value/ruff/ASYNC230.py").into(),
+        include_str!("../../../../../fixtures/python/value/ruff/ASYNC230-unpacking.py").into(),
     ]);
 }
 #[test]

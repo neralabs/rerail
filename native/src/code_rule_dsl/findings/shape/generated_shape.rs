@@ -35,7 +35,7 @@ fn emit(mut shape: Shape, output: &[&str], branches: Vec<Select>) -> Emission {
         .unwrap();
     shape.emit("result").unwrap()
 }
-pub(super) fn queries() -> [Emission; 2] {
+pub(in crate::code_rule_dsl) fn queries() -> [Emission; 2] {
     let mut shape = Shape::default();
     for (name, columns) in [
         ("call_sites", &["doc", "report", "call", "ref"][..]),

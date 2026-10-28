@@ -305,6 +305,13 @@ excluded code back, so this needs a decision, not a copy: (a) a row for the orac
 with an exception to the exclusion for test-only use, or (b) `Native` rebuilt on W's matcher and
 `prefilter::select`.
 
+2026-10-28: placed with option (b), as a mutation of the copy. `findings::async_reference` (test-only)
+compares against W's matcher: `FileAnchorIndex::build` per file (its CPU in `prepare_ns`, so
+`index_ns` is 0), `select` mapped to node ids, the required-text check inline, and no
+`invalid_syntax` gate (W's DSL has none). Its tests pass, including the two native comparisons.
+Still open: whether the oracle should instead compare against `prefilter::select` on the content
+store, once that path runs clauses.
+
 ## O16. `mimalloc` against W's jemalloc
 
 Phase 0 lists `mimalloc` among the dependency deltas. G installs it as the global allocator on
