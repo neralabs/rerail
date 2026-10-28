@@ -7,8 +7,17 @@ import { text } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
 
 const temporaryDirectories: string[] = [];
+/** Each command the test ran and how long it took, so a slow run says where the time went, not just that it ran out. */
+const commandTimes: Array<[string, number]> = [];
+const SLOW_RUN_MS = 40_000;
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  const total = commandTimes.reduce((sum, [, ms]) => sum + ms, 0);
+  if (total > SLOW_RUN_MS) {
+    const lines = commandTimes.map(([command, ms]) => `  ${String(ms).padStart(6)} ms  ${command}`);
+    process.stderr.write(`updater-cli: ${total} ms spent in ${commandTimes.length} commands:\n${lines.join("\n")}\n`);
+  }
+  commandTimes.length = 0;
 });
 
 interface PackageManifest {
@@ -38,6 +47,7 @@ function laterPatch(version: string, steps: number): string {
 async function run(command: readonly string[], environment: NodeJS.ProcessEnv, cwd?: string): Promise<CommandResult> {
   const [executable, ...args] = command;
   if (executable === undefined) throw new Error("Expected a command to run");
+  const started = Date.now();
   const child = spawn(executable, args, {
     env: environment,
     ...(cwd === undefined ? {} : { cwd }),
@@ -51,6 +61,8 @@ async function run(command: readonly string[], environment: NodeJS.ProcessEnv, c
       child.once("close", code => resolve(code ?? 1));
     }),
   ]);
+  // The launcher's path is the same in every command; its arguments are what tell them apart.
+  commandTimes.push([[executable, ...args].map(part => part.replace(/^.*\/(?=[^/]+$)/u, "")).join(" "), Date.now() - started]);
   return { exitCode, stdout, stderr };
 }
 
