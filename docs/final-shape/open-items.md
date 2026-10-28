@@ -20,7 +20,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
-| O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | open, **plan gap** |
+| O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | open, **plan gap, decision needed** (closure includes excluded `anchors/sql/lower*`) |
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | open, **decision needed** |
 
 ## O1. Stale-fact detection after a crash
@@ -294,6 +294,16 @@ row of the plan lists them. So the oracle stays outside the module tree (an atte
 its other imports is in the stash `wolfeel-oracle-placement-attempt-2026-10-27`). The fixture
 paths in `tests.rs` also need one `..` fewer. Closure: add a row for S's matcher deltas that the
 oracle needs, or replace `Native` with W's matcher as the comparison.
+
+2026-10-27: why this stays blocked under copy-the-closure. Measured against its merge base with main
+(f3f92c24), S's matcher delta is 75 files, +14.5k/−0.7k lines. Half of it is P's
+`anchors/sql/*` (`lower/{children,waves,lifetime,ownership,render}.rs`, `reader.rs`, `tree.rs`,
+`store.rs`, …). `Native` reaches that half through `anchor_plans` and `FileAnchorIndex::build_at`.
+05's "Explicitly not copied" excludes the D and P `anchors/sql/lower*` relation evaluation, and
+Phase 3 ported the rest as `prefilter/` with those parts dropped. Copying the closure would put
+excluded code back, so this needs a decision, not a copy: (a) a row for the oracle's closure,
+with an exception to the exclusion for test-only use, or (b) `Native` rebuilt on W's matcher and
+`prefilter::select`.
 
 ## O16. `mimalloc` against W's jemalloc
 
