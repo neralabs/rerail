@@ -178,9 +178,10 @@ jobs:
         run: npm run upstream:bump -- --pack "$PACK" --tool "$TOOL" --version "$VERSION" --summary "$RUNNER_TEMP/bump/summary.md" --json "$RUNNER_TEMP/bump/bump.json"
 
       # The bump names the tool-packs whose test data it made stale (`derive`): its own, and any other whose upstream
-      # runs in a runtime it changed; a re-snapshot names its own alone. Each is derived from the pins (its UPSTREAM.md
-      # rows rewritten), then staged whole into its publish/ (`--all`: the publish replaces the archive with exactly
-      # this data, so a case upstream dropped is dropped too).
+      # runs in a runtime it changed; a re-snapshot names its own alone. Each is derived from the pins (the bump has
+      # already moved its licenses/<project>/UPSTREAM.md Source row and heading; deriving writes each tool's
+      # provenance.json and LICENSES.md into the test data), then staged whole into its publish/ (`--all`: the publish
+      # replaces the archive with exactly this data, so a case upstream dropped is dropped too).
       - name: Derive and stage the stale tool-packs
         env:
           PACK: ${{ matrix.pack }}
@@ -205,12 +206,13 @@ jobs:
             npm run fixtures:stage -- --pack "$pack" --tool "$tool" --all
           done
 
-      # Only what git tracks: the pins, the UPSTREAM.md and licence files deriving rewrites, and each stale tool-pack's
-      # publish/. The test data in its pulled layout is ignored, and no lock changes here: the publish writes them.
+      # Only what git tracks: the pins (UPSTREAM.md's Source row and heading, and a pack's hand-pinned reference tools in
+      # fixtures/<pack>/ among them), the licence files deriving copies, and each stale tool-pack's publish/. The test
+      # data in its pulled layout is ignored, and no lock changes here: the publish writes them.
       - name: Keep the bump as a patch
         run: |
           set -euo pipefail
-          git add -A -- packs scripts/pack-data/runtimes
+          git add -A -- packs scripts/pack-data/runtimes 'fixtures/*/tools.mjs' 'fixtures/*/common.py'
           git diff --cached --binary > "$RUNNER_TEMP/bump/bump.patch"
           git diff --cached --stat -- . ':(exclude)packs/*/upstream/*/publish/**'
           echo "staged in publish/: $(git diff --cached --name-only -- 'packs/*/upstream/*/publish/**' | wc -l) file(s)"

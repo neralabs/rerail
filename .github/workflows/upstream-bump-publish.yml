@@ -122,7 +122,9 @@ jobs:
       #   (`stage`);
       # - src/engine, which the derivation imports, and the engine source a recipe reads (DEFAULT_PYTHON_MINOR);
       # - the packs' upstream/ directories (generators, gates.yaml, the locks naming the archives the bump started
-      #   from), licenses/ (the per-repo UPSTREAM.md and licence texts) and conformance manifests.
+      #   from), licenses/ (the per-repo UPSTREAM.md, whose Source row and heading the bump moves, and licence texts),
+      #   the reference tools a pack pins by hand (fixtures/<pack>/tools.mjs, fixtures/<pack>/common.py), which the bump
+      #   moves and the vue and sql recipes install, and conformance manifests.
       # The build (npm run build:js) writes only dist/, which none of these read. When any of them moved, the whole run
       # is skipped, not failed: the next nightly bumps again from main's head.
       - id: code
@@ -151,6 +153,8 @@ jobs:
               'packs/*/licenses/*'
               'packs/*/conformance.json'
               'packs/*/candidates/conformance.json'
+              'fixtures/*/tools.mjs'
+              'fixtures/*/common.py'
             )
             changed="$(git diff --name-only --no-renames "$HEAD_SHA" "$BASE" -- "${code[@]}")"
             if [ -n "$changed" ]; then
@@ -305,7 +309,7 @@ jobs:
             echo "status=not-applying" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          outside="$(git diff --cached --name-only --no-renames | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          outside="$(git diff --cached --name-only --no-renames | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+|fixtures/[a-z0-9-]+/(tools\.mjs|common\.py))$' || true)"
           if [ -n "$outside" ]; then
             echo "::error::the bump patch touches files outside the pins and the derived data:"
             # Each path after "- ": a path from the patch could otherwise begin a workflow command.
@@ -348,11 +352,13 @@ jobs:
       # read from files the run job's code step does not compare, such as a pack's README). Its tree, staged as the bump
       # leg stages it, must be the trusted bump's but for these files, of the bumped tool-pack and each tool-pack in
       # bump.json's `derive` (the ones the bump leg derived and staged again; a re-snapshot's own tool-pack alone):
-      # - upstream/<tool>/publish/**, but publish/samples/: the derived data, staged whole (fixtures:stage --all), which
-      #   the publish workflow packs, licence-checks and summarises, and a code owner approves;
+      # - upstream/<tool>/publish/**, but publish/samples/: the derived data, staged whole (fixtures:stage --all), with
+      #   each tool's provenance.json and LICENSES.md that deriving writes into it, which the publish workflow packs,
+      #   licence-checks and summarises, and a code owner approves;
       # - upstream/<tool>/UPSTREAM.md: the generators' list of the cases Rerail wrote (packs/python/upstream/common.py
       #   write_record, the next, vitest and vue generators);
-      # - licenses/<project>/UPSTREAM.md, <project> being gates.yaml's rerail.project: the per-repo record of what is
+      # - licenses/<project>/UPSTREAM.md, <project> being gates.yaml's rerail.project (its Source row and heading are the
+      #   bump's own edits, compared above with the rest of the pins): the per-repo record of what is
       #   copied (bumps are paused until the generators write it rather than per-file rows; docs/upstream.md);
       # - any other file directly in licenses/<project>/: upstream's licence text, which the generators copy verbatim
       #   from upstream's checkout at the pinned commit (LICENSE, LICENSE.md, license.md, licence.txt, COPYRIGHT, ...).
@@ -395,7 +401,7 @@ jobs:
             echo "derived again: $pack/$tool (licenses/$project)"
           done
 
-          git add -A -- packs scripts/pack-data/runtimes
+          git add -A -- packs scripts/pack-data/runtimes 'fixtures/*/tools.mjs' 'fixtures/*/common.py'
           bumped="$(git write-tree)"
           mapfile -d '' -t differing < <(git diff -z --name-only --no-renames "$bumped" "$TREE")
           unexpected=()
@@ -624,7 +630,7 @@ jobs:
           fi
 
           # The commits together, confined as each verified patch was.
-          outside="$(git diff --name-only --no-renames "$BASE" HEAD | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          outside="$(git diff --name-only --no-renames "$BASE" HEAD | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+|fixtures/[a-z0-9-]+/(tools\.mjs|common\.py))$' || true)"
           if [ -n "$outside" ]; then
             echo "::error::the composed bumps touch files outside the pins and the derived data:"
             mapfile -t paths <<< "$outside"
@@ -730,9 +736,9 @@ jobs:
             done < "$RUNNER_TEMP/status.tsv"
             echo
             if [ "$RESNAPSHOT" = "true" ]; then
-              echo "The upstream re-snapshot derived each tool-pack again at the release it already pins, in a leg of its own on Linux, and staged its whole data in its \`publish/\`. Before opening this pull request, the publish run ran \`npm run upstream:bump\` itself for each, with main's code and packages at \`$BASE\`, and found the pins unchanged: each commit below changes only the \`publish/\`, \`UPSTREAM.md\` and licence files that deriving and staging write."
+              echo "The upstream re-snapshot derived each tool-pack again at the release it already pins, in a leg of its own on Linux, and staged its whole data in its \`publish/\`. Before opening this pull request, the publish run ran \`npm run upstream:bump\` itself for each, with main's code and packages at \`$BASE\`, and found the pins unchanged: each commit below changes only the \`publish/\` (the derived data, with each tool's \`provenance.json\` and \`LICENSES.md\`), the generators' \`UPSTREAM.md\` and the licence files that deriving and staging write."
             else
-              echo "The upstream bump moved each tool-pack's pins to its upstream's release in a leg of its own, then derived again, on Linux, each tool-pack the bump made stale and staged its whole data in its \`publish/\`. Before opening this pull request, the publish run ran \`npm run upstream:bump\` itself for each, with main's code and packages at \`$BASE\`: each commit below makes exactly its edits, and otherwise changes only the \`publish/\`, \`UPSTREAM.md\` and licence files that deriving and staging write. A breaking release is a major one, or a minor one of a \`0.x\` pin."
+              echo "The upstream bump moved each tool-pack's pins to its upstream's release in a leg of its own, then derived again, on Linux, each tool-pack the bump made stale and staged its whole data in its \`publish/\`. Before opening this pull request, the publish run ran \`npm run upstream:bump\` itself for each, with main's code and packages at \`$BASE\`: each commit below makes exactly its edits (the pins, and each \`licenses/<project>/UPSTREAM.md\`'s Source row and heading), and otherwise changes only the \`publish/\` (the derived data, with each tool's \`provenance.json\` and \`LICENSES.md\`), the generators' \`UPSTREAM.md\` and the licence files that deriving and staging write. A breaking release is a major one, or a minor one of a \`0.x\` pin."
             fi
             echo
             echo "Each tool-pack is one commit, and no two commits derive the same tool-pack again. When a tool-pack's conformance check fails on this pull request, merge the others without its commit ([how]($DOCS_URL))."
@@ -1052,9 +1058,10 @@ jobs:
             exit 1
           fi
 
-          # The commits may touch only the packs' pins, scripts, derived data and licence files, and the runtimes, as
-          # regular files, and no lock: the publish writes those once S3 holds what they name.
-          outside="$(git diff --name-only --no-renames "$BASE" "$TREE" | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+)$' || true)"
+          # The commits may touch only the packs' pins, scripts, derived data and licence files, the runtimes, and the
+          # reference tools a pack pins by hand, as regular files, and no lock: the publish writes those once S3 holds
+          # what they name.
+          outside="$(git diff --name-only --no-renames "$BASE" "$TREE" | grep -v -E '^(packs/[a-z0-9-]+/(conformance\.json|upstream/.+|licenses/[^/]+/[^/]+)|scripts/pack-data/runtimes/[a-z0-9._-]+/[^/]+|fixtures/[a-z0-9-]+/(tools\.mjs|common\.py))$' || true)"
           if [ -n "$outside" ]; then
             echo "::error::the composed bumps touch files outside the pins and the derived data:"
             mapfile -t paths <<< "$outside"

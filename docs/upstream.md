@@ -372,9 +372,17 @@ The bump moves every pin of the release together, and reads each file back to ch
   runtime directory named `<name>-<version>` is renamed for the new release, and every `gates.yaml` naming it follows.
 - `conformance.json`'s `tools[].version`.
 - The generators' pins (`packs/<pack>/upstream/<tool>/*` and the pack's shared `upstream/*` scripts): the commit, npm's
-  `gitHead` where a generator pins that instead, a `...VERSION = "<release>"` constant, and an entry keyed by upstream's
-  package.
-- Clippy: `TOOLCHAIN`, `RUSTC_VERSION`, `CLIPPY_VERSION` and `CLIPPY_COMMIT` in `packs/rust/upstream/common.py`.
+  `gitHead` where a generator pins that instead, a `...VERSION = "<release>"` and `...TAG = "<tag>"` constant, and an
+  entry keyed by upstream's package.
+- The reference tools a pack pins by hand (`fixtures/vue/tools.mjs`, `fixtures/sql/common.py`): upstream's package
+  entry, and the commit and the tag beside it.
+- `packs/<pack>/licenses/<project>/UPSTREAM.md`: its Source row's tag and commit, and the release in its heading. A row
+  with no tag (`—`) naming npm's `gitHead`, as react-hooks' does, moves to the new release's `gitHead` and keeps `—`.
+- Clippy: `TOOLCHAIN`, `RUSTC_VERSION`, `CLIPPY_VERSION` and `CLIPPY_COMMIT` in `packs/rust/upstream/common.py`, and
+  `licenses/clippy/UPSTREAM.md`'s Source row and the Rust release in its heading.
+
+Whatever still names the old release afterwards (prose in a README, a comment, the rest of `UPSTREAM.md`, a derive
+recipe under `scripts/pack-data/recipes/`, or a renamed runtime's old name) is listed in the summary for the reviewer.
 
 The bump does not touch `gates.yaml`'s `rules`: the pull request shows them, and the reviewer checks them against the
 new release (a rule deprecated, added to a recommended configuration, or gone).

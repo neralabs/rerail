@@ -21,18 +21,25 @@
  *   renamed to the new version, and every gates.yaml naming it follows;
  * - conformance.json's `tools[<tool>].version`;
  * - the generators' pins (`packs/<pack>/upstream/<tool>/*` and `packs/<pack>/upstream/*` scripts): the old commit, the
- *   npm `gitHead` of the old release where a generator pins that instead, a `...VERSION = "<old>"` constant of the
- *   tool's own scripts, and an object entry keyed by upstream's package (`"eslint-plugin-react": "7.37.5"`).
+ *   npm `gitHead` of the old release where a generator pins that instead, a `...VERSION = "<old>"` and `...TAG =
+ *   "<old tag>"` constant of the tool's own scripts, and an object entry keyed by upstream's package
+ *   (`"eslint-plugin-react": "7.37.5"`);
+ * - the reference tools a pack pins by hand (fixtures/<pack>/tools.mjs, fixtures/<pack>/common.py): upstream's package
+ *   entry, the commit, and the tag in the same `{…}` as the commit;
+ * - `packs/<pack>/licenses/<project>/UPSTREAM.md`: its Source row's tag and commit (a row naming npm's `gitHead` and no
+ *   tag, `—`, as react-hooks' does, moves to the new release's gitHead and keeps `—`), and the version on its first line.
  *
  * The Rust pack's Clippy ships with Rust: its pins are packs/rust/upstream/common.py's `TOOLCHAIN`, `RUSTC_VERSION`,
  * `CLIPPY_VERSION` and `CLIPPY_COMMIT` (rust-lang/rust-clippy at tag `rust-<release>`), read from the release's channel
- * manifest, conformance.json's `tools[clippy].version`, gates.yaml's `upstream` commit, version and runtime, and the
- * runtime's `rust-toolchain.toml` (its directory named `clippy-<release>`).
+ * manifest, conformance.json's `tools[clippy].version`, gates.yaml's `upstream` commit, version and runtime, the
+ * runtime's `rust-toolchain.toml` (its directory named `clippy-<release>`), and licenses/clippy/UPSTREAM.md's Source row
+ * and its heading's Rust release.
  *
  * How upstream tags a release is learnt from the pin itself: the first of `eslint.release.tag`'s form, `v<version>` and
  * `<version>` whose tag of the pinned release names the pinned commit. Every edit is checked by reading the file back,
  * so a pin in an unexpected shape stops the bump instead of being half-moved. Prose still naming the old release (READMEs,
- * comments, UPSTREAM.md headers) is listed, not rewritten: the pull request's reviewer decides it.
+ * comments, UPSTREAM.md's text below the Source row, the derive recipes) is listed, not rewritten: the pull request's
+ * reviewer decides it.
  *
  * Exit 0 when planned (`--dry-run`) or already at the release, 1 when the bump cannot be made or would be applied while
  * bumps are paused, 2 on bad arguments.
@@ -47,6 +54,7 @@ import { z } from "zod";
 import { gatedToolPacks, parseGatesManifest, readGatesManifest, type GatesManifest } from "../../conformance/languages/manifest.js";
 import { DERIVE_PAUSED } from "../pack-data/paused.js";
 import { RUNTIMES_DIRECTORY } from "../pack-data/runtimes.js";
+import { readUpstreamSources } from "../s3/pack-fixtures.mjs";
 import {
   ECOSYSTEM_NAMES,
   PIN_FILES,
@@ -345,16 +353,16 @@ function versionToken(version: string, flags: string): RegExp {
 const LEFTOVER_LIMIT = 60;
 const LEFTOVER_WIDTH = 200;
 
-/** Every line of `files` that still names `version`. */
+/** Every line of `files` that still names `version`, or a renamed runtime directory by its old name (`bandit-1.9.4`). */
 function findLeftovers(root: string, edits: Edits, files: string[], version: string, renames: { from: string; to: string }[]): string[] {
-  const token = versionToken(version, "u");
+  const tokens = [versionToken(version, "u"), ...renames.map((entry) => new RegExp(`(?<![\\w.-])${literal(entry.from.slice(entry.from.lastIndexOf("/") + 1))}(?![\\w-]|\\.\\d)`, "u"))];
   const found: string[] = [];
   for (const path of [...new Set(files)]) {
     if (!existsSync(join(root, path))) continue;
     const rename = renames.find((entry) => path.startsWith(`${entry.from}/`));
     const shown = rename === undefined ? path : `${rename.to}${path.slice(rename.from.length)}`;
     edits.read(path).split("\n").forEach((line, index) => {
-      if (token.test(line)) found.push(`${shown}:${index + 1}: ${line.trim().length > LEFTOVER_WIDTH ? `${line.trim().slice(0, LEFTOVER_WIDTH)}…` : line.trim()}`);
+      if (tokens.some((token) => token.test(line))) found.push(`${shown}:${index + 1}: ${line.trim().length > LEFTOVER_WIDTH ? `${line.trim().slice(0, LEFTOVER_WIDTH)}…` : line.trim()}`);
     });
   }
   return found;
@@ -364,6 +372,50 @@ function findLeftovers(root: string, edits: Edits, files: string[], version: str
 function filesIn(root: string, directory: string): string[] {
   if (!existsSync(join(root, directory))) return [];
   return readdirSync(join(root, directory)).filter((name) => statSync(join(root, directory, name)).isFile()).sort().map((name) => `${directory}/${name}`);
+}
+
+/** Every file under `directory` (repository-relative), at any depth. */
+function filesUnder(root: string, directory: string): string[] {
+  if (!existsSync(join(root, directory))) return [];
+  return readdirSync(join(root, directory), { recursive: true, encoding: "utf8" }).filter((name) => statSync(join(root, directory, name)).isFile()).sort().map((name) => `${directory}/${name}`);
+}
+
+/** The derive recipes: each names the inputs it derives with, and none may still name the old release. */
+const RECIPES_DIRECTORY = "scripts/pack-data/recipes";
+
+/** The files a pack pins its reference tools in by hand, outside its generators (fixtures/vue/tools.mjs, fixtures/sql/common.py). */
+function referenceToolPins(root: string, pack: string): string[] {
+  return ["tools.mjs", "common.py"].map((name) => `fixtures/${pack}/${name}`).filter((path) => existsSync(join(root, path)));
+}
+
+/** A project's record of where its test data is taken from (docs/pack-format.md). */
+function upstreamRecordPath(root: string, pack: string, project: string): string {
+  const path = `packs/${pack}/licenses/${project}/UPSTREAM.md`;
+  if (!existsSync(join(root, path))) throw new Error(`${path} is missing: the bump moves its Source row with the pins`);
+  return path;
+}
+
+/**
+ * An UPSTREAM.md with its Source row and heading moved to the new release: the row's commit (whichever of `commits`'
+ * old ones it names: the tag's commit, or npm's gitHead) and its tag (a row with no tag, `—`, keeps `—`), and `version`'s
+ * token on the first line. The rest of the file is left as it is; the row is read back as the moved pins.
+ */
+export function bumpUpstreamRecord(path: string, text: string, change: { commits: [string, string][]; tag: [string, string]; version: [string, string] }): string {
+  const before = readUpstreamSources(text);
+  const { source } = before;
+  if (source === undefined) throw new Error(`${path} has no Source row`);
+  const commit = change.commits.find(([old]) => old === source.commit);
+  if (commit === undefined) throw new Error(`${path}: the Source row names commit ${source.commit ?? "none"}, not the pinned ${change.commits.map(([old]) => old).join(" or ")}`);
+  const untagged = source.tag === "—";
+  if (!untagged && source.tag !== change.tag[0]) throw new Error(`${path}: the Source row names tag ${source.tag ?? "none"}, not the pinned ${change.tag[0]}`);
+  const [heading = "", ...rest] = text.split("\n");
+  const movedHeading = replaceCounted(heading, versionToken(change.version[0], "gu"), (_, v: string) => `${v}${change.version[1]}`, `${path} heading`, 1);
+  const tagCell = (tag: string): string => (untagged ? "—" : `\`${tag}\``);
+  const row = new RegExp(`^(\\|\\s*${literal(source.repository)}\\s*\\|\\s*)${literal(tagCell(change.tag[0]))}(\\s*\\|\\s*\`)${literal(commit[0])}(\`\\s*\\|)`, "gmu");
+  const movedRest = replaceCounted(rest.join("\n"), row, (_, head: string, middle: string, tail: string) => `${head}${tagCell(change.tag[1])}${middle}${commit[1]}${tail}`, `${path} Source row`, 1);
+  const after = [movedHeading, movedRest].join("\n");
+  verify(path, readUpstreamSources(after), { ...before, source: { ...source, tag: untagged ? "—" : change.tag[1], commit: commit[1] } });
+  return after;
 }
 
 /** Plan the bump of a gated tool-pack to `version`; null when it already pins it. */
@@ -434,42 +486,52 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
   const conformancePath = `packs/${pack}/conformance.json`;
   edits.write(conformancePath, bumpConformanceTool(conformancePath, edits.read(conformancePath), tool, from.version, version));
 
-  // The generators' pins.
+  // The generators' pins, and the reference tools the pack pins by hand.
   const scripts = generatorScripts(root, pack, tool);
+  const handPins = referenceToolPins(root, pack);
+  const record = upstreamRecordPath(root, pack, manifest.rerail.project);
   const gitHeads = ecosystem === "npm" ? await (async () => {
     const old = await npmGitHead(sources, pin.package, from.version);
-    if (old === null || old === from.commit || ![...scripts.own, ...scripts.shared].some((path) => edits.read(path).includes(old))) return null;
+    if (old === null || old === from.commit || ![...scripts.own, ...scripts.shared, ...handPins, record].some((path) => edits.read(path).includes(old))) return null;
     const fresh = await npmGitHead(sources, pin.package, version);
     if (fresh === null) throw new Error(`a generator pins npm's gitHead of ${pin.package} ${from.version} (${old}), and npm records none for ${version}`);
-    notes.push(`The generators pin npm's \`gitHead\` of ${pin.package}: ${old} for ${from.version}, ${fresh} for ${version}.`);
+    notes.push(`The generators or UPSTREAM.md pin npm's \`gitHead\` of ${pin.package}: ${old} for ${from.version}, ${fresh} for ${version}.`);
     return { old, fresh };
   })() : null;
   // A line naming the pinned commit (or gitHead) describes the pin: its release moves with it (`at v10.11.0 (<commit>)`).
   const commits: [string, string][] = [[from.commit, to.commit]];
   if (gitHeads !== null) commits.push([gitHeads.old, gitHeads.fresh]);
   const release = versionToken(from.version, "gu");
-  for (const path of [...scripts.own, ...scripts.shared]) {
-    let text = edits.read(path).split("\n").map((line) => (commits.some(([old]) => line.includes(old))
+  for (const path of [...scripts.own, ...scripts.shared, ...handPins]) {
+    let text = edits.read(path);
+    // A hand pin's tag sits beside its commit, in the same `{…}` (fixtures/sql/common.py's CORPORA).
+    if (handPins.includes(path)) text = text.replace(/\{[^{}]*\}/gu, (block) => (block.includes(from.commit) ? block.replace(new RegExp(`(["']tag["']\\s*:\\s*)(["'])${literal(from.tag)}\\2`, "gu"), (_, head: string, quote: string) => `${head}${quote}${to.tag}${quote}`) : block));
+    text = text.split("\n").map((line) => (commits.some(([old]) => line.includes(old))
       ? commits.reduce((moved, [old, fresh]) => moved.replaceAll(old, fresh), line).replace(release, (_, v: string) => `${v}${version}`)
       : line)).join("\n");
     if (scripts.own.includes(path)) {
       text = replaceCounted(text, new RegExp(`^((?:export\\s+)?(?:const\\s+)?(?:[A-Z][A-Z0-9_]*_)?VERSION\\s*=\\s*)(["'])${literal(from.version)}\\2`, "gmu"), (_, head, quote) => `${head}${quote}${version}${quote}`, path);
+      text = replaceCounted(text, new RegExp(`^((?:export\\s+)?(?:const\\s+)?(?:[A-Z][A-Z0-9_]*_)?TAG\\s*=\\s*)(["'])${literal(from.tag)}\\2`, "gmu"), (_, head, quote) => `${head}${quote}${to.tag}${quote}`, path);
     }
     for (const name of runtime.packages) text = replaceCounted(text, packageEntry(name, from.version), (_, head, quote) => `${head}${quote}${version}${quote}`, path);
     edits.write(path, text);
   }
 
+  // UPSTREAM.md's Source row and heading.
+  edits.write(record, bumpUpstreamRecord(record, edits.read(record), { commits, tag: [from.tag, to.tag], version: [from.version, version] }));
+
   // The tool-packs whose test data the changed runtime derives.
   const derive = [toolPack, ...[...manifests].filter(([id, other]) => id !== toolPack && other.upstream.runtime === newRuntime).map(([id]) => id)];
 
-  const project = manifest.rerail.project;
   const leftovers = findLeftovers(root, edits, [
     gatesPath,
     ...filesIn(root, `packs/${pack}/upstream/${tool}`).filter((path) => !path.endsWith(".expected.json")),
     ...scripts.shared,
+    ...handPins,
     conformancePath,
     `packs/${pack}/README.md`,
-    `packs/${pack}/licenses/${project}/UPSTREAM.md`,
+    record,
+    ...filesUnder(root, RECIPES_DIRECTORY),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], from.version, renames);
 
@@ -603,12 +665,18 @@ export async function planClippyBump(root: string, version: string, sources: Sou
   const original = toolchainSchema.parse(parseToml(toolchainBefore));
   verify(toolchainPath, toolchainSchema.parse(parseToml(toolchain)), { ...original, toolchain: { ...original.toolchain, channel: version } });
 
+  // UPSTREAM.md's Source row (unchanged when the point release keeps the .0 tag's Clippy) and its heading's Rust release.
+  const oldSourceTag = oldTag ?? `rust-${pinned.toolchain}`;
+  const record = upstreamRecordPath(root, "rust", manifest.rerail.project);
+  edits.write(record, bumpUpstreamRecord(record, edits.read(record), { commits: [[pinned.commit, source.commit]], tag: [oldSourceTag, source.tag], version: [pinned.toolchain, version] }));
+
   const leftovers = findLeftovers(root, edits, [
     common,
     ...filesIn(root, "packs/rust/upstream/clippy").filter((path) => !path.endsWith(".expected.json")),
     conformancePath,
     "packs/rust/README.md",
     ...(existsSync(join(root, "packs/rust/licenses")) ? readdirSync(join(root, "packs/rust/licenses")).map((project) => `packs/rust/licenses/${project}/UPSTREAM.md`) : []),
+    ...filesUnder(root, RECIPES_DIRECTORY),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], pinned.toolchain, renames);
   return {
@@ -618,7 +686,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
     ecosystem: "rust",
     package: "rust",
     repository: "rust-lang/rust-clippy",
-    from: { version: pinned.toolchain, tag: oldTag ?? `rust-${pinned.toolchain}`, commit: pinned.commit },
+    from: { version: pinned.toolchain, tag: oldSourceTag, commit: pinned.commit },
     to: { version, tag: source.tag, commit: source.commit },
     files: edits.changed(renames),
     renames,
@@ -719,7 +787,7 @@ export function renderBump(bump: Bump): string {
     "",
   ];
   if (bump.leftovers.length === 0) {
-    lines.push("Nothing else in the tool-pack's pins, scripts, README, conformance.json or UPSTREAM.md names it.");
+    lines.push("Nothing else in the tool-pack's pins, scripts, README, conformance.json, UPSTREAM.md (whose Source row and heading the bump moved) or the derive recipes names it.");
   } else {
     lines.push("Prose and pins the bump does not rewrite: review each before merging.", "");
     lines.push(...bump.leftovers.slice(0, LEFTOVER_LIMIT).map((line) => `- \`${line.replaceAll("`", "'")}\``));
