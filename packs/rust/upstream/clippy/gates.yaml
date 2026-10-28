@@ -123,3 +123,23 @@ rules:
   "zero_prefixed_literal":
     deprecated: null
     recommended: { config: "default", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads fixtures.json's tests, the auxiliary crates they build and the clippy.toml files; each
+# lint's code file is found through clippy_lints/src/declared_lints.rs. A new test file annotating a ported lint
+# shows up under tests/ui or tests/ui-toml.
+watch:
+  tests:
+    - { file: "fixtures.json" }
+    - "tests/clippy.toml"
+    - "tests/ui-toml/*/clippy.toml"
+    - "tests/ui/auxiliary/**"
+  code:
+    - { index: clippy-declared-lints }
+  shared:
+    - "clippy_config/src/conf.rs"
+    - "clippy_lints/src/lib.rs"
+    - "clippy_utils/src/**"
+    - "declare_clippy_lint/**"
+  new-tests:
+    - "tests/ui-toml/**"
+    - "tests/ui/**"

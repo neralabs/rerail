@@ -40,6 +40,23 @@ rules:
 # - src/code-path-analysis/, which RulesOfHooks imports, is vendored ESLint code under its own MIT LICENSE (OpenJS
 #   Foundation) that the published bundle does not carry: a notice question.
 # - File types (`lints`): eslint-config-next lints **/*.{js,jsx,mjs,ts,tsx,mts,cts}, and ESLint's defaults add .cjs.
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator's TESTS names each rule's test, and each rule's code is its own file; __tests__/ holds tests it
+# does not read (the React Compiler's).
+watch:
+  rule-prefix: "react-hooks/"
+  tests: []
+  code: []
+  shared:
+    - "packages/eslint-plugin-react-hooks/package.json"
+    - "packages/eslint-plugin-react-hooks/src/code-path-analysis/**"
+    - "packages/eslint-plugin-react-hooks/src/index.ts"
+    - "packages/eslint-plugin-react-hooks/src/shared/Utils.ts"
+  new-tests:
+    - "packages/eslint-plugin-react-hooks/__tests__/**"
+  rules:
+    "exhaustive-deps": { tests: ["packages/eslint-plugin-react-hooks/__tests__/ESLintRuleExhaustiveDeps-test.js"], code: ["packages/eslint-plugin-react-hooks/src/rules/ExhaustiveDeps.ts"] }
+    "rules-of-hooks": { tests: ["packages/eslint-plugin-react-hooks/__tests__/ESLintRulesOfHooks-test.js"], code: ["packages/eslint-plugin-react-hooks/src/rules/RulesOfHooks.ts"] }
 eslint:
   release:
     tag: eslint-plugin-react-hooks@7.1.1

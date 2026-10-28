@@ -47,6 +47,20 @@ rules:
 # - Message text: no port copies upstream's documentation. unicorn:no-null and
 #   unicorn:no-array-for-each paraphrase the messages in the rule code ("Use `undefined` instead of `null`.",
 #   "Use `for…of` instead of `.forEach(…)`."); the other messages and every description are the port's own words.
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads test/<rule>.js for each ported rule (generate.mjs).
+watch:
+  rule-prefix: "unicorn/"
+  tests:
+    - "test/{rule}.js"
+  code:
+    - "rules/{rule}.js"
+  shared:
+    - "package.json"
+    - "rules/ast/**"
+    - "rules/fix/**"
+    - "rules/shared/**"
+    - "rules/utils/**"
 eslint:
   release:
     tag: v76.0.0

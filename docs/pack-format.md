@@ -141,6 +141,30 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
+  Its `watch:` block says what the nightly upstream report ([docs/upstream.md](upstream.md)) compares between the
+  pinned commit and upstream's latest release. Every path is relative to upstream's repository root; a glob takes `*`
+  within a path segment and `**` across segments; `{rule}` stands for each ported rule, which is conformance.json's
+  `upstream.rule` for this tool without `rule-prefix`, plus `extra-rules`:
+
+  ```yaml
+  watch:
+    rule-prefix: "unicorn/"          # optional: removed from upstream.rule to give {rule}
+    extra-rules: [NoArgumentsValidator]  # optional: rules the generator reads that conformance.json does not port
+    tests: ["test/{rule}.js"]        # the tests the generator reads; or { file: fixtures.json }
+    code: ["rules/{rule}.js"]        # each ported rule's code; or { index: clippy-declared-lints | ruff-codes }
+    shared: ["rules/utils/**"]       # code every ported rule depends on; no {rule}
+    new-tests: ["tests/{rule}/**"]   # optional: where upstream adds tests for a ported rule that the generator does not read
+    rules:                           # optional: a rule's own tests or code, in place of the {rule} patterns
+      DebugDirectiveValidator: { tests: ["tests/Validation/DebugDirectiveTest.php", "src/Compiler/**"] }
+  ```
+
+  `{ file: fixtures.json }` watches the paths a data file beside the generator lists for each rule
+  (`{ "rules": { "<rule>": ["<upstream path>", …] } }`), for a generator that keeps its tests in a list rather than
+  by convention. `{ index: … }` names the upstream file the report reads to find each rule's code
+  (`clippy_lints/src/declared_lints.rs`, `crates/ruff_linter/src/codes.rs`). `expandWatch` in
+  `conformance/languages/watch.ts` resolves the block. A `new-tests` glob may cover tests the generator reads too; a
+  file counts as a new test only when `tests` does not cover it. `test/scripts/upstream/watch-coverage.test.ts` checks
+  that `tests` covers every upstream file the tool-pack's pulled `provenance.json` records as read.
 - `upstream/<tool>/test-data.lock`, `samples.lock` and `SAMPLES.md`: the pins of the tool-pack's pack data
   ([Pack data](#pack-data)).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,

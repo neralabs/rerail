@@ -45,6 +45,17 @@ rules:
 #   its rules into a configuration of their own with `files`; no such overlay is approved.
 # - Message text: no port copies upstream's documentation or rule messages; every
 #   message and description is the port's own words.
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads tests/<rule>.test.ts for each ported rule (generate.mjs).
+watch:
+  rule-prefix: "vitest/"
+  tests:
+    - "tests/{rule}.test.ts"
+  code:
+    - "src/rules/{rule}.ts"
+  shared:
+    - "package.json"
+    - "src/utils/**"
 eslint:
   release:
     tag: v1.6.27

@@ -70,3 +70,26 @@ rules:
   "variable.undefined":
     deprecated: null
     recommended: { config: "level0", options: [{"checkMaybeUndefinedVariables":false,"checkNonStringableDynamicAccess":false,"cliArgumentsVariablesRegistered":true,"polluteScopeWithAlwaysIterableForeach":true,"polluteScopeWithLoopInitialAssignments":true}] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads fixtures.json's tests and the data files they name (under data/ or Analyser/nsrt/). An
+# identifier is no file: the ported classes and the analyser are shared code.
+watch:
+  tests:
+    - { file: "fixtures.json" }
+    - "tests/PHPStan/Analyser/nsrt/**"
+    - "tests/PHPStan/Rules/**/data/**"
+  code: []
+  shared:
+    - "composer.lock"
+    - "conf/config*.neon"
+    - "resources/functionMap*.php"
+    - "src/Analyser/**"
+    - "src/Parser/**"
+    - "src/Rules/Arrays/DuplicateKeysInLiteralArraysRule.php"
+    - "src/Rules/Comparison/**"
+    - "src/Rules/Functions/MissingFunctionReturnTypehintRule.php"
+    - "src/Rules/Functions/PrintfParametersRule.php"
+    - "src/Rules/Functions/RandomIntParametersRule.php"
+    - "src/Rules/Variables/DefinedVariableRule.php"
+    - "src/Type/**"
+    - "stubs/**"
