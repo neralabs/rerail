@@ -2522,6 +2522,10 @@ pub(crate) fn tape_doc<'t, D: Doc>(node: &ast_grep_core::Node<'t, D>) -> Option<
     doc.downcast_ref::<TapeDoc>()
 }
 
+// P's tape spike (v7, v8, v9np), for O8's pre-lock measurements.
+#[allow(dead_code, unused_imports)]
+pub(crate) mod v9np;
+
 #[cfg(test)]
 mod tests;
 

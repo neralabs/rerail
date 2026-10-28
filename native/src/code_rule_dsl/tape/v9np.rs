@@ -558,15 +558,15 @@ impl V9 {
 // ---- corpus ----
 
 pub fn language(lang: &str, path: &Path) -> Option<Language> {
-    let ext = path.extension()?.to_str()?;
-    Some(match (lang, ext) {
-        ("python", "py") => tree_sitter_python::LANGUAGE.into(),
-        ("typescript", "ts" | "mts" | "cts") => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        ("typescript", "tsx") => tree_sitter_typescript::LANGUAGE_TSX.into(),
-        ("rust", "rs") => tree_sitter_rust::LANGUAGE.into(),
-        ("php", "php") if !path.to_string_lossy().ends_with(".blade.php") => tree_sitter_php::LANGUAGE_PHP.into(),
-        _ => return None,
-    })
+    // Rerail's registry grammars (vendored and patched), not the spike's crates.io ones.
+    use crate::code_rule_dsl::language::{dialect_by_label, label_of_path};
+    use ast_grep_language::LanguageExt as _;
+    let label = label_of_path(path.to_str()?)?;
+    let family = if label == "tsx" { "typescript" } else { label };
+    if family != lang || path.to_string_lossy().ends_with(".blade.php") {
+        return None;
+    }
+    Some(dialect_by_label(label)?.get_ts_language())
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -996,11 +996,14 @@ fn measure(corpus: &str, lang: &str, dirs: &[String]) {
     );
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+/// The spike's command line, `args[0]` the program name.
+pub(crate) fn main(args: &[String]) {
     match args[1].as_str() {
         "measure" => measure(&args[2], &args[3], &args[4..]),
         "sql" => sql::run(&args[2], &args[3], args[4].parse().unwrap(), &args[5..]),
         _ => panic!("mode"),
     }
 }
+
+#[cfg(test)]
+mod tests;
