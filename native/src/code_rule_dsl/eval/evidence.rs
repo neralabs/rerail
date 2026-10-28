@@ -50,6 +50,7 @@ pub(crate) fn producer_violation(
     let mut violation = clause.violation.clone();
     violation.project = relation.ast.project.clone();
     violation.fix = None;
+    violation.fix_template = None;
     violation.fix_range = None;
     violation.each = None;
     // Compiling refuses `suppress` on a relation clause: only `rerail-ignore` reaches its rows.
@@ -586,6 +587,7 @@ mod tests {
         };
         let rows = || Rows {
             witnesses: vec![Witness {
+                sql_violation: None,
                 path: "pkg/a.py".to_owned(),
                 span: crate::code_rule_dsl::violations::Span {
                     start_byte: 0,

@@ -5,7 +5,7 @@ use super::identity::{
 };
 use super::scope::{CandidateRoot, CandidateScope, CompletionStatus, DocumentCompletion};
 use crate::code_rule_dsl::language::label;
-use crate::code_rule_dsl::query::{ClauseId, PackedFileInput};
+use crate::code_rule_dsl::demand::driver::catalog::{ClauseId, PackedFileInput};
 use std::collections::BTreeMap;
 
 /// A declarative recipe for the candidates admitted to a clause.
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 /// The recipe identifies the selection operation, not a clause's allocation or source position.
 /// Two clauses evaluated by this recipe can share only after their evaluated scopes compare equal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum ScopeRecipe {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum ScopeRecipe {
     AdmittedClauseCandidates,
 }
 
@@ -64,7 +64,7 @@ impl ScopeRecipe {
 }
 
 /// The typed logical information needed before physical statement planning.
-pub(in crate::code_rule_dsl::query) struct ClauseLogicalPlan {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct ClauseLogicalPlan {
     ordinal: usize,
     source: ClauseId,
     identity: ClausePlanId,
@@ -74,7 +74,7 @@ pub(in crate::code_rule_dsl::query) struct ClauseLogicalPlan {
 }
 
 impl ClauseLogicalPlan {
-    pub(in crate::code_rule_dsl::query) fn new(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new(
         ordinal: usize,
         source: ClauseId,
         rule_id: &str,
@@ -97,12 +97,12 @@ impl ClauseLogicalPlan {
         }
     }
 
-    pub(in crate::code_rule_dsl::query) fn utility_definitions(&self) -> &[UtilityDefinitionId] {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn utility_definitions(&self) -> &[UtilityDefinitionId] {
         &self.utility_definitions
     }
 }
 
-pub(in crate::code_rule_dsl::query) fn exact_scope_groups(
+pub(in crate::code_rule_dsl::demand::driver::catalog) fn exact_scope_groups(
     files: &[PackedFileInput],
     clauses: &[ClauseLogicalPlan],
 ) -> Result<Vec<Vec<usize>>, String> {

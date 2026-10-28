@@ -1,5 +1,5 @@
-use super::super::matcher::{Collation, CompareOp, CompareText, SemanticText};
-use super::super::value::structure::Equality;
+use crate::code_rule_dsl::matcher::{Collation, CompareOp, CompareText, SemanticText};
+use crate::code_rule_dsl::value::structure::Equality;
 use num_traits::FromPrimitive as _;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -208,7 +208,7 @@ pub(super) enum ValueLiteral {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ValuePredicateSpec {
     pub(super) producer: usize,
-    pub(super) language: super::super::language::GrammarDialect,
+    pub(super) language: crate::code_rule_dsl::language::GrammarDialect,
     pub(super) eq: Option<ValueLiteral>,
 }
 
@@ -3019,7 +3019,7 @@ impl<'a> SqlRenderer<'a> {
         let expected = match &spec.eq {
             Some(ValueLiteral::Null) => "null".to_owned(),
             Some(ValueLiteral::Bool(value))
-                if spec.language == super::super::language::GrammarDialect::Python =>
+                if spec.language == crate::code_rule_dsl::language::GrammarDialect::Python =>
             {
                 format!("int:{}", i64::from(*value))
             }
@@ -3029,7 +3029,7 @@ impl<'a> SqlRenderer<'a> {
                 let value = value
                     .parse::<f64>()
                     .map_err(|_| "value comparison has an invalid float literal")?;
-                if spec.language == super::super::language::GrammarDialect::Python
+                if spec.language == crate::code_rule_dsl::language::GrammarDialect::Python
                     && value.is_finite()
                     && value.fract() == 0.0
                 {

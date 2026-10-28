@@ -14,8 +14,8 @@ use crate::code_rule_dsl::model::{
     Anchor, ClauseKind, CompiledClause, CompiledCodeRule, ProjectionSource, Query, RegexSource,
     RuleMode, TemplatePart, ViolationSpec,
 };
-use crate::code_rule_dsl::packed::Program;
-use crate::code_rule_dsl::transducer::sql_backend::{
+use crate::code_rule_dsl::transducer::packed::Program;
+use crate::code_rule_dsl::demand::driver::catalog::sql_backend::{
     FileFactDescriptor, ParseFactDescriptor, ProducerKind, SemanticFactDescriptor,
     SemanticFactSource, TransformFactDescriptor, ValueFactDescriptor,
 };
@@ -128,7 +128,7 @@ impl TerminalPlan {
                 applicability
                     .condition
                     .as_ref()
-                    .is_none_or(|condition| condition.holds(path, module))
+                    .is_none_or(|condition| condition.holds(path, module, None))
                     && applicability.required.as_ref().is_none_or(|required| {
                         required.holds_with(source, &mut |text, literal| text.contains(literal))
                     })
@@ -1287,7 +1287,8 @@ impl Builder {
             }
             Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_) => {}
             Semantic::Parse(_) => unreachable!("parse returned before semantic fact lowering"),
-            Semantic::Value(_) | Semantic::Host(_) | Semantic::Capture(_) => {
+            // W's `embedded` (embedded documents) has no fact family in N's catalog.
+            Semantic::Value(_) | Semantic::Host(_) | Semantic::Capture(_) | Semantic::Embedded(_) => {
                 self.unsupported.push(format!(
                     "{at}: semantic fact family belongs to a later phase"
                 ));
@@ -1387,7 +1388,11 @@ impl Builder {
             }
             Semantic::Layout(test) => SemanticFactSource::Layout((**test).clone()),
             Semantic::Calls(test) => SemanticFactSource::Calls((**test).clone()),
-            Semantic::Value(_) | Semantic::Parse(_) | Semantic::Host(_) | Semantic::Capture(_) => {
+            Semantic::Value(_)
+            | Semantic::Parse(_)
+            | Semantic::Host(_)
+            | Semantic::Capture(_)
+            | Semantic::Embedded(_) => {
                 unreachable!("unsupported semantic families returned before descriptor creation")
             }
         };

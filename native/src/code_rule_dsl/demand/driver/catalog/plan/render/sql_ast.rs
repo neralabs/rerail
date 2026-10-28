@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::query) enum SqlAstNodeKind {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlAstNodeKind {
     RelationScan,
     DemandScan,
     Select,
@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl::query) enum SqlAstNodeKind {
 }
 
 impl SqlAstNodeKind {
-    pub(in crate::code_rule_dsl::query) const ALL: [Self; 16] = [
+    pub(in crate::code_rule_dsl::demand::driver::catalog) const ALL: [Self; 16] = [
         Self::RelationScan,
         Self::DemandScan,
         Self::Select,
@@ -47,10 +47,10 @@ impl SqlAstNodeKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::query) struct SqlRelationRef(u32);
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlRelationRef(u32);
 
 impl SqlRelationRef {
-    pub(in crate::code_rule_dsl::query) const fn new(value: u32) -> Self {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) const fn new(value: u32) -> Self {
         Self(value)
     }
 
@@ -60,7 +60,7 @@ impl SqlRelationRef {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum PhysicalRelation {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum PhysicalRelation {
     BatchStatus,
     ProducerStatus,
     TerminalMatch,
@@ -76,13 +76,13 @@ pub(in crate::code_rule_dsl::query) enum PhysicalRelation {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlParameter {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlParameter {
     Batch,
     Files,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlValue {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlValue {
     Null,
     Integer(i64),
     Text(String),
@@ -90,13 +90,13 @@ pub(in crate::code_rule_dsl::query) enum SqlValue {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) struct SqlColumn {
-    pub(in crate::code_rule_dsl::query) relation: Option<SqlRelationRef>,
-    pub(in crate::code_rule_dsl::query) name: String,
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlColumn {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) relation: Option<SqlRelationRef>,
+    pub(in crate::code_rule_dsl::demand::driver::catalog) name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlBinaryOperator {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlBinaryOperator {
     Equal,
     NotEqual,
     Less,
@@ -113,7 +113,7 @@ pub(in crate::code_rule_dsl::query) enum SqlBinaryOperator {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlUnaryOperator {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlUnaryOperator {
     Not,
     IsNull,
     IsNotNull,
@@ -121,7 +121,7 @@ pub(in crate::code_rule_dsl::query) enum SqlUnaryOperator {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlExpression {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlExpression {
     All,
     Column(SqlColumn),
     Parameter(SqlParameter),
@@ -244,15 +244,15 @@ impl SqlExpression {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) struct SqlProjection {
-    pub(in crate::code_rule_dsl::query) expression: SqlExpression,
-    pub(in crate::code_rule_dsl::query) alias: Option<String>,
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlProjection {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) expression: SqlExpression,
+    pub(in crate::code_rule_dsl::demand::driver::catalog) alias: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) struct SqlOrderTerm {
-    pub(in crate::code_rule_dsl::query) expression: SqlExpression,
-    pub(in crate::code_rule_dsl::query) descending: bool,
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlOrderTerm {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) expression: SqlExpression,
+    pub(in crate::code_rule_dsl::demand::driver::catalog) descending: bool,
 }
 
 impl SqlProjection {
@@ -281,7 +281,7 @@ impl SqlOrderTerm {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlAggregateFunction {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlAggregateFunction {
     Count,
     Minimum,
     Maximum,
@@ -290,11 +290,11 @@ pub(in crate::code_rule_dsl::query) enum SqlAggregateFunction {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) struct SqlAggregate {
-    pub(in crate::code_rule_dsl::query) function: SqlAggregateFunction,
-    pub(in crate::code_rule_dsl::query) expression: Option<SqlExpression>,
-    pub(in crate::code_rule_dsl::query) distinct: bool,
-    pub(in crate::code_rule_dsl::query) alias: String,
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlAggregate {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) function: SqlAggregateFunction,
+    pub(in crate::code_rule_dsl::demand::driver::catalog) expression: Option<SqlExpression>,
+    pub(in crate::code_rule_dsl::demand::driver::catalog) distinct: bool,
+    pub(in crate::code_rule_dsl::demand::driver::catalog) alias: String,
 }
 
 impl SqlAggregate {
@@ -320,7 +320,7 @@ impl SqlAggregate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlAstNode {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlAstNode {
     RelationScan {
         source: PhysicalRelation,
         projection: Vec<SqlProjection>,
@@ -465,7 +465,7 @@ fn render_ordering(ordering: &[SqlOrderTerm]) -> String {
 }
 
 impl SqlAstNode {
-    pub(in crate::code_rule_dsl::query) const fn kind(&self) -> SqlAstNodeKind {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) const fn kind(&self) -> SqlAstNodeKind {
         match self {
             Self::RelationScan { .. } => SqlAstNodeKind::RelationScan,
             Self::DemandScan { .. } => SqlAstNodeKind::DemandScan,
@@ -486,7 +486,7 @@ impl SqlAstNode {
         }
     }
 
-    pub(in crate::code_rule_dsl::query) fn inputs(&self) -> Vec<SqlRelationRef> {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn inputs(&self) -> Vec<SqlRelationRef> {
         match self {
             Self::RelationScan { .. } | Self::DemandScan { .. } => Vec::new(),
             Self::Select { input, .. }
@@ -761,7 +761,7 @@ impl SqlAstNode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl::query) enum SqlAstError {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlAstError {
     DuplicateRelation(SqlRelationRef),
     MissingRelation {
         relation: SqlRelationRef,
@@ -778,17 +778,17 @@ pub(in crate::code_rule_dsl::query) enum SqlAstError {
 }
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl::query) struct SqlAst {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SqlAst {
     nodes: BTreeMap<SqlRelationRef, SqlAstNode>,
     outputs: Vec<SqlRelationRef>,
 }
 
 impl SqlAst {
-    pub(in crate::code_rule_dsl::query) fn new() -> Self {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new() -> Self {
         Self::default()
     }
 
-    pub(in crate::code_rule_dsl::query) fn insert(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn insert(
         &mut self,
         relation: SqlRelationRef,
         node: SqlAstNode,
@@ -799,18 +799,18 @@ impl SqlAst {
         Ok(())
     }
 
-    pub(in crate::code_rule_dsl::query) fn set_outputs(&mut self, outputs: Vec<SqlRelationRef>) {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn set_outputs(&mut self, outputs: Vec<SqlRelationRef>) {
         self.outputs = outputs;
     }
 
-    pub(in crate::code_rule_dsl::query) fn node(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn node(
         &self,
         relation: SqlRelationRef,
     ) -> Option<&SqlAstNode> {
         self.nodes.get(&relation)
     }
 
-    pub(in crate::code_rule_dsl::query) fn validate(&self) -> Result<(), SqlAstError> {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn validate(&self) -> Result<(), SqlAstError> {
         if self.outputs.is_empty() {
             return Err(SqlAstError::NoOutputs);
         }
@@ -975,7 +975,7 @@ impl SqlAst {
         Ok((recursive, ctes, outputs))
     }
 
-    pub(in crate::code_rule_dsl::query) fn render(&self) -> Result<String, SqlAstError> {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn render(&self) -> Result<String, SqlAstError> {
         let (recursive, ctes, outputs) = self.render_parts()?;
         Ok(format!(
             "WITH{} {ctes}\n{outputs}",
@@ -984,14 +984,14 @@ impl SqlAst {
     }
 }
 
-pub(in crate::code_rule_dsl::query) struct ClauseMergeAst {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct ClauseMergeAst {
     ast: SqlAst,
     sources: Vec<PhysicalRelation>,
     outputs: bool,
 }
 
 impl ClauseMergeAst {
-    pub(in crate::code_rule_dsl::query) fn new(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new(
         ordinals: &[usize],
         outputs: bool,
     ) -> Result<Self, String> {
@@ -1071,7 +1071,7 @@ impl ClauseMergeAst {
         })
     }
 
-    pub(in crate::code_rule_dsl::query) fn render(&self) -> Result<(String, String), String> {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn render(&self) -> Result<(String, String), String> {
         self.ast
             .validate()
             .map_err(|error| format!("invalid clause merge AST: {error:?}"))?;

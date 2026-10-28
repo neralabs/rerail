@@ -1,5 +1,5 @@
 use super::AstMatcher;
-use super::binding::{match_binding_nodes, match_occurrence};
+use super::binding::{binding_node_facts, match_binding_nodes, match_occurrence, occurrence_facts};
 use super::resolve::{file_source_type, file_table, file_usage, table_reading};
 use super::util::{THREE_VALUED, UNKNOWN};
 use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
@@ -7,6 +7,7 @@ use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::usage::{BindingId, PrivateMember, Usage};
 use crate::code_rule_dsl::scope::{Form, ScopeKind, ScopeTable, TYPE, VALUE};
+use crate::code_rule_dsl::transducer::semantic_facts::{BindsRequest, Facts, Target, slot};
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
@@ -729,4 +730,239 @@ impl Binds {
 /// Whether `family` reads the file's flow (`ScopeRules::FLOW`).
 fn flow(family: Family) -> bool {
     with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::FLOW)
+}
+
+impl Binds {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn facts<'tree, D: Doc>(
+        &self,
+        node: Node<'tree, D>,
+        env: &MetaVarEnv<'tree, D>,
+        facts: &mut Facts<'tree, D>,
+        request: BindsRequest,
+    ) {
+        if !self.name_kinds.contains(&node.kind_id()) {
+            return;
+        }
+        let Some(table) = file_table(
+            &node,
+            self.language,
+            table_reading(self.options.as_deref(), self.python.as_deref()),
+        ) else {
+            return;
+        };
+        let Some(usage) = file_usage(&node, &table) else {
+            return;
+        };
+        let range = node.range();
+        let region = |capture: &str| capture_range(env, capture);
+        if let Some((member, index)) = usage.private_at(range.start, range.end) {
+            return self.private_facts(&node, member, index, &region, facts, request);
+        }
+        let python = self.language == GrammarDialect::Python;
+        for id in usage.named_at(range.start, range.end, node.kind_id()) {
+            match self.filter.verdict(&table, Some(&usage), id, &region) {
+                Some(true) => {}
+                Some(false) => continue,
+                None => {
+                    facts.gate(-1, Target::None);
+                    continue;
+                }
+            }
+            let shadowed = match self.redefines.as_deref().filter(|_| python) {
+                None => None,
+                Some(redefines) => match Self::shadowed(redefines, &table, &usage, id, &region) {
+                    Some(Some(shadowed)) => Some((redefines, shadowed)),
+                    Some(None) => continue,
+                    None => {
+                        facts.gate(-1, Target::None);
+                        continue;
+                    }
+                },
+            };
+            // TypeScript's and PHP's (and Blade's embedded PHP's) other bindings; a PHP binding
+            // that overwrites none fails.
+            let others = match self.redefines.as_deref().filter(|_| !python) {
+                None => None,
+                Some(redefines) => match Self::others(redefines, &table, id) {
+                    Some(others) => Some((redefines, others)),
+                    None if flow(Family::of(self.language)) => continue,
+                    None => None,
+                },
+            };
+            let key = facts.gate(1, Target::None);
+            let binding = table.binding_of(id);
+            binding_node_facts(
+                &node,
+                [
+                    (request.binding.site, slot::SITE, binding.site.node),
+                    (request.binding.value, slot::VALUE, binding.site.value),
+                    (
+                        request.binding.annotation,
+                        slot::ANNOTATION,
+                        binding.site.annotation,
+                    ),
+                ],
+                key,
+                facts,
+            );
+            if request.binding.occurrence {
+                occurrence_facts(&node, usage.occurrences(id), key, facts);
+            }
+            if let Some((_redefines, shadowed)) = shadowed {
+                let previous = table.binding_of(shadowed);
+                binding_node_facts(
+                    &node,
+                    [
+                        (
+                            request.redefines.is_some_and(|request| request.site),
+                            slot::SHADOWED_SITE,
+                            previous.site.node,
+                        ),
+                        (
+                            request.redefines.is_some_and(|request| request.value),
+                            slot::SHADOWED_SITE + 1,
+                            previous.site.value,
+                        ),
+                        (
+                            request.redefines.is_some_and(|request| request.annotation),
+                            slot::SHADOWED_SITE + 2,
+                            previous.site.annotation,
+                        ),
+                    ],
+                    key,
+                    facts,
+                );
+            }
+            if let Some((redefines, (others, incomplete))) = others {
+                for (other, admitted) in others {
+                    let flag = if admitted {
+                        match redefines
+                            .filter
+                            .verdict(&table, Some(&usage), other, &region)
+                        {
+                            Some(true) => 1,
+                            Some(false) => 0,
+                            None => -1,
+                        }
+                    } else {
+                        0
+                    };
+                    let pos = facts.push(slot::OTHERS, key, flag, Target::None);
+                    let previous = table.binding_of(other);
+                    binding_node_facts(
+                        &node,
+                        [
+                            (
+                                request.redefines.is_some_and(|request| request.site),
+                                slot::OTHER_SITE,
+                                previous.site.node,
+                            ),
+                            (
+                                request.redefines.is_some_and(|request| request.value),
+                                slot::OTHER_SITE + 1,
+                                previous.site.value,
+                            ),
+                            (
+                                request.redefines.is_some_and(|request| request.annotation),
+                                slot::OTHER_SITE + 2,
+                                previous.site.annotation,
+                            ),
+                        ],
+                        key << slot::OTHER_BITS | pos,
+                        facts,
+                    );
+                }
+                // A binding PHP's dynamic symbol table may have made, after every known one.
+                if incomplete {
+                    facts.push(slot::OTHERS, key, -1, Target::None);
+                }
+            }
+        }
+    }
+}
+
+impl Binds {
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn private_facts<'tree, D: Doc>(
+        &self,
+        node: &Node<'tree, D>,
+        member: &PrivateMember,
+        index: usize,
+        region: Region<'_>,
+        facts: &mut Facts<'tree, D>,
+        request: BindsRequest,
+    ) {
+        match self.filter.private_verdict(member, index, region) {
+            Some(true) => {}
+            Some(false) => return,
+            None => {
+                facts.gate(-1, Target::None);
+                return;
+            }
+        }
+        let key = facts.gate(1, Target::None);
+        let declaration = &member.declarations[index];
+        binding_node_facts(
+            node,
+            [
+                (request.binding.site, slot::SITE, Some(declaration.site)),
+                (request.binding.value, slot::VALUE, declaration.value),
+                (
+                    request.binding.annotation,
+                    slot::ANNOTATION,
+                    declaration.annotation,
+                ),
+            ],
+            key,
+            facts,
+        );
+        if request.binding.occurrence {
+            occurrence_facts(node, &member.occurrences, key, facts);
+        }
+        let Some(redefines) = self.redefines.as_deref() else {
+            return;
+        };
+        if redefines.same_scope == Some(false) {
+            return;
+        }
+        let others = (0..member.declarations.len()).filter(|other| {
+            if redefines.every {
+                *other != index
+            } else {
+                *other < index
+            }
+        });
+        for other in others {
+            let flag = match redefines.filter.private_verdict(member, other, region) {
+                Some(true) => 2,
+                Some(false) => 0,
+                None => -2,
+            };
+            let pos = facts.push(slot::OTHERS, key, flag, Target::None);
+            let declaration = &member.declarations[other];
+            binding_node_facts(
+                node,
+                [
+                    (
+                        request.redefines.is_some_and(|request| request.site),
+                        slot::OTHER_SITE,
+                        Some(declaration.site),
+                    ),
+                    (
+                        request.redefines.is_some_and(|request| request.value),
+                        slot::OTHER_SITE + 1,
+                        declaration.value,
+                    ),
+                    (
+                        request.redefines.is_some_and(|request| request.annotation),
+                        slot::OTHER_SITE + 2,
+                        declaration.annotation,
+                    ),
+                ],
+                key << slot::OTHER_BITS | pos,
+                facts,
+            );
+        }
+    }
 }

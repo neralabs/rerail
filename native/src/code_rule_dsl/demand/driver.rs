@@ -141,6 +141,7 @@ impl SqlViolationRow {
 
     pub(in crate::code_rule_dsl) fn into_witness(self) -> crate::code_rule_dsl::violations::Witness {
         crate::code_rule_dsl::violations::Witness {
+            sql_violation: None,
             path: self.path,
             span: self.span,
             captures: crate::code_rule_dsl::violations::Captures::from_spans(self.captures),
@@ -423,5 +424,7 @@ fn run(
     })
 }
 
+#[cfg(test)]
+pub(in crate::code_rule_dsl) mod catalog;
 #[cfg(test)]
 mod tests;

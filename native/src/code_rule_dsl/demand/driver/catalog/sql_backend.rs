@@ -4,16 +4,17 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
-use super::super::language::{Family, GrammarDialect};
-use super::super::matcher::{Reading, ValueTest};
-use super::super::packed::{
+use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
+use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::matcher::{Reading, ValueTest};
+use crate::code_rule_dsl::transducer::packed::{
     Error as PackedError, ExecutionBackend, Program, execute_with_backend_packed_result_limits,
     packed_workspace_fits,
 };
-use super::super::tape::TapeDoc;
-use super::super::value::structure::Equality;
-use super::super::value::{Context as ValueContext, Lang};
+use crate::code_rule_dsl::tape::TapeDoc;
+use crate::code_rule_dsl::value::structure::Equality;
+use crate::code_rule_dsl::language::Family as Lang;
+use crate::code_rule_dsl::value::Context as ValueContext;
 use ast_grep_core::{AstGrep, Doc};
 use fallible_iterator::FallibleIterator as _;
 use num_traits::FromPrimitive as _;
@@ -58,7 +59,7 @@ pub(in crate::code_rule_dsl) enum ProducerKind {
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct TransformFactDescriptor {
-    pub(in crate::code_rule_dsl) transform: Arc<super::super::matcher::Transform>,
+    pub(in crate::code_rule_dsl) transform: Arc<crate::code_rule_dsl::matcher::Transform>,
     pub(in crate::code_rule_dsl) outputs: Vec<(String, String)>,
     pub(in crate::code_rule_dsl) sources: Vec<usize>,
 }
@@ -83,9 +84,9 @@ pub(in crate::code_rule_dsl) struct FileFactDescriptor {
 /// remain relational SQL operands and are not stored in this descriptor.
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct ParseFactDescriptor {
-    pub(in crate::code_rule_dsl) grammar: super::super::literal::Grammar,
+    pub(in crate::code_rule_dsl) grammar: crate::code_rule_dsl::literal::Grammar,
     pub(in crate::code_rule_dsl) host_kinds: Arc<std::collections::BTreeSet<u16>>,
-    pub(in crate::code_rule_dsl) reading: super::super::scope::Reading,
+    pub(in crate::code_rule_dsl) reading: crate::code_rule_dsl::scope::Reading,
 }
 
 impl std::fmt::Debug for ParseFactDescriptor {
@@ -100,19 +101,19 @@ impl std::fmt::Debug for ParseFactDescriptor {
 /// rules remain relational operands and are never executed by this producer.
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) enum SemanticFactSource {
-    Resolves(super::super::matcher::Resolves),
+    Resolves(crate::code_rule_dsl::matcher::Resolves),
     Binding {
-        test: Box<super::super::matcher::BindingTest>,
-        request: super::semantic_facts::BindingRequest,
+        test: Box<crate::code_rule_dsl::matcher::BindingTest>,
+        request: crate::code_rule_dsl::transducer::semantic_facts::BindingRequest,
     },
     Binds {
-        test: Box<super::super::matcher::Binds>,
-        request: super::semantic_facts::BindsRequest,
+        test: Box<crate::code_rule_dsl::matcher::Binds>,
+        request: crate::code_rule_dsl::transducer::semantic_facts::BindsRequest,
     },
-    Arguments(super::super::matcher::Arguments),
-    FormatArgs(super::super::matcher::FormatArgs),
-    Layout(super::super::matcher::Layout),
-    Calls(super::super::calls::CallsTest),
+    Arguments(crate::code_rule_dsl::matcher::Arguments),
+    FormatArgs(crate::code_rule_dsl::matcher::FormatArgs),
+    Layout(crate::code_rule_dsl::matcher::Layout),
+    Calls(crate::code_rule_dsl::calls::CallsTest),
 }
 
 impl SemanticFactSource {
@@ -145,7 +146,7 @@ impl SemanticFactSource {
 pub(in crate::code_rule_dsl) struct SemanticFactDescriptor {
     pub(in crate::code_rule_dsl) source: SemanticFactSource,
     pub(in crate::code_rule_dsl) input_labels: Vec<String>,
-    pub(in crate::code_rule_dsl) call_through: Option<super::super::calls::Through>,
+    pub(in crate::code_rule_dsl) call_through: Option<crate::code_rule_dsl::calls::Through>,
 }
 
 impl std::fmt::Debug for SemanticFactDescriptor {
@@ -210,8 +211,8 @@ impl ValueFact {
 }
 
 impl ValueFactDescriptor {
-    fn canonical(&self, value: &super::super::value::Value) -> Option<String> {
-        use super::super::value::Value;
+    fn canonical(&self, value: &crate::code_rule_dsl::value::Value) -> Option<String> {
+        use crate::code_rule_dsl::value::Value;
         Some(match value {
             Value::Unknown => return None,
             Value::None => "null".to_owned(),
@@ -234,6 +235,10 @@ impl ValueFactDescriptor {
                 )
             }
             Value::Float(value) => format!("float:{:016x}", value.to_bits()),
+            // W's Rust values (`RustInt`, `RustFloat`, `Char`, …) have no canonical form in N.
+            Value::RustInt { .. } | Value::RustFloat { .. } | Value::Char(_) | Value::CStr(_) => {
+                return None;
+            }
             Value::BigInt(value) => format!("bigint:{value}"),
             Value::Str(value) => format!("string:{value}"),
             Value::Utf16(value) => format!(
@@ -795,33 +800,33 @@ impl PackedDemand {
                             .as_ref()
                             .expect("a verified parse producer has its descriptor");
                         let parsed = AstGrep::doc(self.files[file].clone());
-                        let _scope = super::super::matcher::FileScopeSlot::install(
+                        let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
                             !parsed.root().get_doc().syntax_error_ranges().is_empty(),
                         );
                         let parse_row_start = rows.len();
                         let mut failure = None;
-                        super::super::matcher::begin_bounded_producer(
+                        crate::code_rule_dsl::matcher::begin_bounded_producer(
                             self.result_limits[program] as usize,
                         );
-                        super::super::matcher::with_file_memo(&parsed, || {
+                        crate::code_rule_dsl::matcher::with_file_memo(&parsed, || {
                             let root = parsed.root();
                             let tape = root.get_doc();
                             for (task_index, ordinal) in
                                 self.anchors[file][program].iter().copied().enumerate()
                             {
                                 let host = parsed.adopt(tape.node(ordinal));
-                                let parsed_tree = super::super::matcher::parse_fact_tree(
+                                let parsed_tree = crate::code_rule_dsl::matcher::parse_fact_tree(
                                     &host,
                                     descriptor.grammar,
                                     &descriptor.host_kinds,
                                     descriptor.reading,
                                 );
                                 match parsed_tree {
-                                    Some(super::super::literal::Parsed::Tree(tree)) => {
+                                    Some(crate::code_rule_dsl::literal::Parsed::Tree(tree)) => {
                                         let document =
-                                            AstGrep::doc(super::super::literal::SubDoc {
+                                            AstGrep::doc(crate::code_rule_dsl::literal::SubDoc {
                                                 tree: Arc::clone(&tree),
                                             });
                                         for (position, candidate) in
@@ -853,10 +858,10 @@ impl PackedDemand {
                                             ));
                                         }
                                     }
-                                    Some(super::super::literal::Parsed::NotString) => {}
-                                    Some(super::super::literal::Parsed::Unknown) | None => {
+                                    Some(crate::code_rule_dsl::literal::Parsed::NotString) => {}
+                                    Some(crate::code_rule_dsl::literal::Parsed::Unknown) | None => {
                                         failure = Some(
-                                            if super::super::matcher::bounded_producer_exceeded() {
+                                            if crate::code_rule_dsl::matcher::bounded_producer_exceeded() {
                                                 "parse-fact-capacity"
                                             } else {
                                                 "parse-incomplete"
@@ -897,7 +902,7 @@ impl PackedDemand {
                             .as_ref()
                             .expect("a verified transform producer has its descriptor");
                         let parsed = AstGrep::doc(self.files[file].clone());
-                        let _scope = super::super::matcher::FileScopeSlot::install(
+                        let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
                             !parsed.root().get_doc().syntax_error_ranges().is_empty(),
@@ -1043,12 +1048,12 @@ impl PackedDemand {
                         continue;
                     }
                     if self.producer_kinds[program] == ProducerKind::SemanticFact {
-                        use super::semantic_facts::{Target, slot};
+                        use crate::code_rule_dsl::transducer::semantic_facts::{Target, slot};
                         let descriptor = self.semantic_facts[program]
                             .as_ref()
                             .expect("a verified semantic producer has its descriptor");
                         let parsed = AstGrep::doc(self.files[file].clone());
-                        let _scope = super::super::matcher::FileScopeSlot::install(
+                        let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
                             !parsed.root().get_doc().syntax_error_ranges().is_empty(),
@@ -1057,7 +1062,7 @@ impl PackedDemand {
                         let semantic_capacity_failed = std::cell::Cell::new(false);
                         let call_summary = match &descriptor.source {
                             SemanticFactSource::Calls(test) => Some(
-                                super::super::calls::summarize(
+                                crate::code_rule_dsl::calls::summarize(
                                     parsed.root(),
                                     test.language,
                                     "",
@@ -1070,7 +1075,7 @@ impl PackedDemand {
                             ),
                             _ => None,
                         };
-                        super::super::matcher::with_file_memo(&parsed, || {
+                        crate::code_rule_dsl::matcher::with_file_memo(&parsed, || {
                             let root = parsed.root();
                             let tape = root.get_doc();
                             for (task_index, ordinal) in
@@ -1152,7 +1157,7 @@ impl PackedDemand {
                                             let _ = environment.insert(label, found);
                                         }
                                     }
-                                    let mut facts = super::super::matcher::producer_facts(
+                                    let mut facts = crate::code_rule_dsl::matcher::producer_facts(
                                         &descriptor.source,
                                         node.clone(),
                                         &environment,
@@ -1164,16 +1169,16 @@ impl PackedDemand {
                                     ) =
                                         (&descriptor.source, &call_summary, descriptor.call_through)
                                     {
-                                        use super::super::calls::summary::Callee;
-                                        use super::super::language::Family;
-                                        use super::super::language::adapter::{
+                                        use crate::code_rule_dsl::calls::summary::Callee;
+                                        use crate::code_rule_dsl::language::Family;
+                                        use crate::code_rule_dsl::language::adapter::{
                                             Adapter, CallRules, with_adapter,
                                         };
                                         facts.rows.clear();
                                         let callee = with_adapter!(Family::of(test.language), A => <<A as Adapter>::Calls as CallRules>::callee_at(
                                             &node,
                                             summary,
-                                            || super::super::matcher::calls_tables(&node, test.language),
+                                            || crate::code_rule_dsl::matcher::calls_tables(&node, test.language),
                                         ));
                                         match callee {
                                             Some(Some(Callee::Name(name))) => {
@@ -1296,7 +1301,7 @@ impl PackedDemand {
                                             ));
                                             row.capture_named = Some(i64::from(
                                                 tape.transducer_flags(related)
-                                                    & super::super::packed::NAMED
+                                                    & crate::code_rule_dsl::transducer::packed::NAMED
                                                     != 0,
                                             ));
                                         }
@@ -1382,12 +1387,12 @@ impl PackedDemand {
                             .as_ref()
                             .expect("a verified value producer has its descriptor");
                         let parsed = AstGrep::doc(self.files[file].clone());
-                        let _scope = super::super::matcher::FileScopeSlot::install(
+                        let _scope = crate::code_rule_dsl::matcher::FileScopeSlot::install(
                             Vec::new(),
                             None,
                             !parsed.root().get_doc().syntax_error_ranges().is_empty(),
                         );
-                        super::super::matcher::with_file_memo(&parsed, || {
+                        crate::code_rule_dsl::matcher::with_file_memo(&parsed, || {
                             let root = parsed.root();
                             let tape = root.get_doc();
                             for (task_index, node) in
@@ -1453,7 +1458,7 @@ impl PackedDemand {
                                             .filter(|candidate| candidate.label == *label)
                                             .count();
                                         let capture_named = tape.transducer_flags(node)
-                                            & super::super::packed::NAMED
+                                            & crate::code_rule_dsl::transducer::packed::NAMED
                                             != 0;
                                         let equality_occurrence = if capture_named {
                                             let occurrence = equality_occurrences
@@ -1751,7 +1756,7 @@ impl PackedDemand {
                                     .transducer_is_named_leaf(capture.node()),
                                 capture_kind: 1,
                                 capture_named: self.files[file].transducer_flags(capture.node())
-                                    & super::super::packed::NAMED
+                                    & crate::code_rule_dsl::transducer::packed::NAMED
                                     != 0,
                                 equality_occurrence: 0,
                                 start_byte: span.start,
@@ -2994,7 +2999,7 @@ mod tests {
         stable_partition_ranges,
     };
     use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::packed::{ExecutionBackend, Program};
+    use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, Program};
     use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
     use rusqlite::Connection;
     use std::sync::Arc;
@@ -3081,7 +3086,7 @@ mod tests {
         );
         assert!(matches!(
             result,
-            Err(crate::code_rule_dsl::packed::Error::InvalidAnchor)
+            Err(crate::code_rule_dsl::transducer::packed::Error::InvalidAnchor)
         ));
     }
 
@@ -3201,7 +3206,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn metal_uses_one_command_buffer_and_one_packed_dispatch() {
-        use crate::code_rule_dsl::packed::{
+        use crate::code_rule_dsl::transducer::packed::{
             metal_execution_metrics, reset_metal_execution_metrics,
         };
 

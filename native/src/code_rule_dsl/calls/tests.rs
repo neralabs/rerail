@@ -328,6 +328,7 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
     let witnesses = calls
         .iter()
         .map(|(start, end)| crate::code_rule_dsl::violations::Witness {
+            sql_violation: None,
             path: "m.py".into(),
             span: crate::code_rule_dsl::violations::Span {
                 start_byte: *start as usize,

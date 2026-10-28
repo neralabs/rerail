@@ -1407,6 +1407,7 @@ fn parse_violation(value: &Value, path: &str) -> Result<ViolationSpec> {
         anchor,
         message_template: None,
         fix: None,
+        fix_template: None,
         node_regexes: Vec::new(),
         each: violation
             .get("each")

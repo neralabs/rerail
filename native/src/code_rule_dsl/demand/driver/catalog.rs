@@ -1,3 +1,6 @@
+//! N's catalog lowering and its driver (`query/mod.rs`), kept as the reference that N's contract
+//! suites drive (05 Phase 4's check). Test-only; production statements come from the logic planner.
+//!
 //! SQL-owned workspace execution.
 //!
 //! The compiler lowers a catalog to verified packed programs. The workspace supplies immutable
@@ -7,22 +10,22 @@
 //! dependency.
 
 #[cfg(test)]
-#[path = "plan/render/compact_output_sql.rs"]
+#[path = "catalog/plan/render/compact_output_sql.rs"]
 mod compact_output_sql;
-pub(in crate::code_rule_dsl) mod crossfile;
 mod plan;
-#[path = "plan/render/relational.rs"]
+#[path = "catalog/plan/render/relational.rs"]
 mod relational;
-#[path = "plan/render/relational_ir.rs"]
+#[path = "catalog/plan/render/relational_ir.rs"]
 mod relational_ir;
-pub(in crate::code_rule_dsl) mod select_when;
+// N's backend, with the fact producers demand::vtab's adaptation removed.
+pub(in crate::code_rule_dsl) mod sql_backend;
 
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::CompiledCodeRule;
-use crate::code_rule_dsl::packed::ExecutionBackend;
+use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
 use crate::code_rule_dsl::tape::TapeDoc;
-use crate::code_rule_dsl::transducer::sql_backend::{
+use crate::code_rule_dsl::demand::driver::catalog::sql_backend::{
     DocumentMapSpan, HardPartition, MatchRegistry, PackedDemand, PackedRow, ProducerKind,
     register_module,
 };
@@ -163,22 +166,23 @@ impl SqlViolationRow {
         (&self.rule_id, &self.clause_id, &self.path)
     }
 
-    pub(super) fn into_witness(self) -> super::violations::Witness {
+    pub(super) fn into_witness(self) -> crate::code_rule_dsl::violations::Witness {
         let sql_violation = Some(self.to_value());
-        super::violations::Witness {
+        crate::code_rule_dsl::violations::Witness {
             path: self.path,
             span: self.span,
-            captures: super::violations::Captures::from_spans(self.captures),
+            captures: crate::code_rule_dsl::violations::Captures::from_spans(self.captures),
             message: Some(self.message),
             fix: self.fix.map(|fix| {
                 serde_json::to_value(fix).expect("a typed SQL fix serializes as a witness fix")
             }),
             sql_violation,
+            ignored: false,
         }
     }
 
     pub(super) fn to_value(&self) -> Value {
-        let mut id = super::eval::violation_id(
+        let mut id = crate::code_rule_dsl::eval::violation_id(
             &self.rule_id,
             &self.clause_id,
             &self.code,
@@ -188,7 +192,7 @@ impl SqlViolationRow {
         );
         if let Some((start, end)) = self.each_range {
             let source = format!("{id}\0each\0{start}\0{end}");
-            id = format!("sha256:{}", super::json::hex_digest(source.as_bytes()));
+            id = format!("sha256:{}", crate::code_rule_dsl::json::hex_digest(source.as_bytes()));
         }
         let mut value = json!({
             "id": id,
@@ -867,5 +871,3 @@ pub(in crate::code_rule_dsl) fn regex_matches(
 mod policy_lowering_tests;
 #[cfg(test)]
 mod production_contract_tests;
-#[cfg(test)]
-mod tests;

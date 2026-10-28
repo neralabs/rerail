@@ -579,6 +579,7 @@ pub(super) fn bind(
         return Ok(());
     };
     let template = Template::parse(fix);
+    let fix_template = template.clone();
     references(&template, "fix")?;
     let upstream = template.upstream();
     if upstream.is_some()
@@ -635,6 +636,7 @@ pub(super) fn bind(
             )));
         }
     };
+    violation.fix_template = Some(fix_template);
     violation.fix = Some(Arc::new(plan));
     Ok(())
 }
@@ -932,6 +934,8 @@ pub(crate) struct Witness {
     /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
     /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
     pub(crate) ignored: bool,
+    /// A complete violation projected by SQL. Publication returns it without host reconstruction.
+    pub(crate) sql_violation: Option<Value>,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
@@ -1059,6 +1063,7 @@ pub(super) fn regex_witness(
         _ => None,
     };
     Witness {
+        sql_violation: None,
         path: path.to_owned(),
         span: span(whole.start(), whole.end()),
         captures: Captures::from_spans(captures),

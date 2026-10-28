@@ -57,6 +57,8 @@ pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
+#[cfg(test)]
+pub(crate) use parse::parse_fact_tree;
 pub(crate) use parse::{HostTest, ParseTest};
 use regex::Regex;
 pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
@@ -75,6 +77,8 @@ pub(super) use run::{Stopped, enumerate, node_at, run_clause};
 #[cfg(test)]
 pub(crate) use run::{reset_roots_matched, roots_matched};
 pub(super) use semantic::Semantic;
+#[cfg(test)]
+pub(crate) use semantic::producer_facts;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -85,11 +89,11 @@ pub(crate) use transform::{
     line_table_constructions, note_line_table_construction, reset_line_table_constructions,
 };
 pub(super) use util::{
-    CallArgs, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef, UtilTable,
-    UtilitySummary,
+    CallArgs, MAX_UTIL_DEPTH, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef,
+    UtilTable, UtilitySummary,
 };
 use util::{
-    MAX_UTIL_DEPTH, MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE,
+    MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE,
     UTIL_STEPS_LEFT, stack_address,
 };
 use util::{THREE_VALUED, UNKNOWN};
@@ -749,6 +753,24 @@ fn utility_steps_left() -> usize {
 /// matcher's, so nothing may remember them.
 fn util_limit_hit() -> bool {
     UTIL_EXCEEDED.get().is_some()
+}
+
+/// Whether the bounded producer in progress hit a utility limit (N's catalog backend).
+#[cfg(test)]
+pub(crate) fn bounded_producer_exceeded() -> bool {
+    UTIL_EXCEEDED.get().is_some()
+}
+
+/// Sets up this thread for one bounded producer call of N's catalog backend, with `work` left.
+#[cfg(test)]
+pub(crate) fn begin_bounded_producer(work: usize) {
+    UTIL_DEPTH.set(0);
+    UTIL_EXCEEDED.set(None);
+    UTIL_STACK_BASE.set(stack_address());
+    UTIL_STEPS_LEFT.set(work);
+    THREE_VALUED.set(true);
+    UNKNOWN.set(false);
+    resolve::CURRENT_CLAUSE.set(0);
 }
 
 /// Sets up this thread to evaluate `matcher`'s clause on one file, with `work` left of its

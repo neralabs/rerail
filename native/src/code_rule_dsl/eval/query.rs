@@ -284,6 +284,7 @@ fn witness_with_groups<'t, D: Doc>(
         )));
     }
     Ok(Witness {
+        sql_violation: None,
         path: file.path.clone(),
         span: node_span(node),
         captures,
@@ -421,6 +422,7 @@ impl<'a> Leaf<'a> {
                         && violation.is_none_or(|violation| violation.fix.is_none())
                     {
                         witnesses.push(Witness {
+                            sql_violation: None,
                             path: file.path.clone(),
                             span: span(start, end),
                             captures: Captures::default(),

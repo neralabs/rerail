@@ -8,7 +8,7 @@ use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
 
 /// The text modes that read what the captures mean rather than their text.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SemanticText {
     /// The captured expressions' values, in the language's sense: Python `==` and order, or
     /// JavaScript `Object.is` and its relational operators' order (IsLessThan, converting

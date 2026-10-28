@@ -430,6 +430,27 @@ impl SubTree {
             .filter(|index| *index < self.nodes.len())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The grammar kind of the parsed root.
+    pub(crate) fn root_kind(&self) -> u16 {
+        self.nodes[0].kind
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The grammar kind of the node with this id.
+    pub(crate) fn node_kind(&self, node_id: usize) -> Option<u16> {
+        self.nodes
+            .get(self.index_of(node_id)?)
+            .map(|node| node.kind)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The source range of the node with this id.
+    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
+        let rec = self.nodes.get(self.index_of(node_id)?)?;
+        Some(self.map_range(rec.start as usize..rec.end as usize))
+    }
+
     /// A range of this tree's nodes (offset included) as decoded bytes.
     fn decoded(&self, range: Range<usize>) -> Option<Range<usize>> {
         let offset = self.source.offset;
@@ -531,6 +552,8 @@ impl Language for SubLang {
 pub(crate) struct SubDoc {
     pub(crate) tree: Arc<SubTree>,
 }
+
+impl SubDoc {}
 
 impl Doc for SubDoc {
     type Source = SubSource;

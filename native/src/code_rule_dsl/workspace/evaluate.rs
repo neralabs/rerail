@@ -364,6 +364,7 @@ pub(super) fn evaluate_file(
             assert_eq!(found.get(0).expect("whole match").range(), range);
             if plain {
                 witnesses.push(Witness {
+                    sql_violation: None,
                     path: file.input.path.clone(),
                     span: span(range.start, range.end),
                     captures: Captures::default(),

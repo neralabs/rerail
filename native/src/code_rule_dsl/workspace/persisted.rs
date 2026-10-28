@@ -201,6 +201,7 @@ pub(super) fn decode_local_result(
         .iter()
         .map(|witness| {
             Some(Witness {
+                sql_violation: None,
                 path: path.to_owned(),
                 span: Span::deserialize(witness.get("span")?).ok()?,
                 captures: Captures::from_value(witness.get("captures")?)?,

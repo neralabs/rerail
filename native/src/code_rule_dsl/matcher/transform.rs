@@ -376,6 +376,27 @@ pub(crate) struct Transform {
 }
 
 impl Transform {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn simple_case(&self, name: &str) -> Option<(&str, StringCase)> {
+        let (
+            _,
+            Trans::Convert {
+                source,
+                case,
+                separators,
+            },
+        ) = self.steps.iter().find(|(key, _)| key == name)?
+        else {
+            return None;
+        };
+        let source_name = match &source.variable {
+            MetaVariable::Capture(name, _) | MetaVariable::MultiCapture(name) => name.as_str(),
+            MetaVariable::Dropped(_) | MetaVariable::Multiple => return None,
+        };
+        (source.default.is_none() && source.value.is_none() && separators.is_none())
+            .then_some((source_name, *case))
+    }
+
     pub(crate) fn contains(&self, name: &str) -> bool {
         self.steps.iter().any(|(key, _)| key == name)
     }

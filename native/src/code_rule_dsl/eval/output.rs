@@ -44,8 +44,11 @@ fn violation_identity(
 pub(crate) fn violation_from_witness(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
-    witness: Witness,
+    mut witness: Witness,
 ) -> Value {
+    if let Some(violation) = witness.sql_violation.take() {
+        return violation;
+    }
     let (id, span, fallback) = violation_identity(code_rule, clause, &witness);
     let mode = code_rule
         .scope

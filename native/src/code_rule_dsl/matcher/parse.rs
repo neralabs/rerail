@@ -106,6 +106,11 @@ impl Drop for Hosted {
 }
 
 impl HostTest {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::code_rule_dsl) fn rule(&self) -> &AstMatcher {
+        &self.rule
+    }
+
     pub(super) fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
@@ -159,6 +164,24 @@ pub(super) fn host_exports<D: Doc>(
     exports
 }
 
+pub(crate) fn parse_fact_tree<'t, D: Doc>(
+    node: &Node<'t, D>,
+    grammar: Grammar,
+    host_kinds: &BTreeSet<u16>,
+    reading: Reading,
+) -> Option<Parsed> {
+    if !host_kinds.contains(&node.kind_id()) {
+        return Some(Parsed::NotString);
+    }
+    if grammar == Grammar::Annotation {
+        let table = file_table(node, GrammarDialect::Python, reading)?;
+        return table
+            .annotation_at(&node.range())
+            .map(|annotation| Parsed::Tree(Arc::clone(&annotation.tree)));
+    }
+    parsed_tree(node, grammar)
+}
+
 impl ParseTest {
     pub(super) fn match_node<'t, D: Doc>(
         &self,
@@ -169,13 +192,12 @@ impl ParseTest {
             return None;
         }
         if self.grammar == Grammar::Annotation {
-            // A string type definition's tree is the table's; any other string has none.
             let table = file_table(&node, GrammarDialect::Python, self.reading)?;
             let tree = Arc::clone(&table.annotation_at(&node.range())?.tree);
             let _tables = SubTables::enter(table);
             return self.match_tree(node, env, tree);
         }
-        let tree = match parsed_tree(&node, self.grammar)? {
+        let tree = match parse_fact_tree(&node, self.grammar, &self.host_kinds, self.reading)? {
             Parsed::Tree(tree) => tree,
             Parsed::NotString => return None,
             Parsed::Unknown => {

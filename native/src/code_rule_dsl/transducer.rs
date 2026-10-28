@@ -14,6 +14,9 @@ use std::ops::Range;
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
 pub(super) mod packed;
+// N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) mod semantic_facts;
 
 #[cfg(test)]
 const STOP: u8 = 0x00;

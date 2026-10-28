@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// `matches` recursion deeper than this fails the clause for the file instead of risking the stack.
 /// Utilities recurse only through relations, so real rules recurse as deep as the syntax they walk.
-pub(super) const MAX_UTIL_DEPTH: u32 = 256;
+pub(crate) const MAX_UTIL_DEPTH: u32 = 256;
 
 /// Stack a root's `matches` recursion may use, measured from `begin_clause`. A level's frames grow
 /// with how much rule it nests and with the build (a small recursive rule takes about 2 KiB per
@@ -388,6 +388,35 @@ pub(crate) struct UtilRef {
 }
 
 impl UtilRef {
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// The deterministic identity of the compiled utility closure.
+    pub(crate) fn semantic_key(&self) -> Option<[u8; 32]> {
+        let table = self.table.upgrade()?;
+        table.origins.get(self.index)?.as_ref().map(|origin| origin.digest)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    /// A deterministic SQL component name from the compiled utility closure.
+    pub(crate) fn component_name(&self) -> Option<String> {
+        let table = self.table.upgrade()?;
+        let digest = table.origins.get(self.index)?.as_ref()?.digest;
+        Some(format!(
+            "{}_{}",
+            table.names[self.index]
+                .chars()
+                .map(|character| if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '_'
+                })
+                .collect::<String>(),
+            digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
+    }
+
     /// What the memo keys the referenced utility's verdicts by (`memo`): where it compiles alike
     /// in every query (it has a `scope`), what it compiles from (`UtilOrigin::digest`), so every
     /// clause of a file reaching an equal utility shares them; else its table and index. `None`

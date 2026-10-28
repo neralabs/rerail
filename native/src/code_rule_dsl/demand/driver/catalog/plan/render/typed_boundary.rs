@@ -246,14 +246,14 @@ impl CteAst {
     }
 }
 
-pub(in crate::code_rule_dsl::query) struct TypedBoundaryAst {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct TypedBoundaryAst {
     producers: Vec<u64>,
     utility_definitions: Vec<UtilityDefinitionId>,
     ctes: Vec<CteAst>,
 }
 
 impl TypedBoundaryAst {
-    pub(in crate::code_rule_dsl::query) fn new(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new(
         relations: &StatementRelations,
         producers: impl IntoIterator<Item = u64>,
     ) -> Self {
@@ -345,7 +345,7 @@ impl TypedBoundaryAst {
         }
     }
 
-    pub(in crate::code_rule_dsl::query) fn render(&self) -> String {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn render(&self) -> String {
         debug_assert!(
             self.utility_definitions
                 .windows(2)
@@ -359,7 +359,7 @@ impl TypedBoundaryAst {
             .join(",\n")
     }
 
-    pub(in crate::code_rule_dsl::query) fn verify_rendered_sources(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn verify_rendered_sources(
         sql: &str,
     ) -> Result<(), String> {
         if sql.contains("rerail_matches") {

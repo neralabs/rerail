@@ -236,7 +236,7 @@ pub(crate) struct ValueTest {
 
 impl ValueTest {
     /// `Some(true)`, `Some(false)`, or `None` when the verdict is unknown.
-    pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
+    pub(crate) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
         if !self.reading.has_value(node) {
             return Some(false);
         }

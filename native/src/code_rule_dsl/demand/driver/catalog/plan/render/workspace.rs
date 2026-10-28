@@ -1,10 +1,10 @@
-pub(in crate::code_rule_dsl::query) fn execution_sql(base: &str) -> String {
+pub(in crate::code_rule_dsl::demand::driver::catalog) fn execution_sql(base: &str) -> String {
     format!(
         "WITH execution AS MATERIALIZED (\n{base}\n),\nsyntax_failure AS MATERIALIZED (\n  SELECT CAST(file.key AS INTEGER) AS file_index, json_extract(file.value, '$.path') AS path, json_extract(failure.value, '$.ruleId') AS rule_id, json_extract(failure.value, '$.clauseId') AS clause_id, json_extract(failure.value, '$.message') AS message\n  FROM json_each(:files) file\n  JOIN json_each(file.value, '$.syntaxFailures') failure\n  JOIN json_each(:clauses) demanded\n    ON json_extract(demanded.value, '$.ruleId') = json_extract(failure.value, '$.ruleId')\n   AND json_extract(demanded.value, '$.clauseId') = json_extract(failure.value, '$.clauseId')\n)\nSELECT * FROM execution\nWHERE output_kind <> 2 OR error_code <> 'source-partial'\nUNION ALL\nSELECT 2 AS output_kind, syntax_failure.rule_id, syntax_failure.clause_id, NULL AS code, syntax_failure.message, syntax_failure.path, NULL AS start_byte, NULL AS end_byte, NULL AS mode, printf('%08d/%08d', 0, syntax_failure.file_index) AS stable_order, json('{{}}') AS captures, json('{{}}') AS variables, NULL AS fix, NULL AS span, syntax_failure.file_index, NULL AS node, json('[]') AS bindings, NULL AS witness_start_byte, NULL AS witness_end_byte, NULL AS each_start_byte, NULL AS each_end_byte, 'source-partial' AS error_code, 0 AS clause_ordinal\nFROM syntax_failure\nORDER BY clause_ordinal, file_index, stable_order"
     )
 }
 
 #[cfg(test)]
-pub(in crate::code_rule_dsl::query) fn legacy_test_scan_sql() -> &'static str {
+pub(in crate::code_rule_dsl::demand::driver::catalog) fn legacy_test_scan_sql() -> &'static str {
     "SELECT batch, row_kind, producer_id, file_index, task_index, match_index, capture_index, capture_occurrence, capture_sequence_start, capture_sequence_count, node, related_node, axis_kind, axis_order, fact_kind, document_id, mapped_document_id, start_ordinal, output_label, capture_label, text_value, start_byte, end_byte, verdict, complete, work_used, error_code, field_id, related_named, source_text, structural_key, named_leaf, capture_kind, capture_named, equality_occurrence FROM rerail_matches WHERE batch = ?1 ORDER BY rowid"
 }

@@ -134,6 +134,8 @@ pub(super) struct ViolationSpec {
     /// The message's `$NAME` references; `None` when it is literal text.
     pub(super) message_template: Option<Template>,
     pub(super) fix: Option<Arc<FixPlan>>,
+    /// The source fix template for relational output rendering.
+    pub(super) fix_template: Option<Template>,
     /// Per dialect, the rule's regexes with named groups that test the witness node itself.
     pub(super) node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
@@ -332,6 +334,17 @@ impl Template {
         self.vars().next().is_none()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::code_rule_dsl) fn parts(&self) -> impl Iterator<Item = TemplatePart<'_>> {
+        self.segments.iter().map(|segment| match segment {
+            Segment::Text(text) => TemplatePart::Text(text),
+            Segment::Var { name, multi } => TemplatePart::Var {
+                name,
+                multi: *multi,
+            },
+        })
+    }
+
     /// Each referenced metavariable and whether it is referenced as `$$$NAME`.
     pub(super) fn vars(&self) -> impl Iterator<Item = (&str, bool)> {
         self.segments.iter().filter_map(|segment| match segment {
@@ -359,6 +372,12 @@ impl Template {
 
 /// `${NAME}` or `$$${NAME}` at the start of `source`: the name, whether it is a multi-capture, and
 /// the length read.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(in crate::code_rule_dsl) enum TemplatePart<'a> {
+    Text(&'a str),
+    Var { name: &'a str, multi: bool },
+}
+
 fn braced_var(source: &str) -> Option<(String, bool, usize)> {
     let (multi, rest) = match source.strip_prefix("$$${") {
         Some(rest) => (true, rest),
@@ -452,7 +471,7 @@ pub(super) struct AstRelation {
     pub(super) domain: Option<CodeRuleScope>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum RegexSource {
     Content,
     Path,

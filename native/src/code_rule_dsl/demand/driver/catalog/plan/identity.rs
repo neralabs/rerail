@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 const IDENTITY_MAGIC: &[u8] = b"rerail.query-plan.identity\0";
 const IDENTITY_CONTRACT_VERSION: u16 = 1;
 
-pub(in crate::code_rule_dsl::query) trait IdentityDomain {
+pub(in crate::code_rule_dsl::demand::driver::catalog) trait IdentityDomain {
     const TAG: u8;
     const NAME: &'static str;
 }
@@ -27,7 +27,7 @@ impl IdentityDomain for ScopeInstanceDomain {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::query) struct UtilityDefinitionDomain;
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct UtilityDefinitionDomain;
 
 impl IdentityDomain for UtilityDefinitionDomain {
     const TAG: u8 = 11;
@@ -93,9 +93,9 @@ pub(super) type EffectProfileId = SemanticId<EffectProfileDomain>;
 pub(super) type DocumentMapGenerationId = SemanticId<DocumentMapGenerationDomain>;
 pub(super) type SnapshotId = SemanticId<SnapshotDomain>;
 pub(super) type DocumentId = SemanticId<DocumentDomain>;
-pub(in crate::code_rule_dsl::query) type UtilityDefinitionId = SemanticId<UtilityDefinitionDomain>;
+pub(in crate::code_rule_dsl::demand::driver::catalog) type UtilityDefinitionId = SemanticId<UtilityDefinitionDomain>;
 
-pub(in crate::code_rule_dsl::query) fn utility_definition_id(
+pub(in crate::code_rule_dsl::demand::driver::catalog) fn utility_definition_id(
     origin_digest: &[u8; 32],
 ) -> UtilityDefinitionId {
     UtilityDefinitionId::builder().bytes(origin_digest).finish()
@@ -140,7 +140,7 @@ identity_domain!(
 identity_domain!(LogicalFillDomain, LogicalFillId, 16, "logical-fill");
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl::query) struct SemanticId<D> {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct SemanticId<D> {
     digest: [u8; 32],
     domain: PhantomData<D>,
 }
