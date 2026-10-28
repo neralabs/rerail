@@ -42,64 +42,8 @@ import common  # noqa: E402
 
 # Each ported lint's upstream UI tests: every test file whose `//~` annotations name the lint or that is named after
 # it, at rust-clippy 49e2f89a2605a9a340e04955fdbefa9803e6027a.
-TESTS = {
-    "allow_attributes": ["tests/ui/allow_attributes.rs"],
-    "allow_attributes_without_reason": ["tests/ui/allow_attributes_without_reason.rs"],
-    "builtin_type_shadow": ["tests/ui/builtin_type_shadow.rs"],
-    "decimal_literal_representation": [
-        "tests/ui/decimal_literal_representation.rs",
-        "tests/ui-toml/decimal_literal_representation/decimal_literal_representation.rs",
-    ],
-    "double_parens": ["tests/ui/double_parens.rs"],
-    "else_if_without_else": ["tests/ui/else_if_without_else.rs"],
-    "inconsistent_digit_grouping": [
-        "tests/ui/inconsistent_digit_grouping.rs",
-        "tests/ui/literals.rs",
-        "tests/ui-toml/lint_decimal_readability/test.rs",
-    ],
-    "int_plus_one": ["tests/ui/int_plus_one.rs"],
-    "large_digit_groups": ["tests/ui/large_digit_groups.rs"],
-    "many_single_char_names": ["tests/ui/many_single_char_names.rs"],
-    "mixed_case_hex_literals": ["tests/ui/literals.rs"],
-    "needless_arbitrary_self_type": [
-        "tests/ui/needless_arbitrary_self_type.rs",
-        "tests/ui/needless_arbitrary_self_type_unfixable.rs",
-    ],
-    "needless_else": ["tests/ui/needless_else.rs"],
-    "needless_raw_string_hashes": [
-        "tests/ui/needless_raw_string_hashes.rs",
-        "tests/ui-toml/needless_raw_string_hashes_one_allowed/needless_raw_string_hashes.rs",
-    ],
-    "needless_raw_strings": ["tests/ui/needless_raw_string.rs"],
-    "octal_escapes": ["tests/ui/octal_escapes.rs"],
-    "option_env_unwrap": ["tests/ui/option_env_unwrap.rs"],
-    "partial_pub_fields": ["tests/ui/partial_pub_fields.rs"],
-    "precedence": ["tests/ui/precedence.rs"],
-    "precedence_bits": ["tests/ui/precedence_bits.rs"],
-    "redundant_at_rest_pattern": ["tests/ui/redundant_at_rest_pattern.rs"],
-    "redundant_field_names": ["tests/ui/redundant_field_names.rs"],
-    "redundant_static_lifetimes": [
-        "tests/ui/redundant_static_lifetimes.rs",
-        "tests/ui/redundant_static_lifetimes_multiple.rs",
-    ],
-    "single_char_lifetime_names": ["tests/ui/single_char_lifetime_names.rs"],
-    "single_component_path_imports": [
-        "tests/ui/single_component_path_imports.rs",
-        "tests/ui/single_component_path_imports_macro.rs",
-        "tests/ui/single_component_path_imports_nested_first.rs",
-        "tests/ui/single_component_path_imports_self_after.rs",
-        "tests/ui/single_component_path_imports_self_before.rs",
-    ],
-    "unneeded_wildcard_pattern": ["tests/ui/unneeded_wildcard_pattern.rs"],
-    "unnested_or_patterns": ["tests/ui/unnested_or_patterns.rs", "tests/ui/unnested_or_patterns2.rs"],
-    "unreadable_literal": [
-        "tests/ui/unreadable_literal.rs",
-        "tests/ui/inconsistent_digit_grouping.rs",
-        "tests/ui-toml/lint_decimal_readability/test.rs",
-    ],
-    "unusual_byte_groupings": ["tests/ui/literals.rs", "tests/ui/large_digit_groups.rs"],
-    "zero_prefixed_literal": ["tests/ui/literals.rs"],
-}
+# The list is fixtures.json ({"rules": {lint: [upstream path, ...]}}).
+TESTS = json.loads((HERE / "fixtures.json").read_text())["rules"]
 # Ours: inputs the ports once misread, each a golden case (fixtures/rerail/<lint>.rs). Each is recorded with every
 # ported lint on, like Clippy's own tests, and its `//~` annotations are checked against the faithful run.
 PROBES = {

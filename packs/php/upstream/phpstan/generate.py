@@ -66,21 +66,32 @@ def _if(message: str) -> str | None:
     return f"if.always{constant.group(1).capitalize()}" if constant else None
 
 
-# Ported class's test (under tests/PHPStan) -> its identifiers, and the identifier of one of its expected messages.
-TESTS = {
-    "Rules/Variables/DefinedVariableRuleTest.php": (
-        {"variable.undefined"},
-        lambda message: "variable.undefined" if re.match(IDENTIFIERS["variable.undefined"], message) else None),
-    "Rules/Functions/PrintfParametersRuleTest.php": ({"argument.sprintf", "argument.sscanf"}, _printf),
-    "Rules/Arrays/DuplicateKeysInLiteralArraysRuleTest.php": ({"array.duplicateKey"}, lambda message: "array.duplicateKey"),
-    "Rules/Functions/RandomIntParametersRuleTest.php": (
-        {"argument.type"},
-        lambda message: "argument.type" if re.match(IDENTIFIERS["argument.type"], message) else None),
-    "Rules/Functions/MissingFunctionReturnTypehintRuleTest.php": (
-        {"missingType.return"},
-        lambda message: "missingType.return" if re.match(IDENTIFIERS["missingType.return"], message) else None),
-    "Rules/Comparison/IfConstantConditionRuleTest.php": ({"if.alwaysTrue", "if.alwaysFalse"}, _if),
+# Ported class's test (under tests/PHPStan) -> the identifier of one of its expected messages.
+IDENTIFY = {
+    "Rules/Variables/DefinedVariableRuleTest.php":
+        lambda message: "variable.undefined" if re.match(IDENTIFIERS["variable.undefined"], message) else None,
+    "Rules/Functions/PrintfParametersRuleTest.php": _printf,
+    "Rules/Arrays/DuplicateKeysInLiteralArraysRuleTest.php": lambda message: "array.duplicateKey",
+    "Rules/Functions/RandomIntParametersRuleTest.php":
+        lambda message: "argument.type" if re.match(IDENTIFIERS["argument.type"], message) else None,
+    "Rules/Functions/MissingFunctionReturnTypehintRuleTest.php":
+        lambda message: "missingType.return" if re.match(IDENTIFIERS["missingType.return"], message) else None,
+    "Rules/Comparison/IfConstantConditionRuleTest.php": _if,
 }
+
+
+def _tests() -> dict:
+    """fixtures.json ({"rules": {identifier: [upstream test, ...]}}) inverted: each test (under tests/PHPStan, in
+    order of first mention) -> its identifiers, and IDENTIFY's identifier of one of its expected messages."""
+    rules = json.loads((HERE / "fixtures.json").read_text())["rules"]
+    tests = dict.fromkeys(path.removeprefix("tests/PHPStan/") for paths in rules.values() for path in paths)
+    if set(tests) != set(IDENTIFY):
+        raise SystemExit(f"fixtures.json names the tests {sorted(tests)}, IDENTIFY {sorted(IDENTIFY)}")
+    return {test: ({rule for rule, paths in rules.items() if f"tests/PHPStan/{test}" in paths}, IDENTIFY[test])
+            for test in tests}
+
+
+TESTS = _tests()
 
 # The rule options a test method sets, as PHPStan 2.2.16 configures them at level max (conf/config*.neon).
 DEFAULTS = {
