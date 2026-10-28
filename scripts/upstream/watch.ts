@@ -12,10 +12,11 @@
  *    renamed file shows however many files the release touched (watch-compare.ts):
  *    - (a) the tests the generator reads, an ESLint-family file with its RuleTester case diff (rule-tester.ts);
  *    - (b) the ported rules' code, and which rules;
- *    - (c) the code the rules share, a weaker signal of its own;
+ *    - (c) the code the rules share, a weaker signal of its own: listed, but alone it leaves the status
+ *      `behind-irrelevant`;
  *    - (d) tests upstream added for a ported rule that the generator does not read.
- * 4. Its status: `current` (at the latest release), `behind-irrelevant` (behind, nothing it watches changed),
- *    `changed`, or `error` when it could not be read; one tool-pack's error never stops the others.
+ * 4. Its status: `current` (at the latest release), `behind-irrelevant` (behind, and nothing it watches changed but
+ *    shared code), `changed`, or `error` when it could not be read; one tool-pack's error never stops the others.
  *
  * Writes the Markdown summary (one row per tool-pack, then the details) to `--summary <file>`, or appends it to
  * `$GITHUB_STEP_SUMMARY`, and to stdout; `--json <file>` gets one entry per tool-pack. `--pack <p> --tool <t>` reports
@@ -116,7 +117,7 @@ export async function watchToolPack(root: string, pack: string, tool: string, so
     report = { ...report, pinned: resolved.from, latest: resolved.to, releasesBehind: current ? 0 : latest.behind, breaking: BREAKING_GAPS[gap], notes: resolved.notes };
     if (current) return { ...report, status: "current" };
     const changes = await compareWatch(sources.github, { repository: resolved.repository, ruleTester: manifest.adapter === "eslint", watch, from: resolved.from.commit, to: resolved.to.commit });
-    const relevant = changes.tests.files.length + changes.code.files.length + changes.shared.files.length + changes.newTests.length > 0;
+    const relevant = changes.tests.files.length + changes.code.files.length + changes.newTests.length > 0;
     return { ...report, ...changes, status: relevant ? "changed" : "behind-irrelevant" };
   } catch (error) {
     return { ...report, status: "error", error: error instanceof Error ? error.message : String(error) };

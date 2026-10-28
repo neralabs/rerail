@@ -192,7 +192,8 @@ watch:
     - "tests/{rule}.js"
   code:
     - "lib/{rule}.js"
-  shared: []
+  shared:
+    - "README.md"
 eslint:
   release:
     tag: v1.0.0
@@ -240,7 +241,9 @@ test("each tool-pack's status, one tool-pack's error leaving the others' rows", 
     ["demo/irrelevant", "behind-irrelevant", 1],
     ["demo/untagged", "error", null],
   ]);
-  const [changed, current, , untagged] = reports;
+  const [changed, current, irrelevant, untagged] = reports;
+  // Shared code alone is listed but does not make the tool-pack `changed`.
+  assert.deepEqual(irrelevant!.shared.files.map((file) => file.path), ["README.md"]);
   assert.deepEqual(changed!.tests.cases, { added: 1, removed: 0, changed: 0, unresolved: 0 });
   assert.deepEqual(changed!.code.rules, ["no-foo"]);
   assert.deepEqual([changed!.pinned, changed!.latest], [{ version: "1.0.0", tag: "v1.0.0", commit: PIN }, { version: "1.1.0", tag: "v1.1.0", commit: NEXT }]);

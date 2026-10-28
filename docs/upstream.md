@@ -316,14 +316,15 @@ passes its read-only `GITHUB_TOKEN`.
 
 The job summary (or `--summary`, and `--json` for the same as data) has one row per tool-pack:
 
-- **Status**: up to date, behind with nothing relevant changed (how many releases), changed, or an error (a tool-pack
-  it could not read; the others are still reported).
+- **Status**: up to date, behind with nothing relevant changed (how many releases; shared code alone counts as nothing
+  relevant), changed, or an error (a tool-pack it could not read; the others are still reported).
 - **Gap**: from the pin to the latest release, a breaking one flagged.
 - **Tests**: the changed test files the generator reads. For the ESLint family, the RuleTester cases added, removed
   and changed; for the other tools a changed file counts as changed fixtures.
 - **Rule code**: the ported rules whose code changed. psalm, phpstan and bladestan have no per-rule file, so they
   report shared code only.
-- **Shared**: shared code that changed, a weaker signal than the two above.
+- **Shared**: shared code that changed, a weaker signal than the two above: it is listed, but on its own it leaves the
+  status at "behind, nothing relevant changed".
 - **New tests not read**: tests upstream added for a ported rule that the generator does not read (a ruff
   `#[test_case(Rule::…)]` in a ported plugin, a Clippy test whose `//~` annotations name a ported lint, another test
   file in an ESLint rule's directory). Porting them is a generator change.
