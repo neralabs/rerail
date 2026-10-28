@@ -312,16 +312,14 @@ GitHub names for it, and compares that commit with the pinned one, statically, t
 both commits, compared by blob over the paths the tool's `gates.yaml` `watch:` block names
 ([pack-format.md](pack-format.md)), which catches files added, changed, deleted and renamed. Only the changed test
 files are downloaded, from both commits. No upstream code runs. It reads `GH_TOKEN` or `GITHUB_TOKEN`; the workflow
-passes its read-only `GITHUB_TOKEN`.
+passes its read-only `GITHUB_TOKEN`. It does not check that a tool-pack's own pins agree: CI does, on every pull
+request and push (`test/scripts/upstream/releases.test.ts`, "this checkout's pins agree").
 
 The job summary (or `--summary`, and `--json` for the same as data) has one row per tool-pack:
 
 - **Status**: up to date, behind with nothing relevant changed (how many releases; shared code alone counts as nothing
   relevant), changed, or an error (a tool-pack it could not read; the others are still reported).
 - **Gap**: from the pin to the latest release, a breaking one flagged.
-- **Pins**: ⚠️ with a count when the tool-pack's pins disagree (gates.yaml's `upstream.version` and the release its
-  runtime installs, or for Clippy the Rust toolchain's pins; the release check below), each listed in the details.
-  The tool-pack is compared all the same, from gates.yaml's pinned commit.
 - **Tests**: the changed test files the generator reads, a Clippy test's expected `.stderr` included. For the ESLint
   family, the RuleTester cases added, removed and changed; for the other tools a changed file counts as changed
   fixtures. For phpstan these are exactly the files its tests name, read from the tests at both commits.
@@ -388,7 +386,8 @@ its `GITHUB_TOKEN` alone (`contents: write`, `actions: write`), it deletes and c
 (`[{pack, tool, version}]`, sorted by pack then tool). Its job summary lists what it started.
 
 Name every tool-pack you want in one start: the bump opens one pull request, on `auto/bump-upstream`
-(`auto/resnapshot-upstream` for a re-snapshot), and the next start replaces that pull request's commits with its own.
+(`auto/resnapshot-upstream` for a re-snapshot), and the next start replaces that pull request's commits with its own,
+a published one's included. To keep a tool-pack the open pull request carries, name it again.
 
 ### Bump pull requests
 

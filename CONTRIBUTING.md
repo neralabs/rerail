@@ -331,7 +331,8 @@ A pack that ports another tool's rules is judged on that tool's test cases and o
 in git. Each tool-pack (one `packs/<pack>/upstream/<tool>/`) has:
 
 - **test data**: the tool's cases (`fixtures/`, `tests/`, the case lists), the expected findings the pinned tool
-  reported on them (`*.expected.json`), Rerail's own cases, and, for audit only, `provenance.json` and `LICENSES.md`.
+  reported on them (`*.expected.json`), Rerail's own cases, and `provenance.json` and `LICENSES.md`, which list every
+  file in the archive.
   It is one archive in S3, which the tracked `test-data.lock` names by sha256.
 - **real-code samples**, when it has a `samples.lock`: whole files from open-source repositories, labelled per rule
   with the lines it should report or as clean for it. They are one archive in S3 too, which `samples.lock` names and
@@ -435,8 +436,9 @@ the tool's expected findings, its rename variants and its samples, and any diver
 
 **Test data.** Pull first (`npm run fixtures:pull`), then write the cases in the pulled layout: a code corpus with its
 ground truth under `upstream/<tool>/authored/`, or a case file under the tool directory with its row in the tool's
-`UPSTREAM.md`. A case file's expected findings are recorded by running the tool through its generator
-(`npm run fixtures:derive`; **Derived data** below). Then stage what changed and commit `publish/`:
+`UPSTREAM.md`. Then derive (`npm run fixtures:derive -- --pack <id> --tool <tool>`; **Derived data** below): it records
+a case file's expected findings by running the tool through its generator, and rewrites `provenance.json`, which must
+list every file the archive holds, so a new corpus needs it too. Then stage what changed and commit `publish/`:
 
 ```sh
 npm run fixtures:stage -- --pack <id> --tool <tool>   # every file the locked archive lacks or holds differently
@@ -455,11 +457,14 @@ in `scripts/samples/licences.ts` whose licence the sample declares. A copyleft r
 from a new repository, read its licence file at the samples' commits and add its entry in the same pull request
 ([docs/upstream.md, "Sample licences"](docs/upstream.md#sample-licences)).
 
-**Removing a file.** A file the archive holds is in no diff. To remove a file the tool's `UPSTREAM.md` lists as
-Rerail's, delete its row: the waiting comment counts the removed row, and an overlay publish drops the file from the
-archive. To remove any other file (one under `authored/` included), delete it on disk after a pull, stage the whole
-set with `npm run fixtures:stage -- --pack <id> --tool <tool> --all`, and ask for a `replace` publish, which makes the
-archive exactly what `publish/` holds. The old archive stays in S3 for the commits that name it
+**Removing a file.** A file the archive holds is in no diff. Any removal changes the archive's file set, which
+`provenance.json` must match, or publish prep refuses the archive: derive the tool-pack again after the removal
+(`npm run fixtures:derive -- --pack <id> --tool <tool>`, on the pinned toolchain; Linux for `rust/clippy`) and stage
+what changed. To remove a file the tool's `UPSTREAM.md` lists as Rerail's, delete its row before deriving: the waiting
+comment counts the removed row, and an overlay publish drops the file from the archive. To remove any other file (one
+under `authored/` included), delete it on disk after a pull, derive, stage the whole set with
+`npm run fixtures:stage -- --pack <id> --tool <tool> --all`, and ask for a `replace` publish, which makes the archive
+exactly what `publish/` holds. The old archive stays in S3 for the commits that name it
 ([docs/upstream.md, "Removing data"](docs/upstream.md#removing-data)).
 
 **From a fork.** Pull requests from forks run CI without the repository's OIDC token, so the jobs that read pack test
@@ -557,7 +562,8 @@ In a pack (`packs/<id>/`), the record is per upstream repository and covers the 
 - The tool's own `upstream/<tool>/UPSTREAM.md` lists, one row per file, the files in the tool directory that Rerail
   wrote. They are Apache-2.0, like everything else Rerail writes.
 - Each test data archive holds `provenance.json` (every file, its upstream path and how it was made) and `LICENSES.md`
-  (the licence texts), for audit. Nothing reads them.
+  (the licence texts), for audit. No licence check reads them; publish prep reads the file list in `provenance.json`
+  and refuses an archive it does not describe.
 - `REUSE.toml` annotates the rule documents with the pack's licence expression, and the pulled and staged copies of
   the copied files with the upstream licence.
 

@@ -17,7 +17,6 @@
  *    - (d) tests upstream added for a ported rule that the generator does not read.
  * 4. Its status: `current` (at the latest release), `behind-irrelevant` (behind, and nothing it watches changed but
  *    shared code), `changed`, or `error` when it could not be read; one tool-pack's error never stops the others.
- *    Pins that disagree (releases.ts's gatedPin) are reported with it, and it is compared all the same.
  *
  * Writes the Markdown summary (one row per tool-pack, then the details) to `--summary <file>`, or appends it to
  * `$GITHUB_STEP_SUMMARY`, and to stdout; `--json <file>` gets one entry per tool-pack. `--pack <p> --tool <t>` reports
@@ -51,8 +50,6 @@ export interface WatchReport extends WatchChanges {
   /** How many stable releases are newer than the pin, up to the latest; null when unknown. */
   releasesBehind: number | null;
   breaking: boolean;
-  /** Where the tool-pack's pins disagree (releases.ts's gatedPin); the tool-pack is compared all the same. */
-  disagreements: string[];
   /** How a release was chosen (Clippy's source at a Rust point release). */
   notes: string[];
   error?: string;
@@ -104,11 +101,11 @@ const NO_CHANGES: WatchChanges = { tests: { files: [], cases: null }, code: { ru
 /** One tool-pack's report; an error is its row's, never thrown. */
 export async function watchToolPack(root: string, pack: string, tool: string, sources: WatchSources): Promise<WatchReport> {
   const toolPack = `${pack}/${tool}`;
-  let report: WatchReport = { toolPack, status: "error", pinned: { version: "", tag: null, commit: "" }, latest: null, releasesBehind: null, breaking: false, disagreements: [], notes: [], ...NO_CHANGES };
+  let report: WatchReport = { toolPack, status: "error", pinned: { version: "", tag: null, commit: "" }, latest: null, releasesBehind: null, breaking: false, notes: [], ...NO_CHANGES };
   try {
     const manifest = readGatesManifest(root, pack, tool);
     const pin = gatedPin(root, pack, tool);
-    report = { ...report, pinned: { version: pin.version, tag: null, commit: manifest.upstream.commit }, disagreements: pin.disagreements };
+    report = { ...report, pinned: { version: pin.version, tag: null, commit: manifest.upstream.commit } };
     const watch = expandWatch(root, pack, tool, manifest);
     if (watch === undefined) throw new Error(`packs/${pack}/upstream/${tool}/gates.yaml has no watch: block`);
     const latest = await latestRelease(sources.fetch, pin.ecosystem, pin.package, pin.version);
@@ -156,14 +153,13 @@ function filesText(count: number): string {
 function row(report: WatchReport): string {
   const version = report.latest === null || report.latest.version === report.pinned.version ? `${report.pinned.version || "?"}` : `${report.pinned.version} → ${report.latest.version}`;
   const behind = report.releasesBehind === null ? "?" : `${report.releasesBehind}${report.breaking ? " (breaking)" : ""}`;
-  const pins = report.disagreements.length === 0 ? "—" : `⚠️ ${report.disagreements.length} disagree`;
-  if (report.status === "error" || report.status === "current") return `| \`${report.toolPack}\` | ${STATUS_LABELS[report.status]} | ${version} | ${behind} | ${pins} | | | | |`;
+  if (report.status === "error" || report.status === "current") return `| \`${report.toolPack}\` | ${STATUS_LABELS[report.status]} | ${version} | ${behind} | | | | |`;
   const tests = report.tests.files.length === 0 ? "—" : `${filesText(report.tests.files.length)}${report.tests.cases === null ? "" : `, ${casesText(report.tests.cases)}`}`;
   const named = report.code.rules.slice(0, CELL_RULES).map((rule) => `\`${rule}\``).join(", ");
   const code = report.code.files.length === 0 ? "—" : report.code.rules.length === 0 ? filesText(report.code.files.length) : `${named}${report.code.rules.length > CELL_RULES ? `, … ${report.code.rules.length - CELL_RULES} more` : ""}`;
   const shared = report.shared.files.length === 0 ? "—" : filesText(report.shared.files.length);
   const fresh = report.newTests.length === 0 ? "—" : filesText(new Set(report.newTests.map((entry) => entry.path)).size);
-  return `| \`${report.toolPack}\` | ${STATUS_LABELS[report.status]} | ${version} | ${behind} | ${pins} | ${tests} | ${code} | ${shared} | ${fresh} |`;
+  return `| \`${report.toolPack}\` | ${STATUS_LABELS[report.status]} | ${version} | ${behind} | ${tests} | ${code} | ${shared} | ${fresh} |`;
 }
 
 function changeText(file: FileChange): string {
@@ -185,7 +181,6 @@ function details(report: WatchReport): string[] {
     ...(report.error === undefined ? [] : [`- Error: ${report.error.replace(/\s+/gu, " ")}`]),
     ...(report.latest === null || report.pinned.tag === null ? [] : [`- ${report.pinned.tag} (\`${report.pinned.commit.slice(0, 12)}\`) → ${report.latest.tag} (\`${report.latest.commit.slice(0, 12)}\`)`]),
     ...report.notes.map((note) => `- ${note}`),
-    ...list("Pins that disagree", report.disagreements, (disagreement) => disagreement),
     ...list("Tests the generator reads", report.tests.files, (file) => `${changeText(file)}${file.cases === null ? "" : ` ${casesText(file.cases)}`}`),
     ...list("Rule code", report.code.files, (file) => `${changeText(file)}${file.rules.length === 0 ? "" : ` for ${file.rules.map((rule) => `\`${rule}\``).join(", ")}`}`),
     ...list("Shared code", report.shared.files, changeText),
@@ -201,12 +196,12 @@ export function renderWatch(reports: WatchReport[]): string {
     "",
     "What changed upstream since each tool-pack's pin, in what Rerail reads (gates.yaml `watch:`). Report only: start a bump by hand (docs/upstream.md).",
     "",
-    "| Tool-pack | Status | Pinned → latest | Releases behind | Pins | Tests read (cases +/−/~) | Rule code | Shared code | New tests not read |",
-    "|---|---|---|---|---|---|---|---|---|",
+    "| Tool-pack | Status | Pinned → latest | Releases behind | Tests read (cases +/−/~) | Rule code | Shared code | New tests not read |",
+    "|---|---|---|---|---|---|---|---|",
     ...reports.map(row),
     "",
   ];
-  const noted = reports.filter((report) => report.status !== "current" || report.disagreements.length > 0);
+  const noted = reports.filter((report) => report.status !== "current");
   if (noted.length > 0) lines.push("### Details", "", ...noted.flatMap(details));
   return `${lines.join("\n")}\n`;
 }

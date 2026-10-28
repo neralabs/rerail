@@ -189,10 +189,9 @@ const PIN = "a".repeat(40);
 const NEXT = "b".repeat(40);
 
 /**
- * A demo pack with ESLint-family tool-packs, each pinned at 1.0.0 and watching `tests/{rule}.js`; its runtime pins the
- * package at 1.0.0, or at `runtimePins[tool]`.
+ * A demo pack with ESLint-family tool-packs, each pinned at 1.0.0 and watching `tests/{rule}.js`.
  */
-function checkout(tools: string[], runtimePins: Record<string, string> = {}): string {
+function checkout(tools: string[]): string {
   const root = mkdtempSync(join(tmpdir(), "upstream-watch-"));
   roots.push(root);
   const files: Record<string, string> = {
@@ -230,7 +229,7 @@ eslint:
     tag: v1.0.0
     installed: "${tool}"
 `;
-    files[`${RUNTIMES_DIRECTORY}/${tool}-1.0.0/package.json`] = JSON.stringify({ dependencies: { [tool]: runtimePins[tool] ?? "1.0.0" } });
+    files[`${RUNTIMES_DIRECTORY}/${tool}-1.0.0/package.json`] = JSON.stringify({ dependencies: { [tool]: "1.0.0" } });
   }
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -284,19 +283,6 @@ test("each tool-pack's status, one tool-pack's error leaving the others' rows", 
   assert.ok(reads.every((read) => !read.includes("demo/current@")));
   assert.match(untagged!.error!, /has no tag v1\.1\.0/u);
   const markdown = renderWatch(reports);
-  assert.match(markdown, /\| `demo\/changed` \| changed \| 1\.0\.0 → 1\.1\.0 \| 1 \| — \| 1 file, \+1 −0 ~0 \| `no-foo` \| — \| — \|/u);
+  assert.match(markdown, /\| `demo\/changed` \| changed \| 1\.0\.0 → 1\.1\.0 \| 1 \| 1 file, \+1 −0 ~0 \| `no-foo` \| — \| — \|/u);
   assert.match(markdown, /- Error: .*has no tag v1\.1\.0/u);
-});
-
-test("pins that disagree are reported with the tool-pack, which is still compared", async () => {
-  const root = checkout(["skewed"], { skewed: "1.0.1" });
-  const fetch = registryAndTags({ skewed: "1.1.0" }, { skewed: ["v1.0.0", "v1.1.0"] });
-  const { github } = fakeGitHub({ [PIN]: { "tests/no-foo.js": ruleTest("no-foo", ["a;"]) }, [NEXT]: { "tests/no-foo.js": ruleTest("no-foo", ["a;", "b;"]) } });
-  const [report] = await watchUpstreams(root, [{ pack: "demo", tool: "skewed" }], { fetch, github });
-  assert.deepEqual(report!.disagreements, [`gates.yaml upstream.version is 1.0.0 but ${RUNTIMES_DIRECTORY}/skewed-1.0.0/package.json pins skewed 1.0.1`]);
-  assert.equal(report!.status, "changed");
-  assert.deepEqual(report!.tests.cases, { added: 1, removed: 0, changed: 0, unresolved: 0 });
-  const markdown = renderWatch([report!]);
-  assert.match(markdown, /\| `demo\/skewed` \| changed \| 1\.0\.0 → 1\.1\.0 \| 1 \| ⚠️ 1 disagree \|/u);
-  assert.match(markdown, /- Pins that disagree \(1\):\n {2}- gates\.yaml upstream\.version is 1\.0\.0 but .*pins skewed 1\.0\.1/u);
 });
