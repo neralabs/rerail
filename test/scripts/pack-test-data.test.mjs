@@ -52,6 +52,7 @@ import {
 } from "../../scripts/s3/pack-fixtures.mjs";
 import { SAMPLE_ID } from "../../scripts/samples/format.ts";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
+import { provenanceFiles, restaged } from "./support/provenance.mjs";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
 const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;
@@ -150,7 +151,7 @@ const TAGS = { commit: "0".repeat(40), pr: "none", runId: "local", uploader: "ma
 const licensesRecord = ({ licence, taken = "upstream/t/fixtures/upstream/**", how = "verbatim", extra = "" }) =>
   `# Tool\n\nLicense: ${licence} (Copyright (c) Upstream); [\`LICENSE\`](LICENSE) is the upstream licence file.\n\n## Source\n\n| Repository | Tag | Commit | Licence |\n|---|---|---|---|\n| https://example.com/tool | \`v1\` | \`${"1".repeat(40)}\` | ${licence} |\n\n## Taken from it\n\n| Pack paths | Upstream paths | How |\n|---|---|---|\n| \`${taken}\` | \`tests/\` | ${how}: as taken |\n${extra}`;
 
-/** setUp with three tool-packs' test data on disk, untracked, and everything else committed. */
+/** setUp with three tool-packs' test data on disk (each with its provenance.json and LICENSES.md), untracked, and everything else committed. */
 function withData() {
   const context = setUp();
   const { root, write } = context;
@@ -165,6 +166,9 @@ function withData() {
   write("packs/p/upstream/w/cases.json", "[]\n");
   write("packs/q/upstream/u/gates.yaml", "gates\n");
   write("packs/q/upstream/u/authored/corpus/c.py", "corpus\n");
+  for (const [directory, paths] of [["packs/p/upstream/t", ["fixtures/rerail/a.py", "fixtures/upstream/b.py", "x y.expected.json"]], ["packs/p/upstream/w", ["cases.json"]], ["packs/q/upstream/u", ["authored/corpus/c.py"]]]) {
+    for (const [path, text] of Object.entries(provenanceFiles(paths))) write(`${directory}/${path}`, text);
+  }
   git(root, "add", ".");
   git(root, "commit", "-qm", "packs");
   context.data = tree(root, true);
@@ -1024,6 +1028,13 @@ function branch(root, name, edits) {
   return worktree;
 }
 
+/** The paths of `toolPack`'s locked archive in `context` (published's), relative to its tool directory. */
+const lockedPaths = (context, toolPack) =>
+  Object.keys(context.data).filter((path) => path.startsWith(`${toolPack.directory}/`)).map((path) => path.slice(toolPack.directory.length + 1));
+
+/** A branch's `edits` with `toolPack`'s publish/provenance.json and LICENSES.md restaged (restaged) over its locked archive, or alone with `replace`. */
+const restage = (context, toolPack, edits, { replace = false, dropped = [] } = {}) => restaged(toolPack.directory, replace ? [] : lockedPaths(context, toolPack), edits, dropped);
+
 /**
  * published, with this repository's pack-fixtures scripts committed on main, and a pull request branch `feature`
  * checked out in the worktree `pr`. Its publish/ directories hold a changed and a new file of packs/p/upstream/t and a
@@ -1037,12 +1048,15 @@ function pullRequest() {
   git(root, "add", "scripts");
   git(root, "commit", "-qm", "scripts");
   const marker = join(dirname(root), "marker");
-  const changes = {
-    "packs/p/upstream/t/fixtures/rerail/a.py": "changed\n",
-    "packs/p/upstream/t/fixtures/rerail/new.py": "new\n",
-    "packs/q/upstream/u/authored/corpus/d.py": "d\n",
-  };
-  const publishRequest = Object.fromEntries(Object.entries(changes).map(([path, text]) => [path.replace(/^(packs\/[^/]+\/upstream\/[^/]+)\//u, "$1/publish/"), text]));
+  const publishRequest = [T, U].reduce(
+    (edits, toolPack) => restage(context, toolPack, edits),
+    {
+      "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n",
+      "packs/p/upstream/t/publish/fixtures/rerail/new.py": "new\n",
+      "packs/q/upstream/u/publish/authored/corpus/d.py": "d\n",
+    },
+  );
+  const changes = Object.fromEntries(Object.entries(publishRequest).map(([path, text]) => [path.replace("/publish/", "/"), text]));
   const pr = branch(root, "feature", {
     ...publishRequest,
     // The new file is Rerail's: a file in a tool's subdirectory that neither its UPSTREAM.md lists nor a glob covers is refused.
@@ -1108,8 +1122,8 @@ describe("pack --from (the publish workflow's prep)", () => {
     const manifest = JSON.parse(readFileSync(join(out, "publish.json"), "utf8"));
     expect(manifest).toMatchObject({ format: "rerail.pack-data-publish/v1", commit: git(pr, "rev-parse", "HEAD").trim(), replace: false, remove: Object.keys(publishRequest).sort() });
     expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped }) => [kind, id, tool, added, changed, dropped])).toEqual([
-      ["test-data", "p", "t", ["fixtures/rerail/new.py"], ["fixtures/rerail/a.py"], []],
-      ["test-data", "q", "u", ["authored/corpus/d.py"], [], []],
+      ["test-data", "p", "t", ["fixtures/rerail/new.py"], ["fixtures/rerail/a.py", "provenance.json"], []],
+      ["test-data", "q", "u", ["authored/corpus/d.py"], ["provenance.json"], []],
     ]);
     for (const [object, toolPack] of [[manifest.objects[0], T], [manifest.objects[1], U]]) {
       const file = join(out, object.key.slice("rerail/archives/".length));
@@ -1125,21 +1139,22 @@ describe("pack --from (the publish workflow's prep)", () => {
 
   it("drops the files a removed UPSTREAM.md row listed, and keeps the rest of the archive", async () => {
     const context = published();
-    branch(context.root, "unlist", { "packs/p/upstream/t/UPSTREAM.md": record([]), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "unlist", restage(context, T, { "packs/p/upstream/t/UPSTREAM.md": record([]), "packs/p/upstream/t/publish/cases.json": "[]\n" }, { dropped: ["fixtures/rerail/a.py"] }));
     const { manifest, out } = await packed(context, "unlist");
     const [object] = manifest.objects;
     expect(object.dropped).toEqual(["fixtures/rerail/a.py"]);
-    expect(archivedObject(out, object)).toEqual({ "cases.json": "[]\n", "fixtures/upstream/b.py": "derived\n", "x y.expected.json": "{}\n" });
+    const kept = { "cases.json": "[]\n", "fixtures/upstream/b.py": "derived\n", "x y.expected.json": "{}\n" };
+    expect(archivedObject(out, object)).toEqual({ ...kept, ...provenanceFiles(Object.keys(kept)) });
   });
 
   it("with replace, archives publish/ alone and lists every file of the locked archive it drops", async () => {
     const context = published();
-    branch(context.root, "replace", { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" });
+    branch(context.root, "replace", restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }, { replace: true }));
     const { manifest, out } = await packed(context, "replace", { replace: true });
     const [object] = manifest.objects;
     expect(manifest.replace).toBe(true);
     expect(object.dropped).toEqual(["fixtures/upstream/b.py", "x y.expected.json"]);
-    expect(archivedObject(out, object)).toEqual({ "fixtures/rerail/a.py": "changed\n" });
+    expect(archivedObject(out, object)).toEqual({ "fixtures/rerail/a.py": "changed\n", ...provenanceFiles(["fixtures/rerail/a.py"]) });
   });
 
   it("refuses a publish/ path no archive takes, listing each, and writes nothing", async () => {
@@ -1172,35 +1187,98 @@ describe("pack --from (the publish workflow's prep)", () => {
     expect(await packFailure(context, "HEAD")).toMatch(/^HEAD \([0-9a-f]{12}\) has no publish\/ in any packs\/<pack>\/upstream\/<tool>\/ and removes no UPSTREAM.md row: nothing to publish$/u);
   });
 
-  it("archives, as an overlay, a commit that only removes an authored row: the next archive drops the file", async () => {
+  it("refuses, as an overlay, a commit that only removes an authored row, and archives one that restages provenance with it", async () => {
     const context = published();
+    // The row's file drops out of the archive, so the locked provenance.json no longer describes it.
     branch(context.root, "unlist-only", { "packs/p/upstream/t/UPSTREAM.md": record([]) });
-    const { manifest, out } = await packed(context, "unlist-only");
-    expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped }) => [kind, id, tool, added, changed, dropped])).toEqual([["test-data", "p", "t", [], [], ["fixtures/rerail/a.py"]]]);
-    expect(manifest.remove).toEqual([]);
-    expect(archivedObject(out, manifest.objects[0])).toEqual({ "fixtures/upstream/b.py": "derived\n", "x y.expected.json": "{}\n" });
-
+    expect(await packFailure(context, "unlist-only")).toContain("packs/p/upstream/t/provenance.json at unlist-only");
     // replace archives publish/ alone, so a removal alone gives it nothing.
     expect(await packFailure(context, "unlist-only", { replace: true })).toContain("nothing to publish");
+
+    const edits = restage(context, T, { "packs/p/upstream/t/UPSTREAM.md": record([]) }, { dropped: ["fixtures/rerail/a.py"] });
+    branch(context.root, "unlist-restaged", edits);
+    const { manifest, out } = await packed(context, "unlist-restaged");
+    expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped }) => [kind, id, tool, added, changed, dropped])).toEqual([["test-data", "p", "t", [], ["provenance.json"], ["fixtures/rerail/a.py"]]]);
+    expect(manifest.remove).toEqual(["packs/p/upstream/t/publish/LICENSES.md", "packs/p/upstream/t/publish/provenance.json"]);
+    const kept = { "fixtures/upstream/b.py": "derived\n", "x y.expected.json": "{}\n" };
+    expect(archivedObject(out, manifest.objects[0])).toEqual({ ...kept, ...provenanceFiles(Object.keys(kept)) });
+  });
+
+  it("refuses a test data archive without provenance.json or LICENSES.md, naming what it lacks, and writes nothing", async () => {
+    const context = published();
+    branch(context.root, "no-provenance", { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" });
+    expect(await packFailure(context, "no-provenance", { replace: true })).toMatch(
+      /^packs\/p\/upstream\/t's archive from no-provenance \([0-9a-f]{12}\) would hold no provenance\.json or LICENSES\.md, which every test data archive carries: derive the tool-pack again [^]*npm run fixtures:stage -- --pack p --tool t/u,
+    );
+    const { "packs/p/upstream/t/publish/LICENSES.md": _licences, ...withoutLicences } = restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }, { replace: true });
+    branch(context.root, "no-licences", withoutLicences);
+    expect(await packFailure(context, "no-licences", { replace: true })).toContain("would hold no LICENSES.md, which every test data archive carries");
+    expect(existsSync(join(dirname(context.root), "out-no-licences"))).toBe(false);
+  });
+
+  it("refuses a provenance.json that is not JSON or not of the provenance format", async () => {
+    const context = published();
+    const edits = restage(context, T, { "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    const recorded = JSON.parse(edits["packs/p/upstream/t/publish/provenance.json"]);
+    for (const [name, text, expected] of [
+      ["not-json", "{\n", "packs/p/upstream/t/provenance.json at not-json"],
+      ["old-format", `${JSON.stringify({ ...recorded, format: "rerail.pack-provenance/v0" })}\n`, 'has format "rerail.pack-provenance/v0", not "rerail.pack-provenance/v1"'],
+      ["no-format", `${JSON.stringify({ files: recorded.files })}\n`, "has format undefined"],
+      ["no-files", `${JSON.stringify({ format: recorded.format })}\n`, "has no `files` object"],
+    ]) {
+      branch(context.root, name, { ...edits, "packs/p/upstream/t/publish/provenance.json": text });
+      expect(await packFailure(context, name), name).toContain(expected);
+    }
+    expect(await packFailure(context, "not-json")).toContain("is not JSON");
+  });
+
+  it("refuses a provenance.json whose files are not the archive's, naming the extra and the missing paths", async () => {
+    const context = published();
+    // The overlay adds cases.json, but publish/ carries the locked provenance.json, which does not record it.
+    branch(context.root, "missing-key", { "packs/p/upstream/t/publish/cases.json": "[]\n", "packs/p/upstream/t/publish/provenance.json": context.data["packs/p/upstream/t/provenance.json"] });
+    expect(await packFailure(context, "missing-key")).toContain("does not describe the archive: it does not record 1 path(s) the archive would hold (cases.json): derive the tool-pack again");
+
+    const many = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`fixtures/gone/${index}.py`, { source: "rerail", how: "authored" }]));
+    const edits = restage(context, T, { "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    const recorded = JSON.parse(edits["packs/p/upstream/t/publish/provenance.json"]);
+    branch(context.root, "extra-key", { ...edits, "packs/p/upstream/t/publish/provenance.json": `${JSON.stringify({ ...recorded, files: { ...recorded.files, ...many, "provenance.json": {} } })}\n` });
+    expect(await packFailure(context, "extra-key")).toContain(
+      "it records 8 path(s) the archive would not hold (fixtures/gone/0.py, fixtures/gone/1.py, fixtures/gone/2.py, fixtures/gone/3.py, fixtures/gone/4.py and 3 more)",
+    );
+  });
+
+  it("leaves a samples-only publish alone: no test data archive, so no provenance is asked of it", async () => {
+    const context = published();
+    const text = "export const a = 1;\n";
+    const digest = sha256(Buffer.from(text));
+    const sample = `demo-src-a-js-${digest.slice(0, 12)}`;
+    const labels = { source: { repo: "fastify/fastify", commit: "0".repeat(40), path: "src/a.js", license: "MIT", sha256: digest }, labelledBy: { tool: "examplelint", version: "1.0.0", how: "hand-labelled" }, expected: {} };
+    branch(context.root, "samples-only", {
+      "packs/p/upstream/t/publish/samples/LICENSES.md": "# Licences\n\nfastify/fastify: MIT\n",
+      [`packs/p/upstream/t/publish/samples/${sample}/src/a.js`]: text,
+      [`packs/p/upstream/t/publish/samples/${sample}/src/a.js.expected.json`]: `${JSON.stringify(labels, null, 2)}\n`,
+    });
+    const { manifest } = await packed(context, "samples-only");
+    expect(manifest.objects.map(({ kind }) => kind)).toEqual(["samples"]);
   });
 
   it("refuses every file of a pack whose licences record misspells a Not copied line", async () => {
     const context = published();
     for (const [name, line] of [["indented", " - Not copied:"], ["starred", "* Not copied:"], ["capital", "- Not Copied:"], ["bare", "- Not copied: tests/gpl/ as upstream/t/fixtures/upstream/** —"]]) {
       const extra = `\n## Not copied\n\n${line.endsWith(":") ? `${line} \`tests/gpl/\` as \`upstream/t/fixtures/upstream/**\` — other, GPL-3.0-only` : line}\n`;
-      branch(context.root, name, { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "Apache-2.0", extra }), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+      branch(context.root, name, restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "Apache-2.0", extra }), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
       const message = await packFailure(context, name);
-      expect(message, name).toContain("4 file(s) going to S3");
+      expect(message, name).toContain("6 file(s) going to S3");
       expect(message, name).toContain("  packs/p/upstream/t/fixtures/upstream/b.py: malformed record (packs/p/licenses/tool/UPSTREAM.md: ");
     }
   });
 
   it("refuses a file whose equal-length longest covering globs disagree on licence", async () => {
     const context = published();
-    branch(context.root, "tie", {
+    branch(context.root, "tie", restage(context, T, {
       "packs/p/licenses/other/UPSTREAM.md": licensesRecord({ licence: "MIT", taken: "upstream/t/fixtures/upstream/b*" }),
       "packs/p/upstream/t/publish/cases.json": "[]\n",
-    });
+    }));
     expect(await packFailure(context, "tie")).toContain(
       "  packs/p/upstream/t/fixtures/upstream/b.py: ambiguous (equal-length globs disagree: packs/p/licenses/other/UPSTREAM.md: `upstream/t/fixtures/upstream/b*`, MIT, verbatim; packs/p/licenses/tool/UPSTREAM.md: `upstream/t/fixtures/upstream/**`, Apache-2.0, verbatim)",
     );
@@ -1210,23 +1288,23 @@ describe("pack --from (the publish workflow's prep)", () => {
     const context = published();
     const upstream = (licence) =>
       `# Tool\n\nLicense: ${licence}\n\n## Source\n\n| Repository | Tag | Commit | Licence |\n|---|---|---|---|\n| https://example.com/tool | \`v1\` | \`${"1".repeat(40)}\` | ${licence} |\n\n## Taken from it\n\n| Pack paths | Upstream paths | How |\n|---|---|---|\n| \`upstream/t/fixtures/**\` | \`tests/\` | verbatim: as taken |\n`;
-    branch(context.root, "gpl", { "packs/p/licenses/tool/UPSTREAM.md": upstream("GPL-3.0-only"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "gpl", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": upstream("GPL-3.0-only"), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     const message = await packFailure(context, "gpl");
     expect(message).toContain("1 file(s) going to S3 are under a licence scripts/check/licence-allowlist.json does not take");
     expect(message).toContain("  packs/p/upstream/t/fixtures/upstream/b.py: GPL-3.0-only");
     expect(existsSync(join(dirname(context.root), "out-gpl"))).toBe(false);
 
     // The glob covers the authored fixtures/rerail/a.py too: authored comes first, so it stays Rerail's.
-    branch(context.root, "mit", { "packs/p/licenses/tool/UPSTREAM.md": upstream("MIT"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "mit", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": upstream("MIT"), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     const { manifest } = await packed(context, "mit");
-    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 3, MIT: 1 });
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 5, MIT: 1 });
   });
 
   it("refuses a file under a Not copied glob", async () => {
     const context = published();
     const notCopied = "\n## Not copied\n\n- Not copied: `tests/upstream/` as `upstream/t/fixtures/upstream/**` — other, GPL-3.0-only\n";
     const text = `# Tool\n\nLicense: MIT\n\n| \`upstream/t/fixtures/**\` | \`tests/\` | verbatim |\n${notCopied}`;
-    branch(context.root, "refused", { "packs/p/licenses/tool/UPSTREAM.md": text, "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "refused", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": text, "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     expect(await packFailure(context, "refused")).toContain(
       "  packs/p/upstream/t/fixtures/upstream/b.py: not copied (packs/p/licenses/tool/UPSTREAM.md lists tests/upstream/ as `upstream/t/fixtures/upstream/**` as not copied)",
     );
@@ -1235,25 +1313,26 @@ describe("pack --from (the publish workflow's prep)", () => {
   it("refuses an Apache-2.0-only source's file that is not verbatim, and takes a verbatim one", async () => {
     const context = published();
     const text = (how) => `# Tool\n\nLicense: Apache-2.0\n\n| \`upstream/t/fixtures/**\` | \`tests/\` | ${how}: as taken |\n`;
-    branch(context.root, "extracted", { "packs/p/licenses/tool/UPSTREAM.md": text("extracted"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "extracted", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": text("extracted"), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     expect(await packFailure(context, "extracted")).toContain(
       "  packs/p/upstream/t/fixtures/upstream/b.py: Apache-2.0, extracted not verbatim (packs/p/licenses/tool/UPSTREAM.md: `upstream/t/fixtures/**`; a modified Apache-2.0 file must carry its change notices)",
     );
 
-    branch(context.root, "verbatim", { "packs/p/licenses/tool/UPSTREAM.md": text("verbatim"), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "verbatim", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": text("verbatim"), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     const { manifest } = await packed(context, "verbatim");
-    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 4 });
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 6 });
   });
 
   it("refuses an authored file under a Not copied glob, whether its tool's UPSTREAM.md lists it or it is under authored/", async () => {
     const context = published();
     const notCopied = (glob) => `\n## Not copied\n\n- Not copied: \`tests/gpl/\` as \`${glob}\` — other, GPL-3.0-only\n`;
-    branch(context.root, "overlap", {
+    const overlap = {
       "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "Apache-2.0", extra: notCopied("upstream/t/fixtures/rerail/**") }),
       "packs/q/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT", taken: "upstream/u/fixtures/**", extra: notCopied("upstream/u/authored/**") }),
       "packs/p/upstream/t/publish/cases.json": "[]\n",
       "packs/q/upstream/u/publish/cases.json": "[]\n",
-    });
+    };
+    branch(context.root, "overlap", restage(context, U, restage(context, T, overlap)));
     const message = await packFailure(context, "overlap");
     expect(message).toContain("2 file(s) going to S3");
     expect(message).toContain("  packs/p/upstream/t/fixtures/rerail/a.py: not copied (packs/p/licenses/tool/UPSTREAM.md lists tests/gpl/ as `upstream/t/fixtures/rerail/**` as not copied)");
@@ -1262,30 +1341,31 @@ describe("pack --from (the publish workflow's prep)", () => {
 
   it("refuses a file in a tool's subdirectory that no Taken from it glob covers, and keeps the tool directory's own files Rerail's", async () => {
     const context = published();
-    branch(context.root, "uncovered", {
+    branch(context.root, "uncovered", restage(context, T, {
       "packs/p/upstream/t/publish/fixtures/other/c.py": "copied?\n",
       "packs/p/upstream/t/publish/tests/d.py": "copied?\n",
       "packs/p/upstream/t/publish/cases.json": "[]\n",
-    });
+    }));
     const message = await packFailure(context, "uncovered");
     expect(message).toContain("2 file(s) going to S3");
     expect(message).toContain("  packs/p/upstream/t/fixtures/other/c.py: uncovered (no licenses/*/UPSTREAM.md \"Taken from it\" glob covers it and its tool's UPSTREAM.md does not list it)");
     expect(message).toContain("  packs/p/upstream/t/tests/d.py: uncovered");
     expect(message).not.toContain("cases.json");
+    expect(message).not.toContain("provenance.json");
 
-    branch(context.root, "rerails", { "packs/p/upstream/t/publish/cases.json": "[]\n", "packs/p/upstream/t/publish/provenance.json": "{}\n" });
+    branch(context.root, "rerails", restage(context, T, { "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     const { manifest } = await packed(context, "rerails");
-    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 5 });
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 6 });
   });
 
   it("reads a License: line's whole SPDX expression: an AND of a refused licence is refused, an OR with an allowed one is taken", async () => {
     const context = published();
-    branch(context.root, "and", { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT AND GPL-3.0-only" }), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "and", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT AND GPL-3.0-only" }), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     expect(await packFailure(context, "and")).toContain("  packs/p/upstream/t/fixtures/upstream/b.py: MIT AND GPL-3.0-only");
 
-    branch(context.root, "or", { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT OR GPL-3.0-only" }), "packs/p/upstream/t/publish/cases.json": "[]\n" });
+    branch(context.root, "or", restage(context, T, { "packs/p/licenses/tool/UPSTREAM.md": licensesRecord({ licence: "MIT OR GPL-3.0-only" }), "packs/p/upstream/t/publish/cases.json": "[]\n" }));
     const { manifest } = await packed(context, "or");
-    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 3, "MIT OR GPL-3.0-only": 1 });
+    expect(manifest.objects[0].licences).toEqual({ "Apache-2.0": 5, "MIT OR GPL-3.0-only": 1 });
   });
 });
 
@@ -1413,7 +1493,7 @@ describe("upload --objects and confirm (the publish workflow's upload)", () => {
   /** A pull request's publish/ packed by prep: the context, its objects (as prep's job output) and the archives. */
   async function prepared() {
     const context = published();
-    branch(context.root, "feature", { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n", "packs/q/upstream/u/publish/cases.json": "[]\n" });
+    branch(context.root, "feature", restage(context, U, restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n", "packs/q/upstream/u/publish/cases.json": "[]\n" })));
     const { manifest, out } = await packed(context, "feature");
     const objects = manifest.objects.map(({ kind, pack: id, tool, key, sha256: digest, files: count, bytes, compressedBytes }) => ({ kind, pack: id, tool, key, sha256: digest, files: count, bytes, compressedBytes }));
     context.calls.length = 0;
@@ -1485,11 +1565,11 @@ describe("stage", () => {
     // Reverting a file unstages it; --all stages the whole set.
     write("packs/p/upstream/t/fixtures/rerail/a.py", data["packs/p/upstream/t/fixtures/rerail/a.py"]);
     expect(stage({ root, aws, pack: "p", tool: "t", log: () => {} }).toolPacks[0]).toMatchObject({ staged: ["fixtures/rerail/new.py"], removed: ["fixtures/rerail/a.py"] });
-    expect(stage({ root, aws, pack: "p", tool: "t", all: true, log: () => {} }).toolPacks[0].staged).toEqual(["fixtures/rerail/a.py", "fixtures/rerail/new.py", "fixtures/upstream/b.py"]);
+    expect(stage({ root, aws, pack: "p", tool: "t", all: true, log: () => {} }).toolPacks[0].staged).toEqual(["LICENSES.md", "fixtures/rerail/a.py", "fixtures/rerail/new.py", "fixtures/upstream/b.py", "provenance.json"]);
 
     pull({ root, aws, log: () => {} });
     expect(readFileSync(join(root, "packs/p/upstream/t/fixtures/rerail/new.py"), "utf8")).toBe("new\n");
-    expect(stage({ root, aws, pack: "p", tool: "t", all: true, dryRun: true, log: () => {} }).toolPacks[0].staged).toHaveLength(4);
+    expect(stage({ root, aws, pack: "p", tool: "t", all: true, dryRun: true, log: () => {} }).toolPacks[0].staged).toHaveLength(6);
   });
 });
 

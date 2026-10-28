@@ -324,7 +324,7 @@ function tableCells(line, unquote = false) {
  * of its "Taken from it" table with each one's copy kind (copyKind of its How cell), its "Not copied" lines (the
  * upstream prefix and, when the line has one, the pack-path glob), and `malformed`: the list items that mean to be
  * "Not copied" lines but are not spelled `- Not copied: …`. Pack check 6 and the publish licence check both read it;
- * neither reads an archive's provenance.json.
+ * neither reads an archive's provenance.json for a licence (prep checks only its `files` key set, checkProvenance).
  */
 export function readUpstreamSources(text) {
   let source;
@@ -1463,6 +1463,50 @@ function archiveChanges(base, next) {
   };
 }
 
+/** A test data archive's record of where each of its files came from, and the licence texts it embeds (scripts/pack-data/provenance.mjs writes both). */
+const PROVENANCE_FILE = "provenance.json";
+const PROVENANCE_LICENSES = "LICENSES.md";
+/** How many of the extra and of the missing paths a provenance refusal names. */
+const PROVENANCE_PATHS_SHOWN = 5;
+
+/** `paths` as a refusal shows them: the first PROVENANCE_PATHS_SHOWN, then how many more. */
+const someOf = (paths) => `${paths.slice(0, PROVENANCE_PATHS_SHOWN).join(", ")}${paths.length > PROVENANCE_PATHS_SHOWN ? ` and ${paths.length - PROVENANCE_PATHS_SHOWN} more` : ""}`;
+
+/**
+ * Throws unless the test data archive `entries` (of `toolPack`, from the commit `at` describes) holds provenance.json
+ * and LICENSES.md, and provenance.json is a PROVENANCE_FORMAT record whose `files` keys are exactly the archive's other
+ * paths: an overlay that adds or drops files without its provenance restaged, or a replace without one, is refused.
+ * Only the key set is read; licences are decided by the tracked records alone (sourcesAt).
+ */
+function checkProvenance(toolPack, entries, at) {
+  const label = `${toolPack.directory}/${PROVENANCE_FILE} at ${at}`;
+  const remedy = `derive the tool-pack again so its ${PROVENANCE_FILE} and ${PROVENANCE_LICENSES} describe its files, then ${publishInstruction(toolPack)}`;
+  const byPath = new Map(entries.map(({ path, bytes }) => [path, bytes]));
+  const missing = [PROVENANCE_FILE, PROVENANCE_LICENSES].filter((path) => !byPath.has(path));
+  if (missing.length > 0) throw new Error(`${toolPack.directory}'s archive from ${at} would hold no ${missing.join(" or ")}, which every test data archive carries: ${remedy}`);
+  let record;
+  try {
+    record = JSON.parse(byPath.get(PROVENANCE_FILE).toString("utf8"));
+  } catch (error) {
+    throw new Error(`${label} is not JSON (${error instanceof Error ? error.message : String(error)}): ${remedy}`);
+  }
+  if (record === null || typeof record !== "object" || record.format !== PROVENANCE_FORMAT) {
+    throw new Error(`${label} has format ${JSON.stringify(record?.format)}, not ${JSON.stringify(PROVENANCE_FORMAT)}: ${remedy}`);
+  }
+  const { files } = record;
+  if (files === null || typeof files !== "object" || Array.isArray(files)) throw new Error(`${label} has no \`files\` object: ${remedy}`);
+  const recorded = new Set(Object.keys(files));
+  const archived = [...byPath.keys()].filter((path) => path !== PROVENANCE_FILE && path !== PROVENANCE_LICENSES);
+  const extra = [...recorded].filter((path) => !byPath.has(path) || path === PROVENANCE_FILE || path === PROVENANCE_LICENSES).sort(byBytes);
+  const absent = archived.filter((path) => !recorded.has(path)).sort(byBytes);
+  if (extra.length === 0 && absent.length === 0) return;
+  const problems = [
+    ...(extra.length > 0 ? [`it records ${extra.length} path(s) the archive would not hold (${someOf(extra)})`] : []),
+    ...(absent.length > 0 ? [`it does not record ${absent.length} path(s) the archive would hold (${someOf(absent)})`] : []),
+  ];
+  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${remedy}`);
+}
+
 /** The format of `pack --from`'s manifest. */
 export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
 
@@ -1479,7 +1523,8 @@ export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
  * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, then laid over the
  *   archive the commit's samples.lock names, or alone with `replace`.
  *
- * Base archives come from ARCHIVE_CACHE or S3 (a read). Every file going to S3 must be under a licence the allowlist
+ * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
+ * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
  * takes (licenceAllowed): test data by sourcesAt, and samples by their labels' `source.license`; a failure lists every
  * file and licence before anything is written. Then each archive is written compressed under `out` (its key less
  * ARCHIVE_PREFIX), the manifest (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to
@@ -1577,6 +1622,7 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       }
       for (const { path, bytes } of published) next.set(path, bytes);
       const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
+      if (kind === "test-data") checkProvenance(toolPack, entries, at);
       const archive = buildArchive(entries);
       const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
       const compressed = compressArchive(archive.tar);
