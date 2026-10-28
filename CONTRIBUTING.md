@@ -429,7 +429,7 @@ comment in [its own section](conformance/README.md#the-pull-request-comment).
 **Promoting a candidate.** "Ready to promote" means the candidate passes every check; it is necessary, not
 sufficient, and the reviewer decides. Move its document from `candidates/rules/<id>.json` to `rules/<id>.json`, point
 its port's `policy` in `conformance.json` at the new path, add it to `pack.json` with the `on` the comment's *Starts*
-column gives, and list it in the pack's `README.md`. The pull request carries the evidence: the rule's results against
+column gives, and move its rule details from `candidates/README.md` to the pack's `README.md`. The pull request carries the evidence: the rule's results against
 the tool's expected findings, its rename variants and its samples, and any divergence it declares
 ([conformance/README.md, "Candidates and promotion"](conformance/README.md#candidates-and-promotion)).
 

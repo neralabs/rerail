@@ -182,13 +182,16 @@ To promote a candidate, in one pull request:
 2. list it in `pack.json` with its `document`, `title` and `group`, `"on": false` when the comment says it starts off,
    and `"mode": "log"` when upstream's recommended configuration only warns
    ([pack-format.md](../docs/pack-format.md#packjson));
-3. add a changeset for the pack, since `rules/` and `pack.json` are what it publishes
+3. move its rule details from `candidates/README.md` to the pack's `README.md`, which publishes only the shipped rules
+   (pack check 5);
+4. add a changeset for the pack, since `rules/`, `pack.json` and `README.md` are what it publishes
    ([versioning](../docs/pack-format.md#versioning-and-release));
-4. give the evidence in the pull request: its conformance results, rename variants and samples included, and any
+5. give the evidence in the pull request: its conformance results, rename variants and samples included, and any
    divergence declared ([REVIEW.md](../REVIEW.md)).
 
 Once shipped, the rule blocks CI on any failing check. A shipped rule that starts failing is fixed, or moved back to
-`candidates/` (its `pack.json` entry removed and its `policy` pointed back).
+`candidates/` (its `pack.json` entry removed, its `policy` pointed back and its rule details moved to
+`candidates/README.md`).
 
 ### Packs not gated
 
