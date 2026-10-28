@@ -955,6 +955,20 @@ pub(crate) struct Captures {
     /// Each name's spans, in name order.
     spans: Vec<(Box<str>, Vec<Span>)>,
     projection: Option<Box<Value>>,
+    /// P's typed column row, for P's relational input sink (test-only, O18).
+    #[cfg(test)]
+    typed: TypedProjection,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
+struct TypedProjection(Option<projection::Row>);
+
+#[cfg(test)]
+impl PartialEq for TypedProjection {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_ref().map(projection::Row::identity) == other.0.as_ref().map(projection::Row::identity)
+    }
 }
 
 impl Captures {
@@ -974,6 +988,8 @@ impl Captures {
                 .map(|(name, spans)| (name.into_boxed_str(), spans))
                 .collect(),
             projection: None,
+            #[cfg(test)]
+            typed: TypedProjection::default(),
         }
     }
 
@@ -991,6 +1007,20 @@ impl Captures {
 
     pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
         self.projection = projection.map(Box::new);
+    }
+
+    /// P's typed row: a typed row set by P's tests, else the JSON projection as one.
+    #[cfg(test)]
+    pub(crate) fn take_projection(&mut self) -> Option<projection::Row> {
+        self.typed
+            .0
+            .take()
+            .or_else(|| self.projection.take().map(|value| projection::Row::from_json(*value)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_typed_projection(&mut self, row: projection::Row) {
+        self.typed.0 = Some(row);
     }
 
     /// The captures a stored witness's JSON object holds; `None` for any other shape.
