@@ -236,7 +236,9 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 60_000);
+    // Nine launcher runs, each booting a managed child, after a real `npm pack` and `npm install`: 20 s here, 45–55 s on a
+    // CI runner, which the 60 s a test gets by default has already timed out on.
+  }, 180_000);
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
