@@ -108,6 +108,25 @@ rules:
 #   candidates/conformance.json (n/hashbang, n/no-deprecated-api); no rule's `meta.deprecated` is set at the pins.
 # - File types (`lints`): flat/recommended sets no `files`, so ESLint lints its defaults .js, .mjs and .cjs. Every port
 #   also applies to the TypeScript types, which the generator lints with @typescript-eslint/parser.
+# What the nightly upstream report watches (docs/pack-format.md, `watch`). The generator reads the tests of its RULES:
+# conformance.json's 22 ports and the two candidates/conformance.json ports (extra-rules), each at
+# tests/lib/rules/<rule>.js (prefer-global/url.js for a nested id), and the test data their cases' filenames name under
+# tests/fixtures/. Shared: the helpers the rules call (lib/util/), Node's built-in module and API data
+# (lib/unsupported-features/), and package.json (eslint-utils, eslint-plugin-es-x, globals, semver).
+watch:
+  rule-prefix: "n/"
+  extra-rules: ["hashbang", "no-deprecated-api"]
+  tests:
+    - "tests/lib/rules/{rule}.js"
+    - "tests/fixtures/**"
+  code:
+    - "lib/rules/{rule}.js"
+  shared:
+    - "lib/unsupported-features/**"
+    - "lib/util/**"
+    - "package.json"
+  new-tests:
+    - "tests/lib/rules/{rule}/**"
 eslint:
   release:
     tag: v18.4.1
