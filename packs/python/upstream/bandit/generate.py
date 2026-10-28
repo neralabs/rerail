@@ -4,12 +4,12 @@ under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
 
     python3.14 generate.py fixtures <Bandit checkout at tag 1.9.4> <bandit executable, 1.9.4>
 
-`fixtures` copies the examples each test fires in (`examples/<file>`; see TESTS) to fixtures/<file> (the pack's
-licenses/bandit/UPSTREAM.md lists them), writes Rerail's own cases (NOSEC, PROBES) to fixtures/rerail/ (listed in
-upstream/bandit/UPSTREAM.md), and runs Bandit with every ported test over every file, as bare `bandit` does: `# nosec`
-honoured, every severity and confidence. A file Bandit reports an error for is skipped. Each finding is the test id,
-path, line and column (`col_offset` + 1: Bandit's is 0-based). `source.units` names each copied example's origin: the
-tests TESTS lists it for (Rerail's own cases have none)."""
+`fixtures` copies the examples each test fires in (`examples/<file>`; see TESTS) to fixtures/<file>, writes Rerail's own
+cases (NOSEC, PROBES) to fixtures/rerail/ (listed in upstream/bandit/UPSTREAM.md), runs Bandit with every ported test
+over every file, as bare `bandit` does (`# nosec` honoured, every severity and confidence), and writes provenance.json
+and LICENSES.md (each copy's upstream path; `common.write_provenance`). A file Bandit reports an error for is skipped.
+Each finding is the test id, path, line and column (`col_offset` + 1: Bandit's is 0-based). `source.units` names each
+copied example's origin: the tests TESTS lists it for (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
@@ -310,17 +310,18 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     target = HERE / "fixtures"
     shutil.rmtree(target, ignore_errors=True)
     target.mkdir()
-    files = sorted({file for paths in TESTS.values() for file in paths})
-    for file in files:
+    copied = sorted({file for paths in TESTS.values() for file in paths})
+    for file in copied:
         shutil.copyfile(checkout / "examples" / file, target / file)
     ours = common.write_authored(target, authored())
     common.write_record("bandit", f"Bandit {VERSION}", ours, "`NOSEC`, `PROBES`")
-    files = sorted(files + ours)
+    files = sorted(copied + ours)
     findings, errors = bandit(executable, files, target)
     assert not errors, errors
     common.write(HERE / "fixtures.expected.json", "bandit", version,
                  {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files,
                   "units": common.origins(TESTS)}, findings)
+    common.write_provenance("bandit", ORIGIN, "examples", copied)
 
 
 def main() -> None:

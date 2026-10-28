@@ -5,19 +5,18 @@ under CPython 3.14:
     python3.14 generate.py fixtures <Ruff checkout at tag 0.16.9> <ruff executable, 0.16.9>
 
 `fixtures` copies each rule's own test fixtures (the files its tests lint with default settings, under
-`crates/ruff_linter/resources/test/fixtures/<linter>/`; see RULES) to fixtures/<linter>/<file> (the pack's
-licenses/ruff/UPSTREAM.md lists them), writes Rerail's own cases (NOQA, PROBES) to fixtures/rerail/ (listed in
-upstream/ruff/UPSTREAM.md), and runs Ruff with every ported rule selected over every file. It runs Ruff isolated from any
-configuration, at target version py310 (Ruff's CLI default and the engine's default `pythonVersion`, which the ports
-keep), with `# noqa` honoured, as Ruff runs by default. Each finding is the rule's code, path, line and column
-(Ruff's, 1-based, in characters). `source.units` names each copied fixture's origin: the rules RULES lists it for, whose
-upstream tests lint it (Rerail's own cases have none)."""
+`crates/ruff_linter/resources/test/fixtures/<linter>/`; see RULES) to fixtures/<linter>/<file>, writes Rerail's own cases
+(NOQA, PROBES) to fixtures/rerail/ (listed in upstream/ruff/UPSTREAM.md), runs Ruff with every ported rule selected over
+every file, and writes provenance.json and LICENSES.md (each copy's upstream path; `common.write_provenance`). It runs
+Ruff isolated from any configuration, at target version py310 (Ruff's CLI default and the engine's default
+`pythonVersion`, which the ports keep), with `# noqa` honoured, as Ruff runs by default. Each finding is the rule's
+code, path, line and column (Ruff's, 1-based, in characters). `source.units` names each copied fixture's origin: the
+rules RULES lists it for, whose upstream tests lint it (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
 import json
 import pathlib
-import re
 import shutil
 import subprocess
 import sys
@@ -35,8 +34,8 @@ FIXTURES = "crates/ruff_linter/resources/test/fixtures"
 # tests) lint with settings that enable the rule and change no option, preview mode or target version. Notebooks
 # (.ipynb), which the host does not route to Python, are left out. Fixtures under the upstream paths that
 # licenses/ruff/UPSTREAM.md lists as "Not copied" (ports of copyleft plugins: pylint, flake8-builtins, flake8-django,
-# flake8-executable, refurb) are never copied (`fixtures` refuses one), so their rules are not recorded: not the
-# candidate A005. Nor is the candidate INP001, which Ruff's tests lint only with a `namespace-packages` option.
+# flake8-executable, refurb) are never copied (the provenance writer refuses one), so their rules are not recorded:
+# not the candidate A005. Nor is the candidate INP001, which Ruff's tests lint only with a `namespace-packages` option.
 RULES: dict[str, list[str]] = {
     "ASYNC100": ["flake8_async/ASYNC100.py"],
     "ASYNC105": ["flake8_async/ASYNC105.py"],
@@ -568,21 +567,7 @@ def ruff(executable: str, paths: list[str], cwd: pathlib.Path) -> list[dict]:
     return findings
 
 
-def not_copied() -> list[str]:
-    """The upstream path prefixes licenses/ruff/UPSTREAM.md lists as "Not copied": fixtures of copyleft plugins' ports."""
-    record = HERE.parent.parent / "licenses" / "ruff" / "UPSTREAM.md"
-    prefixes = re.findall(r"^- Not copied: `([^`]+)`", record.read_text(encoding="utf-8"), re.MULTILINE)
-    if not prefixes:
-        raise SystemExit(f"{record} lists no \"Not copied\" upstream paths")
-    return prefixes
-
-
 def fixtures(checkout: pathlib.Path, executable: str) -> None:
-    excluded = not_copied()
-    refused = sorted(file for paths in RULES.values() for file in paths
-                     if any(f"{FIXTURES}/{file}".startswith(prefix) for prefix in excluded))
-    if refused:
-        raise SystemExit(f"RULES names fixtures licenses/ruff/UPSTREAM.md lists as not copied: {', '.join(refused)}")
     version = common.tool_version(executable, VERSION)
     head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], capture_output=True, text=True,
                           check=True).stdout.strip()
@@ -595,17 +580,18 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     expected = HERE / "fixtures.expected.json"
     for file in json.loads(expected.read_text(encoding="utf-8"))["source"]["files"] if expected.exists() else []:
         (target / file).unlink(missing_ok=True)
-    files = sorted({file for paths in RULES.values() for file in paths})
-    for file in files:
+    copied = sorted({file for paths in RULES.values() for file in paths})
+    for file in copied:
         (target / file).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(checkout / FIXTURES / file, target / file)
     ours = common.write_authored(target, cases)
     common.write_record("ruff", f"Ruff {VERSION}", ours, "`NOQA`, `PROBES`")
-    files = sorted(files + ours)
+    files = sorted(copied + ours)
     common.write(HERE / "fixtures.expected.json", "ruff", version,
                  {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(RULES), "files": files,
                   "units": common.origins(RULES)},
                  ruff(executable, files, target))
+    common.write_provenance("ruff", ORIGIN, FIXTURES, copied)
 
 
 def main() -> None:
