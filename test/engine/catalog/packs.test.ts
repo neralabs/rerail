@@ -344,6 +344,24 @@ describe("validatePack", () => {
       { package: ['package.json: license "Apache-2.0" names Apache-2.0; the pack carries Apache-2.0, MIT (Apache-2.0 and what licenses/*/UPSTREAM.md records)'] },
     ],
     [
+      "README rule details for a rule pack.json does not list",
+      directory => appendFileSync(join(directory, "README.md"), "\n### `assert-false`\n\nA candidate's details.\n"),
+      { package: ["README.md: Rule details describes assert-false, which pack.json does not list; a candidate's details go in candidates/README.md"] },
+    ],
+    [
+      "a README rule details heading that names no rule",
+      directory => appendFileSync(join(directory, "README.md"), "\n### Shared notes\n\nDetails for no one rule.\n"),
+      { package: ['README.md: the Rule details heading "Shared notes" names no rule'] },
+    ],
+    [
+      "candidates/README.md rule details for a rule pack.json lists",
+      directory => {
+        mkdirSync(join(directory, "candidates"));
+        writeFileSync(join(directory, "candidates", "README.md"), "# valid, candidates\n\n## Rule details\n\n### `pass-statement`\n\nA shipped rule's details.\n");
+      },
+      { package: ["candidates/README.md: Rule details describes pass-statement, which pack.json lists; a shipped rule's details go in README.md"] },
+    ],
+    [
       "a copied file once its glob is removed",
       directory => editUpstream(directory, text => text.replace(/^\| `upstream\/examplelint\/fixtures\/\*\*`.*\n/mu, "")),
       { licences: ["upstream/examplelint/fixtures/asserts.py is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)"] },
