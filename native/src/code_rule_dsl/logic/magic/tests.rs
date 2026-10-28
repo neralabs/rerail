@@ -56,7 +56,7 @@ fn golden_text(p: &Program) -> String {
 fn t_programs_transform_like_t() {
     let mut failures = Vec::new();
     for name in ["calls", "calls_rust", "workload", "workload_demand", "workload_perdoc"] {
-        let src = std::fs::read_to_string(root().join(format!("front/rdl/{name}.rdl"))).unwrap();
+        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
         let p = prune(parse(&src).unwrap());
         for mode in ["demand", "adorn", "gate"] {
             let options = Options { gate: mode == "gate", ..Options::default() };

@@ -18,7 +18,7 @@ fn facts() -> std::path::PathBuf {
 
 /// T's `rdl.py sql` front: prune, demand (adornment for `.demand *`), prune.
 fn program(name: &str) -> Program {
-    let src = std::fs::read_to_string(root().join(format!("front/rdl/{name}.rdl"))).unwrap();
+    let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
     let p = prune(parse(&src).unwrap());
     let options = Options::default();
     prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap())
