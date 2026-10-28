@@ -156,6 +156,8 @@ Check: P's prefilter tests on captured databases; `anchor_lab` steps no worse th
 - Packed runtime (`5bf45ff0` copy, `a36418d0`): in the module tree under `transducer`; W's bench-only JIT and Metal backends and the `bench-backends` feature removed.
 - Verifier proofs and query front end (`98e96170`, `692ff6ba` copies; next commit): Tempo's cycle-progress and greedy-contract proofs replace N's backward-goto heuristic in `validate`; `scm.rs` compiles tree-sitter queries to programs; F1 is a test that the verifier's opcodes are exactly the Metal interpreter's.
 - Metal pieces (`cf19c0d9` copy, and G's grid executor `b90a7b0a`, `e92c5958`, `faf1c92b`, `be5197b5`, `6dd8ae15`): placed (`bb4c9605`). G's grid executor is `ExecutionBackend::Metal` (`metal_grid_backend`) beside N's `MetalInterpreter`/`MetalJit`, which stay; shared files are 3-way merges over N's base Tempo@176ea093d. The adaptations (plan-sized pools within 500 MB for the 2 GB `METAL_BUFFER_LIMIT` and the 600-launch cap, K1, K3) are outstanding.
+- Placement differs from the table: row 3's modules sit flat in `transducer/packed/`, not in `packed/metal/`. G's files are 3-way merges into files N's base already has at flat paths (`metal_backend.rs`, `metal_launch.rs`, `metal_parallel*`), and `#[path]` keeps G's names. Moving only G's new files into `packed/metal/` would split one merged unit across two directories.
+- Row 1's "keep W `persist_search_index_batch`": kept (`transducer.rs:534`), called from `workspace/storage.rs` and the packed tests. `POSITIONAL_INDEX_VERSION` is W's 3 (decided with row 1).
 
 Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the copied base, then differential finding keys for interpreter vs JIT vs Metal on a 100–300-file sample.
 
@@ -222,7 +224,9 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
 | Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
 
-**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). Outside the tree: `metal.rs` (Tempo's `policy_dsl` Metal modules, with Phase 4 row 3), `census.rs` (P's typed projections) and `batch.rs` (D's sessions).**
+**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). Outside the tree: `census.rs` (P's typed projections) and `batch.rs` (D's sessions).**
+
+- Row 1 placement differs from the table: G's `metal_backend.rs` (`MappedRegion`, `MappedBuffer`, the guard, the pipeline cache) is the same file Phase 4 row 3 merged, so it lives once, as `transducer/packed/metal_backend.rs` (`bb4c9605`). The `residency/metal.rs` copy was removed there. The row's adaptations (one retained buffer per 64 MiB slab, `PrivateInputUpload`) apply to that file.
 
 ### Phase 10: typing (§13; I1–I18)
 
