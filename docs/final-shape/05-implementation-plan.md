@@ -224,7 +224,7 @@ Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust po
 | Batch admission | P `cr/relational/batch.rs` (resident capacity), `workspace/memory/census.rs`, `profile/memory.rs` | `residency/admission.rs` | Byte budget of 500 MB in total, split into pools. |
 | Write new | — | `residency/slabs.rs` | zstd frames decompressed straight into anonymous-mmap slabs, a document table per batch (no copies), sidecars, a pipeline/program cache keyed by plan identity, wave preparation, a drop timer 2 min after each full execution. No source implements this; reference P `spec.md` §20. |
 
-**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). Outside the tree: `census.rs` (P's typed projections) and `batch.rs` (D's sessions).**
+**Status (2026-10-27): copies done (`b558a528`, `b90fe9af`); adaptations and the write-new row outstanding. Placed: `residency::admission::memory` (`602c2ef6`). `residency::admission::census` (`2d41e7d2`), over W's JSON projections. Outside the tree: `batch.rs`, P's admission loop for relational-stage jobs, which W does not have (provenance).**
 
 - Row 1 placement differs from the table: G's `metal_backend.rs` (`MappedRegion`, `MappedBuffer`, the guard, the pipeline cache) is the same file Phase 4 row 3 merged, so it lives once, as `transducer/packed/metal_backend.rs` (`bb4c9605`). The `residency/metal.rs` copy was removed there. The row's adaptations (one retained buffer per 64 MiB slab, `PrivateInputUpload`) apply to that file.
 
