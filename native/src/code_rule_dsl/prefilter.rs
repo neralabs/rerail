@@ -21,6 +21,9 @@ mod lab;
 mod lower;
 pub(crate) mod plans;
 pub(crate) mod probes;
+#[path = "prefilter/lower/audit.rs"]
+mod audit;
+pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
 // P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback.
 #[allow(dead_code)]
 mod reader;
