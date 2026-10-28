@@ -112,6 +112,8 @@ export const PACK_FIXTURE_PATTERNS = Object.freeze([
   "packs/*/upstream/*/LICENSES.md",
   AUTHORED_CORPUS_PATTERN,
 ]);
+/** The `format` of every test-data archive's `upstream/<tool>/provenance.json`. */
+export const PROVENANCE_FORMAT = "rerail.pack-provenance/v1";
 
 /** What every consumer tells a contributor whose checkout lacks the data. */
 export const PULL_INSTRUCTION =

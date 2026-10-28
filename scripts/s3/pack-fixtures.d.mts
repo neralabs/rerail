@@ -76,6 +76,8 @@ export const ARCHIVE_PREFIX: string;
 export const ARCHIVE_CACHE: string;
 export const AUTHORED_CORPUS_PATTERN: string;
 export const PACK_FIXTURE_PATTERNS: readonly string[];
+/** The `format` of every test-data archive's `upstream/<tool>/provenance.json`. */
+export const PROVENANCE_FORMAT: "rerail.pack-provenance/v1";
 export const PULL_INSTRUCTION: string;
 export const PUBLISH_DIRECTORY: "publish";
 export const PUBLISH_WORKFLOW: string;
