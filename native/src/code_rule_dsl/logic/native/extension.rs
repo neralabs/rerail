@@ -12,7 +12,8 @@
 //!   writes `<p>_out(c0, c1)`. Returns "rows waves visits solve_ms total_ms".
 //! - `set_fixpoint_open/run/close` and the `set_rel` vtab evaluate one component of set-valued relations natively
 //!   (see `setfix.rs`).
-mod setfix;
+// T's `setfix` is `logic::native`'s (its adaptation keeps the copy's functions).
+use super::setfix;
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
@@ -253,9 +254,15 @@ unsafe impl VTabCursor for ResultCursor {
 
 /// # Safety
 /// Called by SQLite's extension loader.
-#[unsafe(no_mangle)]
+// W links SQLite bundled, so rusqlite's `loadable_extension` (and `extension_init2`) is not
+// available, and the symbol is not exported from the addon: the entry point registers on the
+// handle of a connection of the same SQLite (O19).
 pub unsafe extern "C" fn sqlite3_extension_init(db: *mut ffi::sqlite3, err: *mut *mut c_char, api: *mut ffi::sqlite3_api_routines) -> c_int {
-    unsafe { Connection::extension_init2(db, err, api, init) }
+    let _ = (err, api);
+    match unsafe { Connection::from_handle(db) }.and_then(init) {
+        Ok(_) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_ERROR,
+    }
 }
 
 fn init(db: Connection) -> Result<bool> {
@@ -335,4 +342,34 @@ fn init(db: Connection) -> Result<bool> {
     const RESULT: Module<ResultTab> = Module::read_only_module();
     db.create_module(c"lattice_result", &RESULT, None)?;
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The entry point registers T's functions; `tape_nearest` climbs the loaded tape.
+    #[test]
+    fn extension_entry_registers_tape_nearest_over_a_loaded_tape() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(
+            unsafe { sqlite3_extension_init(conn.handle(), std::ptr::null_mut(), std::ptr::null_mut()) },
+            ffi::SQLITE_OK
+        );
+        conn.execute_batch(
+            "CREATE TABLE node(n INTEGER, kind TEXT); CREATE TABLE tape(n INTEGER, par INTEGER, size INTEGER);
+             INSERT INTO node VALUES (0,'module'),(1,'function'),(2,'call'),(3,'name');
+             INSERT INTO tape VALUES (0,-1,3),(1,0,2),(2,1,1),(3,2,0);",
+        )
+        .unwrap();
+        let n: i64 = conn.query_row("SELECT tape_load('main')", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 4);
+        let near = |n: i64, kinds: &str| -> Option<i64> {
+            conn.query_row("SELECT tape_nearest(?1, ?2)", rusqlite::params![n, kinds], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(near(3, "function"), Some(1));
+        assert_eq!(near(3, "call,module"), Some(2));
+        assert_eq!(near(0, "module"), None);
+    }
 }
