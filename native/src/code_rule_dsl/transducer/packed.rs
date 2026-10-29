@@ -19,6 +19,8 @@ use std::sync::{LazyLock, mpsc};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
+#[cfg(test)]
+mod admission_spike;
 mod capture_run;
 #[cfg(test)]
 mod capture_run_entry_tests;
@@ -93,6 +95,9 @@ mod metal_closure_prepare;
 mod metal_closure_prepare_tests;
 #[cfg(target_os = "macos")]
 mod metal_constant_output;
+#[cfg(all(test, target_os = "macos"))]
+#[path = "packed/metal_cutover_architecture.rs"]
+mod metal_cutover_architecture;
 #[cfg(target_os = "macos")]
 mod metal_dynamic_execution;
 #[cfg(target_os = "macos")]

@@ -871,8 +871,6 @@ fn counted_reduction_shares_the_evaluation_launch_budget_across_commands() {
     assert!(trace.iter().skip(600).all(|dispatch| !dispatch.encoded));
 }
 
-// Uses G's admission spike fixtures, which 05 does not copy (test spikes)
-#[cfg(any())]
 #[test]
 fn unsupported_greedy_reconvergence_is_rejected_before_backend_selection() {
     let (program, _, _) = super::admission_spike::advancing_greedy_reconvergence();
