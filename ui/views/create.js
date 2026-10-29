@@ -5,6 +5,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { data, ui, repoName } from "../state.js";
+import { failed } from "../format.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { CREATE_COMMAND } from "../render/rules.js";
@@ -51,5 +52,5 @@ export function render(root) {
 /** Read the recommendations once per repository, for Places to start. */
 export function enter() {
   if (ui.scope === null || data.recommendations !== null) return;
-  loadRecommendations().then(invalidate, error => toast(`Could not read the repo: ${error.message}`));
+  loadRecommendations().then(invalidate, error => toast(failed(`Couldn’t read ${repoName() || "this repo"} to suggest rule packs`, error)));
 }

@@ -251,7 +251,7 @@ function selectRule(id) {
 
 export const actions = {
   hsel: id => selectRule(id),
-  hmore: () => loadMore(loadMoreFindings),
+  hmore: () => loadMore(loadMoreFindings, "violations"),
   hlisttoggle: () => { listHidden = !listHidden; invalidate(); },
 };
 

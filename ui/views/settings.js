@@ -5,7 +5,7 @@
  * Uninstall: the command. Settings are the machine's: the page shows with or without a repository in scope.
  */
 import { h, setContent, icon } from "../dom.js";
-import { andList, fmt, plural } from "../format.js";
+import { andList, failed, fmt, plural } from "../format.js";
 import { send } from "../api.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
@@ -125,8 +125,8 @@ export function enter() {
   countsRound = -1;
   data.agentsError = null;
   loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
-  loadPresence().then(invalidate, error => toast(`Could not read the status line setting: ${error.message}`));
-  if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(`Could not read the Follow .gitignore setting: ${error.message}`));
+  loadPresence().then(invalidate, error => toast(failed("Couldn’t load the status line setting", error)));
+  if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(failed("Couldn’t load Follow .gitignore", error)));
 }
 
 async function savePresence(presence) {
@@ -134,14 +134,14 @@ async function savePresence(presence) {
   data.presence = presence; invalidate();
   try {
     await send("PUT", "/api/presentation-preferences", { repository: "", host: "", presence });
-    toast(presence === "silent" ? "The status line is hidden in new turns." : "The status line shows in new turns.");
-  } catch (error) { data.presence = was; toast(`Could not save: ${error.message}`); }
+    toast(presence === "silent" ? "Status line hidden from the next turn." : "Status line shown from the next turn.");
+  } catch (error) { data.presence = was; toast(failed("Couldn’t change the status line setting", error)); }
   invalidate();
 }
 
-/** "Cleared 12 sessions from storefront." plus the ones still running, which keep recording. */
+/** "Cleared 12 sessions from storefront." plus the ones still running, which will keep recording. */
 function clearedMessage({ sessions, openSessions }, name) {
-  const running = openSessions === 0 ? "" : ` ${fmt(openSessions)} still running ${plural(openSessions, "keeps", "keep")} recording.`;
+  const running = openSessions === 0 ? "" : ` ${fmt(openSessions)} still running will keep recording.`;
   return `Cleared ${fmt(sessions)} ${plural(sessions, "session")} from ${name}.${running}`;
 }
 
@@ -158,7 +158,7 @@ async function clearHistory() {
       loadFollowGitignore().then(invalidate, () => {});
     }
   } catch (error) {
-    toast(`Could not clear the history: ${error.message}`);
+    toast(failed(`Couldn’t clear history for ${name}`, error));
   }
   clearing = false; clearAsk = false;
   invalidate();

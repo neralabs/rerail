@@ -4,7 +4,7 @@
  */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { data, ui } from "../state.js";
+import { data, ui, repoName } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
 import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
@@ -47,8 +47,12 @@ function jumpToFirst() {
 async function selectLinked(id, jump) {
   const error = await selectSession(id, jump ? jumpToFirst : undefined);
   if (error === null || !error.message.endsWith("answered 404")) return;
-  if (ui.selectedSession === id) selectSession(currentSession()?.sessionId ?? null);
-  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} is not in this repo`);
+  // The page falls back to the list's first row, the most recent session, only while the missing one is selected.
+  const selected = ui.selectedSession === id, fallback = selected ? currentSession() : null;
+  const instead = fallback?.sessionId === id ? null : fallback;
+  if (selected) selectSession(instead?.sessionId ?? null);
+  const shown = instead ? " Showing the most recent one." : "";
+  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} isn’t in ${repoName() || "this repo"}.${shown}`);
 }
 
 /** Entered with a session (a link, a violation's session): that one; else the one the view would show anyway. */
@@ -359,7 +363,7 @@ function toggleSet(set, key) {
 
 export const actions = {
   ssel: id => { ui.evFilter = "all"; selectSession(id); },
-  copyid: id => copyText(id, null, `Copied ${id}`),
+  copyid: id => copyText(id, null, "Session id copied."),
   jump: id => jumpTo(id),
   etoggle: (id, b) => {
     const wasOpen = b.parentElement.dataset.open === "true";
@@ -371,14 +375,14 @@ export const actions = {
   showall: () => { ui.showAll = true; ui.evFilter = "all"; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
-  sessmore: () => loadMore(loadMoreSessions),
-  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
+  sessmore: () => loadMore(loadMoreSessions, "sessions"),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId), "earlier events"); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
   slisttoggle: () => { listHidden = !listHidden; invalidate(); },
   resumecopy: () => {
     const s = currentSession(); if (!s) return;
     const rc = resumeCommand(s);
-    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Copied. Run it in your terminal." : "Copied the session id.");
+    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Resume command copied. Run it in your terminal." : "Session id copied.");
   },
 };
 
