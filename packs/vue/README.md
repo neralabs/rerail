@@ -32,9 +32,9 @@ npm run test:conformance
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and its 19 shipped rules, 18 on and 1 off |
-| `rules/` | The 19 shipped code-rule documents (`rerail.policy/v1`) |
-| `candidates/rules/` | The 5 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and its 23 shipped rules, 21 on and 2 off |
+| `rules/` | The 23 shipped code-rule documents (`rerail.policy/v1`) |
+| `candidates/rules/` | The candidate code-rule document (`rerail.policy/v1`), scored but never shipped |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 | `conformance.json` | Each port's upstream rule, how findings compare, and the capabilities it exercises; the pinned parser stack |
 | `divergences.json` | Declared disagreements with eslint-plugin-vue (none) |

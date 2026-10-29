@@ -3,7 +3,7 @@
 160 code rules for Python, ported from Ruff 0.16.9 (111 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
-every disagreement declared in `divergences.json` (one today: ASYNC221 on a probe). Every port honours its tool's
+every disagreement declared in `divergences.json` (two today: ASYNC221 on a probe, and B406 on a Django sample, where Bandit is wrong). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`).
 25 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`). The conformance check
 ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The rename variants that test
