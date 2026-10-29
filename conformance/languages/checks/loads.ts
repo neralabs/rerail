@@ -78,7 +78,8 @@ export function loadAsBundled(engine: Engine, scratch: string, packId: string, r
 /**
  * loads: the shipped bytes parse, pass rerail's own schema, compile on this checkout's engine both as written and in
  * the stable form the rule catalog compiles, load through rerail's bundled-rule loader, and apply to an example path
- * of every file type upstream lints (`linted`: gates.yaml's `upstream.lints`, narrowed by `rerail.in_scope`).
+ * of every file type upstream lints (`linted`: gates.yaml's `upstream.lints`, narrowed by `rerail.in_scope` and by the
+ * port's own `lints` in conformance.json).
  */
 export function loadsGate(engine: Engine, rule: RuleDocument, packId: string, scratch: string, linted: readonly string[]): LoadsResult {
   const checks: Check[] = [];
@@ -138,7 +139,7 @@ export function loadsGate(engine: Engine, rule: RuleDocument, packId: string, sc
     ok: outOfScope.length === 0,
     detail: outOfScope.length === 0
       ? `applies to ${linted.join(", ")}`
-      : `does not apply to ${outOfScope.join(", ")}: gates.yaml declares upstream lints that file type (upstream.lints); widen the rule's scope, or narrow the tool-pack with rerail.in_scope`,
+      : `does not apply to ${outOfScope.join(", ")}: gates.yaml declares upstream lints that file type (upstream.lints); widen the rule's scope, or narrow the tool-pack with rerail.in_scope or the port with its lints in conformance.json`,
   });
   return { checks, compiled, document, ...(schema.success ? { resolved: schema.data as Record<string, unknown> } : {}) };
 }

@@ -595,6 +595,7 @@ async function poll() {
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();
     data.disconnected = false;
+    data.accessRequired = false;
     data.missing = false;
     data.loaded = true;
     backoff = INTERVAL;
@@ -602,9 +603,11 @@ async function poll() {
   } catch (error) {
     if (started !== generation) return;
     // A repository or checkout the daemon does not know is an answer, not a lost connection: the context or rules read
-    // answering 404, not some other read (a session that went away is handled where it is read).
-    data.missing = /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
-    data.disconnected = !data.missing;
+    // answering 404, not some other read (a session that went away is handled where it is read). Neither is a 401: the
+    // daemon is up, and this browser has not opened its link.
+    data.accessRequired = error.name === "AccessRequired";
+    data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
+    data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
     backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
     if (!data.missing) console.warn("poll failed", error);

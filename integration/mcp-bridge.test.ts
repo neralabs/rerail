@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { DAEMON_STATE_FILE, type DaemonState } from "../src/runtime/index.js";
+import { openRerailDatabase, recordCheckout } from "../src/engine/index.js";
+import { DAEMON_STATE_FILE, SqliteSessionStore, type DaemonState } from "../src/runtime/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 
 let root: string | undefined;
@@ -23,14 +24,22 @@ it("bridges real MCP writes with split UTF-8 input and no response to notificati
   root = await mkdtemp(join(tmpdir(), "rerail-mcp-bridge-"));
   vi.stubEnv("RERAIL_HOME", join(root, "home"));
   await mkdir(join(root, "home"), { recursive: true });
+  const databasePath = join(root, "home", "rerail.sqlite");
   daemon = await RerailDaemon.start({
     version: "test",
-    databasePath: join(root, "home", "rerail.sqlite"),
+    databasePath,
     workspaceRoot: root,
     host: "127.0.0.1",
     port: 0,
     stateFile: join(root, "home", DAEMON_STATE_FILE),
   });
+  // A coding agent reaches only its own repository's sessions: the bridge's folder is the session's checkout.
+  const database = openRerailDatabase(databasePath);
+  const { repositoryKey } = recordCheckout(database, root);
+  database.$client.close();
+  const sessions = new SqliteSessionStore(databasePath);
+  sessions.openSession({ host: "codex", sessionId: "unicode-session", cwd: root }, Date.now(), repositoryKey);
+  sessions.close();
   const child = spawn(process.execPath, [resolve("dist/cli/cli.js"), "mcp-bridge"], {
     cwd: root,
     env: { ...process.env, RERAIL_ENGINE_PATH: join(root, "no-host-addon.node") },
@@ -61,7 +70,7 @@ it("bridges real MCP writes with split UTF-8 input and no response to notificati
     const responses = stdout.trim().split("\n").map(line => JSON.parse(line) as { id: number; error?: unknown });
     expect(responses.map(response => response.id)).toEqual([1, 2]);
     expect(responses.every(response => response.error === undefined)).toBe(true);
-    const response = await fetch(new URL("/api/sessions/unicode-session/work-links", daemon.url));
+    const response = await fetch(new URL("/api/sessions/unicode-session/work-links", daemon.url), { headers: { "x-rerail-access": daemon.state().accessToken! } });
     expect(await response.json()).toMatchObject({ workLinks: [{ sessionId: "unicode-session", kind: "git-branch", reference: "café" }] });
   } finally {
     if (child.exitCode === null) child.kill("SIGTERM");
@@ -118,7 +127,7 @@ it.each([
       id,
       error: { code: -32000, message },
     })));
-    const response = await fetch(new URL("/api/sessions/stale-home/work-links", daemon.url));
+    const response = await fetch(new URL("/api/sessions/stale-home/work-links", daemon.url), { headers: { "x-rerail-access": daemon.state().accessToken! } });
     expect(await response.json()).toMatchObject({ workLinks: [] });
   } finally {
     if (child.exitCode === null) child.kill("SIGTERM");

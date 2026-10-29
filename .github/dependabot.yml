@@ -15,7 +15,7 @@ updates:
     groups:
       # First match wins, so these come before npm-minor-patch. Each lands in a pull request of its own, so one that
       # breaks holds back none of the others. Files that pin a version in step with these (the OMP host and its digests,
-      # the playground's SDK, the ast-grep reference version) are brought along by .github/workflows/dependabot-pins.yml.
+      # the ast-grep reference version) are brought along by .github/workflows/dependabot-pins.yml.
       omp-sdk:
         patterns: ["@oh-my-pi/*"]
       ast-grep-cli:
@@ -23,6 +23,9 @@ updates:
       # @vitest/* peer-pins vitest exactly, so they must move together.
       vitest:
         patterns: ["vitest", "@vitest/*"]
+      # @babel/parser's AST is typed by @babel/types: one major of each is read with the other's types.
+      babel:
+        patterns: ["@babel/parser", "@babel/types"]
       npm-minor-patch:
         update-types: [minor, patch]
   - package-ecosystem: cargo

@@ -42,6 +42,3 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `base.css`, each a Nera token or a mix of them; no colour literal appears elsewhere in the CSS.
 
 The browser specs in `e2e/` drive it over seeded scenarios (`e2e/README.md`); `test/ui/` unit-tests its pure modules.
-
-This is the shipped product UI. `playground/ui/` is a separate React tool for developing rules: it is never published
-and does not share code with this one.

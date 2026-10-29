@@ -1,5 +1,5 @@
-// Inside `src/` so every checkout copy of the native sources (the playground, release
-// builds) carries it; the library compiles it only for tests.
+// Inside `src/` so every copy of the native sources (release builds) carries it; the
+// library compiles it only for tests.
 #[path = "src/build_identity.rs"]
 mod identity;
 #[path = "src/build_languages.rs"]

@@ -1,0 +1,74 @@
+[
+  {
+    "rule": "complexity-cyclomatic-python",
+    "source": "fixtures",
+    "path": "python/signatures.py",
+    "line": 1,
+    "kind": "upstream-wrong",
+    "evidence": "lizard 1.24.0 ends wrapped_signature inside its return annotation, which spans three lines, and scores it 1; with the signature on one line it scores the same body 7, as Rerail does (lizard --csv, 2026-10-29; fixed in crapkit #72)."
+  },
+  {
+    "rule": "complexity-cyclomatic-python",
+    "source": "fixtures",
+    "path": "python/signatures.py",
+    "line": 35,
+    "kind": "upstream-wrong",
+    "evidence": "lizard 1.24.0 ends bracket_default inside its parameter list, which breaks after a default holding brackets (`bases=(),`), and scores it 1; with the parameters on one line it scores the same body 8, as Rerail does (lizard --csv, 2026-10-29)."
+  },
+  {
+    "rule": "complexity-cyclomatic-typescript",
+    "source": "fixtures",
+    "path": "typescript/nullish.ts",
+    "line": 3,
+    "kind": "upstream-wrong",
+    "evidence": "`??` and `??=` decide nothing the cyclomatic count measures, and lizard 1.24.0's tokenizer reads each as two `?`, each a conditional: it scores nullishCoalescing 8, and 4 with the same function's `??` and `??=` written as plain operands and assignment (lizard --csv, 2026-10-29). Rerail counts them 0 (4), as the pack README's Deviations say."
+  },
+  {
+    "rule": "complexity-cyclomatic-typescript",
+    "source": "fixtures",
+    "path": "typescript/nullish.ts",
+    "line": 16,
+    "kind": "upstream-wrong",
+    "evidence": "`??` and `??=` decide nothing the cyclomatic count measures, and lizard 1.24.0's tokenizer reads each as two `?`, each a conditional: it scores nullishAssignment 7, and 5 with the same function's `??` and `??=` written as plain operands and assignment (lizard --csv, 2026-10-29). Rerail counts them 0 (5), as the pack README's Deviations say."
+  },
+  {
+    "rule": "complexity-cyclomatic-javascript",
+    "source": "fixtures",
+    "path": "javascript/nullish.js",
+    "line": 4,
+    "kind": "upstream-wrong",
+    "evidence": "`??` and `??=` decide nothing the cyclomatic count measures, and lizard 1.24.0's tokenizer reads each as two `?`, each a conditional: it scores nullishCoalescing 8, and 4 with the same function's `??` and `??=` written as plain operands and assignment (lizard --csv, 2026-10-29). Rerail counts them 0 (4), as the pack README's Deviations say."
+  },
+  {
+    "rule": "complexity-cyclomatic-javascript",
+    "source": "fixtures",
+    "path": "javascript/nullish.js",
+    "line": 17,
+    "kind": "upstream-wrong",
+    "evidence": "`??` and `??=` decide nothing the cyclomatic count measures, and lizard 1.24.0's tokenizer reads each as two `?`, each a conditional: it scores nullishAssignment 7, and 5 with the same function's `??` and `??=` written as plain operands and assignment (lizard --csv, 2026-10-29). Rerail counts them 0 (5), as the pack README's Deviations say."
+  },
+  {
+    "rule": "complexity-cyclomatic-php",
+    "source": "fixtures",
+    "path": "php/tokens.php",
+    "line": 26,
+    "kind": "upstream-wrong",
+    "evidence": "lizard 1.24.0's PHP reader (php_states.py) reads a `function (...) use (...)` only at the top level: inside a function body it counts braces alone, so it adds the closure's six decisions to withClosure and scores it 8. Rerail scores withClosure 2 and the closure on its own, as every other rule of the pack scores a nested function."
+  },
+  {
+    "rule": "complexity-cyclomatic-php",
+    "source": "fixtures",
+    "path": "php/tokens.php",
+    "line": 28,
+    "kind": "upstream-wrong",
+    "evidence": "The closure assigned to $keep inside withClosure: lizard 1.24.0 lists no function here (it adds the decisions to withClosure, line 26), and scores the same closure 7 at the top level of a file of its own (lizard --csv, 2026-10-29), as Rerail does here."
+  },
+  {
+    "rule": "complexity-cyclomatic-blade",
+    "source": "fixtures",
+    "path": "blade/blocks.blade.php",
+    "line": 4,
+    "kind": "not-comparable",
+    "evidence": "lizard 1.24.0 reads a .blade.php file as PHP, where `@php ... @endphp` is template text, so it lists no function in it; Blade compiles the block to PHP, which the rule reads (ast.embedded: compiled-view). With the block written as `<?php ... ?>` lizard scores the closure $grade 7, as Rerail does (lizard --csv, 2026-10-29)."
+  }
+]

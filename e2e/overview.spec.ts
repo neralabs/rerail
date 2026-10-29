@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { DAY, expect, SEED_NOW, test } from "./dashboard-test.js";
+import { DAY, expect, SEED_NOW, test, type RerailScenarios } from "./dashboard-test.js";
 
 const content = (page: Page) => page.locator("#content");
 const tileValue = (page: Page, key: string) => content(page).locator(`[data-tile="${key}"] .v`);
@@ -17,8 +17,8 @@ const MATURE = [
 
 const sinceOf = (days: number) => (days === 0 ? Date.UTC(2026, 9, 22) : days === 9999 ? 0 : SEED_NOW - days * DAY);
 
-async function api<T>(page: Page, url: string, path: string): Promise<T> {
-  const response = await page.request.get(new URL(path, url).href);
+async function api<T>(rerail: RerailScenarios, url: string, path: string): Promise<T> {
+  const response = await rerail.get(new URL(path, url).href);
   expect(response.ok()).toBe(true);
   return await response.json() as T;
 }
@@ -63,7 +63,7 @@ test.describe("mature", () => {
   test("Most violations logged ranks the range's rules and opens a rule's sheet", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature");
     const { manifest } = await rerail.scenario("mature");
-    const activity = await api<{ rules: Record<string, { distinctViolations: number }> }>(page, url,
+    const activity = await api<{ rules: Record<string, { distinctViolations: number }> }>(rerail, url,
       `/api/rules/activity?since=${sinceOf(7)}&repository=${encodeURIComponent(manifest.primary.repositoryKey)}`);
     const counts = Object.values(activity.rules).map(a => a.distinctViolations).filter(n => n > 0).sort((a, b) => b - a);
 
@@ -104,7 +104,7 @@ test.describe("mature", () => {
   test("Recent sessions: the range's five newest with their counts, and View all", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature");
     const { manifest } = await rerail.scenario("mature");
-    const sessions = await api<{ total: number; sessions: Array<{ sessionId: string; violationCount: number }> }>(page, url,
+    const sessions = await api<{ total: number; sessions: Array<{ sessionId: string; violationCount: number }> }>(rerail, url,
       `/api/sessions?since=${sinceOf(7)}&limit=5&repository=${encodeURIComponent(manifest.primary.repositoryKey)}`);
 
     await page.goto(url);

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COMMENT_MARKER, renderComment } from "../../conformance/languages/comment.js";
 import { loadEngine } from "../../conformance/languages/checks/engine.js";
 import { judgeToolPack } from "../../conformance/languages/gates.js";
-import { loadPack } from "../../conformance/languages/pack.js";
+import { fixturesDirectory, fixturesExpectedPath, loadPack } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { summarize, ungatedRow } from "../../conformance/languages/summary.js";
 import { fixturesPath } from "../support/oracles.js";
@@ -79,7 +79,7 @@ describe("a gated tool-pack's rules", () => {
     setUnits({ "asserts.py": { rules: ["EX101"] }, "clean.py": { rules: ["EX101"] } });
     const after = await judge();
     expect(after.verdict.rules[0]).toMatchObject({ pass: true, stoppedAt: null, failure: null, defaultOn: true, on: true });
-    expect(after.verdict.checks.map(check => [check.id, check.ok])).toEqual([["bundled-load", true], ["declared-pins", true], ["conformance-runs", true]]);
+    expect(after.verdict.checks.map(check => [check.id, check.ok])).toEqual([["bundled-load", true], ["declared-pins", true], ["declared-lints", true], ["conformance-runs", true]]);
   });
 
   it("report a shipped document with no conformance.json entry as blocking, once", async () => {
@@ -103,6 +103,23 @@ describe("a gated tool-pack's rules", () => {
     writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), GATES("{ config: default, options: [] }").replace("version: 1.0.0", "version: 1.0.1"));
     const { verdict } = await judge();
     expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "tool-pack", failure: { check: "declared-pins" } });
+  });
+
+  it("ask a port to apply to the file types it declares, and fail every rule when one declares a type the tool does not lint", async () => {
+    setUnits({ "clean.py": { rules: ["EX101"] } });
+    writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), GATES("{ config: default, options: [] }").replace('lints: [".py"]', 'lints: [".py", ".pyi"]'));
+    const document = join(pack, "rules", "assert-used.json");
+    writeFileSync(document, JSON.stringify({ ...JSON.parse(readFileSync(document, "utf8")), scope: { include: ["**/*.py"], exclude: [] } }));
+    const portLints = (lints: string[]): void => {
+      const path = join(pack, "conformance.json");
+      const conformance = JSON.parse(readFileSync(path, "utf8")) as { rules: Record<string, unknown>[] };
+      writeFileSync(path, JSON.stringify({ ...conformance, rules: conformance.rules.map(rule => ({ ...rule, lints })) }));
+    };
+    expect((await judge()).verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "loads", failure: { check: "in-scope" } });
+    portLints([".py"]);
+    expect((await judge()).verdict.rules[0]).toMatchObject({ pass: true });
+    portLints([".py", ".rb"]);
+    expect((await judge()).verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "tool-pack", failure: { check: "declared-lints", why: expect.stringContaining("assert-used .rb") } });
   });
 
   it("are a candidate's report only: a failing candidate blocks nothing, a passing one is ready to promote", async () => {
@@ -136,6 +153,21 @@ describe("the conformance report's errors", () => {
     expect(runs(["fixtures otherlint: notes.txt is not a python source by the host's routing"])).toMatchObject({ ok: true });
     expect(runs(["samples examplelint: x-app-py-000000000000/app.py.labels.json: not JSON"])).toMatchObject({ ok: false });
     expect(runs(["stale exemption: capability syntax is covered by rule(s) assert-used"])).toMatchObject({ ok: false });
+  });
+});
+
+describe("a pack's families", () => {
+  it("score fixtures in every family the pack names, and refuse one of another family", async () => {
+    const loaded = loadPack(pack);
+    writeFileSync(join(fixturesDirectory(loaded, "examplelint"), "clean.js"), "export const total = 1;\n");
+    const expectedPath = fixturesExpectedPath(loaded, "examplelint");
+    const expected = JSON.parse(readFileSync(expectedPath, "utf8")) as { source: { files: string[] } };
+    writeFileSync(expectedPath, JSON.stringify({ ...expected, source: { ...expected.source, files: [...expected.source.files, "clean.js"] } }));
+    const errors = async () => (await runPack(loadPack(pack), { fixtures: true, samples: false, date: "2026-01-01" })).errors;
+    expect(await errors()).toContain("fixtures examplelint: clean.js is not a python source by the host's routing");
+    const path = join(pack, "conformance.json");
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), family: ["python", "ecma"] }));
+    expect(await errors()).toEqual([]);
   });
 });
 

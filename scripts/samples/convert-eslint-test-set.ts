@@ -1,7 +1,8 @@
 /**
- * The ESLint test set as samples: each original file is labelled for its rule with ESLint's findings, used as they
- * are; each fixed copy is a clean sample (`[]`) for that rule. A rule belongs to the tool-pack whose pack rule ports
- * it (`conformance.json`), and every pack rule of that tool porting the same upstream rule gets the labels (D4).
+ * An ESLint-format test set (the ESLint test set, the React test set) as samples: each original file is labelled for
+ * its rule with ESLint's findings, used as they are; each fixed copy is a clean sample (`[]`) for that rule. A rule
+ * belongs to the tool-pack whose pack rule ports it (`conformance.json`), and every pack rule of that tool porting the
+ * same upstream rule gets the labels (D4).
  */
 import { readFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -32,6 +33,8 @@ const LABELLING_PACKAGE: Readonly<Record<string, string>> = {
   "eslint-plugin-unicorn": "eslint-plugin-unicorn",
   "typescript-eslint": "@typescript-eslint/eslint-plugin",
   "eslint-plugin-vitest": "@vitest/eslint-plugin",
+  "eslint-plugin-react": "eslint-plugin-react",
+  "eslint-plugin-react-hooks": "eslint-plugin-react-hooks",
 };
 
 export interface TestSetSamples {

@@ -494,7 +494,7 @@ once the cause is fixed, or bump it by hand (`npm run upstream:bump`, then deriv
 - **Pack test data is in S3** (`test-data-in-s3`) runs `node scripts/s3/pack-fixtures.mjs check` under the read role: a
   `head-object` per archive every `test-data.lock` and `samples.lock` names, downloading nothing, failing with each
   missing key, its lock and its remedy. A pull request cannot merge with data S3 lacks.
-- **Scripts, reference examples, conformance, and rule playground** (`tools`) runs the conformance check
+- **Scripts, reference examples, and conformance** (`tools`) runs the conformance check
   (`conformance:languages -- --check`) over every pack, with `publish/` laid over the pulled data, and uploads its
   summary and pull request comment as the `conformance-summary` artifact, which the `conformance-report` job posts on
   the pull request ([conformance/README.md](../conformance/README.md#what-runs-on-a-pull-request)).

@@ -63,7 +63,7 @@ not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
 
 | Gate | Checks | Data |
 | --- | --- | --- |
-| `loads` (blocks) | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (the scope covers every file type in `gates.yaml`'s `upstream.lints`, or in `rerail.in_scope` when the pack narrows it) | the document, the engine, `gates.yaml` |
+| `loads` (blocks) | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (the scope covers every file type in `gates.yaml`'s `upstream.lints`, or in `rerail.in_scope` when the pack narrows it, or in the port's own `lints` in `conformance.json`) | the document, the engine, `gates.yaml` |
 | `compact` (blocks) | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic | the document |
 | `conformance` (blocks) | `scored`; `no-unexplained-false-positives`, `no-unexplained-misses`, `catches-something` (a true positive, or examples in `pack.json`), `engine-reads-fixtures` | the fixtures: upstream's cases and Rerail's probes, after `divergences.json` |
 | | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check holds vacuously, which is reported as a pass without evidence. "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
@@ -108,8 +108,9 @@ a rule has neither, add a clean real-code sample for it.
 
 Before any rule, each gated tool-pack must pass `bundled-load` (the pack's shipped rules load together through
 rerail's bundled-rule loader), `declared-pins` (`conformance.json`'s `tools[].version` equals `gates.yaml`'s
-`upstream.version`) and `conformance-runs` (the pack's conformance check ran without errors). When one fails, every
-rule of the tool-pack fails with it.
+`upstream.version`), `declared-lints` (every file type a port names in its `conformance.json` `lints` is one of
+`gates.yaml`'s `upstream.lints`, narrowed by `rerail.in_scope`) and `conformance-runs` (the pack's conformance check ran
+without errors). When one fails, every rule of the tool-pack fails with it.
 
 ### Declared upstream facts (`gates.yaml`)
 
@@ -196,7 +197,7 @@ details moved to `candidates/README.md`).
 
 ### Packs not gated
 
-A pack whose shipped rules have no upstream adapter is listed in `conformance/languages/ungated-rules.json`
-(complexity's three rules); a tool-pack still validated elsewhere would be listed in
-`conformance/languages/pending.json`. Both lists may only shrink against the base (`--base`); a new shipped rule in such
-a pack fails, so keep it in `candidates/` until its tool-pack is gated.
+A pack whose shipped rules have no upstream adapter is listed in `conformance/languages/ungated-rules.json`, empty
+today; a tool-pack still validated elsewhere would be listed in `conformance/languages/pending.json`. Both lists may only
+shrink against the base (`--base`); a new shipped rule in such a pack fails, so keep it in `candidates/` until its
+tool-pack is gated.

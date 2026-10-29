@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSteer, type CodeRuleViolation, renderSteer, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
+import { buildSteer, type CodeRuleViolation, renderSteer, SECRET_FILE_FINDING_MESSAGE, STEER_FIX_CHARS } from "../../../src/engine/code-rule/code-rule.js";
 
 const span = (startLine: number, startColumn: number, endLine: number, endColumn: number) => ({
   startByte: 0, endByte: 0, startLine, startColumn, endLine, endColumn,
@@ -94,6 +94,19 @@ describe("renderSteer", () => {
   it("renders an empty fix as a deletion", () => {
     const deletion = violation({ fix: { span: span(0, 0, 0, 3), text: "" } });
     expect(renderSteer([deletion])).toContain("  Suggested fix: delete 1:1–1:4");
+  });
+
+  it("names a finding in a file named like one holding secrets by rule and place only, its message and fix withheld", () => {
+    const secret = violation({
+      path: "config/secrets.yaml", message: "`API_KEY: hunter2` is plaintext", fix: { span: span(0, 0, 0, 7), text: "API_KEY: ${SECRET}" },
+    });
+    expect(renderSteer([secret])).toBe([
+      "Rerail found 1 problem in your last edit:",
+      `- config/secrets.yaml:3:15 — ${SECRET_FILE_FINDING_MESSAGE} [p]`,
+      FIX_IT,
+    ].join("\n"));
+    // Hidden alone is not secret-like: a rule about a workflow file still speaks.
+    expect(renderSteer([violation({ path: ".github/workflows/ci.yml" })])).toContain("- .github/workflows/ci.yml:3:15 — log of user [p]");
   });
 });
 

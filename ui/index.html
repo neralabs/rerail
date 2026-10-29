@@ -26,6 +26,18 @@
         if (t) document.documentElement.dataset.theme = t;
         if (localStorage.getItem("rerail-nav-hidden") === "1") document.documentElement.dataset.nav = "hidden";
       } catch {}
+      // The link `rerail manage` opens carries the daemon's access capability: keep it in this origin's storage
+      // (scheme, host and port: no other localhost server reads it, as it would a cookie) and drop it from the address
+      // before anything else reads the URL. Every API request sends it as `x-rerail-access`.
+      try {
+        const url = new URL(location.href);
+        const access = url.searchParams.get("rerail-access");
+        if (access !== null) {
+          localStorage.setItem("rerail-access", access);
+          url.searchParams.delete("rerail-access");
+          history.replaceState(null, "", url.href);
+        }
+      } catch {}
     </script>
   </head>
   <body data-view="overview">

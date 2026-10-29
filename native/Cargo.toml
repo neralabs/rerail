@@ -26,7 +26,7 @@ napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-sy
 napi-derive = "3.0"
 indexmap = "=2.14.2"
 memchr = "=2.8.3"
-num-bigint = "=0.4.8"
+num-bigint = "=0.5.1"
 num-integer = "=0.1.47"
 num-traits = "=0.2.19"
 parking_lot = { version = "0.12", features = ["arc_lock"] }

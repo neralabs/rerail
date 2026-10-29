@@ -13,7 +13,7 @@ import { z } from "zod";
 export const GATES_MANIFEST = "gates.yaml";
 
 /** The upstream linter families a tool-pack can name: which registry publishes upstream's releases. */
-export const ADAPTERS = ["bandit", "ruff", "eslint", "phpcs", "tlint", "blade-parser", "phpstan", "psalm", "bladestan", "sqlfluff", "clippy"] as const;
+export const ADAPTERS = ["bandit", "ruff", "eslint", "phpcs", "tlint", "blade-parser", "phpstan", "psalm", "bladestan", "sqlfluff", "clippy", "lizard"] as const;
 
 const nonEmpty = z.string().min(1);
 const commit = z.string().regex(/^[0-9a-f]{40}$/u, "a full commit sha");
@@ -210,10 +210,16 @@ export function gatedToolPacks(root: string): { pack: string; tool: string }[] {
 }
 
 /**
- * One example path per file type a port of the tool must apply to (`loads`'s in-scope check): `upstream.lints`, narrowed
- * to `rerail.in_scope` when the pack deliberately covers fewer.
+ * The file types a port of the tool must apply to (`loads`'s in-scope check): `upstream.lints`, narrowed to
+ * `rerail.in_scope` when the pack deliberately covers fewer, and to the port's own `lints` (conformance.json) when it
+ * names them.
  */
-export function lintedPaths(manifest: GatesManifest): string[] {
+export function lintedTypes(manifest: GatesManifest, port?: readonly string[]): string[] {
   const inScope = manifest.rerail.in_scope;
-  return manifest.upstream.lints.filter((type) => inScope === undefined || inScope.includes(type)).map((type) => `src/example${type}`);
+  return manifest.upstream.lints.filter((type) => (inScope === undefined || inScope.includes(type)) && (port === undefined || port.includes(type)));
+}
+
+/** One example path per file type of `lintedTypes`. */
+export function lintedPaths(manifest: GatesManifest, port?: readonly string[]): string[] {
+  return lintedTypes(manifest, port).map((type) => `src/example${type}`);
 }
