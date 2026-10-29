@@ -255,12 +255,12 @@ describe("#4 engine source roots", () => {
 });
 
 describe("#5 test roots", () => {
-  it("allows test/, integration/, playground/ and data roots; flags tests elsewhere", () => {
+  it("allows test/, integration/, e2e/ and data roots; flags tests elsewhere", () => {
     const result = testRoots(
       memoryRepo({
         "test/a.test.ts": "",
         "integration/b.test.ts": "",
-        "playground/ui/c.test.tsx": "",
+        "e2e/c.spec.ts": "",
         "fixtures/python/value/test_d.py": "",
         "packs/php/upstream/phpcs/fixtures/FooTest.php": "",
         "scripts/e.test.mjs": "",
