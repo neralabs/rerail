@@ -20,6 +20,9 @@ const nonEmpty = z.string().min(1);
 
 const toolSchema = z.strictObject({ name: nonEmpty, version: nonEmpty });
 
+/** A file a port's document reads: its path, which must be in the document's scope, and its content. */
+const exampleSchema = z.strictObject({ path: nonEmpty, text: nonEmpty });
+
 const ruleSchema = z.strictObject({
   /** The id of the document it ports (`policy`), in pack.json's style: see `RULE_PACK_RULE_ID`. */
   id: z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case"),
@@ -40,6 +43,12 @@ const ruleSchema = z.strictObject({
    * language (lizard) names each port's own. Each must be one of the tool-pack's types (`declared-lints`).
    */
   lints: z.array(z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .py or .blade.php")).min(1).optional(),
+  /**
+   * A candidate's example pair, which pack.json cannot hold while it does not list the rule: check 3 of the pack
+   * validation contract runs it as it runs a shipped rule's. The pair moves to the rule's pack.json `examples` when it
+   * ships, so a shipped port carries none.
+   */
+  examples: z.strictObject({ caught: exampleSchema, passes: exampleSchema }).optional(),
 });
 export type PackRule = z.infer<typeof ruleSchema>;
 
@@ -109,6 +118,7 @@ export const packSchema = z
     const capabilities = new Set(pack.capabilities);
     for (const rule of pack.rules) {
       if (!tools.has(rule.upstream.tool)) issue(`${rule.id}: upstream tool ${rule.upstream.tool} is not in tools`);
+      if (rule.examples !== undefined && !isCandidate(rule)) issue(`${rule.id}: ships, so its examples belong in pack.json`);
       for (const capability of rule.capabilities)
         if (!capabilities.has(capability)) issue(`${rule.id}: capability ${capability} is not declared by the pack`);
     }

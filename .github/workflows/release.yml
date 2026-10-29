@@ -171,8 +171,8 @@ jobs:
   # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
   # publish credential, so no npm token exists anywhere. npmjs must list this repository,
   # `release.yml`, and the `release` environment as the package's trusted publisher.
-  # npm only generates provenance attestations for packages published from a public repository;
-  # until this repository is public, releases publish without provenance.
+  # `--provenance` makes npm attach a provenance attestation and fail the publish when it cannot generate one (for
+  # example, if this repository is ever made private again), so no release reaches npm without one.
   publish:
     name: Publish to npmjs
     needs: [metadata, package, windows-install, unix-install]
@@ -208,7 +208,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
-          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL"
+          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance
 
   # Reads core's dist-tags back from npm, which for this restricted package needs a read token: the read-only
   # NPM_PACKS_READ_TOKEN, which must cover @neralabs/rerail as well as the packs.

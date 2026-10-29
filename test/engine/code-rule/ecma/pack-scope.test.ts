@@ -29,12 +29,12 @@ async function directory(prefix: string): Promise<string> {
 const CODE_RULES = await Promise.all(
   [
     ["javascript", "candidates", "eslint-no-redeclare.json"],
-    ["typescript", "candidates", "typescript-eslint-no-redeclare.json"],
-    ["typescript", "candidates", "typescript-eslint-no-require-imports.json"],
-    ["javascript", "candidates", "eslint-default-param-last.json"],
+    ["typescript", "", "typescript-eslint-no-redeclare.json"],
+    ["typescript", "", "typescript-eslint-no-require-imports.json"],
+    ["javascript", "", "eslint-default-param-last.json"],
     ["typescript", "", "typescript-eslint-default-param-last.json"],
-    ["javascript", "candidates", "eslint-max-params.json"],
-    ["typescript", "candidates", "typescript-eslint-max-params.json"],
+    ["javascript", "", "eslint-max-params.json"],
+    ["typescript", "", "typescript-eslint-max-params.json"],
   ].map(async ([pack, tier, file]) => codeRuleSchema.parse(JSON.parse(await readFile(repositoryPath("packs", pack!, tier!, "rules", file!), "utf8")))),
 );
 

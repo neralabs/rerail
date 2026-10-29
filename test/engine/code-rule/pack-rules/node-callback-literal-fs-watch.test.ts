@@ -32,8 +32,8 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadPackRuleDocuments([repositoryPath("packs", "node", "candidates")]).find(candidate => candidate.rule.id === ruleId);
-  if (document === undefined) throw new Error(`${ruleId} is not in packs/node/candidates`);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "node")]).find(candidate => candidate.rule.id === ruleId);
+  if (document === undefined) throw new Error(`${ruleId} is not in packs/node`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 

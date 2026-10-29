@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Dependency updates, with no change in behavior: the native engine moves to ast-grep 0.51, gix 0.90, rusqlite 0.41, sha2 0.11 and jemalloc 0.7, and the package to diff 9 and hono 4.13.14.
 - `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
 - The `complexity` pack scores PHP, Blade, Rust and Vue functions too: `complexity-cyclomatic-php`, `complexity-cyclomatic-blade` (functions a template's PHP defines), `complexity-cyclomatic-rust` and `complexity-cyclomatic-vue` (functions in a component's scripts), mode `steer`, limit 6, with lizard 1.24.0's decision points. Set-up now offers the pack for PHP, Blade, Rust and Vue source. SQL gets no rule: lizard scores procedural routines, whose bodies Rerail's SQL grammar does not read.
 

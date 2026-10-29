@@ -15,10 +15,6 @@ Port of ESLint accessor-pairs. Default options: setWithoutGet true, getWithoutSe
 
 Port of ESLint class-methods-use-this, default options. Flags non-static, non-constructor methods and class fields initialized with a function/arrow whose own body never uses this or super. Nested functions, static blocks and nested class field initializers have their own this; arrows share it. An accessor field (AccessorProperty) is not treated as a field.
 
-### `eslint-default-param-last`
-
-Port of ESLint default-param-last on JS files. A rest parameter neither counts as required nor is reported (ESLint isRequiredParameter). TypeScript optional params are handled by typescript-eslint-default-param-last.
-
 ### `eslint-func-name-matching`
 
 Port of ESLint func-name-matching, default mode always. Compares against variable, assigned property, object key or class field; string keys only when they are escape-free identifier names. module.exports is exempt by default.
@@ -35,29 +31,9 @@ Port of ESLint id-length, default min 2 (graphemes), no max, properties always. 
 
 Port of ESLint max-classes-per-file, default max 1. Reported at the file's first statement; counts declared and evaluated (expression) classes.
 
-### `eslint-max-depth`
-
-Port of ESLint max-depth, default 4. Depth counted per function, static block or program.
-
-### `eslint-max-nested-callbacks`
-
-Port of ESLint max-nested-callbacks with max 10. A callback is a function/arrow passed as a call argument; a callback nested inside more than max callbacks (itself included) is reported at its function head. Nesting depth is not interpolated into the message.
-
-### `eslint-max-params`
-
-Port of ESLint max-params (default 3) on JS files. Every param counts: plain, defaulted, destructured, rest. Reported at getFunctionHeadLoc's start; message names the function via getFunctionNameWithKind. countThis only affects TS this params; TS declared functions/function types are typescript-eslint-max-params's.
-
-### `eslint-max-statements`
-
-Port of ESLint max-statements (default 10, ignoreTopLevelFunctions false). Counts statements directly in blocks up to the nearest nested function or class static block; the message's count is only produced where the body holds no nested block.
-
 ### `eslint-no-alert`
 
 Port of ESLint no-alert. Flags alert/confirm/prompt when unshadowed, or as members of unshadowed window, of globalThis when ecmaVersion or globals declare it, or of this at script global scope. Only globalThis honours /* global */ comments.
-
-### `eslint-no-array-constructor`
-
-Port of ESLint no-array-constructor. Only the global Array; exempt with exactly one non-spread argument or type arguments. Fix to an array literal adds a leading ; when the previous statement would otherwise continue (approximated from its last token).
 
 ### `eslint-no-await-in-loop`
 
@@ -70,10 +46,6 @@ Port of ESLint no-dupe-class-members. Static member names follow ESLint's getSta
 ### `eslint-no-dupe-else-if`
 
 Port of ESLint no-dupe-else-if. Flags an else-if test that repeats an earlier test of the chain, is an operand of an earlier `||` test, or is an `&&` whose operand repeats an earlier test (one level only). Tests are compared by tokens, with `||`/`&&` operands in either order (ESLint's equal). Divergence: ESLint's full or/and set-cover over the whole chain is not expressed.
-
-### `eslint-no-empty-function`
-
-Port of ESLint no-empty-function, default options (allow: []). A body holding a comment is not empty; constructors with parameter properties are exempt.
 
 ### `eslint-no-eval`
 
@@ -126,10 +98,6 @@ Flags each definition after the first in the same scope (`binds.redefines`); wit
 ### `eslint-no-self-assign`
 
 Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
-
-### `eslint-no-unexpected-multiline`
-
-Flags a line break before the `(` (or `<` of type arguments) of a call with arguments, the `[` of a computed member access, the template of a tagged template, or the first `/` of a division whose second `/` is directly followed by regex flags. Optional calls and members are skipped.
 
 ### `eslint-no-unsafe-optional-chaining`
 

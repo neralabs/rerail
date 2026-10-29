@@ -117,8 +117,11 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   evidence), the pinned tools, and for each ported rule the upstream tool and rule it reproduces,
   how findings compare (`line` or `line+column`) and the capabilities it exercises. `suppressionExemptions` lists the
   ports, by `id`, whose documents need not carry their tool's suppression comment yet, each with its `reason` (check
-  4). A port whose document is under `candidates/` is scored and reported but never fails a check; it is scored on the
-  fixtures, whose expected findings must cover it. A port may
+  4). A port whose document is under `candidates/` is scored and reported but its scores never fail a check; it is
+  scored on the fixtures, whose expected findings must cover it. Such a port may carry `examples: { caught, passes }`,
+  each with a `path` and `text` as in `pack.json`: its rule's pair while `pack.json` does not list it, which check 3
+  runs and which moves to the rule's `pack.json` entry when it ships (a shipped port carrying `examples` fails the
+  schema). A port may
   set `fixtures`, `path.matchesGlob` patterns over the tool's fixture paths: it is then evaluated and scored only on
   the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
   with several option sets is scored: one document per option set, each on its own tests. A port may set `lints`, the
@@ -326,7 +329,7 @@ ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule 
 |---|---|---|
 | 1 | Rules | A file in `rules/` is not listed in `pack.json`, a listed `document` is missing, is not named for its rule's id, its `id` differs from the listing, or it does not compile against core's capabilities; a rule id breaks the [id rule](#packjson); a candidate is not `rerail.policy/v1`, not in a `rules/` directory or not named for its id; a port's `id` differs from its document's; a `conformance.json` under `candidates/` does not parse or names a missing document |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
-| 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
+| 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one: `pack.json`'s, and a candidate's in `conformance.json` |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's expected findings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
 | 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `public`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records; the README's rule details describe a rule `pack.json` does not list, or `candidates/README.md`'s describe one it does |
 | 6 | Licences | A pulled file falls under a `Not copied` glob, or in a tool's subdirectory is neither authored nor under a `Taken from it` glob; a declared glob matches no pulled file; an `UPSTREAM.md` is malformed, or records a licence off the allowlist; the tool's own `UPSTREAM.md` lists a file outside its tool directory or one that does not exist |
@@ -348,7 +351,8 @@ Precisely:
 2. A port entry is a `conformance.json` rule whose `policy` is the rule's `document`.
 3. Each example is evaluated alone, as a one-file repository at its `path`, through the engine (`evaluateExample` in
    `conformance/pack-validation.ts`). Its path must be in the rule's scope, and it must produce no engine failure. A
-   violation counts when its code is one of the rule's clauses' codes.
+   violation counts when its code is one of the rule's clauses' codes. A candidate's pair, on its `conformance.json`
+   port, is held to the same against its document under `candidates/`.
 4. The fixture tier of the conformance runner (`conformance/languages/runner.ts`, the `language-conformance` test's),
    over the production workspace path: an unexplained false positive fails on every source, an unexplained false
    negative on the fixtures only, as do engine failures, expected-findings errors and stale divergences or exemptions.

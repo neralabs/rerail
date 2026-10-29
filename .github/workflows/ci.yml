@@ -93,6 +93,44 @@ jobs:
           npm run check:ui-tokens
           npm run check:reference
 
+  # Known vulnerabilities in the dependencies the package ships: npm's advisories for the root package's and the
+  # playground's production dependencies (moderate and up; development dependencies are Dependabot alerts' to report,
+  # not a gate), and RustSec's for the engine's crates (vulnerabilities; unmaintained and unsound advisories are the
+  # warnings cargo-audit allows). Both read the lockfiles alone and install nothing from them: `npm audit` sends the
+  # lockfile's names and versions to the registry, and cargo-audit is a prebuilt binary run directly, so rustup never
+  # installs the pinned toolchain here. The fix is `npm audit fix --omit=dev` (in playground/ too) and `cargo update
+  # -p <crate>`; both tools print the advisory with the fix.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: npm audit (root package, production dependencies)
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: npm audit (playground, production dependencies)
+        working-directory: playground
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit (engine crates)
+        run: cargo-audit audit --file Cargo.lock
+
   # Pull requests that touch none of the engine's inputs skip the Rust jobs. The engine's tests also
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
@@ -222,7 +260,7 @@ jobs:
       # As in .github/actions/pack-test-data: the credentials are this step's outputs, not exported.
       - id: credentials
         name: Assume the test data read role
-        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::696860996542:role/github-actions-test-fixtures-read
           aws-region: us-east-2
@@ -897,6 +935,7 @@ jobs:
     needs:
       - licenses
       - lint
+      - audit
       - changes
       - test-data
       - test-data-in-s3

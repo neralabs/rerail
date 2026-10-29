@@ -182,7 +182,8 @@ To promote a candidate, in one pull request:
 1. move its document to `rules/<id>.json` and point its `conformance.json` port's `policy` there (pack check 1 and 2);
 2. list it in `pack.json` with its `document`, `title` and `group`, `"on": false` when the comment says it starts off,
    and `"mode": "log"` when upstream's recommended configuration only warns
-   ([pack-format.md](../docs/pack-format.md#packjson));
+   ([pack-format.md](../docs/pack-format.md#packjson)); an `examples` pair on its `conformance.json` port moves to that
+   entry (pack check 3 runs it in either place; `conformance.json` refuses it on a shipped port);
 3. move its rule details from `candidates/README.md` to the pack's `README.md`, which publishes only the shipped rules
    (pack check 5);
 4. add a changeset for the pack, since `rules/`, `pack.json` and `README.md` are what it publishes
@@ -191,8 +192,8 @@ To promote a candidate, in one pull request:
    divergence declared ([REVIEW.md](../REVIEW.md)).
 
 Once shipped, the rule blocks CI on any failing check. A shipped rule that starts failing is fixed, or moved back to
-`candidates/` (its `pack.json` entry removed, its `policy` pointed back and its rule details moved to
-`candidates/README.md`).
+`candidates/` (its `pack.json` entry removed, its `policy` pointed back, its `examples` moved to its port and its rule
+details moved to `candidates/README.md`).
 
 ### Packs not gated
 

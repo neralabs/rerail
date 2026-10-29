@@ -90,6 +90,8 @@ rerail manage                 # Rule packs page: add it to this repository
 | `javascript` | ESLint v10, eslint-plugin-unicorn v76 |
 | `typescript` | typescript-eslint v8, eslint-plugin-vitest v1 |
 | `next` | @next/eslint-plugin-next v16 |
+| `react` | eslint-plugin-react v7, eslint-plugin-react-hooks v7 |
+| `node` | eslint-plugin-n v18 |
 | `sql` | SQLFluff v4 |
 | `vue` | eslint-plugin-vue v10 |
 | `rust` | Clippy (Rust 1.99) |

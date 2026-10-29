@@ -61,7 +61,7 @@ fn invalid(message: impl Into<String>) -> Error {
 fn sha256(path: &Path) -> Result<String> {
     let bytes = fs::read(path)
         .map_err(|error| invalid(format!("failed to read {}: {error}", path.display())))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(crate::lower_hex(&Sha256::digest(bytes)))
 }
 
 fn verify_file(root: &Path, name: &str, expected: &str) -> Result<PathBuf> {
