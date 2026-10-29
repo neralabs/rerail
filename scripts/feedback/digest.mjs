@@ -34,6 +34,9 @@ const KINDS = [
   ["False negative", "Missed violation"],
   ["The steer", "Confusing steer"],
 ];
+
+/** How many rules the open misfires section names, most reported first. */
+const OPEN_RULES_SHOWN = 10;
 const NOT_GIVEN = "not given";
 
 /** An issue form's answers, by field label: the `### <label>` sections GitHub writes, without `_No response_` ones. */
@@ -119,9 +122,11 @@ export function summarize(issues, { start, end }) {
   const openMisfires = open.filter((issue) => issueType(issue) === "Rule misfire").map(misfire);
   const openKinds = new Map();
   const openPacks = new Map();
+  const openRules = new Map();
   for (const entry of openMisfires) {
     count(openKinds, entry.kind);
     count(openPacks, entry.pack);
+    count(openRules, entry.rule);
   }
 
   return {
@@ -135,7 +140,7 @@ export function summarize(issues, { start, end }) {
     types,
     agents,
     misfires: { total: misfires.length, kinds, packs, rules: [...rules.values()].sort((a, b) => b.issues.length - a.issues.length || a.rule.localeCompare(b.rule)) },
-    openMisfires: { total: openMisfires.length, kinds: openKinds, packs: openPacks },
+    openMisfires: { total: openMisfires.length, kinds: openKinds, packs: openPacks, rules: openRules },
   };
 }
 
@@ -183,6 +188,7 @@ export function render(digest) {
   else {
     lines.push(`- ${digest.openMisfires.total} open: ${kindsOf(digest.openMisfires.kinds)}`);
     lines.push(`- By pack: ${list(digest.openMisfires.packs)}`);
+    lines.push(`- Rules with the most: ${ranked(digest.openMisfires.rules).slice(0, OPEN_RULES_SHOWN).map(([rule, n]) => `\`${rule}\` ${n}`).join(", ")}`);
   }
   return `${lines.join("\n")}\n`;
 }
