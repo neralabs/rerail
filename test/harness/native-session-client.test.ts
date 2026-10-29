@@ -206,7 +206,7 @@ describe("daemon native client branch encoding", () => {
       return network(url, init);
     });
     const client = new NativeSessionClient({
-      instance: { workspaceRoot: root, url: new URL(daemon.url) },
+      instance: { workspaceRoot: root, url: new URL(daemon.url), accessToken: daemon.state().accessToken! },
       token: daemon.state().nativeToken!,
       host: "omp", sessionId: "branch-encoding", entries: () => branch,
       appendEntry() {}, deliver() {},
@@ -729,7 +729,7 @@ describe("daemon native client polling resilience", () => {
     const entries: unknown[] = [];
     const reported: number[] = [];
     const client = new NativeSessionClient({
-      instance: { workspaceRoot: root, url: new URL(daemon.url) },
+      instance: { workspaceRoot: root, url: new URL(daemon.url), accessToken: daemon.state().accessToken! },
       token: daemon.state().nativeToken!,
       host: "omp", sessionId: "closing", entries: () => [],
       appendEntry: (_customType, data) => { entries.push(data); },
@@ -1151,7 +1151,7 @@ describe("the end of a native host's run", () => {
     });
     const received: AdapterDelivery[] = [];
     const client = new NativeSessionClient({
-      instance: { workspaceRoot: root, url: new URL(daemon.url) },
+      instance: { workspaceRoot: root, url: new URL(daemon.url), accessToken: daemon.state().accessToken! },
       token: daemon.state().nativeToken!,
       host: "omp", sessionId: "yield", entries: () => [],
       appendEntry() {},

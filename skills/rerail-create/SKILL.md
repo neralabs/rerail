@@ -85,6 +85,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    Then apply the gates in [references/rule-quality.md](references/rule-quality.md#gates):
    - Every case comes out right. A case marked not checked (`notChecked`) is not right.
    - Read every repository match the report shows, and decide whether each is a real violation.
+   - `repository.leftOut` counts files and folders the repo pass did not read: hidden, secret-named, or ignored by Git.
+     Its matches say nothing about those.
    - A rule that matches hundreds of places fights the repo's convention.
    - The message passes the harmful-steering check.
 

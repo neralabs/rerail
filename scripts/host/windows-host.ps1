@@ -167,8 +167,18 @@ function Invoke-RerailSessionStartHooks([string]$UserHome, [string]$Project, [st
   }
 }
 
+# The daemon answers only a request that carries the access capability its `daemon.json` records, in the Rerail home as
+# Rerail resolves it: `RERAIL_HOME`, else `.rerail` in the user profile.
+function Get-RerailAccessHeaders {
+  $rerailHome = if ($env:RERAIL_HOME) { $env:RERAIL_HOME } else { Join-Path $env:USERPROFILE ".rerail" }
+  $token = (Get-Content -Raw (Join-Path $rerailHome "daemon.json") | ConvertFrom-Json).accessToken
+  if (-not $token) { throw "$rerailHome\daemon.json records no access capability" }
+  return @{ "x-rerail-access" = $token }
+}
+
 function Assert-RerailSessionsRecorded([int]$Port, [string[]]$SessionIds) {
-  $recorded = @((Invoke-RestMethod -UseBasicParsing -ErrorAction Stop "http://127.0.0.1:$Port/api/sessions").sessions | ForEach-Object { $_.sessionId })
+  $sessions = Invoke-RestMethod -UseBasicParsing -ErrorAction Stop -Headers (Get-RerailAccessHeaders) "http://127.0.0.1:$Port/api/sessions"
+  $recorded = @($sessions.sessions | ForEach-Object { $_.sessionId })
   "daemon recorded: $($recorded -join ', ')"
   $missing = @($SessionIds | Where-Object { $recorded -notcontains $_ })
   if ($missing.Count -gt 0) { throw "the daemon did not record $($missing -join ', ')" }
