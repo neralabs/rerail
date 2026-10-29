@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "meteor/meteor",
+    "commit": "e4c568b1e1905062c5b3a2cf69784ff6fc8ad404",
+    "path": "packages/underscore/pre.js",
+    "license": "MIT",
+    "sha256": "bf608bc5dcc224b9ae8952557d6b1dead0d88128dc9f5dad0f33c001c0af889d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": [
+      {
+        "line": 3,
+        "column": 1
+      }
+    ]
+  }
+}

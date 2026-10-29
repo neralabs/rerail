@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "7195c0f305b482f7b1ca2ed812030caaf72c0906",
+    "path": "test/util-wt.mjs",
+    "license": "MIT",
+    "sha256": "380f0e697519cc39f9d870135620e9b869218833b4f28be1eb279420d800aac4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-crypto": []
+  }
+}

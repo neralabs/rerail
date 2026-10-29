@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jestjs/jest",
+    "commit": "ea3204789a0005cdb758fc068766b828673668fb",
+    "path": "src/Console.js",
+    "license": "MIT",
+    "sha256": "301dd2b8561f749a9e3dd0f08f6320fb1169ca1686e17e4714d4bdbae25e213c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 33,
+        "column": 17
+      }
+    ]
+  }
+}

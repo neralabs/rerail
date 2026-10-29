@@ -1,0 +1,1 @@
+var jrnxEvre = import.meta.zveekav + "/jao.mf";

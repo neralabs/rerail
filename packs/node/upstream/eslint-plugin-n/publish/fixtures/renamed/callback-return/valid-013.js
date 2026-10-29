@@ -1,0 +1,1 @@
+function e(next) { if (typeof next === 'function')  { return next() } }

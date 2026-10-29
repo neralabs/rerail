@@ -1,0 +1,1 @@
+(function(Int32Array) { Int32Array }(j))

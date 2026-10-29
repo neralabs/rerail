@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "3f1254492bacfbe1957c5d2ce866392ec8105b50",
+    "path": "packages/gatsby-plugin-utils/src/polyfill-remote-file/__tests__/resize-resolver.ts",
+    "license": "MIT",
+    "sha256": "071e406b0a23ae23bc4ba971a007eb643bc7263a8f6f74f20cd198caa4c30ad7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url-search-params": []
+  }
+}

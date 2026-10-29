@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mde/ejs",
+    "commit": "2f5b75fdfae634f0fec71c9edfd480fedd7dd9c9",
+    "path": "framework/fleegix.js",
+    "license": "Apache-2.0",
+    "sha256": "eed202bd3c70ed2522a10800a70f8bfe301322a2fe16e144ba6cae0e78e58180"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}

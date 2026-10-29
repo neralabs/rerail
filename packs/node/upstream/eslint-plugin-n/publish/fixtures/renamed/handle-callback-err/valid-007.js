@@ -1,0 +1,1 @@
+var test = function(fyk, xaes) {if(!fyk) { esgw(); } else { ocz(); }}

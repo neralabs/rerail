@@ -1,0 +1,1 @@
+import xouyyl6 from './ignore2';

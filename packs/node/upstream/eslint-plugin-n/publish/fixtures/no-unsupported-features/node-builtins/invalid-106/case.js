@@ -1,0 +1,1 @@
+require('fs').realpath.native

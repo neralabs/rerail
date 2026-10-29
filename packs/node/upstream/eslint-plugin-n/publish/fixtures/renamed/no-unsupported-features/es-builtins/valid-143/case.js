@@ -1,0 +1,1 @@
+(function(Proxy) { Proxy }(j))

@@ -1,0 +1,1 @@
+var { pzqpZhdqtgAeojv } = require('assert'); pzqpZhdqtgAeojv()

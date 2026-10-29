@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-css/utilities/get-value-root.js",
+    "license": "MIT",
+    "sha256": "da032305e6239b7c32d3e7be9e748574d0185d2fdf78387cb2a20736af30a8ba"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}

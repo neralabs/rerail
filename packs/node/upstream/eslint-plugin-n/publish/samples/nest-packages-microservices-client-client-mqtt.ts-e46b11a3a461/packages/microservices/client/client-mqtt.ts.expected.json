@@ -1,0 +1,46 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "47eb92b6b5c3abc173ee095d327132148797f47b",
+    "path": "packages/microservices/client/client-mqtt.ts",
+    "license": "MIT",
+    "sha256": "e46b11a3a461511f4f545dea5b8eea23bbbb7bdd1af78ba66d005c13c26c714b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": [
+      {
+        "line": 91,
+        "column": 11
+      },
+      {
+        "line": 301,
+        "column": 16
+      },
+      {
+        "line": 307,
+        "column": 7
+      },
+      {
+        "line": 365,
+        "column": 17
+      },
+      {
+        "line": 375,
+        "column": 11
+      },
+      {
+        "line": 392,
+        "column": 20
+      },
+      {
+        "line": 403,
+        "column": 7
+      }
+    ]
+  }
+}

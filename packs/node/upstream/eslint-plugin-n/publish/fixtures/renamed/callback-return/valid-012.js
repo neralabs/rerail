@@ -1,0 +1,1 @@
+function e(next) { typeof next !== 'undefined' && next(); }

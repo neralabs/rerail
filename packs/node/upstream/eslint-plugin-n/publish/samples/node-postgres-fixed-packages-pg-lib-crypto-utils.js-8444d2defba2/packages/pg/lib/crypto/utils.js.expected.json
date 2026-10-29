@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "brianc/node-postgres",
+    "commit": "522e2dcb76f92d0096177b10204bdc385375020d",
+    "path": "packages/pg/lib/crypto/utils.js",
+    "license": "MIT",
+    "sha256": "8444d2defba27b8c942f84fcac8ff8b322c48858c9db54ffce0478733795f41d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-encoder": []
+  }
+}

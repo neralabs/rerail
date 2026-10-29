@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "sequelize/sequelize",
+    "commit": "410bb59eb7779ce52568aba68c94ad7421237790",
+    "path": "test/unit/model/getAttributes.test.js",
+    "license": "MIT",
+    "sha256": "e01b4be2eb7f662e36d3f49e6d4c9f6c8f51ec2304362946cb9889ad4796ad96"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-mixed-requires": [
+      {
+        "line": 3,
+        "column": 1
+      }
+    ]
+  }
+}

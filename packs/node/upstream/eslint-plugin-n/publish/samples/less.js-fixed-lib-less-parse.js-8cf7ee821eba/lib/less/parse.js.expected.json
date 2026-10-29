@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "less/less.js",
+    "commit": "cf54e01743a92ec05767edcd2dd5352ec5a0d9c6",
+    "path": "lib/less/parse.js",
+    "license": "Apache-2.0",
+    "sha256": "8cf7ee821eba73ad0af996431df3c7bc5612bbdf78a2452512ccda26221b7a2e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-mixed-requires": []
+  }
+}

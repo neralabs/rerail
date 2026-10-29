@@ -1,0 +1,1 @@
+class P { async* hgpjgm() { } }

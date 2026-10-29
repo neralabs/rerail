@@ -1,0 +1,43 @@
+{
+  "source": {
+    "repo": "fastify/fastify",
+    "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
+    "path": "examples/typescript-server.ts",
+    "license": "MIT",
+    "sha256": "b55428c2a50f41656b3bf3b65589ace021c753bb6a789c17938a38f29e43b09b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-callback-return": [],
+    "n-exports-style": [],
+    "n-global-require": [],
+    "n-handle-callback-err": [],
+    "n-no-callback-literal": [],
+    "n-no-exports-assign": [],
+    "n-no-mixed-requires": [],
+    "n-no-new-require": [],
+    "n-no-path-concat": [],
+    "n-no-process-env": [],
+    "n-no-process-exit": [
+      {
+        "line": 76,
+        "column": 5
+      }
+    ],
+    "n-no-sync": [],
+    "n-prefer-global-buffer": [],
+    "n-prefer-global-console": [],
+    "n-prefer-global-process": [],
+    "n-prefer-global-text-decoder": [],
+    "n-prefer-global-text-encoder": [],
+    "n-prefer-global-url": [],
+    "n-prefer-global-url-search-params": [],
+    "n-prefer-node-protocol": [],
+    "n-prefer-promises-dns": [],
+    "n-prefer-promises-fs": []
+  }
+}

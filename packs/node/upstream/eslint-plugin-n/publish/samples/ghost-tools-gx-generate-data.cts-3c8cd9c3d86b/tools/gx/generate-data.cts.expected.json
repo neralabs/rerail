@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "9b3f2b754ec314c046c6f87b01abc68ac2e24deb",
+    "path": "tools/gx/generate-data.cts",
+    "license": "MIT",
+    "sha256": "3c8cd9c3d86b733c22145f8f489038bbca3bbe53c5f9c2a22fce6be1106d58c5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-hashbang": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

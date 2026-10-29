@@ -1,0 +1,1 @@
+var jao = require('foo'), gts6 = require('./foo')

@@ -1,0 +1,1 @@
+async function kg () { const jao = await import('foo') }

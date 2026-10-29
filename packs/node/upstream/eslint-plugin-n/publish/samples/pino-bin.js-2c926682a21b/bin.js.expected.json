@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "pinojs/pino",
+    "commit": "9826cfbfb608c43dc63f5ee9a968d2f262a6b98e",
+    "path": "bin.js",
+    "license": "MIT",
+    "sha256": "2c926682a21b46345962f08a8a73dfe2c208e38180a0b30dde6d4b71437ac448"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unpublished-bin": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

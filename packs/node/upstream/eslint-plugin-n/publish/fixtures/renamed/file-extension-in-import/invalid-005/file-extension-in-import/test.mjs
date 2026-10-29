@@ -1,0 +1,1 @@
+import { hhbs } from './my-folder/'

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "nodejs/undici",
+    "commit": "904b8f3ed231f14a0cab2e65ac8adcded3275d73",
+    "path": "test/wpt/runner/worker.mjs",
+    "license": "MIT",
+    "sha256": "2497ff87d35708b95a7843e1cd7962fa93511a756edb366f3a3317062396083e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-crypto": [
+      {
+        "line": 15,
+        "column": 10
+      }
+    ]
+  }
+}

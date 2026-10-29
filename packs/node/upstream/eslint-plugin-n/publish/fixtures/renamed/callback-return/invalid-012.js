@@ -1,0 +1,1 @@
+var j = (fyk) => { rfnafjvy (fyk); rfnafjvy(); }

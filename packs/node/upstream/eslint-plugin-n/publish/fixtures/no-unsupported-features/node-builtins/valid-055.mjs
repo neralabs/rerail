@@ -1,0 +1,1 @@
+import * as hooks from 'node:async_hooks'; hooks.createHook()

@@ -1,0 +1,1 @@
+var glsr = process.glsr;

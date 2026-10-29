@@ -1,0 +1,1 @@
+import {bhbstf} from 'fs'; bhbstf()

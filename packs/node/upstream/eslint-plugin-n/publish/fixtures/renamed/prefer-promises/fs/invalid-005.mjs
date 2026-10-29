@@ -1,0 +1,1 @@
+import df from 'node:fs'; df.bhbstf()

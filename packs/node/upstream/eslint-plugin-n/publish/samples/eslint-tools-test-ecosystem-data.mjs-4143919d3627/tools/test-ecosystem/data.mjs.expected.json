@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "77add7f1bc91ed17bba3be3289928a9146c5f5a1",
+    "path": "tools/test-ecosystem/data.mjs",
+    "license": "MIT",
+    "sha256": "4143919d3627bf5ed3526213e3f3101daf1224e8356e268f1922df8f64ab319a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-exit": [
+      {
+        "line": 70,
+        "column": 3
+      }
+    ]
+  }
+}

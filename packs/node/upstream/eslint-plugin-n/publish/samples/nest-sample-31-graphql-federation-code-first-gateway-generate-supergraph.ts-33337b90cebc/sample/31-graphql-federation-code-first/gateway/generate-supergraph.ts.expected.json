@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "e483cbe2ef4202c1813a3f4178a1866d46bb32ab",
+    "path": "sample/31-graphql-federation-code-first/gateway/generate-supergraph.ts",
+    "license": "MIT",
+    "sha256": "33337b90cebca745250d028a263ba42eaa105f943a867769a9b3a7881a0e7c9d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-top-level-await": [
+      {
+        "line": 106,
+        "column": 3
+      },
+      {
+        "line": 108,
+        "column": 3
+      }
+    ]
+  }
+}

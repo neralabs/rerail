@@ -1,0 +1,1 @@
+import aConfig from './a.config.js';

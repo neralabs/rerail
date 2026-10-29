@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jestjs/jest",
+    "commit": "12c13459b35c812db7eee6663bf521032316c127",
+    "path": "src/NullConsole.js",
+    "license": "MIT",
+    "sha256": "427389ac398e695ddcc6edf3254cad8a01fc6b8e15309b2021111ff41844a89d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 11,
+        "column": 17
+      }
+    ]
+  }
+}

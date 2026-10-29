@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "8b0a40fd4a13be2d22c855501bf226695d3b2b37",
+    "path": "examples/cluster-engine-node-cluster/server.js",
+    "license": "MIT",
+    "sha256": "3aa2806da0d0028458a11661d57859d0469022f5f2e3722df394fe47d99dd2b3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": []
+  }
+}

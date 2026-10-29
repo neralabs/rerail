@@ -1,0 +1,1 @@
+import buffer from 'buffer'; new buffer.Npuq();

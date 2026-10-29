@@ -1,0 +1,1 @@
+import assert, { strict } from "node:assert";

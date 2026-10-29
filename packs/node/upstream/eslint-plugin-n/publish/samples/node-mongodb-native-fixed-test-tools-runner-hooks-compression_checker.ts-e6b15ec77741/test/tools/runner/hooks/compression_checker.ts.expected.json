@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mongodb/node-mongodb-native",
+    "commit": "399045a6a89c038bbfee7145a4bbc46152066e4b",
+    "path": "test/tools/runner/hooks/compression_checker.ts",
+    "license": "Apache-2.0",
+    "sha256": "e6b15ec777414b27f2431c7f0a2da55885387069fa16dcfa5ecbd6087a7f03a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": []
+  }
+}

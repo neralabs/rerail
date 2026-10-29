@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "axios/axios",
+    "commit": "6b3c305fc40c56428e0afabedc6f4d29c2830f6f",
+    "path": "lib/helpers/formDataToStream.js",
+    "license": "MIT",
+    "sha256": "4696d0265b943b643699cc2c8705e8c39bf06217da8fe9a7be97e573d584fc6f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-encoder": [
+      {
+        "line": 1,
+        "column": 9
+      }
+    ]
+  }
+}

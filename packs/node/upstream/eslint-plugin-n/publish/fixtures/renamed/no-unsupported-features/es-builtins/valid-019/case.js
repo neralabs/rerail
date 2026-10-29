@@ -1,0 +1,1 @@
+(function(Map) { Map }(l))

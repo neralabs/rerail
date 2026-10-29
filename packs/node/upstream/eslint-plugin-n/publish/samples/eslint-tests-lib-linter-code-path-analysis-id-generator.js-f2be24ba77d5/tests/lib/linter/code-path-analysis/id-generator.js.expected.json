@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "2b252be80f362cca7be3326a6dbe958680fdfe9a",
+    "path": "tests/lib/linter/code-path-analysis/id-generator.js",
+    "license": "MIT",
+    "sha256": "f2be24ba77d5e178d7df01c38e55d7f507c9aa8b650f37f55a83ff0984361026"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-import-assert-strict": [
+      {
+        "line": 11,
+        "column": 24
+      }
+    ]
+  }
+}

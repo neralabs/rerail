@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "lerna/lerna",
+    "commit": "96095e21595cfc7bd78fab8f55aed76a144715c4",
+    "path": "tools/scripts/lerna-release.ts",
+    "license": "MIT",
+    "sha256": "c305421cacfdac9e1eb90e701a0df7586090cbbb3498a3e8c8eefff4282d93f5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": []
+  }
+}

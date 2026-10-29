@@ -14,8 +14,9 @@
 //    fixture file, and writes fixtures.expected.json. The run lints a copy of fixtures/ under a fresh temporary
 //    directory, so the plugin reads nothing above it while it resolves imports and reads packages: no node_modules,
 //    tsconfig.json or package.json of this repository or any folder above. Findings are relative to the copy's root.
-// 3. Writes ../../licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md} and, beside the expected findings, provenance.json and
-//    LICENSES.md (the per-file record and licence texts the test-data archive carries).
+// 3. Copies ../../licenses/eslint-plugin-n/LICENSE and writes provenance.json and LICENSES.md: every copied test, every
+//    case with its upstream test file, the upstream fixture trees and package files beside them, and Rerail's own
+//    package.json files.
 //
 // Source type is what Node itself uses for the file: `.mjs`/`.mts` module, `.cjs`/`.cts` commonjs, otherwise the
 // nearest package.json's `type` ("module" → module, anything else → commonjs). Globals: `globals.node` (globals
@@ -48,7 +49,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assertCommit, isVariantPath, lint, pinnedRequire, RENAMED_DIRECTORY, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { assertCommit, lint, pinnedRequire, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { RERAIL, variantEntries, writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = "eslint-plugin-n";
@@ -409,11 +411,7 @@ function writeFixtures(upstream, cases) {
   return copies;
 }
 
-// ---- 3. licenses --------------------------------------------------------------------------------------------------
-
-const PROVENANCE_FORMAT = "rerail.pack-provenance/v1";
-const RERAIL = "rerail";
-const byBytes = (a, b) => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
+// ---- 3. licence and provenance ------------------------------------------------------------------------------------
 
 /** Every file below `directory`, relative to it, `/`-separated. */
 function filesBelow(directory, prefix = "") {
@@ -423,101 +421,48 @@ function filesBelow(directory, prefix = "") {
   });
 }
 
-/**
- * The per-file record of the test data (`provenance.json`, beside the expected findings in the tool-pack's archive):
- * each file under tests/ and fixtures/, its source, its upstream path and how it was made. `copies`: the copied
- * upstream fixture trees (fixtures-relative folder to upstream folder); `variants`: the kept rename variants.
- */
-function provenance(cases, copies, variants) {
-  const files = new Map();
-  const upstreamFile = (from, how, detail) => ({ source: TOOL, from, how, ...(detail === undefined ? {} : { detail }) });
-  const authored = detail => ({ source: RERAIL, how: "authored", detail });
-  for (const rule of RULES) files.set(`tests/lib/rules/${rule}.js`, upstreamFile(`tests/lib/rules/${rule}.js`, "verbatim"));
-  files.set("fixtures/package.json", authored("the fixtures' source type and engines (fixturePackageJson)"));
-  const fixtures = join(HERE, "fixtures");
-  for (const [copy, original] of copies) for (const path of filesBelow(join(fixtures, copy))) files.set(`fixtures/${copy}/${path}`, upstreamFile(`${original}/${path}`, "verbatim"));
-  for (const entry of cases) {
-    if (entry.engines !== undefined) files.set(`fixtures/${entry.directory}/package.json`, authored("the case's configured Node version as engines.node (casePackageJson)"));
-    files.set(`fixtures/${entry.path}`, upstreamFile(entry.testFile, "extracted", entry.origin));
-  }
-  for (const { unit, of } of variants) {
-    const [variant, ...packageFiles] = unit;
-    files.set(`fixtures/${variant}`, { ...upstreamFile(files.get(`fixtures/${of}`).from, "renamed"), renamedFrom: `fixtures/${of}` });
-    for (const copy of packageFiles) {
-      const original = files.get(`fixtures/${copy.slice(RENAMED_DIRECTORY.length + 1)}`);
-      files.set(`fixtures/${copy}`, original.source === RERAIL ? original : upstreamFile(original.from, "verbatim"));
-    }
-  }
-  files.set("fixtures.expected.json", { source: RERAIL, how: "recorded" });
-  const sources = {
-    [TOOL]: { repository: UPSTREAM_REPOSITORY, tag: `v${VERSION}`, commit: UPSTREAM_COMMIT, license: "MIT" },
-    [RERAIL]: { license: "Apache-2.0" },
-  };
-  return { format: PROVENANCE_FORMAT, snapshot: "written by packs/node/upstream/eslint-plugin-n/generate.mjs", pack: "node", tool: TOOL, sources, files: Object.fromEntries([...files].sort(([a], [b]) => byBytes(a, b))) };
-}
-
-const fence = text => "`".repeat(Math.max(2, ...[...text.matchAll(/`+/gu)].map(match => match[0].length)) + 1);
+/** A copy beside the rename variants: the file of the original the variant renames, unchanged. */
+const variantCopy = original => `a copy of \`${original}\`, beside the rename variants it gives a package`;
 
 /**
- * Writes licenses/eslint-plugin-n/{LICENSE,UPSTREAM.md} (the repository's record: its source and the pack-path patterns
- * taken from it) and, beside the expected findings, provenance.json and LICENSES.md (the per-file record and the
- * licence texts the tool-pack's test-data archive carries).
+ * ../../licenses/eslint-plugin-n/LICENSE (verbatim) and the tool's provenance.json and LICENSES.md: the copied tests,
+ * Rerail's fixtures/package.json and each case folder's package.json of ours (`casePackageJson`), the upstream fixture
+ * trees copied beside the cases (`copies`: fixtures-relative folder → upstream folder), each kept case, and its rename
+ * variant (`recorded`, withOrigins' result) with copies of its package files.
  */
-function writeLicenses(upstream, cases, copies, variants) {
+function writeLicenseAndProvenance(upstream, cases, copies, recorded) {
   const directory = join(HERE, "..", "..", "licenses", TOOL);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
-  writeFileSync(join(directory, "UPSTREAM.md"), `# eslint-plugin-n ${VERSION}
-
-License: MIT (Copyright (c) 2015 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at the commit below.
-
-## Source
-
-| Repository | Tag | Commit | Licence |
-|---|---|---|---|
-| ${UPSTREAM_REPOSITORY} | \`v${VERSION}\` | \`${UPSTREAM_COMMIT}\` | MIT |
-
-## Taken from it
-
-| Pack paths | Upstream paths | How |
-|---|---|---|
-| \`upstream/${TOOL}/tests/**\` | \`tests/lib/rules/**\` | verbatim: the rule test files |
-| \`upstream/${TOOL}/fixtures/**\` | \`tests/**\` | extracted: each file is one RuleTester case's \`code\`, verbatim; and verbatim, the upstream test data (\`tests/fixtures/**\`) a case's \`filename\` reads: the package.json, \`.npmignore\` and \`.gitignore\` above it, or the whole fixture tree it lies in |
-| \`upstream/${TOOL}/fixtures/renamed/**\` | as its original | renamed: the file of the same path below \`fixtures/\`, with its names and literals renamed; and verbatim, a copy of the package files beside the variants |
-
-The files taken from it are the upstream rule tests of the rules the Node pack ports (\`conformance.json\`, \`upstream/${TOOL}/generate.mjs\`), the upstream test data they read, and one file per test case holding that case's \`code\` verbatim; they remain under eslint-plugin-n's license. Some files under \`upstream/${TOOL}/fixtures/\` are Rerail's although the pattern above covers them: \`fixtures/package.json\` (the fixtures' source type and engines), each case folder's \`package.json\` that states a case's configured Node version as \`engines.node\`, and their copies under \`fixtures/renamed/\`; \`provenance.json\` records them as Rerail's. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-n's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 ([\`LICENSE\`](../../LICENSE)).
-
-Paths are relative to the pack directory, \`packs/node/\`. The test files are in no package and not in git: the tool-pack's S3 archive (\`upstream/${TOOL}/test-data.lock\`) holds them, with \`provenance.json\` (every file, its upstream path and how it was made, written by \`generate.mjs\`) and \`LICENSES.md\` (this licence text). The expected findings recorded by running the tool are Rerail's.
-`);
-  const record = provenance(cases, copies, variants);
-  writeFileSync(join(HERE, "provenance.json"), `${JSON.stringify(record, null, 2)}\n`);
-  const entries = Object.values(record.files);
-  const counts = list => ["verbatim", "extracted", "renamed", "recorded", "authored"].map(how => [how, list.filter(entry => entry.how === how).length]).filter(([, n]) => n > 0).map(([how, n]) => `${n} ${how}`).join(", ");
-  const upstreamFiles = entries.filter(entry => entry.source === TOOL);
-  const own = entries.filter(entry => entry.source === RERAIL);
-  const licence = readFileSync(join(upstream, "LICENSE"), "utf8");
-  writeFileSync(join(HERE, "LICENSES.md"), [
-    `# Licences of the ${TOOL} test data`,
-    "",
-    `This archive is the test data of \`packs/node/upstream/${TOOL}/\`. \`provenance.json\` beside this file lists every file in it with its source, its upstream path and how it was made (written by generate.mjs). Each upstream source below is listed with its licence, how many files come from it, and its licence text as the repository tracks it under \`packs/node/licenses/\`; the rest is Rerail's.`,
-    "",
-    `## ${TOOL}`,
-    "",
-    `Repository ${UPSTREAM_REPOSITORY}, tag \`v${VERSION}\`, commit \`${UPSTREAM_COMMIT}\`. License: MIT.`,
-    "",
-    `${upstreamFiles.length} file(s): ${counts(upstreamFiles)}. They remain under ${TOOL}'s licence. Files marked \`extracted\` or \`renamed\` were changed by Rerail as \`provenance.json\` describes: \`extracted\` is one test case cut out of the upstream file it names (\`detail\` locates the case), and \`renamed\` is the file \`renamedFrom\` names with its names and literals renamed. \`verbatim\` files are unchanged copies.`,
-    "",
-    "### LICENSE",
-    "",
-    fence(licence),
-    licence.trimEnd(),
-    fence(licence),
-    "",
-    "## Rerail",
-    "",
-    `${own.length} file(s): ${counts(own)}. Rerail's, under Apache-2.0 (the pack's \`LICENSE\`): \`authored\` files were written by Rerail, and \`recorded\` files are a tool's output on this data, recorded by the pack's generators.`,
-    "",
-  ].join("\n"));
+  const fixtures = join(HERE, "fixtures");
+  const originals = new Map([
+    ["fixtures/package.json", { source: RERAIL, how: "authored", detail: "Rerail's own, not copied: the fixtures' source type and engines (`fixturePackageJson`), under the pack's `LICENSE`" }],
+  ]);
+  for (const [copy, from] of [...copies].sort()) {
+    for (const path of filesBelow(join(fixtures, copy))) {
+      originals.set(`fixtures/${copy}/${path}`, { source: TOOL, from: `${from}/${path}`, how: "verbatim", detail: "verbatim (the upstream fixture tree a case's `filename` lies in)" });
+    }
+  }
+  for (const entry of cases) {
+    if (entry.engines !== undefined) {
+      originals.set(`fixtures/${entry.directory}/package.json`, { source: RERAIL, how: "authored", detail: "Rerail's own, not copied: the case's configured Node version as engines.node (`casePackageJson`), under the pack's `LICENSE`" });
+    }
+    originals.set(`fixtures/${entry.path}`, { source: TOOL, from: entry.testFile, how: "extracted", detail: `extracted from ${entry.testFile} ${entry.origin}` });
+  }
+  const byPath = new Map(cases.map(entry => [`fixtures/${entry.path}`, entry]));
+  // A variant's package files are copies of its original's (Rerail's, or upstream test data verbatim), not renamed.
+  const variant = (_path, entry) => {
+    const original = byPath.get(entry.renamedFrom);
+    if (original !== undefined) return { ...entry, detail: `derived from ${original.testFile} ${original.origin} (\`${entry.renamedFrom}\` with its names and literals renamed)` };
+    const { source, from, how } = originals.get(entry.renamedFrom);
+    return { source, ...(from === undefined ? {} : { from }), how, detail: variantCopy(entry.renamedFrom) };
+  };
+  const entries = new Map([
+    ...RULES.map(rule => [`tests/lib/rules/${rule}.js`, { source: TOOL, from: `tests/lib/rules/${rule}.js`, how: "verbatim" }]),
+    ...originals,
+    ...variantEntries(originals, recorded, variant),
+  ]);
+  writeProvenance({ pack: "node", tool: TOOL, entries, commits: { [TOOL]: UPSTREAM_COMMIT } });
 }
 
 // ---- main ---------------------------------------------------------------------------------------------------------
@@ -563,8 +508,7 @@ async function main() {
   }
   const recorded = withOrigins(fixtures, kept.map(entry => entry.path).sort().map(path => units.get(path)), origins, variants, new Set(dropped.keys()), fixtureRun.findings);
   writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${UPSTREAM_REPOSITORY}@${UPSTREAM_COMMIT}`, rules: RULE_IDS, files: recorded.files, units: recorded.units }, recorded.findings);
-  const keptVariants = recorded.files.filter(unit => isVariantPath(unit[0])).map(unit => ({ unit, of: recorded.units[unit[0]].renamedFrom }));
-  writeLicenses(upstream, kept, copies, keptVariants);
+  writeLicenseAndProvenance(upstream, kept, copies, recorded);
 
   const mismatches = [];
   for (const entry of kept) {

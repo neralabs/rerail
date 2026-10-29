@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "node-red/node-red",
+    "commit": "91b54929cd5ceb8206492154612c634412fd72fc",
+    "path": "test/unit/@node-red/registry/lib/externalModules_spec.js",
+    "license": "Apache-2.0",
+    "sha256": "3c2e16e7b5b8d8ad37179f87ab4796c7e57a73534afde71629bd103c772e62a8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": []
+  }
+}

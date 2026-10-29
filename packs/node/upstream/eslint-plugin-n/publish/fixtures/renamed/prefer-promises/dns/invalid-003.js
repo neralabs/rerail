@@ -1,0 +1,1 @@
+const {ggbftl} = require('dns'); ggbftl()

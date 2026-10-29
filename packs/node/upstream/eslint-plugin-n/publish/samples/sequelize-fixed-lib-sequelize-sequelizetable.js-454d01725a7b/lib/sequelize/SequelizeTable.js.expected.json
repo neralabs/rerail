@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "sequelize/sequelize",
+    "commit": "155381bd5ddfc8d4b7a6f1cd8385bfca60921ada",
+    "path": "lib/sequelize/SequelizeTable.js",
+    "license": "MIT",
+    "sha256": "454d01725a7bdb6a05c15ea4835855942bd6f9d8dd986ee518e6b3b9af762ea4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-new-require": []
+  }
+}

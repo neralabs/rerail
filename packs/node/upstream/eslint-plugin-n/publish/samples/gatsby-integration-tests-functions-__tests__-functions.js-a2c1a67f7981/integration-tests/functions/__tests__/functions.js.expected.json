@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "41eef2bdcc8890991e8d5e7c0d5df795992096ff",
+    "path": "integration-tests/functions/__tests__/functions.js",
+    "license": "MIT",
+    "sha256": "a2c1a67f7981af0ea20cfd8dce760a31edc58df9c22cd09c5eff4994cf421789"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url-search-params": [
+      {
+        "line": 122,
+        "column": 13
+      }
+    ]
+  }
+}

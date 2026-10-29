@@ -1,0 +1,1 @@
+import { scrnosOgma } from 'node:async_hooks'; scrnosOgma()

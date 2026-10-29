@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "sequelize/sequelize",
+    "commit": "1ecdaf98308ae9b975ec3af7be209fd448043e6e",
+    "path": "test/unit/deep-exports.test.js",
+    "license": "MIT",
+    "sha256": "827db2e79942d57a970baa1cf3b8ad2d484836d6d2c93550a9ff209d4d0808b3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-mixed-requires": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

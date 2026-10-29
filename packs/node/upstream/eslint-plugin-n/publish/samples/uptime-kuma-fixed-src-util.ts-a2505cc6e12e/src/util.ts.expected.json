@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "louislam/uptime-kuma",
+    "commit": "86dcc9bc8fc39faa44949c52ad74d9831dfedfb4",
+    "path": "src/util.ts",
+    "license": "MIT",
+    "sha256": "a2505cc6e12e161a782d94f2f8e98082cac57b4cbbeddad21b7cc99aece82547"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-crypto": []
+  }
+}

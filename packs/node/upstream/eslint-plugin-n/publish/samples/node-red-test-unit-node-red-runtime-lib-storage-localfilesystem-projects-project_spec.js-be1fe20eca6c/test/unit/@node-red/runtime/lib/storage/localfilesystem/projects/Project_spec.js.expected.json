@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "node-red/node-red",
+    "commit": "8d0510f4977187dcd0201b6f0e990f9704bbe3e9",
+    "path": "test/unit/@node-red/runtime/lib/storage/localfilesystem/projects/Project_spec.js",
+    "license": "Apache-2.0",
+    "sha256": "be1fe20eca6c1c3a6877f80658b7549d0510a05af260c93f2250356c0ee72077"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": [
+      {
+        "line": 19,
+        "column": 12
+      },
+      {
+        "line": 20,
+        "column": 21
+      }
+    ]
+  }
+}

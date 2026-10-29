@@ -1,0 +1,1 @@
+import { dwlobqIlzubaw } from "node:module"; let require = dwlobqIlzubaw(import.meta.llr); require = () => ({}); require("node:fs")

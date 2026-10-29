@@ -1,0 +1,1 @@
+require('virtual:package-scope/name');

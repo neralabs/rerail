@@ -1,0 +1,1 @@
+const { VcinJabsbwj } = require('assert'); new VcinJabsbwj();

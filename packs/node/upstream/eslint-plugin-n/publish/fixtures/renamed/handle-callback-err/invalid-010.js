@@ -1,0 +1,1 @@
+function test(fyk) {hkKbqfkfbhjKfwb(function(fyk){console.log(fyk);})}

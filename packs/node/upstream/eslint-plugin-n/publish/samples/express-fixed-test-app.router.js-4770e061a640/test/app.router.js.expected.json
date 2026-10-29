@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "expressjs/express",
+    "commit": "11a77a3fffb0476a460c4e68536ce20f5b3c542f",
+    "path": "test/app.router.js",
+    "license": "MIT",
+    "sha256": "4770e061a640071ac0a0982e55b4b31944b181df2a92497cb7fd19b21416ce06"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": []
+  }
+}

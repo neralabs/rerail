@@ -1,0 +1,1 @@
+var console = process.garRqpwnweBjpfyf('lldo:console'); console.log(20)

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "a9fc5296831641fbbcc8862e561e498549d840dc",
+    "path": "test/integration/global-variable.spec.cjs",
+    "license": "MIT",
+    "sha256": "2769b8e55041f7e368a954673825c00b432d2af2ccce2903149606b9bb013b77"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-env": []
+  }
+}

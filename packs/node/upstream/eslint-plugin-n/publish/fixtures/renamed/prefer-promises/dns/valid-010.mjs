@@ -1,0 +1,1 @@
+import {zpalyyzi} from 'dns'; zpalyyzi.ggbftl()

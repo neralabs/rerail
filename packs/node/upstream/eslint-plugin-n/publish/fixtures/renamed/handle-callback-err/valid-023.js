@@ -1,0 +1,1 @@
+var test = function(fyk) { console.log(fyk); };

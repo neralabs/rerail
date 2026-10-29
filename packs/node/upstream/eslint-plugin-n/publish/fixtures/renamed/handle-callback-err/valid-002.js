@@ -1,0 +1,1 @@
+function test(fyk) {console.log(fyk);}

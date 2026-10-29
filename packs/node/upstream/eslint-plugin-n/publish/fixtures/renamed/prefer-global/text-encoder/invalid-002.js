@@ -1,0 +1,1 @@
+var { AddyDwvoiad } = require('node:util'); var l = new AddyDwvoiad(w)

@@ -1,0 +1,1 @@
+function lcaq() { Uint8Array }

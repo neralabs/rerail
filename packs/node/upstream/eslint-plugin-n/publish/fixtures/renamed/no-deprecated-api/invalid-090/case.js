@@ -1,0 +1,1 @@
+const l = process.garRqpwnweBjpfyf('lldo:buffer'); new l.Buffer()

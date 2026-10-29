@@ -1,0 +1,43 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "scripts/release/steps/update-version.js",
+    "license": "MIT",
+    "sha256": "709031f09dd59d28077ef24e660854a5f655ae2fb9e2f07f7239a9276b43774a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-callback-return": [],
+    "n-exports-style": [],
+    "n-global-require": [],
+    "n-handle-callback-err": [],
+    "n-no-callback-literal": [],
+    "n-no-exports-assign": [],
+    "n-no-mixed-requires": [],
+    "n-no-new-require": [],
+    "n-no-path-concat": [],
+    "n-no-process-env": [
+      {
+        "line": 23,
+        "column": 3
+      }
+    ],
+    "n-no-process-exit": [],
+    "n-no-sync": [],
+    "n-prefer-global-buffer": [],
+    "n-prefer-global-console": [],
+    "n-prefer-global-process": [],
+    "n-prefer-global-text-decoder": [],
+    "n-prefer-global-text-encoder": [],
+    "n-prefer-global-url": [],
+    "n-prefer-global-url-search-params": [],
+    "n-prefer-node-protocol": [],
+    "n-prefer-promises-dns": [],
+    "n-prefer-promises-fs": []
+  }
+}

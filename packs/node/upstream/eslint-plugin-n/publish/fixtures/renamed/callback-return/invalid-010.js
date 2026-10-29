@@ -1,0 +1,1 @@
+function j(fyk) { rfnafjvy (fyk); newva(); }

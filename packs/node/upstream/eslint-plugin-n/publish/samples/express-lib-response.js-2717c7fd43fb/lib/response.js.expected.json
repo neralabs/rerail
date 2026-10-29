@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "expressjs/express",
+    "commit": "09831580ec64c2b53d712dfbf47a47a5790aa560",
+    "path": "lib/response.js",
+    "license": "MIT",
+    "sha256": "2717c7fd43fb1a4f212a4acb7627c1ede1b14661b047111e89c5d2306f1ed039"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-node-protocol": [
+      {
+        "line": 20,
+        "column": 20
+      },
+      {
+        "line": 23,
+        "column": 20
+      },
+      {
+        "line": 24,
+        "column": 30
+      }
+    ]
+  }
+}

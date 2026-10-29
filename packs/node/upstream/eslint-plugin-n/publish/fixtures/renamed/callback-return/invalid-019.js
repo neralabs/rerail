@@ -1,0 +1,1 @@
+function l() { switch(e) { case 'newva': rfnafjvy(); } }

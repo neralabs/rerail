@@ -1,0 +1,1 @@
+function u() { import('no-exist-package-0') }

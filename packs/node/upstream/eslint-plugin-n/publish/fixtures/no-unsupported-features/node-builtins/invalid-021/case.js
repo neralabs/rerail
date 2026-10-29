@@ -1,0 +1,1 @@
+const { createHook } = require('async_hooks'); createHook()

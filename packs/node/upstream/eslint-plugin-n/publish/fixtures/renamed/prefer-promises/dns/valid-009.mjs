@@ -1,0 +1,1 @@
+import * as deh from 'dns'; deh.zpalyyzi.ggbftl()

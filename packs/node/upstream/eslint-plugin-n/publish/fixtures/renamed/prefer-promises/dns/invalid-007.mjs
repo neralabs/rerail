@@ -1,0 +1,1 @@
+import {ggbftl} from 'dns'; ggbftl()

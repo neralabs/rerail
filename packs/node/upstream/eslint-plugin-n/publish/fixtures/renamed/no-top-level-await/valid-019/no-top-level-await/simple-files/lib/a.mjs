@@ -1,0 +1,1 @@
+async function u() { await using jao = e }

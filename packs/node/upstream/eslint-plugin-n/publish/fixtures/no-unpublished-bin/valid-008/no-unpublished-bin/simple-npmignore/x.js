@@ -1,0 +1,1 @@
+'simple-npmignore/x.js'

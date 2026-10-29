@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "rollup/rollup",
+    "commit": "97611099c648ad66d2ea4a4d3601c0a0a82c9c48",
+    "path": "build-plugins/chokidar-readdir-throttle-replacement.ts",
+    "license": "MIT",
+    "sha256": "c319401ab6e258241c012852926095717e0f6136f811c1e9693be4bd190e705f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": []
+  }
+}

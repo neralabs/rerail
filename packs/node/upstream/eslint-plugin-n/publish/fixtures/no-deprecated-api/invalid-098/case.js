@@ -1,0 +1,1 @@
+process.getBuiltinModule('module').createRequireFromPath()

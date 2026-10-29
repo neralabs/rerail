@@ -1,0 +1,1 @@
+function lcaq() { Float64Array }

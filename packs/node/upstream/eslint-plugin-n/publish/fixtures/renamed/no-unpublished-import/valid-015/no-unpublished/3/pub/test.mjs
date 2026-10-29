@@ -1,0 +1,1 @@
+import k from '../package.json';

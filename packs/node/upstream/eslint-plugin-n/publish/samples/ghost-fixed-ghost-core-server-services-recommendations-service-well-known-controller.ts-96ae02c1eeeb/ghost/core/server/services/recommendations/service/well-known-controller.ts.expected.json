@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "02346b7ca316cdd1ac21f4f95a864b6ed8e76acd",
+    "path": "ghost/core/server/services/recommendations/service/well-known-controller.ts",
+    "license": "MIT",
+    "sha256": "96ae02c1eeeb422d2f9079f6cdfb46b570ae3c1b4f85cce8e1db673ebeacb7de"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-callback-return": []
+  }
+}

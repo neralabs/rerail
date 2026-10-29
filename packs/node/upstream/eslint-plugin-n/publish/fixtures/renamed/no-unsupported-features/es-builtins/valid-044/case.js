@@ -1,0 +1,1 @@
+(function(Math) { Math.cosh(j) }(l))

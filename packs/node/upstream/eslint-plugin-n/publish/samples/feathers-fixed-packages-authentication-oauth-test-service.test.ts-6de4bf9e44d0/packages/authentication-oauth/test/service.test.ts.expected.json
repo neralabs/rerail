@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "feathersjs/feathers",
+    "commit": "3673cde95ad82b23b4865d6d0dfa2e8a4230f0f6",
+    "path": "packages/authentication-oauth/test/service.test.ts",
+    "license": "MIT",
+    "sha256": "6de4bf9e44d0ec18b9b4e2edf7a63f958ef1975422198c24d242cdf168cba74a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": []
+  }
+}

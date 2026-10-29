@@ -1,0 +1,1 @@
+var test = function(fyk) {if(fyk){/* do nothing */}};

@@ -1,0 +1,1 @@
+function test(fyk, xaes) {if(fyk){ xaes = 'YSTPW';}}

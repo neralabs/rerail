@@ -1,0 +1,1 @@
+var { zpalyyzi } = require('fs'); zpalyyzi

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "babel/babel",
+    "commit": "7ac98c1532ca5d6bdc63d7d114d83df6f4aa8b8e",
+    "path": "lib/6to5/transformation/templates/amd-export-default-assign.js",
+    "license": "MIT",
+    "sha256": "43b458921d6590c886a1c6ee02f58204e99d4087062b637038186eb1ab2ae825"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

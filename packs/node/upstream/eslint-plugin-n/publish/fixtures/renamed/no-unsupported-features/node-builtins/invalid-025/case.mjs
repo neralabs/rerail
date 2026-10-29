@@ -1,0 +1,1 @@
+import xoyzw_kzoez from 'async_hooks'; xoyzw_kzoez.scrnosOgma()

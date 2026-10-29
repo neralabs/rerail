@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "typeorm/typeorm",
+    "commit": "5105371dce16f1aa4e67f95a9696801149e35d28",
+    "path": "test/functional/relations/load-strategy/embedded-eager-relation/embedded-eager-relation.test.ts",
+    "license": "MIT",
+    "sha256": "81f7d10af613beac08d0c091d065dcfdd03312059367cadc09fe8a6f451e095e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-path-concat": []
+  }
+}

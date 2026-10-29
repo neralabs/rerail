@@ -1,0 +1,3297 @@
+# Licensing of the staged samples only; never archived (scripts/samples/pack.ts).
+version = 1
+
+[[annotations]]
+path = "LICENSES.md"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appium-app-errors.js-7b0c38d44349/**"
+SPDX-FileCopyrightText = "appium/appium contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appium-fixed-app-errors.js-a6ef7af3b40a/**"
+SPDX-FileCopyrightText = "appium/appium contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appium-fixed-packages-support-lib-console.ts-34b21197cad8/**"
+SPDX-FileCopyrightText = "appium/appium contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appium-packages-docutils-bin-appium-docs.js-6e8c21f0714b/**"
+SPDX-FileCopyrightText = "appium/appium contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appium-packages-support-lib-console.ts-669610393180/**"
+SPDX-FileCopyrightText = "appium/appium contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "axios-fixed-lib-helpers-formdatatostream.js-f4e9107033e5/**"
+SPDX-FileCopyrightText = "axios/axios contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "axios-fixed-lib-platform-node-classes-urlsearchparams.js-c87a7e93c5af/**"
+SPDX-FileCopyrightText = "axios/axios contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "axios-lib-helpers-formdatatostream.js-4696d0265b94/**"
+SPDX-FileCopyrightText = "axios/axios contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "axios-lib-helpers-formdatatostream.js-6cae801c4d74/**"
+SPDX-FileCopyrightText = "axios/axios contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "axios-lib-platform-node-classes-urlsearchparams.js-ecd22e92825c/**"
+SPDX-FileCopyrightText = "axios/axios contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "babel-lib-6to5-transformation-templates-amd-export-default-assign.js-43b458921d65/**"
+SPDX-FileCopyrightText = "babel/babel contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-fixed-packages-data-context-graphql-makegraphqlserver.ts-57faf24eaa6a/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-fixed-packages-driver-cypress-e2e-commands-cookies-clear_cookie.cy.js-b4a86c7ee440/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-fixed-packages-server-lib-cloud-encryption.ts-48fc8dfc5809/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-fixed-packages-server-test-unit-browsers-browser-cri-client_spec.ts-548067db0dda/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-fixed-packages-server-test-unit-capture.spec.ts-15da6541771a/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-packages-data-context-graphql-makegraphqlserver.ts-299e563cfcb1/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-packages-driver-cypress-e2e-commands-cookies-clear_cookie.cy.js-0c07f20747d6/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-packages-server-lib-cloud-encryption.ts-43918d7a3e93/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-packages-server-test-unit-browsers-browser-cri-client_spec.ts-692ddd787b2f/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-packages-server-test-unit-capture.spec.ts-20ddbc82dc71/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "discord.js-fixed-packages-actions-src-releasepackages-generatereleasetree.ts-735d7c93ef71/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-actions-src-uploadreadmefiles-index.ts-836cd8fb2bb2/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-builders-__tests__-messages-filebody.test.ts-a0c741408260/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-create-discord-bot-template-javascript-src-events-interactioncreate.js-9463da8b74b2/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-create-discord-bot-template-typescript-src-util-loaders.ts-5075c5497ed2/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-discord.js-src-client-websocket-handlers-rate_limited.js-38ffc9d5a72e/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-discord.js-src-managers-guildinvitemanager.js-8591c0e7f6ab/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-rest-__tests__-rest.test.ts-76dd3b932de3/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-rpc-src-ipc.ts-50286ee0d4d0/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-rpc-src-ipc.ts-6fc6d068dc24/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-packages-ws-src-ws-websocketshard.ts-3c1766f823ae/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-src-client-voice-voiceconnectionudpclient.js-0f7a81c0e2ae/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-src-client-websocket-websocketshard.js-4d63b4744983/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-fixed-src-websocket.js-329be7a355fb/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-actions-src-releasepackages-generatereleasetree.ts-c0e6615f850b/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-actions-src-uploadreadmefiles-index.ts-a693c8d9ea6e/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-builders-__tests__-messages-filebody.test.ts-1fd63cd1d150/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-create-discord-bot-template-javascript-src-events-interactioncreate.js-9f1b129e3039/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-create-discord-bot-template-typescript-src-util-loaders.ts-86845f8841c4/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-discord.js-src-client-websocket-handlers-rate_limited.js-89ae5d716dde/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-discord.js-src-managers-guildinvitemanager.js-1ffbab69a0f7/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-rest-__tests__-rest.test.ts-ff3cc43c716c/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-rpc-src-ipc.ts-9dac128fb0a5/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-scripts-bin-sortlabels.js-e3aa7944568e/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-packages-ws-src-ws-websocketshard.ts-fc68f869e22c/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-src-client-voice-voiceconnectionudpclient.js-09d19822f6ca/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-src-client-websocket-websocketshard.js-8a51a09a1d5c/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "discord.js-src-websocket.js-3a0a78f5bce2/**"
+SPDX-FileCopyrightText = "discordjs/discord.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "ejs-fixed-framework-fleegix.js-eed202bd3c70/**"
+SPDX-FileCopyrightText = "mde/ejs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "ejs-framework-fleegix.js-eb74e39bc42d/**"
+SPDX-FileCopyrightText = "mde/ejs contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "electron-fixed-spec-api-session.spec.ts-a4870029f1b5/**"
+SPDX-FileCopyrightText = "electron/electron contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "electron-lib-sandboxed_renderer-preload.ts-5d623c5ec507/**"
+SPDX-FileCopyrightText = "electron/electron contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "electron-spec-api-session.spec.ts-0c2ef7f8be12/**"
+SPDX-FileCopyrightText = "electron/electron contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-lib-cli-engine-lint-result-cache.js-91f1b160e436/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-linter-code-path-analysis-debug-helpers.js-c41b0c0db94d/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-linter-code-path-analysis-debug-helpers.js-f30637f9ef60/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-linter-code-path-analysis-fork-context.js-a32d84cfc043/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-linter-code-path-analysis-id-generator.js-6ab41008c97a/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-services-parser-service.js-1194e78f8732/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-services-parser-service.js-457d4a41b23f/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tests-lib-services-suppressions-service.js-b2aae52fb79e/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tools-check-emfile-handling.js-6b540ab4e258/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tools-test-ecosystem-build-failure-summary.js-5f863712bd30/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-fixed-tools-test-ecosystem-data.mjs-1c0f84766abf/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-lib-cli-engine-lint-result-cache.js-b093097ecf6c/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-lib-linter-source-code-traverser.js-1cba4a29da80/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tests-lib-linter-code-path-analysis-debug-helpers.js-505eb0a38717/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tests-lib-linter-code-path-analysis-fork-context.js-1d7a157f841e/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tests-lib-linter-code-path-analysis-id-generator.js-f2be24ba77d5/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tests-lib-services-parser-service.js-af6d80d3995a/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tests-lib-services-suppressions-service.js-230453525cad/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tools-check-emfile-handling.js-dd9714d2bf10/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tools-test-ecosystem-build-failure-summary.js-6901c8b3087d/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "eslint-tools-test-ecosystem-data.mjs-4143919d3627/**"
+SPDX-FileCopyrightText = "eslint/eslint contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "etherpad-fixed-src-static-js-l10n.js-672d7092f4d6/**"
+SPDX-FileCopyrightText = "ether/etherpad contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "etherpad-src-static-js-l10n.js-2ee1295cb6c2/**"
+SPDX-FileCopyrightText = "ether/etherpad contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "express-examples-cache-app.js-9f0a8555a815/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-examples-cookies-index.js-06e95a5c4ad6/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-examples-search-index.js-4fc4dfd87b9b/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-examples-cookies-index.js-e48b68d6ea4d/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-examples-search-index.js-300007076a01/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-express.js-b932298c7472/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-proto.js-6514c8f81afe/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-response.js-3294fd4b77bd/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-response.js-5e74d7ec0dca/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-response.js-7a1fdec31ce3/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-response.js-925b527ddc3e/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-response.js-caae7a86a279/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-response.js-d1e157f8677d/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-router-index.js-584379942d4e/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-router-layer.js-0540ee9cc068/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-router-route.js-cd8489ebbb4b/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-utils.js-096842b286f5/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-utils.js-29caa7126337/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-lib-utils.js-7f43636c5cca/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-app.js-0065e0e46b8f/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-app.route.js-d6ad3e0c0dac/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-app.router.js-4770e061a640/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-express.json.js-677e1c5361e9/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-express.json.js-e621b4875c5f/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-req.is.js-2e16e0f01dc1/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-res.download.js-7974c4ae4ad4/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-res.location.js-6e4fb950f279/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-support-utils.js-34ee1adce84a/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-support-utils.js-bb20375859e8/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-fixed-test-support-utils.js-df4b927cdc49/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-application.js-66630275699c/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-application.js-e8833471fd29/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-express.js-75ec723e9c97/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-proto.js-ee3c7317ddbb/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-052a0953fae8/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-158c89bf5331/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-1ca865937be1/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-2717c7fd43fb/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-42ca3c972889/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-62a2ccca04ac/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-73470518c58e/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-7c5f3720db6b/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-response.js-b4fd393eb952/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-router-index.js-0d46aeeba5aa/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-router-layer.js-6efa069688fd/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-router-route.js-9719cf844da2/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-utils.js-3117a7e37ec2/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-utils.js-4513fd2a69aa/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-lib-utils.js-b594f9d2f1b0/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-app.js-bae48969b1df/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-app.route.js-15a0622c97d5/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-app.router.js-10462bd2c849/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-express.json.js-6cb12e8cac57/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-express.json.js-b58324f5676a/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-req.is.js-204b880c1f06/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-res.download.js-d095bcebf88b/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-res.location.js-d10763be5023/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-support-env.js-70c10952a644/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-support-utils.js-066178220510/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-support-utils.js-0ce35b182016/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "express-test-support-utils.js-1f98154251ec/**"
+SPDX-FileCopyrightText = "expressjs/express contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-build-build-error-serializer.js-7541ec31c78a/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-build-sync-version.js-310d8e4b2dae/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-examples-http2.js-4b76d46be51c/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-examples-https.js-43c8605381e1/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-examples-typescript-server.ts-b55428c2a50f/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-fastify.js-2d717b2957e6/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-lib-hooks.js-02b428780d90/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-lib-logger-factory.js-43a7fa4ae759/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-lib-noop-set.js-d55aa7e5cb10/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-lib-server.js-c43b6db5ae74/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-scripts-validate-ecosystem-links.js-b1d8089b962e/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-als.test.js-095a9302871e/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-build-certificate.js-13af6cb71dd2/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-bundler-esbuild-src-index.js-2ad6c51bc417/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-conditional-pino.test.js-809ede394ff1/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-esm-index.test.js-658e5f84002b/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-imports.test.js-8c962510b754/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-internals-content-type-parser.test.js-1be43c02acdb/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-listen.4.test.js-42c9699ea97d/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-logger-logger-test-utils.js-7bfcdd69781d/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-plugin.helper.js-bbc8e77f7db4/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-server.test.js-021d3bf20f82/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-stream-serializers.test.js-7d609fd5d84b/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-stream.2.test.js-0ee4cfefe3d1/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-stream.3.test.js-06e0789318d8/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-stream.4.test.js-003845563420/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-stream.5.test.js-73db1d036c92/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-types-reply.tst.ts-3295f889bc1f/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-test-web-api.test.js-dcf6e5fa94ed/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-types-context.d.ts-285b28faf277/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "fastify-types-reply.d.ts-fd4baead95da/**"
+SPDX-FileCopyrightText = "fastify/fastify contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "feathers-fixed-packages-authentication-oauth-test-service.test.ts-6de4bf9e44d0/**"
+SPDX-FileCopyrightText = "feathersjs/feathers contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "feathers-packages-authentication-oauth-test-service.test.ts-d28777d85a9a/**"
+SPDX-FileCopyrightText = "feathersjs/feathers contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-ckages-gatsby-plugin-utils-src-polyfill-remote-file-__tests__-resize-resolver.ts-b433b991195c/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-e2e-tests-adapters-scripts-deploy-and-run-netlify.mjs-1e6eceedf066/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-ckages-gatsby-plugin-utils-src-polyfill-remote-file-__tests__-resize-resolver.ts-071e406b0a23/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-e2e-tests-adapters-scripts-deploy-and-run-netlify.mjs-3fcde18b02ee/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-integration-tests-functions-__tests__-functions.js-57489534dcee/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-packages-gatsby-source-contentful-src-extend-node-type.js-303bc31654a3/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-integration-tests-functions-__tests__-functions.js-a2c1a67f7981/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-jestsetup.js-726438f54d83/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-jestsetup.js-ff959acce673/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-packages-gatsby-source-contentful-src-extend-node-type.js-d98daca225f8/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-ghost-bin-generate-data.ts-3700f09b6734/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-ghost-core-server-services-recommendations-service-well-known-controller.ts-96ae02c1eeeb/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-scripts-test-assert-boot-skips-modules.test.js-d55309882e7a/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-scripts-test-check-versioning-ignore.test.js-cd5e3ad2f33a/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-tools-gx-benchmark-recipient-preparation.ts-742425999d4a/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-tools-gx-generate-data.cts-eb94900cf8e6/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-tools-scripts-test-build-publish-matrix.test.ts-16bc6def033c/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-ghost-bin-generate-data.ts-61c434f77355/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-ghost-core-server-services-recommendations-service-well-known-controller.ts-9a93a89b9ded/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-scripts-test-assert-boot-skips-modules.test.js-82b3fbedc448/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-scripts-test-check-versioning-ignore.test.js-ba5259ecc100/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-tools-gx-benchmark-recipient-preparation.ts-1bcc755625ef/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-tools-gx-generate-data.cts-3c8cd9c3d86b/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-tools-scripts-test-build-publish-matrix.test.ts-15c8df5f0b41/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-lib-hexo-multi_config_path.ts-85dfea244f2c/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-lib-hexo-post.ts-1a63b1013c6d/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-lib-plugins-tag-index.ts-3ed47e03650d/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-benchmark.js-456490bd0a48/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-benchmark.js-b00473814609/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-scripts-hexo-hexo.ts-c8f504ef3cd6/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-scripts-hexo-multi_config_path.js-53ac9a7ad41d/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-scripts-hexo-post.js-dda636abaf7a/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-scripts-models-cache.ts-4c263cc6bf8f/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-scripts-renderers-nunjucks.ts-95b691c2b5ab/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-fixed-test-scripts-renderers-nunjucks.ts-db48622e233a/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-lib-hexo-index.js-0f16c4397bad/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-lib-hexo-multi_config_path.ts-949b7e7cda14/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-lib-hexo-post.ts-c6de653d9ae4/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-lib-plugins-tag-index.ts-84db296cc739/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-benchmark.js-01e8e1e564d9/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-benchmark.js-92583454aa48/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-scripts-hexo-hexo.ts-23c030652f73/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-scripts-hexo-multi_config_path.js-78a1936cad73/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-scripts-hexo-post.js-4a5c79733103/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-scripts-models-cache.ts-d2b680638d3f/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "hexo-test-scripts-renderers-nunjucks.ts-0b0dcd9cccaf/**"
+SPDX-FileCopyrightText = "hexojs/hexo contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "insomnia-fixed-packages-insomnia-scripts-generate-schema.ts-0766f1cd9c8f/**"
+SPDX-FileCopyrightText = "Kong/insomnia contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "insomnia-packages-insomnia-scripts-generate-schema.ts-b7fec306caf5/**"
+SPDX-FileCopyrightText = "Kong/insomnia contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "insomnia-packages-insomnia-src-__jest__-setup.ts-390d37da559d/**"
+SPDX-FileCopyrightText = "Kong/insomnia contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "iobroker.js-controller-fixed-packages-common-src-lib-common-tools.ts-ef573ecfd56d/**"
+SPDX-FileCopyrightText = "ioBroker/ioBroker.js-controller contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "iobroker.js-controller-packages-common-src-lib-common-tools.ts-e1d88902f668/**"
+SPDX-FileCopyrightText = "ioBroker/ioBroker.js-controller contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-e2e-native-esm-fsreexport.js-0c97125b7346/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-e2e-native-esm-require-module-esm-with-tla.mjs-2d46d9aafba2/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-e2e-native-esm-fsreexport.js-be15e3d841dd/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-packages-jest-circus-src-__tests__-globalerrorhandlers.test.ts-3f2471df3d0d/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-packages-jest-runtime-src-index.ts-99016201500a/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-packages-jest-runtime-src-internals-mockstate.ts-1db6cab7bed9/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-packages-jest-util-src-bufferedconsole.ts-88e9e6d5429d/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-packages-jest-util-src-console.js-74fe72a39651/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-packages-jest-util-src-createprocessobject.ts-312d61935558/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-scripts-checkchangelog.mjs-abdf95f1ecc6/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-src-console.js-aa55516ed85a/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-src-console.js-abba98c6ed9b/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-fixed-src-nullconsole.js-39c55111bd7c/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-packages-jest-circus-src-__tests__-globalerrorhandlers.test.ts-6064044a4c90/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-packages-jest-runtime-src-index.ts-863f627118c8/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-packages-jest-runtime-src-internals-mockstate.ts-94798c00c261/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-packages-jest-util-src-bufferedconsole.ts-2d3392d0dc97/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-packages-jest-util-src-console.js-443bc89d84c9/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-packages-jest-util-src-createprocessobject.ts-b5f0ba20dcb0/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-scripts-checkchangelog.mjs-83f73aa7569a/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-src-console.js-301dd2b8561f/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-src-console.js-35d68af56b0f/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jest-src-nullconsole.js-427389ac398e/**"
+SPDX-FileCopyrightText = "jestjs/jest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-fixed-lib-url.js-46fac9455b61/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-fixed-lib-utils-dns-utils.js-2b653bc09d3e/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-fixed-test-client-karma.conf.js-bd5bf0cbacb0/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-fixed-test-e2e-support-world.js-3bf30b1b0ae3/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-lib-url.js-24a9a71e6cab/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-lib-utils-dns-utils.js-ce0b3f2c2f9e/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-test-client-karma.conf.js-cc88f02f8831/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "karma-test-e2e-support-world.js-a5c0ee59851e/**"
+SPDX-FileCopyrightText = "karma-runner/karma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-fixed-lib-knex-builder-functionhelper.js-24c84543afe0/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-fixed-scripts-clean.js-94a12e3e59cf/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-fixed-scripts-update-changelog.mjs-c512b2f1f8b0/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-fixed-test-cli-seed.spec.js-60c0ddb61dba/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-fixed-test-unit-dialects-better-sqlite3.js-32b094b2ad5d/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-lib-knex-builder-functionhelper.js-d460bee2f737/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-scripts-clean.js-dbd6a9b3aa88/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-scripts-update-changelog.mjs-08f88dc7aad9/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-test-cli-seed.spec.js-1ee507cea096/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "knex-test-unit-dialects-better-sqlite3.js-ee598298b0bd/**"
+SPDX-FileCopyrightText = "knex/knex contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "lerna-fixed-tools-scripts-lerna-release.ts-c305421cacfd/**"
+SPDX-FileCopyrightText = "lerna/lerna contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "lerna-tools-scripts-lerna-release.ts-babf8b0c0630/**"
+SPDX-FileCopyrightText = "lerna/lerna contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "less.js-fixed-lib-less-functions-data-uri.js-0f5cc1274d5f/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-lib-less-parse.js-368b393424a0/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-lib-less-parse.js-8cf7ee821eba/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-lib-less-render.js-3b0b71d6b46e/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-lib-less-tree-ruleset.js-3b1fabdb4b27/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-packages-less-test-less-test.js-0882e7916440/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-packages-less-test-less-test.js-135d1202afea/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-packages-less-test-less-test.js-60d6dbb71012/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-packages-less-test-less-test.js-a90bd0ac91d2/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-fixed-test-less-test.js-e9180e937126/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-lib-less-functions-data-uri.js-10be732e4844/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-lib-less-parse.js-7d9011b73b01/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-lib-less-parse.js-80c0aedbb729/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-lib-less-render.js-0c934354a0a6/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-lib-less-tree-ruleset.js-36ab73a5ffe5/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-packages-less-test-less-test.js-b2bb257fe7b5/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-packages-less-test-less-test.js-e124b686ecee/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-packages-less-test-less-test.js-e759ea028bf6/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "less.js-test-less-test.js-abca90ec6876/**"
+SPDX-FileCopyrightText = "less/less.js contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "magicmirror-fixed-js-electron.js-a3a66179c2b2/**"
+SPDX-FileCopyrightText = "MagicMirrorOrg/MagicMirror contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "magicmirror-js-electron.js-796a0ed71b74/**"
+SPDX-FileCopyrightText = "MagicMirrorOrg/MagicMirror contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-fixed-github-skills-sync-modern-tool-versions-scripts-audit-rspack-versions.mjs-4e91f68bf96a/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-fixed-github-skills-version-bump-scripts-audit-meteor-installer-version.mjs-c9a66539dde3/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-fixed-tools-native-tests-scripts-run.js-b91d220a22c0/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-github-skills-sync-modern-tool-versions-scripts-audit-rspack-versions.mjs-cd38c13228ec/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-github-skills-version-bump-scripts-audit-meteor-installer-version.mjs-b2199951d1d0/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-packages-underscore-pre.js-bf608bc5dcc2/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "meteor-tools-native-tests-scripts-run.js-c23e0ce68293/**"
+SPDX-FileCopyrightText = "meteor/meteor contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-bin-mocha.js-d10897c3e322/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-bin-mocha.js-e6bc89235a75/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-docs-_data-usage.js-a6d200287944/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-bin-mocha.js-d8d715906b53/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-bin-mocha.js-f68e8a01c31e/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-docs-_data-usage.js-08160398c566/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-cli.js-517af2806a14/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-cli.js-8008549a2093/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-config.cjs-791dec14f790/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-config.cjs-c1135e678ec2/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-config.cjs-e7f4d62931ab/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-node-flags.cjs-304645d29421/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-run-option-metadata.cjs-01e9215b077c/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-watch-run.cjs-d4aa6b37a0b0/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-cli-watch-run.js-e28f872ae337/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-mocha.cjs-c5c169e0e26a/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-reporters-github-actions.js-0005b1827e0d/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-lib-runner.js-014636f586dd/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-playwright.config.mjs-048858001b24/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-scripts-merge-coverage.js-2b263a9c9885/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-scripts-merge-coverage.js-32f3ec5602f6/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-browser-server.mjs-fcd7fa01f88a/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-compiler-fixtures-js.fixture.js-a733c0b3c097/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-integration-config.spec.cjs-7fde90b4d997/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-integration-global-variable.spec.cjs-2769b8e55041/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-integration-helpers.js-8984718f32fa/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-integration-options-timeout.spec.cjs-481a0c53aae0/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-integration-options-watch.spec.cjs-6412b4ea234a/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-node-unit-merge-coverage.spec.cjs-356d1b1be16e/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-reporters-github-actions.spec.cjs-32e3e178f150/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-reporters-github-actions.spec.cjs-90c8ad53e52f/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-fixed-test-reporters-xunit.spec.js-d194181b70f0/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-cli.js-915c493591a3/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-cli.js-fd107fbee6f3/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-config.cjs-c29dddb2c91c/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-config.cjs-d52e99f5b44a/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-node-flags.cjs-dd625f0c8525/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-run-helpers.js-b78aa566c214/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-run-option-metadata.cjs-c312bd02ff84/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-watch-run.cjs-71bcbff8ed3a/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-cli-watch-run.js-e23f096c3a20/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-mocha.cjs-185f85b853a2/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-mocha.cjs-2f444c917c96/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-mocha.cjs-39d9c96f4515/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-reporters-github-actions.js-26792032a5e4/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-lib-runner.js-abfd0b8158fb/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-playwright.config.mjs-ff5921b24484/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-scripts-merge-coverage.js-eb164b993cfc/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-browser-server.mjs-5fb2ee9591c2/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-compiler-esm-test-tla.js-8f96bde77e05/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-compiler-esm-test-tla.mjs-8f96bde77e05/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-compiler-fixtures-js.fixture.js-17a82ea816a0/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-integration-config.spec.cjs-8df63ce5f5f0/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-integration-global-variable.spec.cjs-dc3e14f614eb/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-integration-helpers.js-21bbda6d6dd8/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-integration-options-timeout.spec.cjs-ca4444b36095/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-integration-options-watch.spec.cjs-a752c2a3f1a7/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-node-unit-merge-coverage.spec.cjs-f011b6d7b83e/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-reporters-github-actions.spec.cjs-34f7d9536ee8/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mocha-test-reporters-xunit.spec.js-f283a123e6e5/**"
+SPDX-FileCopyrightText = "mochajs/mocha contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mongoose-fixed-lib-types-subarray.js-a4232dcdb492/**"
+SPDX-FileCopyrightText = "Automattic/mongoose contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mongoose-lib-types-subarray.js-26aee93920c6/**"
+SPDX-FileCopyrightText = "Automattic/mongoose contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-integration-nest-application-get-url-e2e-utils.ts-9d69078fe795/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-integration-nest-application-listen-e2e-fastify-fd.spec.ts-8c42097a4238/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-integration-nest-application-listen-src-fastify-fd-main.js-473db121f4ae/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-core-injector-injector.ts-5a2194313ed0/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-core-test-router-rejected-by-pipes-copies.spec.ts-75fa30771e1b/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-microservices-client-client-kafka.ts-0b838e361ee6/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-microservices-client-client-mqtt.ts-bd403ee4960f/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-microservices-server-server-grpc.ts-a44ba6761fb8/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-microservices-server-server-grpc.ts-f1c2ef548425/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-platform-fastify-test-adapters-fastify-adapter.spec.ts-bd601673f224/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-platform-fastify-test-adapters-fastify-head-requests.spec.ts-dc6d9002ead8/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-packages-platform-ws-test-ws-adapter.spec.ts-cb13045521ec/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-sample-31-graphql-federation-code-first-gateway-generate-supergraph.ts-545524b7d975/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-sample-37-outbox-analytics-service-src-main.ts-dcc3242fb781/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-sample-38-webhooks-partner-service-main.ts-2cc1183822a5/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-fixed-sample-39-file-storage-src-main.ts-d2df88e9b00c/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-integration-nest-application-get-url-e2e-utils.ts-64d028a3f315/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-integration-nest-application-listen-e2e-fastify-fd.spec.ts-cbee85c6d523/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-integration-nest-application-listen-src-fastify-fd-main.js-ca50b6c23228/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-core-injector-injector.ts-22cca1b10e32/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-core-test-router-rejected-by-pipes-copies.spec.ts-14bb35d41eec/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-microservices-client-client-kafka.ts-08991583ffa1/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-microservices-client-client-mqtt.ts-e46b11a3a461/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-microservices-server-server-grpc.ts-16b31a197776/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-microservices-server-server-grpc.ts-b2652fa34dc8/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-platform-fastify-test-adapters-fastify-adapter.spec.ts-8954312ec701/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-platform-fastify-test-adapters-fastify-head-requests.spec.ts-376234dbd416/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-packages-platform-ws-test-ws-adapter.spec.ts-a4070c25ba93/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-sample-31-graphql-federation-code-first-gateway-generate-supergraph.ts-33337b90cebc/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-sample-37-outbox-analytics-service-src-main.ts-a430aa29d1ed/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-sample-38-webhooks-partner-service-main.ts-a05fff35945c/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nest-sample-39-file-storage-src-main.ts-d3b9a9b2ae0c/**"
+SPDX-FileCopyrightText = "nestjs/nest contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-fetch-fixed-test-main.js-9a43415f52b5/**"
+SPDX-FileCopyrightText = "node-fetch/node-fetch contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-fetch-test-main.js-fe9d595b53db/**"
+SPDX-FileCopyrightText = "node-fetch/node-fetch contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mongodb-native-fixed-test-tools-runner-hooks-compression_checker.ts-e6b15ec77741/**"
+SPDX-FileCopyrightText = "mongodb/node-mongodb-native contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-mongodb-native-test-tools-runner-hooks-compression_checker.ts-f0f9e7c35281/**"
+SPDX-FileCopyrightText = "mongodb/node-mongodb-native contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-mysql2-fixed-lib-base-connection.js-0bd09990df38/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-fixed-lib-commands-command.js-1440650c5e1e/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-fixed-lib-commands-execute.js-1bf9fb39db77/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-fixed-lib-commands-query.js-f903254e938e/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-fixed-lib-connection.js-9713cf90ea66/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-lib-base-connection.js-5db26833ad16/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-lib-commands-command.js-a905614794a2/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-lib-commands-execute.js-72a13a0a3864/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-lib-commands-query.js-c340e641eaf2/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-mysql2-lib-connection.js-49945c9971b6/**"
+SPDX-FileCopyrightText = "sidorares/node-mysql2 contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-lib-connection-parameters.js-058f8f36bb42/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-lib-utils.js-987fcf9f2b42/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-lib-utils.js-9c56da0d64e0/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-packages-pg-connection-string-index.js-d804c1f05d46/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-packages-pg-lib-crypto-utils.js-8444d2defba2/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-packages-pg-lib-crypto-utils.js-ab7d0d0d4613/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-fixed-packages-pg-test-unit-connection-parameters-creation-tests.js-8441478b0dc4/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-lib-connection-parameters.js-fbd3f11300b3/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-lib-utils.js-0f0ec89973bb/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-lib-utils.js-24c316af722e/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-packages-pg-connection-string-index.js-1901028f5c1e/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-packages-pg-lib-crypto-utils-webcrypto.js-9b57f878aa6a/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-packages-pg-lib-crypto-utils.js-a849cfe22d75/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-packages-pg-lib-crypto-utils.js-b98087b76704/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-postgres-packages-pg-test-unit-connection-parameters-creation-tests.js-7d51a845c1c7/**"
+SPDX-FileCopyrightText = "brianc/node-postgres contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "node-red-fixed-test-nodes-core-network-21-httprequest_spec.js-c7bf0935785e/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-fixed-test-nodes-core-parsers-70-csv-leading-empty_spec.js-50892cd9d824/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-fixed-test-unit-node-red-registry-lib-externalmodules_spec.js-3c2e16e7b5b8/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-fixed-test-unit-node-red-registry-lib-library_spec.js-1f056f76f3b3/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-fixed-test-unit-node-red-runtime-lib-storage-localfilesystem-projects-project_spec.js-3e8312890a4a/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-fixed-test-unit-node-red-util-lib-util_spec.js-060d0cc2fe9b/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-fixed-test-unit-node-red-util-lib-util_spec.js-088c5fd45b3b/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-nodes-core-network-21-httprequest_spec.js-182786789dca/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-nodes-core-parsers-70-csv-leading-empty_spec.js-dd8083273186/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-unit-node-red-registry-lib-externalmodules_spec.js-218b443b9a1d/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-unit-node-red-registry-lib-library_spec.js-536e68df2cbc/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-unit-node-red-runtime-lib-storage-localfilesystem-projects-project_spec.js-be1fe20eca6c/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-unit-node-red-util-lib-util_spec.js-03aa2d5be009/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "node-red-test-unit-node-red-util-lib-util_spec.js-cbb7f99660b7/**"
+SPDX-FileCopyrightText = "node-red/node-red contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "nuxt-fixed-test-presets-cloudflare.test.mjs-23a461bbdb7a/**"
+SPDX-FileCopyrightText = "nuxt/nuxt contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nuxt-fixed-test-presets-cloudflare.test.mjs-5fc8d9738804/**"
+SPDX-FileCopyrightText = "nuxt/nuxt contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nuxt-packages-bridge-bin-nuxt.mjs-219566a7cb7f/**"
+SPDX-FileCopyrightText = "nuxt/nuxt contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "nuxt-test-presets-cloudflare.test.mjs-4ab3264723a9/**"
+SPDX-FileCopyrightText = "nuxt/nuxt contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "parse-server-fixed-spec-purchasevalidation.spec.js-f5707d445fd6/**"
+SPDX-FileCopyrightText = "parse-community/parse-server contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "parse-server-spec-purchasevalidation.spec.js-c65cef2f429e/**"
+SPDX-FileCopyrightText = "parse-community/parse-server contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "pino-bin.js-2c926682a21b/**"
+SPDX-FileCopyrightText = "pinojs/pino contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pnpm-fixed-github-scripts-run-ts-tests-chunk.mjs-7df3bb27f49a/**"
+SPDX-FileCopyrightText = "pnpm/pnpm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pnpm-fixed-pnpm-npm-pnpm-test-corepack-entry.test.mjs-46c443085d03/**"
+SPDX-FileCopyrightText = "pnpm/pnpm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pnpm-fixed-pnpr-npm-pnpr-bin-pnpr.mjs-46564e30c961/**"
+SPDX-FileCopyrightText = "pnpm/pnpm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pnpm-github-scripts-run-ts-tests-chunk.mjs-65d87bb0e765/**"
+SPDX-FileCopyrightText = "pnpm/pnpm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pnpm-pnpm-npm-pnpm-test-corepack-entry.test.mjs-201a26f383d3/**"
+SPDX-FileCopyrightText = "pnpm/pnpm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pnpm-pnpr-npm-pnpr-bin-pnpr.mjs-7c5f28774cfa/**"
+SPDX-FileCopyrightText = "pnpm/pnpm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-benchmark-bench.js-6cde556538d9/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-changelog-for-patch.js-da32410e5491/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-generate-schema.js-4d36346395ee/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-generate-unused-typescript-specifiers.js-ba7598aecfac/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-release-steps-update-version.js-709031f09dd5/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-release-tests-publish-to-npm.test.js-4cec65d9ae46/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-scripts-sync-flow-tests.cjs-ce7dadbf5b28/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-cli-format.js-5aa6d9f6c164/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-cli-options-get-options-for-file.js-6c9d0e908f47/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-common-ast-path.js-60873ac2908b/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-constants.js-19d75a30b10c/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-document-utilities-index.js-e335786b1eef/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-experimental-cli-index.js-ed5dbcb11b0a/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-index.cjs-e0b102a91773/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-css-print-css-units.evaluate.js-8bd8a305c34d/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-css-utilities-get-value-root.js-da032305e623/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-css-utilities-is-module-rule-name.js-beed6c6f2d5e/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-handlebars-loc.js-6a379237d582/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-handlebars-visitor-keys.js-6e08038dbc49/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-html-utilities-html-tags.evaluate.js-c77e9c4ea536/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-location-end-with-full-text.js-acec44d42cf4/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-location-is-index.js-67447a4a3d48/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-location-start.js-858d02410aec/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-parse-espree.js-75d8512875af/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-parse-utilities-is-dts-file.js-6ab0a8e8f221/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-utilities-create-type-check-function.js-b106648393e4/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-utilities-get-raw.js-360df23fa2d7/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-utilities-is-prettier-ignore-comment.js-48cb09f5223b/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-utilities-is-ts-keyword-type.js-7d7bb54dd933/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-js-utilities-jsx-whitespace.js-12ff42da835b/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-json-print-index.js-fb1d945b39d0/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-json-utilities.js-0cd6db711c56/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-language-markdown-parse-micromark-mdast-util-gfm.js-c983ed77a23b/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-main-create-print-pre-check-function.js-65bb82659a91/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-main-front-matter-print.js-2ed29e6897f3/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-main-plugins-load-builtin-plugins.js-889df1d0b092/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-plugins-flow.js-3144217ba7aa/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-plugins-html.js-8c6ca719bee8/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-plugins-postcss.js-3220898df03d/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-universal-yuku-parser.browser.js-675a6b0ad3f8/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-universal-yuku-parser.js-1bd8ac217844/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-utilities-create-get-visitor-keys.js-d03ae954e020/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-utilities-get-or-insert.js-7888f62d1b45/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-utilities-noop.js-f60e6390936a/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-utilities-object-omit.js-a84b95a26edb/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "prettier-src-utilities-replace-non-line-breaks-with-space.js-3874ac406c5f/**"
+SPDX-FileCopyrightText = "prettier/prettier contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "rollup-build-plugins-chokidar-readdir-throttle-replacement.ts-1f2d90b5bba5/**"
+SPDX-FileCopyrightText = "rollup/rollup contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "rollup-fixed-build-plugins-chokidar-readdir-throttle-replacement.ts-c319401ab6e2/**"
+SPDX-FileCopyrightText = "rollup/rollup contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "rollup-fixed-test-form-samples-configure-file-url-_expected-cjs.js-f48ac409b18d/**"
+SPDX-FileCopyrightText = "rollup/rollup contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "rollup-test-form-samples-configure-file-url-_expected-cjs.js-392fe8946a5d/**"
+SPDX-FileCopyrightText = "rollup/rollup contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sails-adapters-dirtyadapter.js-272498a18fc5/**"
+SPDX-FileCopyrightText = "balderdashy/sails contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sails-fixed-adapters-dirtyadapter.js-7948fc99f420/**"
+SPDX-FileCopyrightText = "balderdashy/sails contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sails-fixed-lib-lift-configuresocketio.js-5d292b33f177/**"
+SPDX-FileCopyrightText = "balderdashy/sails contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sails-lib-lift-configuresocketio.js-3c3d201ca091/**"
+SPDX-FileCopyrightText = "balderdashy/sails contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sentry-javascript-fixed-packages-browser-test-tracing-bfcacherestorenavigation.test.ts-35a689653ab2/**"
+SPDX-FileCopyrightText = "getsentry/sentry-javascript contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sentry-javascript-fixed-packages-browser-test-tracing-bfcacherestorenavigation.test.ts-3c7ebc8e53ea/**"
+SPDX-FileCopyrightText = "getsentry/sentry-javascript contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sentry-javascript-packages-browser-test-tracing-bfcacherestorenavigation.test.ts-a12a79014935/**"
+SPDX-FileCopyrightText = "getsentry/sentry-javascript contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-lib-dialects-abstract-connection-manager.js-5844d69f6fa8/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-lib-sequelize-sequelizetable.js-411991e3f591/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-lib-sequelize-sequelizetable.js-454d01725a7b/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-lib-sequelize-sequelizetable.js-55e9c330d482/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-lib-sequelize-sequelizetable.js-db1a25f9355f/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-lib-sequelize-sequelizetable.js-e56d5586fb35/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-packages-cli-.eslintrc.cjs-687b0b2427f2/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-packages-core-src-utils-url.ts-c9a33a35d9ae/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-packages-snowflake-.eslintrc.js-687b0b2427f2/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-test-unit-deep-exports.test.js-f9db16e4efda/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-test-unit-dialects-db2-query-json-path-extraction.test.js-abcaa7d818f8/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-test-unit-dialects-snowflake-query-generator.test.js-63db49539b09/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-test-unit-esm-named-exports.test.js-a5264c1a5551/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-fixed-test-unit-model-getattributes.test.js-9fb935edc813/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-lib-dialects-abstract-connection-manager.js-57fb1f33f52f/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-lib-sequelize-sequelizetable.js-0156cffb1d8e/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-lib-sequelize-sequelizetable.js-1627a0124423/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-lib-sequelize-sequelizetable.js-45c9ada59cfd/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-lib-sequelize-sequelizetable.js-8a5bbe1079d4/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-lib-sequelize-sequelizetable.js-acd261a77490/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-packages-cli-.eslintrc.cjs-a18b0d4757a9/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-packages-core-src-utils-url.ts-d5aaeb4b39bc/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-packages-snowflake-.eslintrc.js-a18b0d4757a9/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-test-unit-deep-exports.test.js-827db2e79942/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-test-unit-dialects-db2-query-json-path-extraction.test.js-56bc687ca711/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-test-unit-dialects-snowflake-query-generator.test.js-c7ce29080f0c/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-test-unit-esm-named-exports.test.js-df9d4a00778c/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "sequelize-test-unit-model-getattributes.test.js-e01b4be2eb7f/**"
+SPDX-FileCopyrightText = "sequelize/sequelize contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "serverless-offline-fixed-src-events-http-lambda-events-__tests__-lambdaproxyintegrationeventv2.test.js-7ac637379e1c/**"
+SPDX-FileCopyrightText = "dherault/serverless-offline contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "serverless-offline-fixed-src-events-websocket-__tests__-websocketclients.test.js-f39761feb636/**"
+SPDX-FileCopyrightText = "dherault/serverless-offline contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "serverless-offline-src-events-http-lambda-events-__tests__-lambdaproxyintegrationeventv2.test.js-b20699614162/**"
+SPDX-FileCopyrightText = "dherault/serverless-offline contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "serverless-offline-src-events-websocket-__tests__-websocketclients.test.js-e7f94bca97dc/**"
+SPDX-FileCopyrightText = "dherault/serverless-offline contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-examples-cluster-engine-node-cluster-server.js-18bbca789d0b/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-examples-cluster-engine-redis-server.js-284a23b5debf/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-examples-nextjs-pages-router-custom-server-server.js-80cac4f0b866/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-examples-nextjs-pages-router-server.js-588af3586eac/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-examples-pm2-example-entrypoint.js-7a094657d958/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-examples-postgres-adapter-example-server.js-2060ee6d5fb2/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-cluster-engine-node-cluster-server.js-3aa2806da0d0/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-cluster-engine-redis-server.js-d99b02529d13/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-nextjs-pages-router-custom-server-server.js-22131e02191e/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-nextjs-pages-router-custom-server-server.js-465f0f58f3f3/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-nextjs-pages-router-server.js-aa749a7c8055/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-pm2-example-entrypoint.js-3954a68ffb45/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-postgres-adapter-example-server.js-37ae3232d517/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-examples-postgres-adapter-example-server.js-911fd0d10e66/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-lib-index.ts-0fd7941567c3/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-lib-server.ts-5a3411076854/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-lib-socket.ts-9198ee8a6d7e/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-engine.io-client-test-webtransport.mjs-b9e9aae6ea7a/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-engine.io-lib-contrib-base64id.ts-56cfec5f8ae6/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-engine.io-lib-server.ts-7fa520ff2b6e/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-engine.io-lib-transports-polling.ts-5ed17d87868a/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-engine.io-lib-utils-objectfromentries.ts-3caf988a3d53/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-cluster-engine-test-cluster.test.ts-c689131b3f70/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-cluster-engine-test-in-memory.test.ts-697197bf5d45/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-clustered-engine-lib-engine.ts-349a386a2246/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-lib-client.ts-a6b2841f232a/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-lib-contrib-base64id.ts-067b929e3a78/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-lib-index.ts-fa73d901d846/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-redis-streams-emitter-test-index.ts-f2f59ba62459/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-test-server-attachment.ts-02603aeb09e6/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-packages-socket.io-test-uws.ts-3d354f5de926/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-test-cluster-adapter.ts-74e0d0ba84e7/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-test-util-wt.mjs-380f0e697519/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-fixed-test-util.mjs-380f0e697519/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-lib-index.ts-0aa5295a2e3c/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-lib-index.ts-79805475cb6b/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-lib-server.ts-5d07d04c6c10/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-lib-socket.ts-f77b3816e167/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-engine.io-client-test-webtransport.mjs-7582677ac3f3/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-engine.io-lib-contrib-base64id.ts-01ca8504ec90/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-engine.io-lib-server.ts-da354e5c9972/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-engine.io-lib-socket.ts-601b931a1846/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-engine.io-lib-transports-polling.ts-304fff02c699/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-engine.io-lib-utils-objectfromentries.ts-041dbfaf0270/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-cluster-engine-test-cluster.test.ts-637a42fd670d/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-cluster-engine-test-in-memory.test.ts-56074e74009b/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-cluster-engine-test-in-memory.test.ts-c524e08fbfbb/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-cluster-engine-test-in-memory.test.ts-d946e1a34b6c/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-clustered-engine-lib-engine.ts-eb47a6dba2b9/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-lib-broadcast-operator.ts-206ea10e7c58/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-lib-client.ts-503d299135d1/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-lib-contrib-base64id.ts-e4f9ffa0f44f/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-lib-index.ts-089f0f8866d6/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-redis-streams-emitter-test-index.ts-d611464237b0/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-test-server-attachment.ts-c44a130845b5/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-packages-socket.io-test-uws.ts-ec107a15a689/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-test-cluster-adapter.ts-e3c834567b58/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-test-util-wt.mjs-01eb11592f90/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "socket.io-test-util.mjs-01eb11592f90/**"
+SPDX-FileCopyrightText = "socketio/socket.io contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "storybook-code-core-bin-index.cjs-655069e27145/**"
+SPDX-FileCopyrightText = "storybookjs/storybook contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "storybook-code-frameworks-angular-setup-jest.ts-24eb947eae59/**"
+SPDX-FileCopyrightText = "storybookjs/storybook contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "storybook-code-jest.init.browser.ts-5951f43e88a8/**"
+SPDX-FileCopyrightText = "storybookjs/storybook contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-ctional-embedded-embedded-relation-id-column-embedded-relation-id-column.test.ts-86b37122ee3a/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-ctional-relations-lazy-relations-primary-join-column-primary-join-column.test.ts-ac81fb8adaf0/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-fixed-ctional-embedded-embedded-relation-id-column-embedded-relation-id-column.test.ts-d4af40f8125f/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-fixed-ctional-relations-lazy-relations-primary-join-column-primary-join-column.test.ts-a4471ef1c93e/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-fixed-relations-load-strategy-embedded-eager-relation-embedded-eager-relation.test.ts-81f7d10af613/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-fixed-test-functional-cache-query-runner-release.test.ts-9f4f258af712/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-fixed-test-github-issues-12492-issue-12492.test.ts-ca718faab3f7/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-relations-load-strategy-embedded-eager-relation-embedded-eager-relation.test.ts-70a9ebbca9da/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-test-functional-cache-query-runner-release.test.ts-6e5ad741cb90/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "typeorm-test-github-issues-12492-issue-12492.test.ts-bf447f0c70e6/**"
+SPDX-FileCopyrightText = "typeorm/typeorm contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-fixed-lib-dispatcher-client-h1.js-3831567a9d67/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-fixed-lib-interceptor-dns.js-485c5844c3e5/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-fixed-lib-mock-snapshot-recorder.js-3f66e98225b1/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-fixed-test-autoselectfamily.js-e9cd48523b37/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-lib-dispatcher-client-h1.js-4aece6a63aef/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-lib-interceptor-dns.js-b535e6321be1/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-lib-mock-snapshot-recorder.js-31309077414f/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-test-autoselectfamily.js-fde21e524610/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "undici-test-wpt-runner-worker.mjs-2497ff87d357/**"
+SPDX-FileCopyrightText = "nodejs/undici contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "uptime-kuma-fixed-server-monitor-types-ntp.js-6093079e8ac8/**"
+SPDX-FileCopyrightText = "louislam/uptime-kuma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "uptime-kuma-fixed-server-util-server.js-46677607146f/**"
+SPDX-FileCopyrightText = "louislam/uptime-kuma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "uptime-kuma-fixed-src-util.ts-a2505cc6e12e/**"
+SPDX-FileCopyrightText = "louislam/uptime-kuma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "uptime-kuma-server-monitor-types-ntp.js-a3b39fad23ca/**"
+SPDX-FileCopyrightText = "louislam/uptime-kuma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "uptime-kuma-server-util-server.js-1d48b6cc6e79/**"
+SPDX-FileCopyrightText = "louislam/uptime-kuma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "uptime-kuma-src-util.ts-a77d472eaad1/**"
+SPDX-FileCopyrightText = "louislam/uptime-kuma contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-cypress.config.ts-f29c49d2925a/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-cypress.config.ts-e026b1d77cf0/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-packages-middleware-src-middlewares-web-utils-ui-options.ts-d2fd187cc5f3/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-packages-plugins-htpasswd-src-htpasswd.ts-37ce3d47203d/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-packages-plugins-local-storage-tests-upload-failure.test.ts-87e89f06c00b/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-packages-store-src-storage.ts-22b996c819e5/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-packages-store-test-uplink-304-cache.spec.ts-245077830d37/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-packages-web-src-api-search.ts-68ceed80d03d/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-scripts-check-uncovered-latest.mjs-3166ef289f4a/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-fixed-scripts-global-install.js-df14454f71bd/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-packages-middleware-src-middlewares-web-utils-ui-options.ts-46dd06707965/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-packages-plugins-htpasswd-src-htpasswd.ts-18a736f5acea/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-packages-plugins-local-storage-tests-upload-failure.test.ts-815758c79818/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-packages-store-src-storage.ts-f4f4e52bf9a3/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-packages-store-test-uplink-304-cache.spec.ts-3aa9c78fce20/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-packages-web-src-api-search.ts-32f635a1a6f0/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-scripts-check-uncovered-latest.mjs-94220f83ee4f/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "verdaccio-scripts-global-install.js-277de83507e3/**"
+SPDX-FileCopyrightText = "verdaccio/verdaccio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-fixed-packages-vite-src-node-utils.ts-1fea77199bbd/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-fixed-packages-vite-src-node-utils.ts-88bc00a020f5/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-fixed-packages-vite-src-node-utils.ts-e923d92d8be7/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-fixed-packages-vite-src-node-utils.ts-f0056f9fdb60/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-packages-vite-src-node-utils.ts-0530d7527554/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-packages-vite-src-node-utils.ts-3a8fb6a1d815/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-packages-vite-src-node-utils.ts-43c5cc3a65b2/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "vite-packages-vite-src-node-utils.ts-e194c523ef93/**"
+SPDX-FileCopyrightText = "vitejs/vite contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webdriverio-e2e-browser-runner-mock.test.ts-5c1978d9dcf8/**"
+SPDX-FileCopyrightText = "webdriverio/webdriverio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webdriverio-fixed-packages-wdio-appium-service-tests-cli-utils.workspace.test.ts-c64f41689d18/**"
+SPDX-FileCopyrightText = "webdriverio/webdriverio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webdriverio-packages-wdio-appium-service-tests-cli-utils.workspace.test.ts-60b539d546e7/**"
+SPDX-FileCopyrightText = "webdriverio/webdriverio contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-fixed-test-cases-cjs-tree-shaking-remove-unused-requires-index.js-6b5f2fa82ff5/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-fixed-test-configcases-concatenate-modules-commonjs-wrapped-body-asi-position-body.js-9c406d06ac72/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-fixed-test-configcases-concatenate-modules-commonjs-wrapped-exports-local-reassign.js-7ce0de4de319/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-fixed-test-configcases-library-0-create-library-exports-shortcut-cjs.js-67f3be2db78f/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-fixed-test-configcases-parsing-custom-parser-hoisting-block-declarations.js-8f2ac1beadc3/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-test-cases-cjs-tree-shaking-remove-unused-requires-index.js-ff661385d54c/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-test-configcases-concatenate-modules-commonjs-wrapped-body-asi-position-body.js-06ee6b96f11d/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-test-configcases-concatenate-modules-commonjs-wrapped-exports-local-reassign.js-4f0c8b660596/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-test-configcases-library-0-create-library-exports-shortcut-cjs.js-1e07d3a7394a/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "webpack-test-configcases-parsing-custom-parser-hoisting-block-declarations.js-e7d94e01e295/**"
+SPDX-FileCopyrightText = "webpack/webpack contributors"
+SPDX-License-Identifier = "MIT"

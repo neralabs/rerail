@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "cypress-io/cypress",
+    "commit": "0de9f6ea6c8fdceb10bd7d3a731544d23f1d643c",
+    "path": "packages/driver/cypress/e2e/commands/cookies/clear_cookie.cy.js",
+    "license": "MIT",
+    "sha256": "b4a86c7ee44066d0b4e7371947d75fe24670ff617d240f04974e7648a2ee5fa3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": []
+  }
+}

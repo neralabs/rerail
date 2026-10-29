@@ -1,0 +1,1 @@
+const { setInterval } = process.getBuiltinModule('node:timers'); setInterval(() => {}, 1000)

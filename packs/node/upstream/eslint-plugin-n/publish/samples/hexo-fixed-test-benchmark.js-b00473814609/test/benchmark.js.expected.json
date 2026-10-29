@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "hexojs/hexo",
+    "commit": "8a08bb9e4637aa982bf823c629d5791be2d2b6ef",
+    "path": "test/benchmark.js",
+    "license": "MIT",
+    "sha256": "b00473814609626dd1a7c6860cb946a1d473c78295a2f10a05a86e2ccbf9a5a0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-env": []
+  }
+}

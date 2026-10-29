@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-js/utilities/is-ts-keyword-type.js",
+    "license": "MIT",
+    "sha256": "7d7bb54dd93322be39abf68d75af0913b368ce06c3f86b095c4758e1d7270215"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-path-concat": []
+  }
+}

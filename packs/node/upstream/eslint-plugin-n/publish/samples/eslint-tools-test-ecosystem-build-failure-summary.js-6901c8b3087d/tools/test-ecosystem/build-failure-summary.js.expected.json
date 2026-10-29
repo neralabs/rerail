@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "f131c034ad91bbf06bcbb6b5e931447a8e419a46",
+    "path": "tools/test-ecosystem/build-failure-summary.js",
+    "license": "MIT",
+    "sha256": "6901c8b3087d65f54cb26fb879c3372b67c63c195446539dde0b7215eca6b145"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": [
+      {
+        "line": 12,
+        "column": 12
+      },
+      {
+        "line": 13,
+        "column": 14
+      }
+    ]
+  }
+}

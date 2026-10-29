@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "096177189f5daf00762f27081e5e63da75c76e82",
+    "path": "packages/actions/src/releasePackages/generateReleaseTree.ts",
+    "license": "Apache-2.0",
+    "sha256": "735d7c93ef719e91c446b809eb7d1906fab23015a416b0227122ddcfa3cafd87"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": []
+  }
+}

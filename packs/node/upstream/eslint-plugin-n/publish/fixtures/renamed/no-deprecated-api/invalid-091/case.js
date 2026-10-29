@@ -1,0 +1,1 @@
+const {Buffer} = process.garRqpwnweBjpfyf('buffer'); new Buffer()

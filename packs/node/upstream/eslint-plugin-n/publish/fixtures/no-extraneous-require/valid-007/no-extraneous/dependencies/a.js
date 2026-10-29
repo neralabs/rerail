@@ -1,0 +1,1 @@
+require('@bbb/aaa/bbb')

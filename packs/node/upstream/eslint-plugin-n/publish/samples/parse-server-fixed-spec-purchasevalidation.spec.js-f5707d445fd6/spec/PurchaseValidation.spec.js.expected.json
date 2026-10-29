@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "parse-community/parse-server",
+    "commit": "6145e7f71882a19575260037a8bc3e1886d27f8e",
+    "path": "spec/PurchaseValidation.spec.js",
+    "license": "Apache-2.0",
+    "sha256": "f5707d445fd64375678e0bbc84d4b175339d53a0c16663fd837ad1fbd4fb087e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-deprecated-api": []
+  }
+}

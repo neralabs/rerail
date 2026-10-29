@@ -1,0 +1,1 @@
+const { webcrypto } = process.getBuiltinModule('crypto'); webcrypto.randomUUID()

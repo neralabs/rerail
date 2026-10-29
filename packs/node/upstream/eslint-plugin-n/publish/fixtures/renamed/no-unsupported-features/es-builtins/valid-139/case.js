@@ -1,0 +1,1 @@
+(function(Promise) { Promise.any }(j))

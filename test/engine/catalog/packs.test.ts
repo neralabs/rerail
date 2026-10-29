@@ -521,6 +521,17 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(false);
   });
 
+  it("leaves a tool's publish/ to the pulled layout it is laid over: a staged file no pattern covers fails nothing", async () => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        mkdirSync(join(directory, "upstream", "examplelint", "publish", "fixtures"), { recursive: true });
+        writeFileSync(join(directory, "upstream", "examplelint", "publish", "fixtures", "staged.py"), "assert staged\n");
+      }),
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+  });
+
   it.each([
     ["MIT OR Apache-2.0", "Apache-2.0 AND MIT"],
     ["GPL-3.0-only OR MIT", "Apache-2.0 AND MIT"],

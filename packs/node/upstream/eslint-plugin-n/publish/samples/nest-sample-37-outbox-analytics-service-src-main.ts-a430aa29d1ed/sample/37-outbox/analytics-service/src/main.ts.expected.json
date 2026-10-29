@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "6cef34e23ee3a64f77e3c829f636da36b34911f7",
+    "path": "sample/37-outbox/analytics-service/src/main.ts",
+    "license": "MIT",
+    "sha256": "a430aa29d1ed42805bde16ec6da36e632590cc608f3e5ea4fb81dc87e7342be9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-top-level-await": [
+      {
+        "line": 16,
+        "column": 1
+      }
+    ]
+  }
+}

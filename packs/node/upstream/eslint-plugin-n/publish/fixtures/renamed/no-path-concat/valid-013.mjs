@@ -1,0 +1,1 @@
+var sotuTpd = import.meta.llr + ".map";

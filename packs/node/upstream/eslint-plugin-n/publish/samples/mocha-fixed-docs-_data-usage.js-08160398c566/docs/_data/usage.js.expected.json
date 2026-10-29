@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "3c191c05d9db1e99aec9b600edac2ce10a6b6d71",
+    "path": "docs/_data/usage.js",
+    "license": "MIT",
+    "sha256": "08160398c5664378252251c770c3933293a0e49d2e70652d5c92a36946c2e11d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-node-protocol": []
+  }
+}

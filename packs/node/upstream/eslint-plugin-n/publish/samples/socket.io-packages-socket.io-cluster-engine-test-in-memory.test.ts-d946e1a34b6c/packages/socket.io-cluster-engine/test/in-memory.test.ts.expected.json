@@ -1,0 +1,134 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "7a33d9be8e8219c1b0581a77063d451d094c80d9",
+    "path": "packages/socket.io-cluster-engine/test/in-memory.test.ts",
+    "license": "MIT",
+    "sha256": "d946e1a34b6c839b01fd96a7e426adb2551664601b1793e192eafcdc80a8a052"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 1,
+        "column": 1
+      },
+      {
+        "line": 2,
+        "column": 1
+      },
+      {
+        "line": 3,
+        "column": 1
+      },
+      {
+        "line": 4,
+        "column": 1
+      },
+      {
+        "line": 4,
+        "column": 10
+      },
+      {
+        "line": 4,
+        "column": 20
+      },
+      {
+        "line": 4,
+        "column": 24
+      },
+      {
+        "line": 4,
+        "column": 36
+      },
+      {
+        "line": 13,
+        "column": 1
+      },
+      {
+        "line": 87,
+        "column": 23
+      },
+      {
+        "line": 103,
+        "column": 23
+      },
+      {
+        "line": 122,
+        "column": 23
+      },
+      {
+        "line": 148,
+        "column": 24
+      },
+      {
+        "line": 154,
+        "column": 24
+      },
+      {
+        "line": 160,
+        "column": 24
+      },
+      {
+        "line": 173,
+        "column": 26
+      },
+      {
+        "line": 177,
+        "column": 25
+      },
+      {
+        "line": 198,
+        "column": 28
+      },
+      {
+        "line": 199,
+        "column": 26
+      },
+      {
+        "line": 203,
+        "column": 23
+      },
+      {
+        "line": 219,
+        "column": 23
+      },
+      {
+        "line": 238,
+        "column": 28
+      },
+      {
+        "line": 239,
+        "column": 5
+      },
+      {
+        "line": 255,
+        "column": 26
+      },
+      {
+        "line": 261,
+        "column": 26
+      },
+      {
+        "line": 283,
+        "column": 23
+      },
+      {
+        "line": 352,
+        "column": 23
+      },
+      {
+        "line": 460,
+        "column": 25
+      },
+      {
+        "line": 468,
+        "column": 25
+      }
+    ]
+  }
+}

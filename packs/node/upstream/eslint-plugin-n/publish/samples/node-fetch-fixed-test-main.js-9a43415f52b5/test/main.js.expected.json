@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "node-fetch/node-fetch",
+    "commit": "96431ed4a10b3d9599cbd0d8249d1c37100f4230",
+    "path": "test/main.js",
+    "license": "MIT",
+    "sha256": "9a43415f52b5f3f6f61fda6723af85d9b10aed2a6dc0c6e84f39942bfaeca5a8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-encoder": []
+  }
+}

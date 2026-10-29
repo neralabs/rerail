@@ -1,0 +1,90 @@
+{
+  "source": {
+    "repo": "electron/electron",
+    "commit": "33cce89c88b25b4eec4652a00969a4fe3e44c821",
+    "path": "spec/api-session.spec.ts",
+    "license": "MIT",
+    "sha256": "0c2ef7f8be12774dcceb29f9b6765b121a07944b44660aa70faf613324d276a7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": [
+      {
+        "line": 784,
+        "column": 7
+      },
+      {
+        "line": 1039,
+        "column": 15
+      },
+      {
+        "line": 1097,
+        "column": 15
+      },
+      {
+        "line": 1105,
+        "column": 15
+      },
+      {
+        "line": 1188,
+        "column": 15
+      },
+      {
+        "line": 1254,
+        "column": 9
+      },
+      {
+        "line": 1321,
+        "column": 38
+      },
+      {
+        "line": 1323,
+        "column": 11
+      },
+      {
+        "line": 1336,
+        "column": 51
+      },
+      {
+        "line": 1342,
+        "column": 59
+      },
+      {
+        "line": 1749,
+        "column": 11
+      },
+      {
+        "line": 1991,
+        "column": 9
+      },
+      {
+        "line": 2014,
+        "column": 9
+      },
+      {
+        "line": 2031,
+        "column": 9
+      },
+      {
+        "line": 2061,
+        "column": 9
+      },
+      {
+        "line": 2100,
+        "column": 9
+      },
+      {
+        "line": 2152,
+        "column": 9
+      },
+      {
+        "line": 2207,
+        "column": 11
+      }
+    ]
+  }
+}

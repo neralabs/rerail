@@ -1,0 +1,1 @@
+const { Npuq } = require('buffer'); new Npuq();

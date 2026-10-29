@@ -1,0 +1,78 @@
+{
+  "source": {
+    "repo": "hexojs/hexo",
+    "commit": "04bc704d9479912c36208ffd9daa95677b08c1af",
+    "path": "test/scripts/hexo/multi_config_path.js",
+    "license": "MIT",
+    "sha256": "78a1936cad73ebed1bea0fa42dfb1a7e4f33af071579ed5e456ec3b595d2540f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-sync": [
+      {
+        "line": 128,
+        "column": 5
+      },
+      {
+        "line": 129,
+        "column": 5
+      },
+      {
+        "line": 130,
+        "column": 5
+      },
+      {
+        "line": 131,
+        "column": 5
+      },
+      {
+        "line": 133,
+        "column": 5
+      },
+      {
+        "line": 134,
+        "column": 5
+      },
+      {
+        "line": 142,
+        "column": 5
+      },
+      {
+        "line": 143,
+        "column": 5
+      },
+      {
+        "line": 218,
+        "column": 18
+      },
+      {
+        "line": 225,
+        "column": 14
+      },
+      {
+        "line": 234,
+        "column": 18
+      },
+      {
+        "line": 241,
+        "column": 14
+      },
+      {
+        "line": 250,
+        "column": 18
+      },
+      {
+        "line": 257,
+        "column": 14
+      },
+      {
+        "line": 277,
+        "column": 5
+      }
+    ]
+  }
+}

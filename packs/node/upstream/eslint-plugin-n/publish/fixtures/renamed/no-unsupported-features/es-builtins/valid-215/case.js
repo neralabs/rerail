@@ -1,0 +1,1 @@
+(function(WeakMap) { WeakMap }(j))

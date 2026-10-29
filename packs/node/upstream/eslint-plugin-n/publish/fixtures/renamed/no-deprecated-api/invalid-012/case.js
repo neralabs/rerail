@@ -1,0 +1,1 @@
+var {'Buffer': l = null} = require('buffer'); new l()

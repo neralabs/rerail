@@ -1,0 +1,1 @@
+import l from 'aaa/a/b/c';

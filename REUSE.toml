@@ -697,14 +697,39 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# The two files Rerail wrote among them (packs/node/licenses/eslint-plugin-n/UPSTREAM.md): the fixtures' package.json
-# and its copy among the renamed variants.
+# The files Rerail wrote among them (packs/node/licenses/eslint-plugin-n/UPSTREAM.md): the fixtures' package.json, the
+# package.json of each case folder that states a case's configured Node version as engines.node (the rules that read
+# the configured range), and their copies among the renamed variants.
 [[annotations]]
 path = [
   "packs/node/upstream/eslint-plugin-n/fixtures/package.json",
-  "packs/node/upstream/eslint-plugin-n/publish/fixtures/package.json",
   "packs/node/upstream/eslint-plugin-n/fixtures/renamed/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/package.json",
   "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-process-get-builtin-module/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/prefer-process-get-builtin-module/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/prefer-process-get-builtin-module/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/prefer-process-get-builtin-module/*/package.json",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."

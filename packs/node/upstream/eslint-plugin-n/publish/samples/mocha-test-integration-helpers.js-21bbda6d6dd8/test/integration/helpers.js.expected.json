@@ -1,0 +1,46 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "75dcf8c6c40ed1ce134ae5e174b6f4c4ca4d8c42",
+    "path": "test/integration/helpers.js",
+    "license": "MIT",
+    "sha256": "21bbda6d6dd85b3c437915fac4e3aeb93039903d88567cd1b1f3edf4b2e1f16b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-node-protocol": [
+      {
+        "line": 4,
+        "column": 20
+      },
+      {
+        "line": 5,
+        "column": 20
+      },
+      {
+        "line": 6,
+        "column": 21
+      },
+      {
+        "line": 7,
+        "column": 26
+      },
+      {
+        "line": 8,
+        "column": 22
+      },
+      {
+        "line": 327,
+        "column": 28
+      },
+      {
+        "line": 337,
+        "column": 29
+      }
+    ]
+  }
+}

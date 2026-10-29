@@ -1,0 +1,1 @@
+GMMDUS; /*globals GLOBAL*/

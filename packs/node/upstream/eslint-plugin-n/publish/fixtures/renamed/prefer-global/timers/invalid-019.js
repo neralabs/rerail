@@ -1,0 +1,1 @@
+const { setInterval } = require('timers'); setInterval(() => {}, 3000)

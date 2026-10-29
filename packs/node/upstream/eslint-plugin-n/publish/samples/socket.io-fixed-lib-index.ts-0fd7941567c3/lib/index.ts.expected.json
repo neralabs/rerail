@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "0b5e98591e7b1acf82cd51c0435716e445297e21",
+    "path": "lib/index.ts",
+    "license": "MIT",
+    "sha256": "0fd7941567c31dbd764d6e13218bb79b17ef8641cb5f928a6daea73d16037b92"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-es-builtins": []
+  }
+}

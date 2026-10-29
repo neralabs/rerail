@@ -1,0 +1,1 @@
+var jrnxEvre = __dirname + (test ? "/jao.mf" : "/lvm.mf");

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "webdriverio/webdriverio",
+    "commit": "7f473550e28ecd9bc5710622f975ee4b30fc8e21",
+    "path": "packages/wdio-appium-service/tests/cli-utils.workspace.test.ts",
+    "license": "MIT",
+    "sha256": "c64f41689d18e14d03dfcfb066741093a11dd7a1c150fdfcb819f3e6d72a08ad"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": []
+  }
+}

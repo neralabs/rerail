@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "7d9ade6bffbe09959d4e8acaf33dd22b4edb2b39",
+    "path": "lib/cli/watch-run.js",
+    "license": "MIT",
+    "sha256": "e28f872ae3379ea3cf3bab459330226da2cfe2ee5b8be4f73513ee942b33ba63"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-env": []
+  }
+}

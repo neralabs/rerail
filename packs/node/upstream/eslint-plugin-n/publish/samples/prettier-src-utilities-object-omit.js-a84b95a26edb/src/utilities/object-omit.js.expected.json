@@ -1,0 +1,18 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/utilities/object-omit.js",
+    "license": "MIT",
+    "sha256": "a84b95a26edb02da23808c631532a1f63bd8b279635781b387cf446e6a6b17aa"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-exports-assign": [],
+    "n-no-new-require": []
+  }
+}

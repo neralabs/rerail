@@ -1,0 +1,1 @@
+import {Buffer as l} from 'buffer'; new l()

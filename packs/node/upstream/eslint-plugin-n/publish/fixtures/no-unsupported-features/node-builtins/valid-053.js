@@ -1,0 +1,1 @@
+const hooks = require('node:async_hooks'); hooks.createHook()

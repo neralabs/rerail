@@ -1,0 +1,1 @@
+const jao = await import('foo')

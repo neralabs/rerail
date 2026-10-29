@@ -1,0 +1,1 @@
+import l from 'buffer'; new l.Buffer()

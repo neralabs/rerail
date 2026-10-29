@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "cypress-io/cypress",
+    "commit": "b7e9929be2ca59de285497e20fde463624c8bb53",
+    "path": "packages/data-context/graphql/makeGraphQLServer.ts",
+    "license": "MIT",
+    "sha256": "299e563cfcb103a2fbcfe8dfd8733ae5e84255931214acee23f79a7ae4b7b2ce"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": [
+      {
+        "line": 193,
+        "column": 5
+      },
+      {
+        "line": 199,
+        "column": 5
+      },
+      {
+        "line": 222,
+        "column": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+import l from './b.json';

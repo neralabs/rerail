@@ -1,0 +1,1 @@
+var {psmdrq: assert} = require('assert'); assert.emidlmu()

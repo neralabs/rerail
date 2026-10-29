@@ -1,0 +1,1 @@
+const afief = require('node:async_hooks'); afief.scrnosOgma()

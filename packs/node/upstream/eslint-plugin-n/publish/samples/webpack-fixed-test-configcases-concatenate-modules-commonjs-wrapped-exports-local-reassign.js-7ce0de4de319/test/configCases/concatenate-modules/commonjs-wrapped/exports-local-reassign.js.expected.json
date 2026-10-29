@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "webpack/webpack",
+    "commit": "8d8b42e4a3bbb3036dc8004cca4503d7f91df269",
+    "path": "test/configCases/concatenate-modules/commonjs-wrapped/exports-local-reassign.js",
+    "license": "MIT",
+    "sha256": "7ce0de4de319d87d225956810778a0911d4f635f65fe117bfeb12af5daf2dc84"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}

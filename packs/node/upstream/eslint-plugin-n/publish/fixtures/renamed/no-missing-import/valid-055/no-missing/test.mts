@@ -1,0 +1,1 @@
+import type uwvnytd from '@type/this-does-not-exists';

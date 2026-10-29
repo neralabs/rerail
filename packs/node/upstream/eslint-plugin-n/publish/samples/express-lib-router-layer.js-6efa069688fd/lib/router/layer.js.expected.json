@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "expressjs/express",
+    "commit": "691181517117e0784493a8f877beb593923577b5",
+    "path": "lib/router/layer.js",
+    "license": "MIT",
+    "sha256": "6efa069688fdecda6b17392b44796e22067f847f1435a76b9dcac99fa3cb4f09"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-mixed-requires": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

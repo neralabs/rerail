@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "less/less.js",
+    "commit": "3f6abd18fe8f8f671b2afed6b085ee0939a984c0",
+    "path": "lib/less/functions/data-uri.js",
+    "license": "Apache-2.0",
+    "sha256": "10be732e4844a386a935367794eb2f6bba7072978352cca7412288fbf3b7774d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-mixed-requires": [
+      {
+        "line": 2,
+        "column": 5
+      }
+    ]
+  }
+}

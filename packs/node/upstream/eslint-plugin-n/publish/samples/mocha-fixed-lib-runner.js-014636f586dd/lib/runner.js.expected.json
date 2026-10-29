@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "0ed524af347b59200e03b972c2450d36f6818a45",
+    "path": "lib/runner.js",
+    "license": "MIT",
+    "sha256": "014636f586ddd8a358d1e5ae8ef27098e79792ab2ba8db481ffe35834e3d55f6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": []
+  }
+}

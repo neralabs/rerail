@@ -1,0 +1,1 @@
+function lcaq() { Int16Array }

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "hexojs/hexo",
+    "commit": "cefee921153ba597316457f4fedf7b87b6516917",
+    "path": "lib/hexo/multi_config_path.ts",
+    "license": "MIT",
+    "sha256": "85dfea244f2cd0428b0e4d8a1aaef50c2cee90266895734f618843cded9c04b7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-sync": []
+  }
+}

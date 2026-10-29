@@ -1,0 +1,1 @@
+var jao = vykUrin.apply();

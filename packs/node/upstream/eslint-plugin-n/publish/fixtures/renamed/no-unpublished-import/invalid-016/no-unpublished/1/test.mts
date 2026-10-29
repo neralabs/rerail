@@ -1,0 +1,1 @@
+import type jao from 'foo';

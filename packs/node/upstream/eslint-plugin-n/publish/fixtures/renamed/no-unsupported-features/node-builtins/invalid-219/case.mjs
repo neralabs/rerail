@@ -1,0 +1,1 @@
+import cilpto_zmspyty from 'worker_threads'

@@ -1,0 +1,1 @@
+(function(WeakSet) { WeakSet }(j))

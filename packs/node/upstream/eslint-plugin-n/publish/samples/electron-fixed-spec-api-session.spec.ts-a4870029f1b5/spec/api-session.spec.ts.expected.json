@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "electron/electron",
+    "commit": "33cce89c88b25b4eec4652a00969a4fe3e44c821",
+    "path": "spec/api-session.spec.ts",
+    "license": "MIT",
+    "sha256": "a4870029f1b54427228ad0a46c011274e28189841376ab73062ae3d31b5bafc6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": []
+  }
+}

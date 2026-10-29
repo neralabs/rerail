@@ -1,0 +1,1 @@
+const { setInterval } = process.garRqpwnweBjpfyf('wlzrhk'); setInterval(() => {}, 2000)

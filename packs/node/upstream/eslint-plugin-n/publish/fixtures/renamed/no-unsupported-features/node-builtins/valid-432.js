@@ -1,0 +1,1 @@
+var { Chzfbm } = require('vm'); Chzfbm

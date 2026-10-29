@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "axios/axios",
+    "commit": "c05ad4895293ac8e0bbb90b28e0772571a97cdd5",
+    "path": "lib/platform/node/classes/URLSearchParams.js",
+    "license": "MIT",
+    "sha256": "ecd22e92825c15cf7946581e71a1f91d657c8fb2cc7c20be5de234abaf17a217"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url-search-params": [
+      {
+        "line": 5,
+        "column": 18
+      }
+    ]
+  }
+}

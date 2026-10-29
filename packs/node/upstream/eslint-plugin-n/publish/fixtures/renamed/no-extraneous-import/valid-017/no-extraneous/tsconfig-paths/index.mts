@@ -1,0 +1,1 @@
+import jao from '~configurations/foo'

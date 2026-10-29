@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "d923e90ae67e1dce3ea875e05fdcf0a20786021f",
+    "path": "packages/create-discord-bot/template/JavaScript/src/events/interactionCreate.js",
+    "license": "Apache-2.0",
+    "sha256": "9463da8b74b259984c572ab073f5ed81f9ed349d8057e9dd4c95aec5f79289d2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": []
+  }
+}

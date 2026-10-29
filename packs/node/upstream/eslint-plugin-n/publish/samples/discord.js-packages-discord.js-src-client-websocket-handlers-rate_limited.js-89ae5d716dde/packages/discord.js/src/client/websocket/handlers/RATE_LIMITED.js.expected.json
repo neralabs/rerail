@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "25aff7e218af5182b7968a7547e4751a0e050e30",
+    "path": "packages/discord.js/src/client/websocket/handlers/RATE_LIMITED.js",
+    "license": "Apache-2.0",
+    "sha256": "89ae5d716ddece0c8129e87e7ea570a9a7481c1b0c9c8a82c6f1075bad26653f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": [
+      {
+        "line": 3,
+        "column": 17
+      }
+    ]
+  }
+}

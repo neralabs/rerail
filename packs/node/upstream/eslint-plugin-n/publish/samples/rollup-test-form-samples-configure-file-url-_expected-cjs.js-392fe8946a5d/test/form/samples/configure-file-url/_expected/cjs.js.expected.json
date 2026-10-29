@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "rollup/rollup",
+    "commit": "e2552c9e955e0a61f70f508200ee9f752f85a541",
+    "path": "test/form/samples/configure-file-url/_expected/cjs.js",
+    "license": "MIT",
+    "sha256": "392fe8946a5d4740a97ddab97cda58192c95f17f234dd2b6dbedfd216036cf3a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-path-concat": [
+      {
+        "line": 7,
+        "column": 83
+      }
+    ]
+  }
+}

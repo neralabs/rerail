@@ -1,0 +1,52 @@
+{
+  "source": {
+    "repo": "fastify/fastify",
+    "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
+    "path": "lib/server.js",
+    "license": "MIT",
+    "sha256": "c43b6db5ae74e51a24996a0819f93985620e67d1155a58936c34e642d9a4ce3a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-callback-return": [
+      {
+        "line": 83,
+        "column": 11
+      },
+      {
+        "line": 95,
+        "column": 9
+      }
+    ],
+    "n-exports-style": [],
+    "n-global-require": [],
+    "n-handle-callback-err": [],
+    "n-no-callback-literal": [],
+    "n-no-exports-assign": [],
+    "n-no-mixed-requires": [],
+    "n-no-new-require": [],
+    "n-no-path-concat": [],
+    "n-no-process-env": [],
+    "n-no-process-exit": [],
+    "n-no-sync": [],
+    "n-prefer-global-buffer": [],
+    "n-prefer-global-console": [],
+    "n-prefer-global-process": [],
+    "n-prefer-global-text-decoder": [],
+    "n-prefer-global-text-encoder": [],
+    "n-prefer-global-url": [],
+    "n-prefer-global-url-search-params": [],
+    "n-prefer-node-protocol": [],
+    "n-prefer-promises-dns": [
+      {
+        "line": 155,
+        "column": 3
+      }
+    ],
+    "n-prefer-promises-fs": []
+  }
+}

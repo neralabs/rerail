@@ -1,0 +1,1 @@
+const { AsyncLocalStorage } = require('node:async_hooks'); new AsyncLocalStorage()

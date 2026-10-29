@@ -1,0 +1,1 @@
+import {Buffer} from 'another-buffer'; new Buffer()

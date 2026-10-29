@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "webpack/webpack",
+    "commit": "61a15a672e32875a64f40a81f825480f76aee2b6",
+    "path": "test/configCases/library/0-create-library/exports-shortcut-cjs.js",
+    "license": "MIT",
+    "sha256": "67f3be2db78f6a37ceabc585261f9dca42d8f39c03fe40fc589aa3d81cae50eb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}

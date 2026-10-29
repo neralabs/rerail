@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "61f444956b395c19efc1091c4fd60d827fd38496",
+    "path": "examples/nextjs-pages-router/server.js",
+    "license": "MIT",
+    "sha256": "aa749a7c80559a78ed93051ce32064f004c551324530bcbf15a552836e7a05cf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-exit": []
+  }
+}

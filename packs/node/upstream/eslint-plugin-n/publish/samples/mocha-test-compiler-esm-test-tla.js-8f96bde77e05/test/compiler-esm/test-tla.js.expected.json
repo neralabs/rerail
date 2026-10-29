@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "f58e49f08df2066e27f87f93ad7ee9cd6f91d225",
+    "path": "test/compiler-esm/test-tla.js",
+    "license": "MIT",
+    "sha256": "8f96bde77e05c9d3c430625cbafe7358c3c53ec6ee5c993ca7a297452aeeb8d9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-top-level-await": [
+      {
+        "line": 9,
+        "column": 1
+      }
+    ]
+  }
+}

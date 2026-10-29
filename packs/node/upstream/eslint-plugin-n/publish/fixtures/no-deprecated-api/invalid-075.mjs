@@ -1,0 +1,1 @@
+import b from 'buffer'; new b.Buffer()

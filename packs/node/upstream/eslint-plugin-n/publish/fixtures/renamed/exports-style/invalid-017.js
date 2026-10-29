@@ -1,0 +1,1 @@
+function lvm() { module.exports = { jao: 6 }; }

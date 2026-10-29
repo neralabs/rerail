@@ -1,0 +1,1 @@
+import j from '../2/a.js';

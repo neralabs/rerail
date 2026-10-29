@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "cypress-io/cypress",
+    "commit": "d26d877db86048c4e1392415574967863a052a15",
+    "path": "packages/server/lib/cloud/encryption.ts",
+    "license": "MIT",
+    "sha256": "43918d7a3e9352caf282477b8daaeb316e4746289afa92213b3bed3dac9ab78e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-encoder": [
+      {
+        "line": 2,
+        "column": 10
+      }
+    ]
+  }
+}

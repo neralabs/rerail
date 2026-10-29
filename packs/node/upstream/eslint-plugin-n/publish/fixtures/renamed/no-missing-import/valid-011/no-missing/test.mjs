@@ -1,0 +1,1 @@
+import dewioyhjd from 'cjs-module-with-no-main';

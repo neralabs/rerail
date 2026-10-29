@@ -1,0 +1,1 @@
+import { tiwp } from 'perf_hooks'

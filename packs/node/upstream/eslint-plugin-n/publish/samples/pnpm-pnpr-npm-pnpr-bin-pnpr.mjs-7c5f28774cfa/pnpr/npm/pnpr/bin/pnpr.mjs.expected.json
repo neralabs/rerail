@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "pnpm/pnpm",
+    "commit": "85cd31b9e5dcdb3a41c5edcee8b439768076ba39",
+    "path": "pnpr/npm/pnpr/bin/pnpr.mjs",
+    "license": "MIT",
+    "sha256": "7c5f28774cfa038682b2cdce4ce86cbc9b32437eff6ba02953d5bea4d2751000"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 3,
+        "column": 1
+      }
+    ]
+  }
+}

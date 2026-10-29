@@ -1,0 +1,1 @@
+({ psmdrq: assert } = require("node:assert"));

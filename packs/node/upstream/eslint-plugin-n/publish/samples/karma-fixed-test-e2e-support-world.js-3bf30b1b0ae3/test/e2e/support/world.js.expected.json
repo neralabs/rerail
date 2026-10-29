@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "karma-runner/karma",
+    "commit": "255bf6744c2c019aad7f9c095f8da1d9d7fc5d27",
+    "path": "test/e2e/support/world.js",
+    "license": "MIT",
+    "sha256": "3bf30b1b0ae37dde7115d738c22903179573d97cee69bb53ee572304bd83bf84"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-promises-fs": []
+  }
+}

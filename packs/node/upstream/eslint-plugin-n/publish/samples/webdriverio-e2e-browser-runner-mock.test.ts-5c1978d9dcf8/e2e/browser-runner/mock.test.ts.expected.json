@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "webdriverio/webdriverio",
+    "commit": "2aee7bd0422e44db0c8c9f9512d5b58cf3fa2380",
+    "path": "e2e/browser-runner/mock.test.ts",
+    "license": "MIT",
+    "sha256": "5c1978d9dcf866e61af8bdfbd1b85498093ea410c3dac61805649c53db2e9189"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-buffer": [
+      {
+        "line": 1,
+        "column": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "storybookjs/storybook",
+    "commit": "2c509cb2f743187fd1315a076822b20f38f55478",
+    "path": "code/frameworks/angular/setup-jest.ts",
+    "license": "MIT",
+    "sha256": "24eb947eae5991b863f51ddc60d0f792b8836a54d57c297a56b43ab8df3b9e25"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-crypto": [
+      {
+        "line": 4,
+        "column": 10
+      }
+    ]
+  }
+}

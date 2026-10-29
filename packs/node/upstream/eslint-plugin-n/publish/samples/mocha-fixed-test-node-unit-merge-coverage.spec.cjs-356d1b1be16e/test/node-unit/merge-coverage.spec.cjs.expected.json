@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "8eca642addbe0e0842821cc67bd7428d546c170f",
+    "path": "test/node-unit/merge-coverage.spec.cjs",
+    "license": "MIT",
+    "sha256": "356d1b1be16e956574114e71594ada6eb1f4f387cf8b241d2681adc0ae30eb3b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": []
+  }
+}

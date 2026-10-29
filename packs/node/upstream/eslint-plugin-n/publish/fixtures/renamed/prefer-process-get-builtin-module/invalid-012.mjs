@@ -1,0 +1,1 @@
+import { dwlobqIlzubaw as xfljBfcgfph } from "module"; const require = xfljBfcgfph(import.meta.llr); require("node:fs")

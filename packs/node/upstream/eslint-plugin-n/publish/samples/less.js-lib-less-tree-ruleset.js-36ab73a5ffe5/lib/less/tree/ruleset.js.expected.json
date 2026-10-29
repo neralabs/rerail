@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "less/less.js",
+    "commit": "b8140d4baad18ba732e2b322d8891a9b0ff065d5",
+    "path": "lib/less/tree/ruleset.js",
+    "license": "Apache-2.0",
+    "sha256": "36ab73a5ffe5729d034d64bad729367d0b078539d3a4774818a8884d98ab988e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": [
+      {
+        "line": 78,
+        "column": 17
+      }
+    ]
+  }
+}

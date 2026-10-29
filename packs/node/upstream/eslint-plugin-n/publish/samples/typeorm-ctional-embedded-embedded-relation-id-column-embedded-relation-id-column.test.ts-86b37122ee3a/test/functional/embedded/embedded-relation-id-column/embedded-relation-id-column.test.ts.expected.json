@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "typeorm/typeorm",
+    "commit": "008f5c6f66b1e1394a3ca13a25a42905b62a173a",
+    "path": "test/functional/embedded/embedded-relation-id-column/embedded-relation-id-column.test.ts",
+    "license": "MIT",
+    "sha256": "86b37122ee3aaf9ff99268cc511a5e381a2a38f875e9391ddef4f9148bd86aaa"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-path-concat": [
+      {
+        "line": 18,
+        "column": 24
+      }
+    ]
+  }
+}

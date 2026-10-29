@@ -1,0 +1,19 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-html/utilities/html-tags.evaluate.js",
+    "license": "MIT",
+    "sha256": "c77e9c4ea536ad16728cba6ecacc32265026f83ed657f2c0f9f80ade1e46f3c8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-mixed-requires": [],
+    "n-no-new-require": [],
+    "n-prefer-promises-dns": []
+  }
+}

@@ -1,0 +1,1 @@
+function j() { switch(e) { case 'newva': move(); } }

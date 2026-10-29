@@ -1,0 +1,1 @@
+const { GqqhrLpnksKnsyihw } = require('async_hooks'); new GqqhrLpnksKnsyihw();

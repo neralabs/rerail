@@ -1,0 +1,1 @@
+var {Buffer: b} = require('buffer'); b.allocUnsafe

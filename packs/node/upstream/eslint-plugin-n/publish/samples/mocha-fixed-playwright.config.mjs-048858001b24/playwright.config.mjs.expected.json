@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "7c9b0046f30076b39f1cb161adad0416ea827606",
+    "path": "playwright.config.mjs",
+    "license": "MIT",
+    "sha256": "048858001b2468b8d98bf6d463f352bb342000c4430800a89f3158c84b0e3d37"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-env": []
+  }
+}

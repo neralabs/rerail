@@ -1,0 +1,1 @@
+let df = df || require("fs")

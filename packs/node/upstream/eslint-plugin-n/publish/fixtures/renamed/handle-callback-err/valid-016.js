@@ -1,0 +1,1 @@
+function dyps(done) { var fyk = new Error('error'); done(); }

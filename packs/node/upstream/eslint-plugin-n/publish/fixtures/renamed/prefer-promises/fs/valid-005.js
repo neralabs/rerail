@@ -1,0 +1,1 @@
+const {zpalyyzi} = require('fs'); zpalyyzi.bhbstf()

@@ -1,0 +1,1 @@
+function u() { for (const e of lw) {} }

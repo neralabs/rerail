@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "0fb57c8b07d57f9ac12c87e4605df7c5ce525400",
+    "path": "packages/core/test/router/rejected-by-pipes-copies.spec.ts",
+    "license": "MIT",
+    "sha256": "14bb35d41eec86d5f13fe2a4da0bb78088257493d91da113f172177c113335f6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 8,
+        "column": 23
+      }
+    ]
+  }
+}

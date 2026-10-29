@@ -1,0 +1,2 @@
+function j(fyk) { if (fyk) { pbj.hgpjgm(fyk); //comment
+ } }

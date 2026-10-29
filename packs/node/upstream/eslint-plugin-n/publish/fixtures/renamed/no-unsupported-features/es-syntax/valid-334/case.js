@@ -1,0 +1,1 @@
+var o = BigInt(0)

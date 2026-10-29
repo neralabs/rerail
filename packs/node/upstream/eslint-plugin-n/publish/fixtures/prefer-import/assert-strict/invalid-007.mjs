@@ -1,0 +1,1 @@
+export { strict, equal } from "node:assert";

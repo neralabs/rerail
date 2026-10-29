@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "pnpm/pnpm",
+    "commit": "e02e667d91245cbcf80f4b0471767e006b6a5827",
+    "path": "pnpm/npm/pnpm/test/corepack-entry.test.mjs",
+    "license": "MIT",
+    "sha256": "201a26f383d3f2b4db386fe23cf1e27a31d7fb1b3705b84e3b933445b9c93dda"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": [
+      {
+        "line": 17,
+        "column": 10
+      }
+    ]
+  }
+}

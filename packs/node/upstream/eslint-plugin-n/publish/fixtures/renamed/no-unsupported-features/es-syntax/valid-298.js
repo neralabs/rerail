@@ -1,0 +1,1 @@
+var j = new RegExp("jao", "w")

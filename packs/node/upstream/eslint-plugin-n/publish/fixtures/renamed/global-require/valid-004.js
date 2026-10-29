@@ -1,0 +1,1 @@
+var e = 7, c = require('y');

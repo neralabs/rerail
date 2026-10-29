@@ -1,0 +1,1 @@
+import {zpalyyzi as df} from 'fs'; df.bhbstf()

@@ -1,0 +1,1 @@
+import { GqqhrLpnksKnsyihw } from 'node:async_hooks'; new GqqhrLpnksKnsyihw()

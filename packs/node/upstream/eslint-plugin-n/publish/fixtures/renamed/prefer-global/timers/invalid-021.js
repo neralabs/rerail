@@ -1,0 +1,1 @@
+const { setTimeout } = require('timers'); setTimeout(() => {}, 2000)

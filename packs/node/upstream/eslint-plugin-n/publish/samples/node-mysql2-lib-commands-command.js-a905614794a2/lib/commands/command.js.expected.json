@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "sidorares/node-mysql2",
+    "commit": "2f1014c1cc784b130fbbf1c78f4f93820ab5ff76",
+    "path": "lib/commands/command.js",
+    "license": "MIT",
+    "sha256": "a905614794a2ee96d79d30eb73fc62773aa92493edb94bc3a81b14d5b3db774c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-timers": [
+      {
+        "line": 32,
+        "column": 9
+      }
+    ]
+  }
+}

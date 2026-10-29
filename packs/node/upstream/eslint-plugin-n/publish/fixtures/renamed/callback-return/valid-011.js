@@ -1,0 +1,1 @@
+function e(fv) { fv && fv(); }

@@ -1,0 +1,1 @@
+import j from './fixtures/no-missing/a.js';

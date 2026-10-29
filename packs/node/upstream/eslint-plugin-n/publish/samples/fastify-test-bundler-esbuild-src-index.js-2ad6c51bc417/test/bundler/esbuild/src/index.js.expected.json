@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "fastify/fastify",
+    "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
+    "path": "test/bundler/esbuild/src/index.js",
+    "license": "MIT",
+    "sha256": "2ad6c51bc41742dd886e9b5c0905273011fddb9559805f10cfc307f1f6ce6a78"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}
