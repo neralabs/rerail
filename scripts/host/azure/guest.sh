@@ -309,7 +309,7 @@ check_hooks() {
       console.log(`daemon recorded: ${ids.join(", ")}`);
       process.exitCode = missing.length === 0 ? 0 : 1;
     });
-  ' "$daemon_port" "$HOME/.rerail/daemon.json"
+  ' "$daemon_port" "${RERAIL_HOME:-$HOME/.rerail}/daemon.json"
 }
 
 check_daemon_restart() {
