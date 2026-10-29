@@ -108,7 +108,7 @@ jobs:
           1. Open the [publish workflow](https://github.com/$GITHUB_REPOSITORY/actions/workflows/pack-data-publish.yml) and click **Run workflow** (branch \`main\`).
           2. Type **\`$PR\`** as the pull request number. GitHub can't pre-fill workflow inputs from a link, so type it yourself.
           3. ${replace_step}
-          4. Wait for a code owner (@Moti-Velz or @jeffreysnell) to approve the \`test-data-upload\` deployment. They read the run's **prep** summary first.
+          4. Wait for a code owner (@Moti-Velz, @jeffreysnell or @gdgiangi-nera) to approve the \`test-data-upload\` deployment. They read the run's **prep** summary first.
           5. When the run is green, pull this branch: the workflow has committed the new locks and removed \`publish/\`. If someone pushed to the branch meanwhile, or the branch is on a fork, this comment shows the locks to commit instead.
 
           **With the gh CLI (for agents)**
