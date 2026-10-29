@@ -15,14 +15,29 @@ and the project's own automation open pull requests.
 | | Nera Software employees | Anyone else |
 | --- | --- | --- |
 | Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes, in an issue |
-| Open a pull request | Yes, from a branch in this repository | No |
+| Propose a code change: a branch or pull request in your fork, linked from an issue | Not needed | Yes ([below](#proposing-a-change-from-your-fork)) |
+| Open a pull request in this repository | Yes, from a branch in this repository | No |
 
 The automation is Dependabot, for dependency updates, and the GitHub Actions workflows that open the **Release** pull
 request (`release-pr.yml`) and upstream bump pull requests (`upstream-bump-publish.yml`) as the `neralabs-ci` app.
 Their pull requests are reviewed and merged like any other.
 
 A maintainer closes a pull request from anyone else with a link to this section. That says nothing about the change
-itself: describe it in an issue, with the case that shows the problem, and a maintainer answers there.
+itself: describe it in an issue, or link your fork there as below, and a maintainer answers there.
+
+### Proposing a change from your fork
+
+You can write the change yourself:
+
+1. Open an issue for it, or find the one that covers it.
+2. Fork the repository and make the change on a branch in your fork, with tests, as
+   [Before you open a pull request](#before-you-open-a-pull-request) describes.
+3. Link the branch, or a pull request within your fork, in the issue.
+
+A maintainer reviews it there. If it goes in, a Nera Software employee brings it into this repository in their own pull
+request, linked from the issue, and credits you with a `Co-authored-by:` trailer on the commit. Linking it in an issue
+submits it under Apache-2.0 ([Licence of contributions](#licence-of-contributions)), and
+[Third-party material](#third-party-material) applies to it like any other change.
 
 ## Start with an issue
 

@@ -80,6 +80,12 @@ body:
     attributes:
       label: The steer the agent got
       render: text
+  - type: input
+    id: fork
+    attributes:
+      label: A change in your fork
+      description: Optional. A branch or pull request in your fork with the change ([how it works](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#proposing-a-change-from-your-fork)).
+      placeholder: https://github.com/you/rerail/tree/your-branch
   - type: checkboxes
     id: checks
     attributes:
