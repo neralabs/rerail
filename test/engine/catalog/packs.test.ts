@@ -135,6 +135,44 @@ describe("validatePack", () => {
   const failing = (validation: PackValidation): Partial<Record<PackCheckName, string[]>> =>
     Object.fromEntries(Object.entries(validation.checks).filter(([, failures]) => failures.length > 0));
 
+  /** The `assert-used` port's entry in conformance.json, rewritten by `edit`. */
+  const editAssertUsedPort = (directory: string, edit: (port: Record<string, unknown>) => Record<string, unknown>): void =>
+    editJson(join(directory, "conformance.json"), conformance => ({
+      ...conformance,
+      rules: z
+        .array(z.record(z.string(), z.unknown()))
+        .parse(conformance.rules)
+        .map(port => (port.id === "assert-used" ? edit(port) : port)),
+    }));
+
+  /** `assert-used` back to a candidate (`candidates/rules/assert-used.json`, out of pack.json and the README), its port carrying `examples`. */
+  const assertUsedCandidate =
+    (examples: unknown) =>
+    (directory: string): void => {
+      mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
+      renameSync(join(directory, "rules", "assert-used.json"), join(directory, "candidates", "rules", "assert-used.json"));
+      editJson(join(directory, "pack.json"), pack => ({ ...pack, rules: z.array(z.looseObject({ id: z.string() })).parse(pack.rules).filter(rule => rule.id !== "assert-used") }));
+      const readme = join(directory, "README.md");
+      writeFileSync(readme, readFileSync(readme, "utf8").replace(/^### `assert-used`\n[\s\S]*$/mu, ""));
+      editAssertUsedPort(directory, port => ({ ...port, policy: "candidates/rules/assert-used.json", examples }));
+    };
+  const pair = (caught: string, passes: string): unknown => ({ caught: { path: "src/a.py", text: caught }, passes: { path: "src/a.py", text: passes } });
+
+  it("passes a candidate's example pair in conformance.json, its caught example firing and its passes example silent", async () => {
+    const validation = await validatePack(changed("valid", assertUsedCandidate(pair("assert x\n", "x = 1\n"))));
+    expect(failing(validation)).toEqual({});
+    expect(validation.rules).toEqual([{ id: "pass-statement", document: "rules/pass-statement.json", status: "ok" }]);
+  });
+
+  it("fails a shipped port that carries examples: they belong in pack.json", async () => {
+    const validation = await validatePack(changed("valid", directory => editAssertUsedPort(directory, port => ({ ...port, examples: pair("assert x\n", "x = 1\n") }))));
+    // conformance.json fails its schema, so the rule has no port entry either.
+    expect(failing(validation)).toEqual({
+      ports: ["conformance.json: conformance.json: ✖ assert-used: ships, so its examples belong in pack.json"],
+      proof: ["assert-used: no examples and no port entry in conformance.json"],
+    });
+  });
+
   it("passes a valid pack, every rule ok", async () => {
     const validation = await validatePack(join(FIXTURES, "valid"));
     expect(failing(validation)).toEqual({});
@@ -282,6 +320,16 @@ describe("validatePack", () => {
       "a passes example that fires",
       directory => editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "pass\n" }, passes: { path: "src/a.py", text: "pass\n" } } })),
       { examples: ["pass-statement: the passes example (src/a.py) produces PASS"] },
+    ],
+    [
+      "a candidate's caught example that does not fire",
+      assertUsedCandidate(pair("x = 1\n", "x = 2\n")),
+      { examples: ["assert-used: the caught example (src/a.py) produces no EX101 violation"] },
+    ],
+    [
+      "a candidate's passes example that fires",
+      assertUsedCandidate(pair("assert x\n", "assert y\n")),
+      { examples: ["assert-used: the passes example (src/a.py) produces EX101"] },
     ],
     [
       "a ported rule's violation the recording lacks, outside divergences.json",

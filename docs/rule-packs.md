@@ -13,16 +13,17 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
 | Cyclomatic complexity (limit 6) | language | 3 (3) | Python, TypeScript or JavaScript source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| JavaScript and TypeScript (ESLint core) | language | 72 (22) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
-| TypeScript | language | 24 (13) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 136 (112) | Python source outside tests, scripts and docs |
-| PHP | language | 7 (3) | PHP source: `*.php` files, not Blade views |
-| Blade | language | 7 (5) | Blade templates: `*.blade.php` files |
-| Rust | language | 18 (13) | `*.rs` files |
-| SQL | language | 19 (17) | `*.sql` files |
+| JavaScript and TypeScript (ESLint core) | language | 80 (23) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
+| TypeScript | language | 46 (18) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
+| Python | language | 160 (135) | Python source outside tests, scripts and docs |
+| PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
+| Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
+| Rust | language | 33 (17) | `*.rs` files |
+| SQL | language | 21 (19) | `*.sql` files |
 | Next.js | framework | 21 (21) | a `next` dependency |
-| Vue | framework | 19 (18) | `*.vue` files |
-| Node.js, React | framework | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never offered. Set-up and `rerail packs recommend` name it when it would fit (an `@types/node` dependency or `*.mjs`/`*.cjs` files; a `react` dependency or `*.jsx` files), so it is not simply missing |
+| Vue | framework | 23 (21) | `*.vue` files |
+| Node.js | framework | 21 (2) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
+| React | framework | 18 (14) | a `react` dependency, or `*.jsx` files |
 
 A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`.
 

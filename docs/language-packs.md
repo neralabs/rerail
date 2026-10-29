@@ -279,9 +279,9 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 ## Start a pack
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
-The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/` or `packs/next/`
-(framework packs over a supported language), `packs/react/` (a pack that ships no rules yet, its ports kept in
-`candidates/rules/` until they pass the [conformance check's gate](../conformance/README.md#the-gate)),
+The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/`, `packs/next/` or
+`packs/react/` (framework packs over a supported language; a new pack's ports start in `candidates/rules/` and ship once
+they pass the [conformance check's gate](../conformance/README.md#the-gate)),
 `fixtures/packs/valid/` (the smallest pack, with an example-proven rule and a ported one) and
 `fixtures/packs/exemplar/` (a pack for a planned language).
 
