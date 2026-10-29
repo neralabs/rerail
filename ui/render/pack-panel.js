@@ -90,8 +90,8 @@ function renderHead(pack, on) {
 function renderIntro(pack, on, suppressions) {
   setContent(sheet.intro, JSON.stringify(["intro", pack.id, on, suppressions]), () => [
     h("p.pintro", null, pack.covers, " ", on
-      ? `Its rules are on its page in the menu; turn them on or off there.`
-      : "Add it and its rules get a page of their own in the menu, each in Log or Steer as listed below. A rule marked off arrives off. Nothing else changes."),
+      ? "Turn its rules on or off on its page in the menu."
+      : "Adding it gives its rules a page in the menu. Each rule starts as listed below."),
     suppressionsLine(pack, suppressions)]);
 }
 

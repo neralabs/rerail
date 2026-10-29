@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "18 eslint-plugin-react and eslint-plugin-react-hooks rules ported to Rerail, 14 of them on and 4 off until turned on, each scored against the plugin's own findings on its rule tests; 3 more ports are candidates until they pass the conformance check.",
+  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks.",
   "reason": "matches React",
   "match": {
     "any": [
