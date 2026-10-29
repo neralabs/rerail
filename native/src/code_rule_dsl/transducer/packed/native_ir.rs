@@ -368,3 +368,87 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
         reduction: FunctionRef::Reduction,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // G's tests (b90a7b0a), dropped by bb4c9605's merge; `policy_dsl::transducer` is `packed`.
+    use super::super::{GREEDY, NAMED, Program, word};
+
+    #[test]
+    fn native_ir_decodes_control_flow_without_a_host_call_operation() {
+        let program = Program::new(
+            vec![
+                word(KIND, 0, 7),
+                word(FORK, GREEDY, 4),
+                word(CHILD, NAMED, 0),
+                word(GOTO, 0, 4),
+                word(EMIT, 0, 0),
+            ],
+            vec![b"unused".to_vec(), b"unused".to_vec(), b"match".to_vec()],
+            Vec::new(),
+            vec![2],
+            Vec::new(),
+        )
+        .unwrap();
+        let native = lower(&program).unwrap();
+        assert_eq!(native.structural.len(), 5);
+        assert_eq!(
+            native.structural[1].operation,
+            StructuralOperation::Fork {
+                greedy: true,
+                target: 4,
+            }
+        );
+        assert_eq!(
+            native.structural[2].operation,
+            StructuralOperation::Child { named: true }
+        );
+        assert_eq!(native.structural[3].next, Some(4));
+        assert_eq!(native.structural[4].next, None);
+        assert!(!native.tree_sitter_query);
+        assert!(!native.has_repeats);
+        assert_eq!(native.maximum_cursor_slot, 0);
+        assert!(native.reservation_sites.contains(&ReservationSite {
+            arena: ArenaKind::Pending,
+            strategy: ReservationStrategy::Chunked,
+            origin: ReservationOrigin::Structural(1),
+        }));
+        assert!(native.reservation_sites.contains(&ReservationSite {
+            arena: ArenaKind::Pending,
+            strategy: ReservationStrategy::Chunked,
+            origin: ReservationOrigin::Structural(2),
+        }));
+        assert!(native.reservation_sites.contains(&ReservationSite {
+            arena: ArenaKind::Result,
+            strategy: ReservationStrategy::Exact,
+            origin: ReservationOrigin::Reduction,
+        }));
+        assert!(
+            !native
+                .reservation_sites
+                .iter()
+                .any(|site| site.arena == ArenaKind::QueryBucket)
+        );
+    }
+
+    #[test]
+    fn program_verification_rejects_an_invalid_branch_target_before_native_lowering() {
+        let Err(error) = Program::new(
+            vec![word(GOTO, 0, 2)],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ) else {
+            panic!("invalid target was accepted");
+        };
+        assert!(
+            matches!(
+                error,
+                super::super::Error::InvalidTarget(_)
+            ),
+            "{error:?}"
+        );
+    }
+}
