@@ -19,7 +19,8 @@ ast-grep-language = { version = "=0.50.0", default-features = false, features = 
 # The transducer's CPU JIT (code_rule_dsl/transducer/packed).
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
-cranelift-jit = "=0.125.4"
+# Executable code needs dedicated mappings, separate from mimalloc heap pages (G).
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
@@ -55,6 +56,8 @@ unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 
 [target.'cfg(unix)'.dependencies]
+# G's global allocator, ported as a dependency only: W keeps jemalloc (`lib.rs`) until O16.
+mimalloc = { version = "=0.1.52", default-features = false }
 libc = "0.2.189"
 
 # jemalloc does not build for MSVC targets; Windows keeps the system allocator (`lib.rs`).
