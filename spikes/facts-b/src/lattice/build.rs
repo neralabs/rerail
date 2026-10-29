@@ -89,8 +89,17 @@ fn median(v: &[f64]) -> f64 {
     }
 }
 
-/// `lattice build --dump F [--edges Y1_FILE] --out DIR [--y2-runs N] [--limit-worktrees N]`.
-pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit: Option<usize>) {
+/// A fixed bijective mix of a state (splitmix64's finaliser): the `--order hash` id order, which
+/// scatters states that are adjacent in `St` order (all module nodes sort together, at the end).
+fn mix(s: St) -> u64 {
+    let mut z = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// `lattice build --dump F [--edges Y1_FILE] --out DIR [--y2-runs N] [--limit-worktrees N] [--order st|hash]`.
+pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit: Option<usize>, hash_order: bool) {
     std::fs::create_dir_all(out).unwrap();
     let t = Instant::now();
     let (d, y1) = crate::y2::read_dumps(dump, edges);
@@ -119,7 +128,11 @@ pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit:
         let enum_ms = t3.elapsed().as_secs_f64() * 1e3;
         let t4 = Instant::now();
         let mut fresh: Vec<St> = e.states.iter().copied().filter(|s| !ids.contains_key(s)).collect();
-        fresh.sort_unstable();
+        if hash_order {
+            fresh.sort_unstable_by_key(|s| (mix(*s), *s));
+        } else {
+            fresh.sort_unstable();
+        }
         let first_new = ids.len() as u32;
         for s in &fresh {
             let n = ids.len() as u32;
@@ -270,7 +283,7 @@ pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit:
     cols::write(&out.join("seeds.u32"), &seeds_col);
     cols::write(&out.join("y2_id.u32"), &y2_id);
     cols::write(&out.join("y2_lvl.u32"), &y2_lvl);
-    let meta = json!({"dump": dump.display().to_string(), "edges": edges.map(|p| p.display().to_string()), "n": n, "base_edges": base_tgt.len(), "worktrees": metas,
+    let meta = json!({"dump": dump.display().to_string(), "edges": edges.map(|p| p.display().to_string()), "order": if hash_order { "hash" } else { "st" }, "n": n, "base_edges": base_tgt.len(), "worktrees": metas,
         "bytes": {"base": (base_off.len() + base_tgt.len()) * 4, "layers": ov_bits.len() * 8 + (ov_rank.len() + ov_off.len() + ov_tgt.len()) * 4}});
     std::fs::write(out.join("meta.json"), serde_json::to_string_pretty(&meta).unwrap()).unwrap();
     eprintln!("lattice build: {n} ids, {} base edges, {} worktrees, {:.1}s", base_tgt.len(), wts.len(), t.elapsed().as_secs_f64());

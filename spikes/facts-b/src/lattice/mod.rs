@@ -1,16 +1,18 @@
 //! Lattice facts, experiment E1 (docs/facts/LATTICE.md): the semiring-round fixpoint on the CPU.
 //!
-//! - `round`: the operator (L5): CSR (flat or base + replacement rows), `set` and `min_level`,
-//!   sequential and parallel-within-a-round kernels, the naive reference. Depends on nothing else
-//!   in the crate.
+//! - `round`: the operator (L5): CSR (flat or base + replacement rows), `set` and `min_level`; a
+//!   sequential kernel and four parallel-within-a-round ones (push over frontier word ranges,
+//!   push over edge ranges, owner-computes push, direction-optimizing push/pull); the naive
+//!   reference. Depends on nothing else in the crate.
 //! - `cols`: columns written once and mapped read-only (L6), with the copy counter.
 //! - `build`: Y2's dead-code product graph (`y2::dc`) as columns, and Y2's own reachability timed
-//!   on the same inputs as the exactness reference.
+//!   on the same inputs, interleaved with the sequential fixpoint, as the exactness reference.
 //! - `bench`: the timed, counted, checked runs (workloads A and B).
 //!
-//! `facts-b lattice build --dump F [--edges Y1_FILE] --out DIR [--y2-runs N] [--limit-worktrees N]`
+//! `facts-b lattice build --dump F [--edges Y1_FILE] --out DIR [--y2-runs N] [--limit-worktrees N]
+//!   [--order st|hash]`
 //! `facts-b lattice run --graph DIR --threads T --out FILE [--runs N] [--lattice level|set]
-//!   [--kernel seq|par] [--fleet within|across]`
+//!   [--kernel seq|par|edge|own|dir] [--fleet within|across]`
 pub mod bench;
 pub mod build;
 pub mod cols;
@@ -30,6 +32,11 @@ pub fn main(args: Vec<String>) {
             &PathBuf::from(arg(&args, "--out").expect("--out")),
             arg(&args, "--y2-runs").map_or(5, |x| x.parse().unwrap()),
             arg(&args, "--limit-worktrees").map(|x| x.parse().unwrap()),
+            match arg(&args, "--order").as_deref() {
+                None | Some("st") => false,
+                Some("hash") => true,
+                Some(o) => panic!("--order {o}: st | hash"),
+            },
         ),
         Some("run") => bench::run(bench::Opts {
             graph: PathBuf::from(arg(&args, "--graph").expect("--graph")),

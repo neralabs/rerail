@@ -46,7 +46,7 @@ run() {
 case $cmd in
 build-oracle)
   wait_quiet
-  "$BIN" lattice build --dump "$Y2/20261023-210008-dump-oracle/dump.tsv" --out "$rd/graph" --y2-runs "${Y2_RUNS:-5}" 2>"$rd/build.log"
+  "$BIN" lattice build --dump "$Y2/20261023-210008-dump-oracle/dump.tsv" --out "$rd/graph" --y2-runs "${Y2_RUNS:-5}" --order "${ORDER:-st}" 2>"$rd/build.log"
   ;;
 build-fleet)
   wait_quiet
@@ -59,7 +59,7 @@ sweep-oracle)
     for lat in level set; do
       run --graph "$g" --threads 1 --kernel seq --lattice $lat --out "$rd/a-$lat-seq-1-r$r.json"
       for t in $THREADS; do
-        for k in par edge dir; do
+        for k in ${KERNELS:-par edge own dir}; do
           run --graph "$g" --threads "$t" --kernel $k --lattice $lat --out "$rd/a-$lat-$k-$t-r$r.json"
         done
       done

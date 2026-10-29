@@ -117,8 +117,9 @@ fn fixpoint<R: Rows>(g: &R, rev: Option<&Csr<'_>>, seeds: &[u32], lat: Lattice, 
         }
         "par" => round::parallel(g, seeds, lat, threads),
         "edge" => round::parallel_edges(g, seeds, lat, threads),
+        "own" => round::parallel_owner(g, seeds, lat, threads),
         "dir" => round::parallel_dir(g, rev.expect("--kernel dir: the base worktree only"), seeds, lat, threads),
-        k => panic!("--kernel {k}: seq | par | edge | dir"),
+        k => panic!("--kernel {k}: seq | par | edge | own | dir"),
     }
 }
 

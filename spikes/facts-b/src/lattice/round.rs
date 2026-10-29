@@ -360,6 +360,11 @@ trait ParVal: Sync {
     fn visited(&self, wi: usize, valid: u64) -> u64;
     /// Set the ids of `nb` in word `wi` to `lvl`: only the word's owner calls it, in a pull round.
     fn set_owned(&self, wi: usize, nb: u64, lvl: u32);
+    /// Whether joining `lvl` into `t` would change it (a read, no write).
+    fn improves(&self, t: u32, lvl: u32) -> bool;
+    /// Join `lvl` into `t` by its owner (no other worker writes `t`'s word this phase); true if
+    /// the value changed.
+    fn join_owned(&self, t: u32, lvl: u32) -> bool;
 }
 
 struct ParLevels(Vec<AtomicU32>);
@@ -390,6 +395,20 @@ impl ParVal for ParLevels {
             self.0[wi * 64 + b as usize].store(lvl, Relaxed);
         }
     }
+    #[inline(always)]
+    fn improves(&self, t: u32, lvl: u32) -> bool {
+        unsafe { self.0.get_unchecked(t as usize) }.load(Relaxed) > lvl
+    }
+    #[inline(always)]
+    fn join_owned(&self, t: u32, lvl: u32) -> bool {
+        let x = unsafe { self.0.get_unchecked(t as usize) };
+        if x.load(Relaxed) > lvl {
+            x.store(lvl, Relaxed);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 struct ParBits(Vec<AtomicU64>);
@@ -407,6 +426,22 @@ impl ParVal for ParBits {
     fn set_owned(&self, wi: usize, nb: u64, _: u32) {
         let x = &self.0[wi];
         x.store(x.load(Relaxed) | nb, Relaxed);
+    }
+    #[inline(always)]
+    fn improves(&self, t: u32, _: u32) -> bool {
+        unsafe { self.0.get_unchecked((t >> 6) as usize) }.load(Relaxed) >> (t & 63) & 1 == 0
+    }
+    #[inline(always)]
+    fn join_owned(&self, t: u32, _: u32) -> bool {
+        let m = 1u64 << (t & 63);
+        let x = unsafe { self.0.get_unchecked((t >> 6) as usize) };
+        let w = x.load(Relaxed);
+        if w & m == 0 {
+            x.store(w | m, Relaxed);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -851,6 +886,168 @@ fn edge_kernel<R: Rows, V: ParVal>(g: &R, seeds: &[u32], val: V, threads: usize,
     (val, c)
 }
 
+/// As `parallel`, with every value written by one owner only (L6's "workers own their output
+/// slices"): the id space is cut into `16 × threads` word-aligned partitions. Phase 1: workers
+/// scan frontier word ranges and append each target the join would improve (a read of the value,
+/// no write) to their own buffer for the target's partition. Phase 2: each partition is claimed by
+/// one worker, which joins every buffered target into its values and next-frontier words with
+/// plain stores. No atomic read-modify-write on values, no line written by two workers; the price
+/// is the buffers (private bytes per worker ≈ its share of a round's candidate targets × 4 B) and
+/// a second barrier per round.
+pub fn parallel_owner<R: Rows>(g: &R, seeds: &[u32], lat: Lattice, threads: usize) -> (Values, Counts) {
+    let t0 = Instant::now();
+    let n = g.n();
+    match lat {
+        Lattice::MinLevel => {
+            let (v, c) = owner_kernel(g, seeds, ParLevels(atomic_u32(vec![INF; n])), threads, t0);
+            (Values::Levels(plain_u32(v.0)), c)
+        }
+        Lattice::Set => {
+            let (v, c) = owner_kernel(g, seeds, ParBits(atomic_u64(vec![0; n.div_ceil(64)])), threads, t0);
+            (Values::Bits(plain_u64(v.0)), c)
+        }
+    }
+}
+
+/// Per (worker, partition) candidate buffers. Phase 1: worker `w` alone pushes to row `w`. Phase
+/// 2: the claimer of partition `p` alone reads and empties column `p`. The phases are separated by
+/// barriers, so no buffer is touched by two threads at once.
+struct Bufs(Vec<std::cell::UnsafeCell<Vec<u32>>>);
+// SAFETY: access is partitioned by phase as above.
+unsafe impl Sync for Bufs {}
+
+fn owner_kernel<R: Rows, V: ParVal>(g: &R, seeds: &[u32], val: V, threads: usize, t0: Instant) -> (V, Counts) {
+    assert!(threads >= 1);
+    let n = g.n();
+    check_seeds(n, seeds);
+    let words = n.div_ceil(64);
+    let cw = chunk_words(words, threads);
+    let units = words.div_ceil(cw);
+    // Partitions: the same word ranges as the scan units, so a partition's words are its own.
+    let span = (cw * 64) as u32;
+    let parts = units;
+    let bits: [Vec<AtomicU64>; 2] = [atomic_u64(vec![0; words]), atomic_u64(vec![0; words])];
+    let mut width = 0u64;
+    for &s in seeds {
+        if val.join(s, 0) {
+            bits[0][(s >> 6) as usize].fetch_or(1 << (s & 63), Relaxed);
+            width += 1;
+        }
+    }
+    let bufs = Bufs((0..threads * parts).map(|_| std::cell::UnsafeCell::new(Vec::new())).collect());
+    let ctr = [AtomicUsize::new(0), AtomicUsize::new(0)];
+    let slots: [Vec<Slot>; 2] = [(0..threads).map(|_| Slot::default()).collect(), (0..threads).map(|_| Slot::default()).collect()];
+    let barrier = SpinBarrier::new(threads);
+    let rounds = parking_lot::Mutex::new(Vec::new());
+    let waits = parking_lot::Mutex::new(vec![0f64; threads]);
+    let times = parking_lot::Mutex::new((0f64, Vec::new()));
+    let seeds_width = width;
+    std::thread::scope(|s| {
+        for w in 0..threads {
+            let (g, val, bits, bufs, ctr, slots, barrier, rounds, waits, times) = (g, &val, &bits, &bufs, &ctr, &slots, &barrier, &rounds, &waits, &times);
+            s.spawn(move || {
+                let mut sense = false;
+                let mut width = seeds_width;
+                let mut wait = 0f64;
+                let mut tr = Instant::now();
+                let start_ms = (tr - t0).as_secs_f64() * 1e3;
+                let mut round_ms = Vec::new();
+                let mut k = 0usize;
+                let mut wait_at = |sense: &mut bool| {
+                    let tw = Instant::now();
+                    barrier.wait(sense);
+                    wait += tw.elapsed().as_secs_f64() * 1e3;
+                };
+                while width > 0 {
+                    let p = k & 1;
+                    let (cur, next) = (&bits[p], &bits[p ^ 1]);
+                    let lvl = k as u32 + 1;
+                    // Phase 1: scan, buffer the candidates by partition.
+                    let mut edges = 0u64;
+                    loop {
+                        let u = ctr[0].fetch_add(1, Relaxed);
+                        if u >= units {
+                            break;
+                        }
+                        for wi in u * cw..((u + 1) * cw).min(words) {
+                            let cell = unsafe { cur.get_unchecked(wi) };
+                            let mut x = cell.load(Relaxed);
+                            if x == 0 {
+                                continue;
+                            }
+                            cell.store(0, Relaxed);
+                            while x != 0 {
+                                let v = (wi as u32) << 6 | x.trailing_zeros();
+                                x &= x - 1;
+                                let r = g.row(v);
+                                edges += r.len() as u64;
+                                for &t in r {
+                                    if val.improves(t, lvl) {
+                                        // SAFETY: row `w` of the buffers is this worker's in phase 1.
+                                        unsafe { &mut *bufs.0.get_unchecked(w * parts + (t / span) as usize).get() }.push(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if w == 0 {
+                        ctr[1].store(0, Relaxed);
+                    }
+                    wait_at(&mut sense);
+                    // Phase 2: each partition joined by its claimer.
+                    let mut changed = 0u64;
+                    loop {
+                        let q = ctr[1].fetch_add(1, Relaxed);
+                        if q >= parts {
+                            break;
+                        }
+                        for x in 0..threads {
+                            // SAFETY: column `q` is this worker's in phase 2.
+                            let b = unsafe { &mut *bufs.0.get_unchecked(x * parts + q).get() };
+                            for &t in b.iter() {
+                                if val.join_owned(t, lvl) {
+                                    let c = unsafe { next.get_unchecked((t >> 6) as usize) };
+                                    c.store(c.load(Relaxed) | 1 << (t & 63), Relaxed);
+                                    changed += 1;
+                                }
+                            }
+                            b.clear();
+                        }
+                    }
+                    slots[p][w].edges.store(edges, Relaxed);
+                    slots[p][w].changed.store(changed, Relaxed);
+                    if w == 0 {
+                        ctr[0].store(0, Relaxed);
+                    }
+                    wait_at(&mut sense);
+                    let mut tot = Round { width, edges: 0, changed: 0, pull: false };
+                    for sl in &slots[p] {
+                        tot.edges += sl.edges.load(Relaxed);
+                        tot.changed += sl.changed.load(Relaxed);
+                    }
+                    width = tot.changed;
+                    if w == 0 {
+                        rounds.lock().push(tot);
+                        round_ms.push(tr.elapsed().as_secs_f64() * 1e3);
+                        tr = Instant::now();
+                    }
+                    k += 1;
+                }
+                drop(wait_at);
+                waits.lock()[w] = wait;
+                if w == 0 {
+                    *times.lock() = (start_ms, round_ms);
+                }
+            });
+        }
+    });
+    let (start_ms, round_ms) = times.into_inner();
+    // Each worker's buffers (row `w`), at their high-water capacity.
+    let alloc: Vec<u64> = (0..threads).map(|w| (0..parts).map(|q| unsafe { &*bufs.0[w * parts + q].get() }.capacity() as u64 * 4).sum()).collect();
+    let c = Counts { seeds: seeds_width, rounds: rounds.into_inner(), list_rounds: 0, barrier_wait_ms: waits.into_inner(), worker_alloc_bytes: alloc, start_ms, round_ms };
+    (val, c)
+}
+
 /// The reference fixpoint (naive, Bellman–Ford order: every reached id relaxes every out-edge,
 /// until a whole pass changes nothing). For the differential tests.
 pub fn naive<R: Rows>(g: &R, seeds: &[u32], lat: Lattice) -> Values {
@@ -1000,6 +1197,9 @@ mod tests {
                 let (e, ec) = parallel_edges(g, seeds, lat, t);
                 assert_eq!(e, want, "edge-balanced {lat:?} at {t} threads");
                 assert_eq!(ec.algebraic(), sc.algebraic(), "edge-balanced counts {lat:?} at {t} threads");
+                let (o, oc) = parallel_owner(g, seeds, lat, t);
+                assert_eq!(o, want, "owner-computes {lat:?} at {t} threads");
+                assert_eq!(oc.algebraic(), sc.algebraic(), "owner-computes counts {lat:?} at {t} threads");
                 let (d, dc) = parallel_dir(g, &rev, seeds, lat, t);
                 assert_eq!(d, want, "direction-optimizing {lat:?} at {t} threads");
                 assert_eq!(dc.algebraic(), dc1.algebraic(), "direction-optimizing counts {lat:?} at {t} threads");
