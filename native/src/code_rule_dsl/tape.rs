@@ -126,6 +126,12 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
+    /// The name of field `code` (M's facts-a, which read the private catalog directly).
+    #[allow(dead_code)]
+    pub(super) fn field_name(&self, code: u16) -> Option<&'static str> {
+        self.kinds.field_name(code)
+    }
+
     /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
     /// tests compile queries against it).
     #[cfg(test)]

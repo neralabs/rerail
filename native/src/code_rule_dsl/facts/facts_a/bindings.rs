@@ -9,12 +9,12 @@
 //! the name (Ruff's order) and how many there are (`ScopeTable::chain`), and `outer`. Native finds
 //! a node's bindings by its byte range and kind id (`Usage::named_at` over `name_sites`); the same
 //! key maps each binding to its fact node here, once per content.
-use crate::facts;
+use super::facts;
 use ast_grep_core::source::SgNode;
 use ast_grep_core::AstGrep;
-use rerail_engine::code_rule_dsl::language::GrammarDialect;
-use rerail_engine::code_rule_dsl::scope::{Form, Reading, ScopeKind, ScopeTable};
-use rerail_engine::code_rule_dsl::tape::TapeDoc;
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::scope::{Form, Reading, ScopeKind, ScopeTable};
+use crate::code_rule_dsl::tape::TapeDoc;
 
 /// One binding of the content, at its name node.
 #[derive(Clone, Copy, Debug)]

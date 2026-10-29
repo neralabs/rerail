@@ -13,6 +13,8 @@ pub(crate) mod memo;
 #[allow(dead_code)]
 pub(crate) mod lmap;
 #[allow(dead_code)]
+pub(crate) mod facts_a;
+#[allow(dead_code)]
 pub(crate) mod observe;
 #[allow(dead_code)]
 pub(crate) mod overlay;

@@ -2,7 +2,7 @@
 //! fields and spans equal the native engine's (preorder transducer ids over every tree-sitter
 //! node, named and anonymous).
 use ast_grep_core::source::SgNode;
-use rerail_engine::code_rule_dsl::{eval, lines::LineTable, model::FileInput, tape::TapeDoc};
+use crate::code_rule_dsl::{eval, lines::LineTable, model::FileInput, tape::TapeDoc};
 use parking_lot::Mutex;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
@@ -56,14 +56,15 @@ thread_local! {
 }
 
 /// The patched Python grammar the native engine parses with (field codes and names).
-pub static GRAMMAR: LazyLock<Arc<rerail_engine::code_rule_dsl::tape::Grammar>> = LazyLock::new(|| {
+pub static GRAMMAR: LazyLock<Arc<crate::code_rule_dsl::tape::Grammar>> = LazyLock::new(|| {
     let file = FileInput::new("g.py".into(), "python".into(), Arc::new(String::new()), None, None, "grammar")
         .unwrap_or_else(|e| panic!("{}", e.reason));
     let language = eval::file_language(&file).expect("python grammar");
-    rerail_engine::code_rule_dsl::tape::Grammar::new(language).expect("grammar")
+    crate::code_rule_dsl::tape::Grammar::new(language).expect("grammar")
 });
 pub fn field_name(code: u16) -> String {
-    GRAMMAR.kinds.field_name(code).unwrap_or("").to_owned()
+    // W's Grammar keeps its kind catalog private.
+    GRAMMAR.field_name(code).unwrap_or("").to_owned()
 }
 
 /// One file's facts. Columns are indexed by node id.
@@ -94,9 +95,9 @@ pub struct Facts {
     /// parser facts computed on demand (`typedefs`).
     pub tape: Option<TapeDoc>,
     /// `string_type_definition` (SCHEMA § 1.3), computed on first use.
-    pub typedefs: std::cell::OnceCell<Result<Vec<crate::typedefs::Annotation>, String>>,
+    pub typedefs: std::cell::OnceCell<Result<Vec<super::typedefs::Annotation>, String>>,
     /// `py_binding` (SCHEMA § 1.4), computed on first use.
-    pub bindings: std::cell::OnceCell<Result<Vec<crate::bindings::Binding>, String>>,
+    pub bindings: std::cell::OnceCell<Result<Vec<super::bindings::Binding>, String>>,
 }
 
 pub enum Built {
@@ -272,17 +273,17 @@ impl Facts {
         (p != NONE).then_some(p)
     }
     /// `string_type_definition` (SCHEMA § 1.3): computed from the tape on first use.
-    pub fn typedefs(&self) -> Result<&[crate::typedefs::Annotation], String> {
+    pub fn typedefs(&self) -> Result<&[super::typedefs::Annotation], String> {
         let r = self.typedefs.get_or_init(|| match &self.tape {
-            Some(t) => crate::typedefs::build(t),
+            Some(t) => super::typedefs::build(t),
             None => Err("string_type_definition needs the parse (facts read from a fact file)".into()),
         });
         r.as_deref().map_err(Clone::clone)
     }
     /// `py_binding` (SCHEMA § 1.4): computed from the tape on first use, sorted by node.
-    pub fn bindings(&self) -> Result<&[crate::bindings::Binding], String> {
+    pub fn bindings(&self) -> Result<&[super::bindings::Binding], String> {
         let r = self.bindings.get_or_init(|| match &self.tape {
-            Some(t) => crate::bindings::build(t),
+            Some(t) => super::bindings::build(t),
             None => Err("py_binding needs the parse (facts read from a fact file)".into()),
         });
         r.as_deref().map_err(Clone::clone)

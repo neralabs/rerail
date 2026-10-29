@@ -3,13 +3,13 @@
 //! table (`scope/python/typedefs.rs`, `ScopeTable::annotations`) by calling its builder, not by
 //! re-implementing it. Per content: the table reads one file (default reading, no module path:
 //! see SCHEMA § 1.3 for the module-path condition).
-use crate::facts::{self, NONE};
+use super::facts::{self, NONE};
 use ast_grep_core::AstGrep;
-use rerail_engine::code_rule_dsl::language::GrammarDialect;
-use rerail_engine::code_rule_dsl::literal::SubDoc;
-use rerail_engine::code_rule_dsl::origin::Origin;
-use rerail_engine::code_rule_dsl::scope::{Reading, ScopeTable};
-use rerail_engine::code_rule_dsl::tape::TapeDoc;
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::literal::SubDoc;
+use crate::code_rule_dsl::origin::Origin;
+use crate::code_rule_dsl::scope::{Reading, ScopeTable};
+use crate::code_rule_dsl::tape::TapeDoc;
 
 /// One node of a parsed annotation: its kind, the source range it stands for (the primary host
 /// range), its text in the annotation, its parent (index in the tree), and whether it is named.
