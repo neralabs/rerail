@@ -184,7 +184,7 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to start work and what a pull request needs. Contributions are licensed under Apache-2.0, with no CLA. Third-party material must use a permissive licence, and where it came from and under which licence must be recorded with it. How core is released is in [docs/release.md](docs/release.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to start work and what a pull request needs, and [docs/GOVERNANCE.md](docs/GOVERNANCE.md) for who the maintainers are and how decisions are made. Contributions are licensed under Apache-2.0, with no CLA. Third-party material must use a permissive licence, and where it came from and under which licence must be recorded with it. How core is released is in [docs/release.md](docs/release.md).
 
 To build from a checkout you need Node.js 24+, npm, Rust (pinned in `rust-toolchain.toml`), [`just`](https://github.com/casey/just) and [Git LFS](https://git-lfs.com). The model weights and an engine data table are stored in LFS, so install it before you clone.
 
