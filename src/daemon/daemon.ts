@@ -9,12 +9,12 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import type { DaemonHealth, DaemonState, NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonState, type NativeStatus } from "../runtime/daemon-control.js";
 import { startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
-import { createRerailApi, hostAllowlist, publicHostSet } from "../api/http.js";
+import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, sameSecret } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
@@ -43,6 +43,13 @@ export interface RerailDaemonOptions {
   port?: number;
   /** Where the port the daemon listens on is remembered, so dashboard links outlive a restart. */
   portFile?: string;
+  /**
+   * Where a loopback daemon keeps its access capability across restarts. Omitted, or for a daemon reachable from other
+   * machines (bound off loopback, or answering a `--public-host`), every start mints a new one.
+   */
+  accessTokenFile?: string;
+  /** The access capability to require, in place of a recorded or minted one; embedding and tests pass their own. */
+  accessToken?: string;
   /** Directory holding the page. Omit to serve `/api` and `/healthz` alone. */
   uiRoot?: string;
   /** `uiRoot` is the committed `ui/` source rather than the packaged copy; reported as `ui: "dev"`. */
@@ -140,17 +147,56 @@ async function readRememberedPort(portFile: string): Promise<number | undefined>
   }
 }
 
+/** `content` as the whole of `file`, readable by its owner only, through a temporary file renamed over it. */
+async function writePrivateFile(file: string, content: string): Promise<void> {
+  const temporaryFile = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(temporaryFile, content, { mode: 0o600 });
+    await rename(temporaryFile, file);
+  } finally {
+    await rm(temporaryFile, { force: true });
+  }
+}
+
+const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 /** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
 async function rememberPort(portFile: string, port: number): Promise<void> {
-  const temporaryPortFile = `${portFile}.${process.pid}.tmp`;
   try {
-    await writeFile(temporaryPortFile, `${JSON.stringify({ port })}\n`, { mode: 0o600 });
-    await rename(temporaryPortFile, portFile);
+    await writePrivateFile(portFile, `${JSON.stringify({ port })}\n`);
   } catch (error) {
-    process.stderr.write(`rerail daemon: could not remember port ${port} in ${portFile}: ${error instanceof Error ? error.message : String(error)}\n`);
-  } finally {
-    await rm(temporaryPortFile, { force: true });
+    process.stderr.write(`rerail daemon: could not remember port ${port} in ${portFile}: ${errorText(error)}\n`);
   }
+}
+
+const ACCESS_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
+
+/** A fresh 256-bit capability, URL-safe. */
+function newAccessToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+/**
+ * The capability recorded in `file`, minted and written (mode 0600, the file's whole content) when there is none or it
+ * is unreadable or malformed; a replaced one is reported, since every browser that held it must open a new link. A
+ * write that fails leaves a per-launch capability: the daemon still runs, every request still needs it, and the
+ * browser asks for a new link after the next restart.
+ */
+async function persistentAccessToken(file: string): Promise<string> {
+  try {
+    const recorded = (await readFile(file, "utf8")).trim();
+    if (ACCESS_TOKEN_PATTERN.test(recorded)) return recorded;
+    process.stderr.write(`rerail daemon: ${file} does not hold an access capability; replacing it, so open the dashboard link again\n`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") process.stderr.write(`rerail daemon: could not read ${file}: ${errorText(error)}\n`);
+  }
+  const token = newAccessToken();
+  try {
+    await writePrivateFile(file, `${token}\n`);
+  } catch (error) {
+    process.stderr.write(`rerail daemon: could not keep the access capability in ${file}: ${errorText(error)}\n`);
+  }
+  return token;
 }
 
 async function closeHttpServer(server: Server): Promise<void> {
@@ -177,10 +223,11 @@ export class RerailDaemon {
   readonly kernelSocketPath: string;
   readonly #nativeServer: NativeSessionServer;
   readonly #nativeToken: string;
+  readonly #accessToken: string;
   #closed = false;
 
   private constructor({
-    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken,
+    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
   }: {
     server: Server;
     engineService: EngineService;
@@ -193,6 +240,7 @@ export class RerailDaemon {
     workspaceRoot: string;
     nativeServer: NativeSessionServer;
     nativeToken: string;
+    accessToken: string;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
@@ -210,17 +258,27 @@ export class RerailDaemon {
     this.#workspaceRoot = workspaceRoot;
     this.#nativeServer = nativeServer;
     this.#nativeToken = nativeToken;
+    this.#accessToken = accessToken;
   }
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
     const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
+    const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
     // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
     // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
     // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
     const publicHosts = publicHostSet([
       ...(options.publicHosts ?? []),
-      ...(LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase()) ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
+      ...(loopbackBind ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
     ]);
+    // Every request carries the daemon's access capability: `Host`/`Origin` are only what a client claims, and on
+    // loopback another user of the machine, or a sandboxed process allowed localhost, reaches the socket as the person
+    // would. A loopback daemon keeps its capability in the home across restarts, so a browser that holds it keeps
+    // working; one reachable off loopback (`--allow-remote`, or a `--public-host` a reverse proxy forwards) mints a new
+    // one on every start.
+    const remote = !loopbackBind || (options.publicHosts ?? []).length > 0;
+    const accessToken = options.accessToken
+      ?? (remote || options.accessTokenFile === undefined ? newAccessToken() : await persistentAccessToken(options.accessTokenFile));
     const uiRoot = options.uiRoot === undefined ? undefined : realpathSync(options.uiRoot);
     const ui: DaemonState["ui"] = uiRoot === undefined || options.dev === true ? "dev" : "bundled";
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
@@ -254,13 +312,14 @@ export class RerailDaemon {
       const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
       const app = new Hono();
       app.use("*", hostAllowlist(publicHosts));
+      app.use("*", accessCapability(accessToken));
       app.get("/healthz", context => context.json(daemon!.health()));
 
       app.post("/native/session", async (context) => {
         // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
         if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
         if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
-        if (context.req.header("authorization") !== `Bearer ${nativeToken}`) {
+        if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
           return context.json({ error: "native-authorization-invalid" }, 403);
         }
         let body: unknown;
@@ -300,17 +359,9 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken,
+        nativeServer: sessions, nativeToken, accessToken,
       });
-      if (options.stateFile !== undefined) {
-        const temporaryStateFile = `${options.stateFile}.${process.pid}.tmp`;
-        try {
-          await writeFile(temporaryStateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`, { mode: 0o600 });
-          await rename(temporaryStateFile, options.stateFile);
-        } finally {
-          await rm(temporaryStateFile, { force: true });
-        }
-      }
+      if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
       // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
       if (options.portFile !== undefined && options.port !== 0 && daemon.port !== remembered) await rememberPort(options.portFile, daemon.port);
       return daemon;
@@ -353,6 +404,7 @@ export class RerailDaemon {
       packageRoot: PACKAGE_ROOT,
       workspaceRoot: this.#workspaceRoot,
       nativeToken: this.#nativeToken,
+      accessToken: this.#accessToken,
     };
   }
 
@@ -391,10 +443,11 @@ export class RerailDaemon {
 }
 
 /**
- * Page files with an SPA fallback; paths that escape the UI root are 404. Every URL the page
- * uses is unversioned (`/app.js`, `/render/*.js`), so nothing may be cached past a revalidation:
- * a browser that kept `app.js` for a year would run the previous release's page, or in `--dev`
- * miss every edit. The validator is a stat, so the common answer is a bodyless 304.
+ * Page files with an SPA fallback: a path that escapes the UI root names no file there, so one with an extension is
+ * 404 and one without gets the shell like any client route. Every URL the page uses is unversioned (`/app.js`,
+ * `/render/*.js`), so nothing may be cached past a revalidation: a browser that kept `app.js` for a year would run the
+ * previous release's page, or in `--dev` miss every edit. The validator is a stat, so the common answer is a bodyless
+ * 304.
  */
 async function serveStatic(pathname: string, headOnly: boolean, uiRoot: string, ifNoneMatch: string | undefined): Promise<Response> {
   const notFound = () => Response.json({ error: "not-found" }, { status: 404 });
@@ -545,6 +598,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     publicHosts: arguments_.publicHosts,
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
     portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
+    accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
     ...services,

@@ -85,6 +85,8 @@ export const data = {
   disconnected: false,
   /** The daemon answered that it does not know the scoped repository or checkout. */
   missing: false,
+  /** The daemon answered `401`: this browser has not opened the dashboard link, so it holds no capability. */
+  accessRequired: false,
   loaded: false,
 };
 

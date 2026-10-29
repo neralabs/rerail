@@ -89,8 +89,8 @@ const installed = (): Record<string, string> =>
 /** The running daemon's answer to `path`, starting it if set-up did not. */
 async function daemonGet<T>(path: string): Promise<T> {
   if (!existsSync(join(home, "daemon.json"))) await rerail(["daemon", "start"]);
-  const { url } = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8")) as { url: string };
-  const response = await fetch(new URL(path, url));
+  const { url, accessToken } = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8")) as { url: string; accessToken: string };
+  const response = await fetch(new URL(path, url), { headers: { "x-rerail-access": accessToken } });
   expect(response.status).toBe(200);
   return await response.json() as T;
 }

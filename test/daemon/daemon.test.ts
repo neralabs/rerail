@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { createServer, request as httpRequest } from "node:http";
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -48,11 +48,20 @@ describe("daemon bind host", () => {
   });
 });
 
+/** The capability every test daemon requires; the helpers below send it unless a test names another. */
+const ACCESS = "test-access-capability";
+const ACCESS_HEADER = "x-rerail-access";
+
 describe("Rerail daemon", () => {
   let root: string;
   const daemons: RerailDaemon[] = [];
 
-  async function start(overrides: Partial<RerailDaemonOptions> = {}): Promise<RerailDaemon> {
+  /** `fetch` against a test daemon carries its capability, as every Rerail client and a browser holding the cookie does. */
+  const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
+    globalThis.fetch(input, { ...init, headers: { [ACCESS_HEADER]: ACCESS, ...init.headers } });
+
+  /** A daemon requiring `ACCESS`, unless `minted`: then it records or mints its own, as a real start does. */
+  async function start(overrides: Partial<RerailDaemonOptions> = {}, minted = false): Promise<RerailDaemon> {
     process.env.RERAIL_HOME = join(root, "home");
     const daemon = await RerailDaemon.start({
       version: "0.0.0-test",
@@ -60,6 +69,7 @@ describe("Rerail daemon", () => {
       workspaceRoot: root,
       port: 0,
       nativeHealth: healthyNative,
+      ...(minted ? {} : { accessToken: ACCESS }),
       ...overrides,
     });
     daemons.push(daemon);
@@ -98,6 +108,7 @@ describe("Rerail daemon", () => {
       method,
       setHost: false,
       headers: {
+        [ACCESS_HEADER]: ACCESS,
         ...(body === undefined ? {} : { "content-type": "application/json", "content-length": Buffer.byteLength(body) }),
         ...headers,
       },
@@ -107,7 +118,7 @@ describe("Rerail daemon", () => {
       incoming.on("end", () => {
         const text = Buffer.concat(chunks).toString();
         const json = incoming.headers["content-type"]?.startsWith("application/json") === true;
-        resolve({ status: incoming.statusCode!, body: json ? JSON.parse(text) : text });
+        resolve({ status: incoming.statusCode!, body: json && text !== "" ? JSON.parse(text) : text });
       });
       incoming.on("error", reject);
     });
@@ -696,6 +707,7 @@ describe("Rerail daemon", () => {
         databasePath: join(root, "rerail.sqlite"),
         workspaceRoot: root,
         nativeHealth: healthyNative,
+        accessToken: ACCESS,
       });
       daemons.push(daemon);
       expect(daemon.port).not.toBe(DEFAULT_DAEMON_PORT);
@@ -820,7 +832,8 @@ describe("Rerail daemon", () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
     const client = new Client({ name: "rerail-test", version: "0.0.0" });
-    await client.connect(new StreamableHTTPClientTransport(new URL("/mcp", daemon.url)) as Parameters<Client["connect"]>[0]);
+    const transport = new StreamableHTTPClientTransport(new URL("/mcp", daemon.url), { requestInit: { headers: { [ACCESS_HEADER]: ACCESS } } });
+    await client.connect(transport as Parameters<Client["connect"]>[0]);
     try {
       const tools = await client.listTools();
       expect(tools.tools.map(tool => tool.name).sort()).toEqual(operations.map(operation => operation.id).sort());
@@ -985,5 +998,70 @@ describe("Rerail daemon", () => {
     expect(probed.status).toBe(200);
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "0.0.0.0:4737" } })).toMatchObject({ status: 200 });
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "evil.example" } })).toEqual({ status: 421, body: { error: "host-not-allowed" } });
+  });
+
+  it("requires its access capability on every request but the page's own files, on loopback too", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const uiRoot = join(root, "ui");
+    await mkdir(join(uiRoot, "css"), { recursive: true });
+    await writeFile(join(uiRoot, "index.html"), "<title>Rerail</title>");
+    await writeFile(join(uiRoot, "app.js"), "export {};");
+    await writeFile(join(uiRoot, "css", "a.css"), "a{}");
+    const daemon = await start({ uiRoot });
+    const host = "127.0.0.1";
+    const refused = { status: 401, body: { error: "access-required", message: expect.stringContaining("x-rerail-access") } };
+    const without = { host, [ACCESS_HEADER]: "" };
+
+    // Every operation the API document lists, and every route beside it: `Host: 127.0.0.1`, a matching `Origin`, a
+    // capability one character longer or shorter, or one in a cookie or the query, are not the capability.
+    const document = await (await fetch(new URL("/openapi.json", daemon.url))).json() as { paths: Record<string, Record<string, unknown>> };
+    const routes = Object.entries(document.paths).flatMap(([path, methods]) =>
+      Object.keys(methods).map(method => [path.replaceAll(/\{[^}]+\}/gu, "x"), method.toUpperCase()] as const));
+    expect(routes.length).toBeGreaterThan(30);
+    for (const [path, method] of [...routes, ["/healthz", "GET"], ["/healthz", "HEAD"], ["/openapi.json", "GET"], ["/mcp", "POST"], ["/native/session", "POST"], ["/sessions/abc", "GET"]] as const) {
+      const body = method === "GET" || method === "HEAD" ? {} : { body: "{}" };
+      const answer = (headers: Record<string, string>) => rawRequest(daemon, path, { method, headers, ...body });
+      const expected = method === "HEAD" ? { status: 401, body: "" } : refused;
+      expect(await answer({ ...without, origin: `http://${host}` }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ host, [ACCESS_HEADER]: `${ACCESS}x` }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ host, [ACCESS_HEADER]: ACCESS.slice(0, -1) }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ ...without, cookie: `rerail-access=${ACCESS}` }), `${method} ${path}`).toEqual(expected);
+    }
+    expect(await rawRequest(daemon, `/api/sessions?rerail-access=${ACCESS}`, { headers: without })).toEqual(refused);
+    expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
+    // The capability guards the native bridge too, on top of that bridge's own bearer token.
+    expect((await rawRequest(daemon, "/native/session", { method: "POST", headers: { host }, body: "{}" })).body).toEqual({ error: "native-authorization-invalid" });
+
+    // The page's own files load without it: they are the package's, and the page then sends the capability it keeps.
+    // The address that opened it may carry the capability, so nothing it loads names that address.
+    for (const path of ["/", `/?rerail-access=${ACCESS}`, "/index.html", "/app.js", "/css/a.css"]) {
+      const page = await globalThis.fetch(new URL(path, daemon.url));
+      expect(page.status, path).toBe(200);
+      expect(page.headers.get("referrer-policy"), path).toBe("no-referrer");
+    }
+    expect((await globalThis.fetch(new URL("/app.js", daemon.url), { method: "HEAD" })).status).toBe(200);
+    // Only those: no file under `/api/`, and no other method, is one of them.
+    expect((await rawRequest(daemon, "/api/x.js", { headers: without })).status).toBe(401);
+    expect((await rawRequest(daemon, "/app.js", { method: "POST", headers: without, body: "{}" })).status).toBe(401);
+  }, 30_000);
+
+  it("keeps a loopback daemon's capability in its home across restarts, and mints one per start off loopback", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    await mkdir(join(root, "home"), { recursive: true });
+    const accessTokenFile = join(root, "home", "access-token");
+    const first = await start({ accessTokenFile }, true);
+    const token = first.state().accessToken!;
+    expect(token).toMatch(/^[\w-]{43}$/u);
+    expect((await readFile(accessTokenFile, "utf8")).trim()).toBe(token);
+    if (process.platform !== "win32") expect((await stat(accessTokenFile)).mode & 0o777).toBe(0o600);
+    await first.close();
+    const second = await start({ accessTokenFile }, true);
+    expect(second.state().accessToken).toBe(token);
+    expect((await rawRequest(second, "/healthz", { headers: { host: "127.0.0.1", [ACCESS_HEADER]: token } })).status).toBe(200);
+    await second.close();
+    // Reachable from other machines, the capability is per launch and the kept one is left alone.
+    const remote = await start({ accessTokenFile, host: "0.0.0.0" }, true);
+    expect(remote.state().accessToken).not.toBe(token);
+    expect((await readFile(accessTokenFile, "utf8")).trim()).toBe(token);
   });
 });

@@ -4,16 +4,17 @@ import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "../engine/adapter-contract.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
-import { startDaemonForPackage } from "../runtime/daemon-control.js";
+import { daemonAccessHeaders, startDaemonForPackage } from "../runtime/daemon-control.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, type DroppedEvents } from "../runtime/session-state.js";
 
-/** The daemon a client talks to: its URL and the checkout its native sessions address. */
+/** The daemon a client talks to: its URL, the checkout its native sessions address, and its access capability if any. */
 interface NativeSessionEndpoint {
   workspaceRoot: string;
   url: URL;
+  accessToken?: string;
 }
 
 const POLL_INTERVAL_MS = 100;
@@ -141,7 +142,11 @@ export async function createNativeSession<Context>(
     port: 0,
     cwd: session.cwd,
   });
-  const instance = { workspaceRoot: daemon.health.workspaceRoot, url: new URL(daemon.state.url) };
+  const instance = {
+    workspaceRoot: daemon.health.workspaceRoot,
+    url: new URL(daemon.state.url),
+    ...(daemon.state.accessToken === undefined ? {} : { accessToken: daemon.state.accessToken }),
+  };
   const token = daemon.state.nativeToken;
   if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
   const input = { ...initialization, cwd: session.cwd, rebuild };
@@ -554,7 +559,7 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
     const { instance, sessionId, host } = this.#options;
     const response = await fetch(new URL("/native/session", instance.url), {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${this.#options.token}` },
+      headers: { ...daemonAccessHeaders(instance), "content-type": "application/json", authorization: `Bearer ${this.#options.token}` },
       body: JSON.stringify({ workspaceRoot: instance.workspaceRoot, sessionId, host, ...request }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
