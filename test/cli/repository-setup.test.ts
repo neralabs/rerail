@@ -1157,7 +1157,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
 
   it("names a newer installed pack its core range leaves out, rather than offering npm's older one the downgrade guard would refuse", async () => {
     const setup = await fixture();
-    // Installed from `next`, then left out: after `rerail update rollback`, say.
+    // Installed from `next`, then left out: after setting up an older core again, say.
     installTypescriptAt("0.9.0", ">=9.0.0");
     const packs = countingStore(["typescript"]);
     const environment = fakeSetupEnvironment({ packs });

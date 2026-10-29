@@ -96,7 +96,7 @@ Coding-agent configurations invoke the stable `rerail` launcher rather than a ve
    `- 0.2.1/node_modules/@neralabs/rerail/
 ```
 
-Rule packs are npm packages too, installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` and `rerail update rollback` keep them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
+Rule packs are npm packages too, installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` keeps them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
 
 The state file is the active-version pointer. It records the selected npm dist-tag, current installation, previous known-good installation, and the last explicit check. State updates use a temporary file and atomic rename.
 
@@ -106,7 +106,6 @@ The launcher supports:
 rerail update check
 rerail update
 rerail update status
-rerail update rollback
 rerail events          # internal testing
 ```
 
@@ -114,7 +113,7 @@ Updates are explicit. `rerail events` ([internal testing](../README.md#internal-
 
 An update:
 
-1. Copies the Rerail database to `$RERAIL_HOME/rerail.sqlite.pre-update`, so every rule and repository's history survives a failed or regretted update.
+1. Copies the Rerail database to `$RERAIL_HOME/rerail.sqlite.pre-update`, so every rule and repository's history can be put back by hand after an update that changed the file (see `docs/installation.md`).
 2. Resolves the exact version behind the configured npm dist-tag.
 3. Compares it with the active semantic version.
 4. Acquires a machine-wide update lock.
@@ -122,9 +121,8 @@ An update:
 6. Confirms the installed package name and version.
 7. Loads the native module and requires a successful native health response.
 8. Moves the staged installation into its immutable version directory.
-9. Atomically records the old current version as previous and activates the new version.
-10. Retains the previous installation for explicit rollback.
-11. Registers the active version again with every coding agent already connected (`rerail install --refresh`, run as that version's CLI), so the commands, skills and hooks it ships arrive and the ones it retired go, and writes the launcher again; hooks, status line and launcher then name the Node the update ran on. This step runs even when no newer version was found. A connected coding agent that cannot be registered again fails this step for that agent only, and the update then exits non-zero with the new version still active; an agent whose configuration cannot be read to tell whether it is connected is named and left alone. The update that brings this step runs the previous version's update, which lacks it: run `rerail install --refresh` once after it.
+9. Atomically records the old current version as previous and activates the new version; the previous installation stays under `versions/`.
+10. Registers the active version again with every coding agent already connected (`rerail install --refresh`, run as that version's CLI), so the commands, skills and hooks it ships arrive and the ones it retired go, and writes the launcher again; hooks, status line and launcher then name the Node the update ran on. This step runs even when no newer version was found. A connected coding agent that cannot be registered again fails this step for that agent only, and the update then exits non-zero with the new version still active; an agent whose configuration cannot be read to tell whether it is connected is named and left alone. The update that brings this step runs the previous version's update, which lacks it: run `rerail install --refresh` once after it.
 
 Failed resolution, authentication, installation, or health checks leave the current version unchanged. Revoked npm access therefore prevents future updates without breaking an installed version. Concurrent updates share the update lock and cannot race activation.
 

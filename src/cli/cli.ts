@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
-import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot } from "../engine/package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
@@ -42,7 +42,7 @@ import {
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
-import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
+import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -101,7 +101,7 @@ function printStatus(status: UpdateStatus): void {
 }
 
 /**
- * What an update or rollback did, and, when it changed the active core, the installed rule packs that version leaves
+ * What an update did, and, when it changed the active core, the installed rule packs that version leaves
  * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
  */
 function printUpdateResult(result: UpdateResult, home: string): void {
@@ -114,7 +114,7 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <id>`, or go back with `rerail update rollback`.",
+    "Install a version that fits with `rerail packs add <id>`.",
   ].join("\n") + "\n");
 }
 
@@ -157,7 +157,6 @@ function usage(): string {
     "  rerail update",
     "  rerail update check [--channel <tag>]",
     "  rerail update status",
-    "  rerail update rollback",
     "  rerail update --channel <tag>",
     "",
     internalTesting("Not part of the 0.1.0 release:"),
@@ -296,7 +295,7 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   if (resolve(state.current.packageRoot) === packageRoot) return undefined;
   const managedCli = join(state.current.packageRoot, ENTRY_POINTS.cli);
   if (!existsSync(managedCli)) {
-    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run rerail update rollback.`);
+    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run npx ${RERAIL_PACKAGE_NAME} setup to install Rerail again.`);
   }
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }
@@ -328,10 +327,6 @@ async function runUpdateCommand(
     printStatus(result);
     process.stdout.write(`Available: ${result.availableVersion}\n`);
     process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
-    return 0;
-  }
-  if (action === "rollback") {
-    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)), home);
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
@@ -553,7 +548,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
-  return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
+  return command === "update" && commandArgs[1] === "status";
 }
 
 /**

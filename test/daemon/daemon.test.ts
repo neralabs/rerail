@@ -764,19 +764,6 @@ describe("Rerail daemon", () => {
     expect(daemon.port).not.toBe(1);
   });
 
-  it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {
-    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
-    const databasePath = join(root, "rerail.sqlite");
-    const restoring = `${databasePath}.restoring`;
-    openRerailDatabase(databasePath).$client.close();
-    await writeFile(restoring, "");
-    await expect(start()).rejects.toThrow(/putting back a copy/u);
-    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
-    await rm(restoring);
-    const daemon = await start();
-    expect((await getJson(daemon, "/healthz")).status).toBe(200);
-  });
-
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.
   it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
