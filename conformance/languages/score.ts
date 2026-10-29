@@ -58,21 +58,72 @@ export function scoreSource(
   const extra = [...pending.values()].flat();
 
   const explained: ExplainedPoint[] = [];
-  const unexplained = (side: Side, points: readonly Point[]): Point[] =>
-    points
-      .filter(point => {
-        const divergence = divergences.find(
-          entry => entry.path === point.path && entry.line === point.line && (side === "fn" || entry.kind !== "rerail-unknown"),
-        );
-        if (divergence === undefined) return true;
-        explained.push({ side, point, divergence });
-        return false;
-      })
-      .sort(comparePoints);
-  const falsePositives = unexplained("fp", extra);
-  const falseNegatives = unexplained("fn", missed);
+  const falsePositives = unexplained("fp", extra, divergences, explained);
+  const falseNegatives = unexplained("fn", missed, divergences, explained);
+  return { tp, falsePositives, falseNegatives, explained: sortExplained(explained) };
+}
+
+/**
+ * The points no divergence explains, sorted; each explained one goes to `explained` instead. A divergence explains every
+ * unmatched point on the line it names. A `rerail-unknown` divergence explains only a missed finding: Rerail declining
+ * to decide never excuses a finding it claims.
+ */
+function unexplained(side: Side, points: readonly Point[], divergences: readonly Divergence[], explained: ExplainedPoint[]): Point[] {
+  return points
+    .filter(point => {
+      const divergence = divergences.find(entry => entry.path === point.path && entry.line === point.line && (side === "fn" || entry.kind !== "rerail-unknown"));
+      if (divergence === undefined) return true;
+      explained.push({ side, point, divergence });
+      return false;
+    })
+    .sort(comparePoints);
+}
+
+const sortExplained = (explained: ExplainedPoint[]): ExplainedPoint[] =>
   explained.sort((left, right) => comparePoints(left.point, right.point) || compareDeterministicStrings(left.side, right.side));
-  return { tp, falsePositives, falseNegatives, explained };
+
+/** One real-code sample judged for a rule: its evaluation path and its labelled lines; none means clean for the rule. */
+export interface JudgedSample {
+  path: string;
+  lines: readonly number[];
+}
+
+export interface SamplesScore extends SourceScore {
+  /** Reports on a labelled sample's unlabelled lines: possibly real violations the labels missed, so reported, never failed. */
+  reviewed: Point[];
+}
+
+/**
+ * A rule's judgement on real-code samples, by intent and at line granularity: a label is caught when the rule reports
+ * on its line (a TP) and missed otherwise (an FN); a report on a clean sample is an FP; a report on a labelled sample's
+ * unlabelled line is only reviewed. Divergences explain FPs and FNs as `scoreSource`'s do. `actual` holds line points
+ * on the judged samples only.
+ */
+export function scoreSamples(samples: readonly JudgedSample[], actual: readonly Point[], divergences: readonly Divergence[]): SamplesScore {
+  const reported = new Map<string, Point[]>();
+  for (const point of actual) reported.set(point.path, [...(reported.get(point.path) ?? []), point]);
+  let tp = 0;
+  const missed: Point[] = [];
+  const cleanFindings: Point[] = [];
+  const reviewed: Point[] = [];
+  for (const { path, lines } of samples) {
+    const points = reported.get(path) ?? [];
+    if (lines.length === 0) {
+      cleanFindings.push(...points);
+      continue;
+    }
+    const reportedLines = new Set(points.map(point => point.line));
+    for (const line of lines) {
+      if (reportedLines.has(line)) tp += 1;
+      else missed.push({ path, line });
+    }
+    const labelled = new Set(lines);
+    reviewed.push(...points.filter(point => !labelled.has(point.line)));
+  }
+  const explained: ExplainedPoint[] = [];
+  const falsePositives = unexplained("fp", cleanFindings, divergences, explained);
+  const falseNegatives = unexplained("fn", missed, divergences, explained);
+  return { tp, falsePositives, falseNegatives, explained: sortExplained(explained), reviewed: reviewed.sort(comparePoints) };
 }
 
 /**

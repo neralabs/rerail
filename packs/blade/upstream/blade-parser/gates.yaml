@@ -6,15 +6,15 @@ rerail:
 upstream:
   name: stillat/blade-parser
   repository: https://github.com/stillat/blade-parser
-  # The release rerail's blade pack records (packs/blade/licenses/blade-parser/UPSTREAM.md: stillat/blade-parser 2.1.0,
+  # The release rerail's blade pack ports (packs/blade/licenses/blade-parser/UPSTREAM.md: stillat/blade-parser 2.1.0,
   # the conformance.json tools entry); tag v2.1.0.
   commit: 23a962f99bca451f8738ed2475a70129fb33f07c
   version: 2.1.0
   license: MIT
   # The Composer package with the laravel/framework it runs on, run on PHP 8.5.11 (runtimes/blade/.php-version, the
-  # interpreter the pack's conformance recordings were made with). It is the runtime the Blade toolkit reads templates
+  # interpreter the pack's expected findings were derived with). It is the runtime the Blade toolkit reads templates
   # with (laravel/framework 13.34.0 and stillat/blade-parser 2.1.0, each pinned exactly), reused rather than copied:
-  # one install, so the parser the gates run as upstream and the one they ask for a verdict are the same package.
+  # one install.
   runtime: blade
   # stillat/blade-parser's validators run by default as its package configuration lists them: config/validation.php's
   # `core_validators`, which ValidatorServiceProvider merges under `blade.validation` and adds to every BladeValidator
@@ -23,42 +23,52 @@ upstream:
   # upstream ships, and all four ported validators are in the list, so each is `recommended` with it and starts on once
   # shipped.
   #
-  # How the adapter applies it (decisions for the team; they hold for every stillat/blade-parser pack):
-  # - Gate 5 runs each validator as its test runs it (Document::fromText(<template>)->addValidator(<validator>)
-  #   ->validate(), the validator alone on a document of its own), loaded with the options the service provider gives
-  #   it: config/validation.php's entry for it, with the global ignore_directives and `livewire` (which the provider
-  #   always adds) merged into a validator that can ignore directives, and the global custom_directives into one that
-  #   accepts them. For the ported four that is DebugDirectiveValidator ignoring `@livewire` with no custom debug
-  #   directive, DuplicateConditionExpressionsValidator ignoring `@livewire`, and the other two with no options; the
-  #   tests construct each with its defaults, and on their templates the answers are the same. The provider drops
-  #   DuplicateConditionExpressionsValidator from the list when the application has PHPStan installed, as PHPStan then
-  #   reports the duplicates itself; the default configuration is read as a project without it.
-  # - The parser runs on a bare container (no Laravel application booted), as upstream/blade-parser/run.php runs it: it
-  #   knows Blade's core directives and no custom one. A template the parser or a validator throws on gets no answer.
-  # - The cases are the templates the tests of the ported validators (tests/Validation/<X>Test.php, Pest files) hand
-  #   Document::fromText(), for every dataset row (DebugDirectiveTest's rows are the parser's own directive names),
-  #   read by running the tests with the recorder's reader (conformance/recorders/port-readiness/adapters/
-  #   blade_parser_tests.php, which the pack's conformance recorder runs too). Each distinct template of a test file is
-  #   its own source (`<test file>#<n>`, n in Pest's order), committed as
-  #   packs/blade/upstream/blade-parser/fixtures/<X>Test/<n>.blade.php, the copies upstream/blade-parser/generate.py
-  #   wrote. A validator's cases are every ported validator's templates, not its own alone: they are Blade templates any
-  #   validator reads, so another validator's template is upstream's answer on code the rule must stay silent on.
-  # - The tests assert the count of validation errors and their messages, not positions: the `upstream-tests-agree`
-  #   tool-pack check holds every ported validator's output, as the default configuration loads it, to every count and
-  #   message its test expects, and the output is the positional answer.
-  # - Positions are the start line and column of the node a validation error reports (its BladeError position; the
-  #   ported validators shift no line), with no end (span-units/blade-parser.ts). stillat/blade-parser numbers them
-  #   itself: it normalizes \r\n and \r to \n and looks a node's character offset up in a table of the line ends' byte
-  #   offsets, so after a multibyte character it reports the line and column that mixed count lands on; the span units
-  #   count the same way, so the gates compare the positions upstream reports.
-  # - stillat/blade-parser is also one of the two independent parsers the gates ask whether a template is valid Blade
-  #   (languages/blade.ts). That is no circularity: the verdict is about the template's source, which the tool's
-  #   validators do not judge, and Laravel's BladeCompiler with `php -l` gives the other verdict.
+  # The expected findings are upstream/blade-parser/generate.py's: its docstring says how it runs each ported validator
+  # over the templates the validators' tests hand the parser, and holds a validator's findings on its own templates to
+  # the count and messages its test expects.
   recommended_configs:
     - blade.validation
+  # The file types upstream lints with its approved configuration at the pins (declared; reviewed at each bump).
+  lints: [".blade.php"]
 popularity:
   observed_on: 2026-10-20
   evidence:
     - "Packagist: 2,355,299 installs of stillat/blade-parser in total, 269,991 in the last 30 days (packagist.org/packages/stillat/blade-parser/stats.json)"
     - "GitHub: stillat/blade-parser has 148 stars and is not archived"
-known_gaps: []
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (declared; reviewed at each bump).
+rules:
+  "ComponentShorthandVariableParameterValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [] }
+  "DebugDirectiveValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [{"custom_directives":[],"ignore_directives":["livewire"]}] }
+  "DuplicateConditionExpressionsValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [{"ignore_directives":["livewire"]}] }
+  "ForElseStructureValidator":
+    deprecated: null
+    recommended: { config: "blade.validation", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator also reads NoArgumentsTest.php and RequiredArgumentsTest.php, which conformance.json does not
+# map; DebugDirectiveTest's cases come from the Compiler's directives, so src/Compiler is its test input too.
+watch:
+  extra-rules: ["NoArgumentsValidator", "RequiredArgumentsValidator"]
+  tests: []
+  code:
+    - "src/Validation/Validators/{rule}.php"
+  shared:
+    - "config/validation.php"
+    - "src/Document/**"
+    - "src/Nodes/**"
+    - "src/Parser/**"
+    - "src/Validation/AbstractNodeValidator.php"
+    - "src/Validation/Validators/Concerns/**"
+  rules:
+    "ComponentShorthandVariableParameterValidator": { tests: ["tests/Validation/ComponentShorthandVariableParameterTest.php"] }
+    "DebugDirectiveValidator": { tests: ["tests/Validation/DebugDirectiveTest.php", "src/Compiler/**"] }
+    "DuplicateConditionExpressionsValidator": { tests: ["tests/Validation/DuplicateConditionExpressionsTest.php"] }
+    "ForElseStructureValidator": { tests: ["tests/Validation/ForElseStructureTest.php"] }
+    "NoArgumentsValidator": { tests: ["tests/Validation/NoArgumentsTest.php"] }
+    "RequiredArgumentsValidator": { tests: ["tests/Validation/RequiredArgumentsTest.php"] }

@@ -105,7 +105,7 @@ Suppression is `clippy` (`suppress/clippy.rs`): rustc's and Clippy's lint-level 
 and tokio corpora (`fixtures/rust/suppress`). The attributes are read per file: a level set in another file (a crate
 root's `#![allow(..)]` over its modules) or on the command line is not seen, and a `cfg` predicate other than
 `all`, `any` and `not` over `clippy` is false. Rust refuses `languageOptions`, `resolves.imported` and every other
-family's grammar and format style; the Clippy pack (`packs/rust/`) scores the syntax ports as candidates, which ship no rules until they pass the V1 rule validation gates.
+family's grammar and format style; the Clippy pack (`packs/rust/`) ships the syntax ports that pass the [conformance check](../conformance/README.md#the-gate) and keeps the rest as candidates.
 
 ### The SQL adapter
 
@@ -117,7 +117,7 @@ readings as divergences. Each concern and its oracle:
 | Concern | What it reads | Oracle |
 |---|---|---|
 | `Adapter` | A naked identifier folds to lower case and a quoted one is exact, as PostgreSQL looks names up (`value::sql::identifier`); SQLFluff's `-- noqa` (`suppress/sqlfluff.rs`) | `fixtures/sql/suppress/sqlfluff.expected.json`, SQLFluff's reports with `noqa` ignored and honoured |
-| `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), a block around a `CREATE POLICY` or `ALTER POLICY` its table (`Form::Target`, which the queries in its `USING` and `WITH CHECK` see, as SQLFluff's RF01 reads it on PostgreSQL), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's RF01 and AL05 recordings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`, pack test data: `npm run fixtures:pull`), with the declared ANSI-versus-PostgreSQL mismatches |
+| `ScopeRules` | Query blocks (`ScopeKind::Query`, scope `query`) from `scope/sql.rs`: a block binds its `FROM`/`JOIN` relations (`Form::Relation`), its `UPDATE`/`DELETE`/`INSERT` target (`Form::Target`), a block around a `CREATE POLICY` or `ALTER POLICY` its table (`Form::Target`, which the queries in its `USING` and `WITH CHECK` see, as SQLFluff's RF01 reads it on PostgreSQL), and a block around a `WITH` statement its CTE names (`Form::Cte`); a qualified column reference's table part resolves to a relation or target of its block or an enclosing one (a CTE only through a relation over it). `resolves.unresolved` is RF01's report and `binds: { used: false }` AL05's | SQLFluff's expected RF01 and AL05 findings (`packs/sql/upstream/sqlfluff/fixtures.expected.json`, pack test data: `npm run fixtures:pull`), with the declared ANSI-versus-PostgreSQL mismatches |
 | `ValueRules` | Literals and names (`value/sql.rs`) only where PostgreSQL's and SQLite's readings agree; `type`, the key, member, reference and structural compare modes are refused | `fixtures/sql/scope/postgres.expected.json` (PostgreSQL 18.6 through libpg_query) and `fixtures/sql/value/sqlite.expected.json` (SQLite 3.50.4) |
 | `ArgumentRules` | An `invocation`'s arguments as PostgreSQL 18.6's parser binds them (`matcher/arguments_sql.rs`): by position, then by name; signature markers, `syntactic` and `estree` are refused | `fixtures/sql/matcher/arguments/postgres.expected.json`, 50 calls: 49 matched by position, 1 asserted unreadable (`substring(s FOR n)`, whose start PostgreSQL supplies) |
 | `SyntaxRules` | No literal grammar (`parse`) and no `languageOptions`; `when` reads the document's options | |
@@ -279,11 +279,11 @@ The generated `Via` and `with_embedder!` carry it only under `#[cfg(test)]`.
 ## Start a pack
 
 A pack is a directory `packs/<id>/` that passes the [validation contract](pack-format.md#the-validation-contract).
-The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/` or `packs/next/`
-(framework packs over a supported language), `packs/rust/` or `packs/sql/` (language packs that ship no rules yet,
-their ports kept in `candidates/rules/` until they pass the V1 rule validation gates), `fixtures/packs/valid/` (the
-smallest pack, with an example-proven rule and a ported one) and `fixtures/packs/exemplar/` (a pack for a planned
-language).
+The models to copy: `packs/python/` or `packs/typescript/` (ported language packs), `packs/node/`, `packs/next/` or
+`packs/react/` (framework packs over a supported language; a new pack's ports start in `candidates/rules/` and ship once
+they pass the [conformance check's gate](../conformance/README.md#the-gate)),
+`fixtures/packs/valid/` (the smallest pack, with an example-proven rule and a ported one) and
+`fixtures/packs/exemplar/` (a pack for a planned language).
 
 ### A pack for a supported language
 
@@ -386,32 +386,46 @@ complete example, for the test-only planned language above.
 
 ### A ported pack
 
-A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes:
+A pack whose rules reproduce another tool's rules adds the validation material, which `files` never publishes. Each
+tool it ports is a tool-pack, `upstream/<tool>/`, with its own pack data ([pack data](pack-format.md#pack-data)):
 
 1. `conformance.json` ([schema](pack-format.md#conformancejson-divergencesjson-upstream)): the family, the
-   capabilities the pack declares, the pinned `tools` and `corpora`, and per ported rule its `upstream` tool and rule,
-   its `id` (the rule's own id) and `policy` (the same `rules/<id>.json` as the rule's `document`), how findings
-   compare (`line` or `line+column`) and the capabilities it exercises. A port's clauses report the upstream rule's
-   code. Every declared capability needs a ported rule or an `exemptCapabilities` entry with its evidence.
-2. `upstream/<tool>/`: the tool's tests copied into `fixtures/`, and `fixtures.expected.json`, what the pinned tool
-   reported on them (`recordingSchema` in `conformance/languages/pack.ts`), written by a recorder you keep beside it
-   (`packs/python/upstream/ruff/generate.py` is one). Optionally `corpus-<name>.expected.json` per pinned corpus.
-   These are derived pack test data, never in git: add the tool-pack's recipe under `scripts/pack-data/recipes/` (one
-   module per pack, listed in its `index.ts`), so `npm run fixtures:derive -- --pack <id>` makes them from the pins.
-   Cases you wrote for the tool (listed in its `UPSTREAM.md`) or a corpus with its ground truth under
-   `upstream/<tool>/authored/` are authored: check them into your pull request with `git add -f`. Before merge a
-   maintainer archives the tool-pack's data from a trusted worktree of main (`npm run fixtures:push -- --from <ref>`),
-   which writes its `upstream/<tool>/test-data.lock` for the pull request to commit
-   ([CONTRIBUTING.md](../CONTRIBUTING.md#merging-maintainers)). Get the other packs' with `npm run fixtures:pull`.
-3. `licenses/<tool>/`: the tool's licence, verbatim, and `UPSTREAM.md` with a `License: <SPDX id>` line and a table
-   listing every copied file by its pack-relative path. Add the tool's licence to `package.json`'s `license`
-   (`Apache-2.0 AND MIT` for an MIT tool), and annotate the copied files in `REUSE.toml`.
-4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked. Start
-   with `[]` and add an entry only for a disagreement you have checked.
+   capabilities the pack declares, the pinned `tools`, and per ported rule its `upstream` tool and rule,
+   its `id` (the rule's own id) and `policy` (the rule's document), how findings compare (`line` or `line+column`) and
+   the capabilities it exercises. A port's clauses report the upstream rule's code. Every declared capability needs a
+   ported rule or an `exemptCapabilities` entry with its evidence. A new port starts as a candidate under
+   `candidates/rules/` ([candidates and promotion](../conformance/README.md#candidates-and-promotion)).
+2. `upstream/<tool>/`: a generator you keep beside the data (`packs/python/upstream/ruff/generate.py` is one; the
+   ESLint-based ones share `scripts/pack-data/eslint-expected.mjs`, which also writes the rename variants under
+   `fixtures/renamed/`), with the tool-pack's recipe under `scripts/pack-data/recipes/` (one module per pack, listed in
+   its `index.ts`), and `gates.yaml`, the upstream manifest
+   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)). The generator copies the
+   tool's tests into `fixtures/` and writes `fixtures.expected.json`, the expected findings the pinned tool reported on
+   them (`expectedFindingsSchema` in `conformance/languages/pack.ts`, with each unit's upstream origin in
+   `source.units`), through `npm run fixtures:derive -- --pack <id>`. That is derived pack test data, never in git:
+   staged into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and published by the
+   publish workflow, which commits the tool-pack's `test-data.lock`
+   ([docs/upstream.md](upstream.md#publishing-pack-data)). The generator writes the tool's `provenance.json` and
+   `LICENSES.md` last, from the pack's `licenses/<project>/UPSTREAM.md` records
+   ([docs/upstream.md](upstream.md#what-the-generators-write)). Cases you write for the tool are authored: list each in the
+   tool's own `UPSTREAM.md`, or keep a corpus with its ground truth under `upstream/<tool>/authored/`. Get the other
+   packs' data with `npm run fixtures:pull`.
+3. `licenses/<project>/`, one per upstream repository: its licence, verbatim, and `UPSTREAM.md` with a
+   `License: <SPDX expression>` line, a `Source` table (repository, tag, 40-hex commit and licence), a `Taken from it`
+   table mapping each pack-relative glob of copied files to its upstream path and how it was copied, and a
+   `Not copied` line for each upstream path under a licence the allowlist refuses
+   ([UPSTREAM.md](pack-format.md#upstreammd)). Add the tool's licence to `package.json`'s `license`
+   (`Apache-2.0 AND MIT` for an MIT tool), and annotate the rule documents in `REUSE.toml` with that expression.
+4. `divergences.json`: each line where Rerail and the tool disagree, with its kind and the evidence checked
+   ([divergences](../conformance/README.md#divergences)). Start with `[]` and add an entry only for a disagreement you
+   have checked.
+5. Optionally, `upstream/<tool>/samples.lock` and `SAMPLES.md`: real-code samples, made with the sample builders and
+   published like test data ([docs/upstream.md](upstream.md#samples)).
 
-Then score one rule with every false positive and false negative listed, and run the contract:
+Then score one rule with every false positive and false negative listed, and run the contract and the gate:
 
 ```sh
-node --import tsx conformance/languages/cli.ts --pack <id> --rule <port id> --fixtures
+npm run conformance:languages -- --pack <id> --rule <port id> --fixtures
 npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"
+npm run conformance:languages -- --check --pack <id>
 ```

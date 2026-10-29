@@ -9,18 +9,6 @@
     "arguments",
     "suppression"
   ],
-  "corpora": [
-    {
-      "name": "excalidraw",
-      "repository": "https://github.com/excalidraw/excalidraw",
-      "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
-      "paths": [
-        "packages/excalidraw",
-        "excalidraw-app"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "eslint-plugin-react",
@@ -38,7 +26,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-danger"
       },
-      "policy": "candidates/rules/react-no-danger.json",
+      "policy": "rules/react-no-danger.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -51,7 +39,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-find-dom-node"
       },
-      "policy": "candidates/rules/react-no-find-dom-node.json",
+      "policy": "rules/react-no-find-dom-node.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -64,7 +52,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-is-mounted"
       },
-      "policy": "candidates/rules/react-no-is-mounted.json",
+      "policy": "rules/react-no-is-mounted.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -77,7 +65,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-render-return-value"
       },
-      "policy": "candidates/rules/react-no-render-return-value.json",
+      "policy": "rules/react-no-render-return-value.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -90,7 +78,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/jsx-no-duplicate-props"
       },
-      "policy": "candidates/rules/react-jsx-no-duplicate-props.json",
+      "policy": "rules/react-jsx-no-duplicate-props.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -104,7 +92,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-children-prop"
       },
-      "policy": "candidates/rules/react-no-children-prop.json",
+      "policy": "rules/react-no-children-prop.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -120,7 +108,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/jsx-no-comment-textnodes"
       },
-      "policy": "candidates/rules/react-jsx-no-comment-textnodes.json",
+      "policy": "rules/react-jsx-no-comment-textnodes.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -133,7 +121,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/void-dom-elements-no-children"
       },
-      "policy": "candidates/rules/react-void-dom-elements-no-children.json",
+      "policy": "rules/react-void-dom-elements-no-children.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -149,7 +137,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/self-closing-comp"
       },
-      "policy": "candidates/rules/react-self-closing-comp.json",
+      "policy": "rules/react-self-closing-comp.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -162,7 +150,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-string-refs"
       },
-      "policy": "candidates/rules/react-no-string-refs.json",
+      "policy": "rules/react-no-string-refs.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -175,7 +163,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-direct-mutation-state"
       },
-      "policy": "candidates/rules/react-no-direct-mutation-state.json",
+      "policy": "rules/react-no-direct-mutation-state.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -188,7 +176,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-danger-with-children"
       },
-      "policy": "candidates/rules/react-no-danger-with-children.json",
+      "policy": "rules/react-no-danger-with-children.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -203,7 +191,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/button-has-type"
       },
-      "policy": "candidates/rules/react-button-has-type.json",
+      "policy": "rules/react-button-has-type.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -218,7 +206,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/jsx-key"
       },
-      "policy": "candidates/rules/react-jsx-key.json",
+      "policy": "rules/react-jsx-key.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -231,7 +219,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/jsx-no-undef"
       },
-      "policy": "candidates/rules/react-jsx-no-undef.json",
+      "policy": "rules/react-jsx-no-undef.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -259,7 +247,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-unescaped-entities"
       },
-      "policy": "candidates/rules/react-no-unescaped-entities.json",
+      "policy": "rules/react-no-unescaped-entities.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -272,7 +260,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/jsx-no-target-blank"
       },
-      "policy": "candidates/rules/react-jsx-no-target-blank.json",
+      "policy": "rules/react-jsx-no-target-blank.json",
       "capabilities": [
         "syntax",
         "value",
@@ -287,7 +275,7 @@
         "tool": "eslint-plugin-react-hooks",
         "rule": "react-hooks/rules-of-hooks"
       },
-      "policy": "candidates/rules/react-hooks-rules-of-hooks.json",
+      "policy": "rules/react-hooks-rules-of-hooks.json",
       "capabilities": [
         "syntax",
         "suppression"

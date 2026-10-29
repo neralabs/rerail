@@ -23,17 +23,6 @@
       ]
     }
   ],
-  "corpora": [
-    {
-      "name": "django",
-      "repository": "https://github.com/django/django",
-      "commit": "fd91518f17c8a84fa47fe0e5534ef46afa7a0f7a",
-      "paths": [
-        "django"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "ruff",
@@ -1126,7 +1115,7 @@
         "tool": "ruff",
         "rule": "F722"
       },
-      "policy": "candidates/rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
       "capabilities": [
         "annotation",
         "scope",
@@ -2010,7 +1999,7 @@
         "tool": "bandit",
         "rule": "B406"
       },
-      "policy": "candidates/rules/bandit-b406-import-xml-sax.json",
+      "policy": "rules/bandit-b406-import-xml-sax.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2156,7 +2145,7 @@
         "tool": "bandit",
         "rule": "B610"
       },
-      "policy": "candidates/rules/bandit-b610-django-extra-used.json",
+      "policy": "rules/bandit-b610-django-extra-used.json",
       "capabilities": [
         "arguments",
         "suppression"
@@ -2240,7 +2229,7 @@
         "tool": "ruff",
         "rule": "B015"
       },
-      "policy": "candidates/rules/ruff-b015-useless-comparison.json",
+      "policy": "rules/ruff-b015-useless-comparison.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2253,7 +2242,7 @@
         "tool": "ruff",
         "rule": "B018"
       },
-      "policy": "candidates/rules/ruff-b018-useless-expression.json",
+      "policy": "rules/ruff-b018-useless-expression.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2318,7 +2307,7 @@
         "tool": "ruff",
         "rule": "B035"
       },
-      "policy": "candidates/rules/ruff-b035-static-key-dict-comprehension.json",
+      "policy": "rules/ruff-b035-static-key-dict-comprehension.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2425,7 +2414,7 @@
         "tool": "ruff",
         "rule": "F402"
       },
-      "policy": "candidates/rules/ruff-f402-import-shadowed-by-loop-var.json",
+      "policy": "rules/ruff-f402-import-shadowed-by-loop-var.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2438,7 +2427,7 @@
         "tool": "ruff",
         "rule": "F704"
       },
-      "policy": "candidates/rules/ruff-f704-yield-outside-function.json",
+      "policy": "rules/ruff-f704-yield-outside-function.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2517,7 +2506,7 @@
         "tool": "ruff",
         "rule": "SIM102"
       },
-      "policy": "candidates/rules/ruff-sim102-collapsible-if.json",
+      "policy": "rules/ruff-sim102-collapsible-if.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2530,7 +2519,7 @@
         "tool": "ruff",
         "rule": "SIM103"
       },
-      "policy": "candidates/rules/ruff-sim103-needless-bool.json",
+      "policy": "rules/ruff-sim103-needless-bool.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2609,7 +2598,7 @@
         "tool": "ruff",
         "rule": "SIM117"
       },
-      "policy": "candidates/rules/ruff-sim117-multiple-with-statements.json",
+      "policy": "rules/ruff-sim117-multiple-with-statements.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2622,7 +2611,7 @@
         "tool": "ruff",
         "rule": "SIM118"
       },
-      "policy": "candidates/rules/ruff-sim118-in-dict-keys.json",
+      "policy": "rules/ruff-sim118-in-dict-keys.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2635,7 +2624,7 @@
         "tool": "ruff",
         "rule": "SIM222"
       },
-      "policy": "candidates/rules/ruff-sim222-expr-or-true.json",
+      "policy": "rules/ruff-sim222-expr-or-true.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2649,7 +2638,7 @@
         "tool": "ruff",
         "rule": "SIM223"
       },
-      "policy": "candidates/rules/ruff-sim223-expr-and-false.json",
+      "policy": "rules/ruff-sim223-expr-and-false.json",
       "capabilities": [
         "scope",
         "suppression",
@@ -2691,7 +2680,7 @@
         "tool": "ruff",
         "rule": "W605"
       },
-      "policy": "candidates/rules/ruff-w605-invalid-escape-sequence.json",
+      "policy": "rules/ruff-w605-invalid-escape-sequence.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2704,7 +2693,7 @@
         "tool": "bandit",
         "rule": "B103"
       },
-      "policy": "candidates/rules/bandit-b103-set-bad-file-permissions.json",
+      "policy": "rules/bandit-b103-set-bad-file-permissions.json",
       "capabilities": [
         "suppression",
         "value"
@@ -2756,7 +2745,7 @@
         "tool": "bandit",
         "rule": "B201"
       },
-      "policy": "candidates/rules/bandit-b201-flask-debug-true.json",
+      "policy": "rules/bandit-b201-flask-debug-true.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2785,7 +2774,7 @@
         "tool": "bandit",
         "rule": "B304"
       },
-      "policy": "candidates/rules/bandit-b304-ciphers.json",
+      "policy": "rules/bandit-b304-ciphers.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2905,7 +2894,7 @@
         "tool": "bandit",
         "rule": "B508"
       },
-      "policy": "candidates/rules/bandit-b508-snmp-insecure-version.json",
+      "policy": "rules/bandit-b508-snmp-insecure-version.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -2920,7 +2909,7 @@
         "tool": "bandit",
         "rule": "B509"
       },
-      "policy": "candidates/rules/bandit-b509-snmp-weak-cryptography.json",
+      "policy": "rules/bandit-b509-snmp-weak-cryptography.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -3030,7 +3019,7 @@
         "tool": "bandit",
         "rule": "B609"
       },
-      "policy": "candidates/rules/bandit-b609-linux-commands-wildcard-injection.json",
+      "policy": "rules/bandit-b609-linux-commands-wildcard-injection.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3059,7 +3048,7 @@
         "tool": "bandit",
         "rule": "B612"
       },
-      "policy": "candidates/rules/bandit-b612-logging-config-insecure-listen.json",
+      "policy": "rules/bandit-b612-logging-config-insecure-listen.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3086,7 +3075,7 @@
         "tool": "bandit",
         "rule": "B614"
       },
-      "policy": "candidates/rules/bandit-b614-pytorch-load.json",
+      "policy": "rules/bandit-b614-pytorch-load.json",
       "capabilities": [
         "arguments",
         "scope",
@@ -3101,7 +3090,7 @@
         "tool": "bandit",
         "rule": "B702"
       },
-      "policy": "candidates/rules/bandit-b702-use-of-mako-templates.json",
+      "policy": "rules/bandit-b702-use-of-mako-templates.json",
       "capabilities": [
         "scope",
         "suppression"

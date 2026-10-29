@@ -1,0 +1,404 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "eslint-no-lonely-if",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use else if instead of an if that is the only statement inside an else block.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "typescript",
+    "utils": {
+     "statement": {
+      "all": [
+       {
+        "not": {
+         "kind": "comment"
+        }
+       },
+       {
+        "not": {
+         "regex": "^[{}]$"
+        }
+       }
+      ]
+     },
+     "loop": {
+      "any": [
+       {
+        "kind": "for_statement"
+       },
+       {
+        "kind": "for_in_statement"
+       },
+       {
+        "kind": "while_statement"
+       },
+       {
+        "kind": "labeled_statement"
+       },
+       {
+        "kind": "with_statement"
+       }
+      ]
+     },
+     "unsafe-if": {
+      "any": [
+       {
+        "kind": "if_statement",
+        "not": {
+         "has": {
+          "kind": "else_clause"
+         }
+        }
+       },
+       {
+        "kind": "if_statement",
+        "has": {
+         "kind": "else_clause",
+         "has": {
+          "matches": "unsafe-if"
+         }
+        }
+       },
+       {
+        "matches": "loop",
+        "has": {
+         "matches": "unsafe-if"
+        }
+       }
+      ]
+     },
+     "in-else-before-else": {
+      "inside": {
+       "kind": "else_clause",
+       "stopBy": "neighbor",
+       "inside": {
+        "kind": "if_statement",
+        "stopBy": "neighbor",
+        "matches": "before-else"
+       }
+      }
+     },
+     "before-else": {
+      "any": [
+       {
+        "precedes": {
+         "kind": "else_clause"
+        }
+       },
+       {
+        "inside": {
+         "all": [
+          {
+           "matches": "loop"
+          },
+          {
+           "matches": "before-else"
+          }
+         ],
+         "stopBy": "neighbor"
+        }
+       },
+       {
+        "matches": "in-else-before-else"
+       }
+      ]
+     },
+     "lonely-else-block": {
+      "kind": "statement_block",
+      "inside": {
+       "kind": "else_clause",
+       "stopBy": "neighbor"
+      },
+      "has": {
+       "kind": "if_statement",
+       "pattern": "$IF"
+      },
+      "all": [
+       {
+        "not": {
+         "has": {
+          "all": [
+           {
+            "matches": "statement"
+           },
+           {
+            "not": {
+             "kind": "if_statement"
+            }
+           }
+          ]
+         }
+        }
+       },
+       {
+        "not": {
+         "has": {
+          "kind": "if_statement",
+          "precedes": {
+           "kind": "if_statement",
+           "stopBy": "end"
+          }
+         }
+        }
+       },
+       {
+        "not": {
+         "all": [
+          {
+           "has": {
+            "kind": "if_statement",
+            "matches": "unsafe-if"
+           }
+          },
+          {
+           "matches": "in-else-before-else"
+          }
+         ]
+        }
+       }
+      ]
+     },
+     "fixable": {
+      "all": [
+       {
+        "not": {
+         "has": {
+          "kind": "comment"
+         }
+        }
+       },
+       {
+        "not": {
+         "has": {
+          "kind": "comment",
+          "stopBy": "end",
+          "follows": {
+           "regex": "^\\}$"
+          },
+          "not": {
+           "precedes": {
+            "regex": "[\\s\\S]",
+            "stopBy": "end"
+           }
+          }
+         }
+        }
+       },
+       {
+        "any": [
+         {
+          "has": {
+           "kind": "if_statement",
+           "has": {
+            "kind": "statement_block"
+           }
+          }
+         },
+         {
+          "has": {
+           "kind": "if_statement",
+           "has": {
+            "all": [
+             {
+              "matches": "statement"
+             },
+             {
+              "not": {
+               "kind": "parenthesized_expression"
+              }
+             },
+             {
+              "not": {
+               "kind": "else_clause"
+              }
+             },
+             {
+              "not": {
+               "regex": "^if$"
+              }
+             },
+             {
+              "regex": ";$"
+             }
+            ]
+           }
+          }
+         },
+         {
+          "inside": {
+           "kind": "else_clause",
+           "stopBy": "neighbor",
+           "inside": {
+            "kind": "if_statement",
+            "stopBy": "neighbor",
+            "inside": {
+             "kind": "program",
+             "stopBy": "neighbor"
+            },
+            "not": {
+             "precedes": {
+              "matches": "statement",
+              "stopBy": "end"
+             }
+            }
+           }
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "lonely-if-fix-spaced",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "matches": "lonely-else-block"
+       },
+       {
+        "matches": "fixable"
+       },
+       {
+        "not": {
+         "inside": {
+          "kind": "else_clause",
+          "stopBy": "neighbor",
+          "regex": "^else\\{"
+         }
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.IF",
+    "code": "no-lonely-if",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
+    "fix": "$IF",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useCollapsedElseIf"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "lonely-if-fix-tight",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "matches": "lonely-else-block"
+       },
+       {
+        "matches": "fixable"
+       },
+       {
+        "inside": {
+         "kind": "else_clause",
+         "stopBy": "neighbor",
+         "regex": "^else\\{"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.IF",
+    "code": "no-lonely-if",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
+    "fix": " $IF",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useCollapsedElseIf"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "lonely-if-nofix",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "matches": "lonely-else-block"
+       },
+       {
+        "not": {
+         "matches": "fixable"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.IF",
+    "code": "no-lonely-if",
+    "message": "Turn this if, the only statement in its else block, into an else if.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "no-lonely-if"
+      ]
+     },
+     "biome": {
+      "rules": [
+       "lint/style/useCollapsedElseIf"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

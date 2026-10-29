@@ -1,0 +1,5 @@
+---
+"@neralabs/rerail-pack-python": patch
+---
+
+Python pack: ships 24 more rules, 160 in all, now that they pass every conformance check. Start on: `bandit-b103-set-bad-file-permissions`, `bandit-b201-flask-debug-true`, `bandit-b304-ciphers`, `bandit-b406-import-xml-sax`, `bandit-b508-snmp-insecure-version`, `bandit-b509-snmp-weak-cryptography`, `bandit-b609-linux-commands-wildcard-injection`, `bandit-b610-django-extra-used`, `bandit-b612-logging-config-insecure-listen`, `bandit-b614-pytorch-load`, `bandit-b702-use-of-mako-templates`, `ruff-b015-useless-comparison`, `ruff-b018-useless-expression`, `ruff-b035-static-key-dict-comprehension`, `ruff-f402-import-shadowed-by-loop-var`, `ruff-f704-yield-outside-function`, `ruff-sim102-collapsible-if`, `ruff-sim103-needless-bool`, `ruff-sim117-multiple-with-statements`, `ruff-sim118-in-dict-keys`, `ruff-sim222-expr-or-true`, `ruff-sim223-expr-and-false` and `ruff-w605-invalid-escape-sequence`. Starts off, as no approved upstream configuration turns it on: `ruff-f722-forward-annotation-syntax-error`.

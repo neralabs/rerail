@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "136 Ruff and Bandit rules ported to Rerail, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "Ruff and Bandit rules for correct, clean and secure Python.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -658,6 +658,85 @@
       "group": "Ruff"
     },
     {
+      "id": "ruff-b015-useless-comparison",
+      "document": "rules/ruff-b015-useless-comparison.json",
+      "title": "Ruff B015: Useless comparison",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-b018-useless-expression",
+      "document": "rules/ruff-b018-useless-expression.json",
+      "title": "Ruff B018: Useless expression",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-b035-static-key-dict-comprehension",
+      "document": "rules/ruff-b035-static-key-dict-comprehension.json",
+      "title": "Ruff B035: Static key dict comprehension",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-f402-import-shadowed-by-loop-var",
+      "document": "rules/ruff-f402-import-shadowed-by-loop-var.json",
+      "title": "Ruff F402: Import shadowed by loop var",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-f704-yield-outside-function",
+      "document": "rules/ruff-f704-yield-outside-function.json",
+      "title": "Ruff F704: Yield outside function",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-f722-forward-annotation-syntax-error",
+      "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "title": "Ruff F722: Forward annotation syntax error",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-sim102-collapsible-if",
+      "document": "rules/ruff-sim102-collapsible-if.json",
+      "title": "Ruff SIM102: Collapsible if",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim103-needless-bool",
+      "document": "rules/ruff-sim103-needless-bool.json",
+      "title": "Ruff SIM103: Needless bool",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim117-multiple-with-statements",
+      "document": "rules/ruff-sim117-multiple-with-statements.json",
+      "title": "Ruff SIM117: Multiple with statements",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim118-in-dict-keys",
+      "document": "rules/ruff-sim118-in-dict-keys.json",
+      "title": "Ruff SIM118: In dict keys",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim222-expr-or-true",
+      "document": "rules/ruff-sim222-expr-or-true.json",
+      "title": "Ruff SIM222: Expr or true",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim223-expr-and-false",
+      "document": "rules/ruff-sim223-expr-and-false.json",
+      "title": "Ruff SIM223: Expr and false",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-w605-invalid-escape-sequence",
+      "document": "rules/ruff-w605-invalid-escape-sequence.json",
+      "title": "Ruff W605: Invalid escape sequence",
+      "group": "Ruff"
+    },
+    {
       "id": "bandit-b101-assert-used",
       "document": "rules/bandit-b101-assert-used.json",
       "title": "Bandit B101: Assert used",
@@ -893,6 +972,72 @@
       "id": "bandit-b615-huggingface-unsafe-download",
       "document": "rules/bandit-b615-huggingface-unsafe-download.json",
       "title": "Bandit B615: Huggingface unsafe download",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b103-set-bad-file-permissions",
+      "document": "rules/bandit-b103-set-bad-file-permissions.json",
+      "title": "Bandit B103: Set bad file permissions",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b201-flask-debug-true",
+      "document": "rules/bandit-b201-flask-debug-true.json",
+      "title": "Bandit B201: Flask debug true",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b304-ciphers",
+      "document": "rules/bandit-b304-ciphers.json",
+      "title": "Bandit B304: Ciphers",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b406-import-xml-sax",
+      "document": "rules/bandit-b406-import-xml-sax.json",
+      "title": "Bandit B406: Import xml sax",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b508-snmp-insecure-version",
+      "document": "rules/bandit-b508-snmp-insecure-version.json",
+      "title": "Bandit B508: Snmp insecure version",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b509-snmp-weak-cryptography",
+      "document": "rules/bandit-b509-snmp-weak-cryptography.json",
+      "title": "Bandit B509: Snmp weak cryptography",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b609-linux-commands-wildcard-injection",
+      "document": "rules/bandit-b609-linux-commands-wildcard-injection.json",
+      "title": "Bandit B609: Linux commands wildcard injection",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b610-django-extra-used",
+      "document": "rules/bandit-b610-django-extra-used.json",
+      "title": "Bandit B610: Django extra used",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b612-logging-config-insecure-listen",
+      "document": "rules/bandit-b612-logging-config-insecure-listen.json",
+      "title": "Bandit B612: Logging config insecure listen",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b614-pytorch-load",
+      "document": "rules/bandit-b614-pytorch-load.json",
+      "title": "Bandit B614: Pytorch load",
+      "group": "Bandit"
+    },
+    {
+      "id": "bandit-b702-use-of-mako-templates",
+      "document": "rules/bandit-b702-use-of-mako-templates.json",
+      "title": "Bandit B702: Use of mako templates",
       "group": "Bandit"
     }
   ]

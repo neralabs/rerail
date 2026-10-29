@@ -73,30 +73,6 @@
   },
   {
     "rule": "sqlfluff-pg01-postgres-excessive-locks",
-    "source": "anki",
-    "path": "rslib/src/storage/dbcheck/invalid_ids_create.sql",
-    "line": 28,
-    "kind": "not-comparable",
-    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, and SQLFluff's PG01 returns early unless the dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py). The statement (`CREATE INDEX invalid_ids_id_idx ON invalid_ids (id);`) is one PG01 reports under the postgres dialect; the engine reads every .sql file with one grammar and no dialect setting."
-  },
-  {
-    "rule": "sqlfluff-pg01-postgres-excessive-locks",
-    "source": "anki",
-    "path": "rslib/src/storage/upgrades/schema11_downgrade.sql",
-    "line": 8,
-    "kind": "not-comparable",
-    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, and SQLFluff's PG01 returns early unless the dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py). The statement (`DROP INDEX idx_cards_odid;`) is one PG01 reports under the postgres dialect; the engine reads every .sql file with one grammar and no dialect setting."
-  },
-  {
-    "rule": "sqlfluff-pg01-postgres-excessive-locks",
-    "source": "anki",
-    "path": "rslib/src/storage/upgrades/schema11_downgrade.sql",
-    "line": 9,
-    "kind": "not-comparable",
-    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, and SQLFluff's PG01 returns early unless the dialect is postgres (`_target_dialects = (\"postgres\",)` in rules/postgres/PG01.py). The statement (`DROP INDEX idx_notes_mid;`) is one PG01 reports under the postgres dialect; the engine reads every .sql file with one grammar and no dialect setting."
-  },
-  {
-    "rule": "sqlfluff-pg01-postgres-excessive-locks",
     "source": "fixtures",
     "path": "ansi/PG01/test_pass_non_postgres_dialect_ignored.sql",
     "line": 1,
@@ -142,14 +118,6 @@
     "line": 3,
     "kind": "not-comparable",
     "evidence": "SQLite-only: `\"`'a\"\"\".id` and `'`''a\"'.id` qualify columns with a quoted name and a string literal that SQLite reads as identifiers in that position (recorded under dialect sqlite only: fixtures.cases.json reference sqlite3 3.50.4, no postgresDialect entry); PostgreSQL and ANSI SQL never take a string as a qualifier. The vendored grammar reads the string as a literal and reports a syntax error at 3:8 (the runner's T1 list), so the port, which reads `resolves` (unsound under error regions), skips the file."
-  },
-  {
-    "rule": "sqlfluff-rf04-references-keywords",
-    "source": "anki",
-    "path": "rslib/src/storage/upgrades/schema18_downgrade.sql",
-    "line": 6,
-    "kind": "not-comparable",
-    "evidence": "SQLite-only: the corpus records anki's files under SQLFluff's sqlite dialect, in which `type` is no keyword, so RF04 does not report the column definition `type integer NOT NULL`. `type` is an unreserved keyword in SQLFluff 4.4.0's postgres dialect (dialect_selector('postgres').sets('unreserved_keywords')), the keywords the port reads, since the engine reads every .sql file as PostgreSQL."
   },
   {
     "rule": "sqlfluff-rf04-references-keywords",

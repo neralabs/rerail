@@ -19,8 +19,11 @@
 
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
-- [pack-format.md](pack-format.md): the pack layout and its validation contract
-- [port-readiness.md](port-readiness.md): the port readiness gates every shipped ported rule must pass, and how to read their report
+- [pack-format.md](pack-format.md): the pack layout, its pack data and provenance records, and its validation contract
+- [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots, the
+  publish workflow, upstream releases and bumps, and CI
+- [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
+  request comment, divergences, and promoting a candidate
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
 
 ## Release
@@ -29,11 +32,11 @@
   publisher
 
 ## Repository
+- [GOVERNANCE.md](GOVERNANCE.md): who takes part and how, who the maintainers are, and how decisions are made
 - [repository-structure.md](repository-structure.md): the layout rules and the structure gate
   (`npm run check:structure`) that enforces them
 
 ## Design notes
-- [vision.md](vision.md): the coordination problem, the semantic monitor, and Rerail's design principles
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and

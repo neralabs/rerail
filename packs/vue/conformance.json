@@ -9,52 +9,6 @@
     "arguments",
     "suppression"
   ],
-  "corpora": [
-    {
-      "name": "element-plus",
-      "repository": "https://github.com/element-plus/element-plus",
-      "commit": "88f4a8ed77ac6c985177d112300a36ea98bc8f97",
-      "paths": [
-        "packages",
-        "docs",
-        "ssr-testing",
-        "play"
-      ],
-      "exclude": [
-        "**/node_modules/**",
-        "**/dist/**"
-      ]
-    },
-    {
-      "name": "vue-vben-admin",
-      "repository": "https://github.com/vbenjs/vue-vben-admin",
-      "commit": "50f4ede309d4450c7dd417399cb8d5c02346d2d2",
-      "paths": [
-        "apps",
-        "docs",
-        "internal",
-        "packages",
-        "playground",
-        "scripts"
-      ],
-      "exclude": [
-        "**/node_modules/**",
-        "**/dist/**"
-      ]
-    },
-    {
-      "name": "hoppscotch",
-      "repository": "https://github.com/hoppscotch/hoppscotch",
-      "commit": "63273f8e599e73f0fb38c0739314e8d46b6bc83d",
-      "paths": [
-        "packages"
-      ],
-      "exclude": [
-        "**/node_modules/**",
-        "**/dist/**"
-      ]
-    }
-  ],
   "tools": [
     {
       "name": "@vue/compiler-sfc",
@@ -273,7 +227,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-unused-refs"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-unused-refs.json",
+      "policy": "rules/eslint-plugin-vue-no-unused-refs.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -319,7 +273,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/no-dupe-keys"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-no-dupe-keys.json",
+      "policy": "rules/eslint-plugin-vue-no-dupe-keys.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -334,7 +288,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/return-in-computed-property"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-return-in-computed-property.json",
+      "policy": "rules/eslint-plugin-vue-return-in-computed-property.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -421,7 +375,7 @@
         "tool": "eslint-plugin-vue",
         "rule": "vue/require-valid-default-prop"
       },
-      "policy": "candidates/rules/eslint-plugin-vue-require-valid-default-prop.json",
+      "policy": "rules/eslint-plugin-vue-require-valid-default-prop.json",
       "capabilities": [
         "syntax",
         "scope",
