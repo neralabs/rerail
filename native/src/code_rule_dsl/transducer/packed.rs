@@ -1101,6 +1101,58 @@ fn compare_capture_nodes(left: CaptureIdentity, right: CaptureIdentity) -> std::
 
 /// Mirrors `ts_query_cursor__compare_captures`: determine whether either ordered capture list is a
 /// superset of the other.
+// N's (5bf45ff0), which bb4c9605's merge dropped where G's version of this file replaced the
+// mechanism; kept as copied (open item O21).
+#[allow(dead_code)]
+#[derive(Default)]
+struct CaptureAntichain {
+    states: Vec<Option<Vec<CaptureIdentity>>>,
+    by_length: BTreeMap<usize, Vec<usize>>,
+}
+
+#[allow(dead_code)]
+impl CaptureAntichain {
+    fn insert_unless_contained(
+        &mut self,
+        captures: Vec<CaptureIdentity>,
+        work: &mut usize,
+    ) -> Result<bool, Error> {
+        for index in self
+            .by_length
+            .range(captures.len()..)
+            .flat_map(|(_, indexes)| indexes)
+        {
+            let Some(existing) = self.states[*index].as_ref() else {
+                continue;
+            };
+            charge_task_work(work)?;
+            if capture_identity_containment(existing, &captures).0 {
+                return Ok(false);
+            }
+        }
+        let dominated = self
+            .by_length
+            .range(..=captures.len())
+            .flat_map(|(_, indexes)| indexes)
+            .copied()
+            .collect::<Vec<_>>();
+        for index in dominated {
+            let Some(existing) = self.states[index].as_ref() else {
+                continue;
+            };
+            charge_task_work(work)?;
+            if capture_identity_containment(&captures, existing).0 {
+                self.states[index] = None;
+            }
+        }
+        let length = captures.len();
+        let index = self.states.len();
+        self.states.push(Some(captures));
+        self.by_length.entry(length).or_default().push(index);
+        Ok(true)
+    }
+}
+
 fn capture_identity_containment(
     left: &[CaptureIdentity],
     right: &[CaptureIdentity],

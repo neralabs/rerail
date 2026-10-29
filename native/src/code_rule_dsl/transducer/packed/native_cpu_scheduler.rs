@@ -273,6 +273,208 @@ fn define_cursor_equal(
     Ok(())
 }
 
+// N's (5bf45ff0), which bb4c9605's merge dropped where G's version of this file replaced the
+// mechanism; kept as copied (open item O21).
+#[allow(dead_code)]
+fn define_capture_occurrences(
+    module: &mut JITModule,
+    id: FuncId,
+) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let mut context = module.make_context();
+    context.func.signature = module.make_signature();
+    context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(module.target_config().pointer_type()));
+    for _ in 0..3 {
+        context
+            .func
+            .signature
+            .params
+            .push(AbiParam::new(types::I32));
+    }
+    context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(types::I32));
+    let mut builder_context = FunctionBuilderContext::new();
+    {
+        let mut function = FunctionBuilder::new(&mut context.func, &mut builder_context);
+        let entry = function.create_block();
+        function.append_block_params_for_function_params(entry);
+        let walk = function.create_block();
+        function.append_block_param(walk, types::I32);
+        function.append_block_param(walk, types::I32);
+        let inspect = function.create_block();
+        let done = function.create_block();
+        function.append_block_param(done, types::I32);
+        function.switch_to_block(entry);
+        let zero = function.ins().iconst(types::I32, 0);
+        let initial_head = function.block_params(entry)[1];
+        function
+            .ins()
+            .jump(walk, &[initial_head.into(), zero.into()]);
+        function.switch_to_block(walk);
+        let head = function.block_params(walk)[0];
+        let count = function.block_params(walk)[1];
+        let present = function.ins().icmp_imm(IntCC::NotEqual, head, 0);
+        function
+            .ins()
+            .brif(present, inspect, &[], done, &[count.into()]);
+        function.switch_to_block(inspect);
+        let task = function.block_params(entry)[0];
+        let links = context_pointer(
+            &mut function,
+            task,
+            mem::offset_of!(NativeTaskContext, captures),
+        );
+        let one = function.ins().iconst(types::I32, 1);
+        let index = function.ins().isub(head, one);
+        let link = pointer_at(&mut function, links, index, mem::size_of::<LinkRecord>());
+        let label = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            link,
+            mem::offset_of!(LinkRecord, first) as i32,
+        );
+        let node = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            link,
+            mem::offset_of!(LinkRecord, second) as i32,
+        );
+        let expected_label = function.block_params(entry)[2];
+        let expected_node = function.block_params(entry)[3];
+        let label_same = function.ins().icmp(IntCC::Equal, label, expected_label);
+        let node_same = function.ins().icmp(IntCC::Equal, node, expected_node);
+        let matches = function.ins().band(label_same, node_same);
+        let incremented = function.ins().iadd_imm(count, 1);
+        let next_count = function.ins().select(matches, incremented, count);
+        let previous = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            link,
+            mem::offset_of!(LinkRecord, previous) as i32,
+        );
+        function
+            .ins()
+            .jump(walk, &[previous.into(), next_count.into()]);
+        function.switch_to_block(done);
+        let result = function.block_params(done)[0];
+        function.ins().return_(&[result]);
+        function.seal_all_blocks();
+        function.finalize();
+    }
+    module.define_function(id, &mut context)?;
+    module.clear_context(&mut context);
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn define_capture_contains(
+    module: &mut JITModule,
+    id: FuncId,
+    occurrences: FuncId,
+) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let mut context = module.make_context();
+    context.func.signature = module.make_signature();
+    context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(module.target_config().pointer_type()));
+    context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(types::I32));
+    context
+        .func
+        .signature
+        .params
+        .push(AbiParam::new(types::I32));
+    context
+        .func
+        .signature
+        .returns
+        .push(AbiParam::new(types::I32));
+    let occurrences = module.declare_func_in_func(occurrences, &mut context.func);
+    let mut builder_context = FunctionBuilderContext::new();
+    {
+        let mut function = FunctionBuilder::new(&mut context.func, &mut builder_context);
+        let entry = function.create_block();
+        function.append_block_params_for_function_params(entry);
+        let walk = function.create_block();
+        function.append_block_param(walk, types::I32);
+        let inspect = function.create_block();
+        let reject = function.create_block();
+        let accept = function.create_block();
+        function.switch_to_block(entry);
+        let initial_right = function.block_params(entry)[2];
+        function.ins().jump(walk, &[initial_right.into()]);
+        function.switch_to_block(walk);
+        let head = function.block_params(walk)[0];
+        let present = function.ins().icmp_imm(IntCC::NotEqual, head, 0);
+        function.ins().brif(present, inspect, &[], accept, &[]);
+        function.switch_to_block(inspect);
+        let task = function.block_params(entry)[0];
+        let links = context_pointer(
+            &mut function,
+            task,
+            mem::offset_of!(NativeTaskContext, captures),
+        );
+        let one = function.ins().iconst(types::I32, 1);
+        let index = function.ins().isub(head, one);
+        let link = pointer_at(&mut function, links, index, mem::size_of::<LinkRecord>());
+        let label = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            link,
+            mem::offset_of!(LinkRecord, first) as i32,
+        );
+        let node = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            link,
+            mem::offset_of!(LinkRecord, second) as i32,
+        );
+        let left = function.block_params(entry)[1];
+        let right = function.block_params(entry)[2];
+        let left_call = function.ins().call(occurrences, &[task, left, label, node]);
+        let left_count = function.inst_results(left_call)[0];
+        let right_call = function
+            .ins()
+            .call(occurrences, &[task, right, label, node]);
+        let right_count = function.inst_results(right_call)[0];
+        let enough =
+            function
+                .ins()
+                .icmp(IntCC::UnsignedGreaterThanOrEqual, left_count, right_count);
+        let previous = function.ins().load(
+            types::I32,
+            MemFlags::trusted(),
+            link,
+            mem::offset_of!(LinkRecord, previous) as i32,
+        );
+        function
+            .ins()
+            .brif(enough, walk, &[previous.into()], reject, &[]);
+        function.switch_to_block(reject);
+        let zero = function.ins().iconst(types::I32, 0);
+        function.ins().return_(&[zero]);
+        function.switch_to_block(accept);
+        let one = function.ins().iconst(types::I32, 1);
+        function.ins().return_(&[one]);
+        function.seal_all_blocks();
+        function.finalize();
+    }
+    module.define_function(id, &mut context)?;
+    module.clear_context(&mut context);
+    Ok(())
+}
+
 fn define_repeat_equal(
     module: &mut JITModule,
     id: FuncId,

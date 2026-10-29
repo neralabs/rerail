@@ -2684,6 +2684,14 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
     })
 }
 
+// N's (5bf45ff0), which bb4c9605's merge dropped where G's version of this file replaced the
+// mechanism; kept as copied (open item O21).
+#[allow(dead_code)]
+#[cfg(not(target_os = "macos"))]
+pub(super) fn warm_jit(program: &Program) -> Result<(), Error> {
+    compile_cached(program).map(|_| ())
+}
+
 pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLine>, Error> {
     let key = format!(
         "cpu-jit:{FORMAT_VERSION}:{}:{}",

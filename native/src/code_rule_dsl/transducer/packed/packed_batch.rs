@@ -1007,6 +1007,13 @@ impl PackedBatch {
     }
 }
 
+// N's (5bf45ff0), which bb4c9605's merge dropped where G's version of this file replaced the
+// mechanism; kept as copied (open item O21).
+#[allow(dead_code)]
+pub(super) fn stable_status_error(statuses: &[TaskStatus]) -> Option<Error> {
+    statuses.iter().find_map(status_error)
+}
+
 fn status_error(status: &TaskStatus) -> Option<Error> {
     (status.error != 0).then_some(match status.error {
         1 | 3 | 5 | 6 => Error::InvalidOpcode(status.program_counter as usize),
