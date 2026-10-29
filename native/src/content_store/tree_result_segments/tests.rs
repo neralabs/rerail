@@ -1,8 +1,14 @@
 // COPY: Tempo 8fe9ffed4:tempo/native/src/content_store.rs l.6192-6244 (test), verbatim.
+use super::super::tests::{candidate_catalog, published_tree, store};
+use super::*;
+use std::collections::HashSet;
+use std::io::Cursor;
+
     #[test]
     fn completed_tree_result_segments_round_trip_atomically() {
         let (_path, store) = store("tree-results");
-        let tree = HashKey::git_sha1([31; 20]);
+        // W's snapshots require their root Git tree published first.
+        let tree = published_tree(&store, HashKey::git_sha1([31; 20]));
         let snapshot = store
             .put_snapshot(tree, 1, HashKey::sha256(b"grammar"), 1)
             .unwrap();

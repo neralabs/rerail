@@ -1,22 +1,28 @@
 // COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
 // l.253-263 (SCHEMA_V9), l.3082-3159 (reusable_snapshot_tree_prefixes, reusable_maximal_tree_prefixes).
-const SCHEMA_V9: &str = r#"
-CREATE TABLE completed_snapshot_trees (
+use super::super::{CandidateCatalogIdentity, ContentStore, HashKey, StoreError, StoreResult};
+use rusqlite::params;
+use std::collections::HashSet;
+
+pub(super) const SCHEMA_V9: &str = r#"
+CREATE TABLE IF NOT EXISTS completed_snapshot_trees (
     snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id),
     tree_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
     prefix TEXT NOT NULL,
     catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
     PRIMARY KEY (snapshot_id, tree_hash_id, prefix, catalog_hash_id)
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX completed_snapshot_trees_by_identity
+CREATE INDEX IF NOT EXISTS completed_snapshot_trees_by_identity
 ON completed_snapshot_trees(tree_hash_id, prefix, catalog_hash_id);
 "#;
 
+impl ContentStore {
     pub fn reusable_snapshot_tree_prefixes(
         &self,
         catalog: CandidateCatalogIdentity,
         trees: &[(String, HashKey)],
     ) -> StoreResult<HashSet<String>> {
+        self.tree_result_segment_schema()?;
         if trees.is_empty() {
             return Ok(HashSet::new());
         }
@@ -90,3 +96,4 @@ ON completed_snapshot_trees(tree_hash_id, prefix, catalog_hash_id);
             .cloned()
             .collect())
     }
+}

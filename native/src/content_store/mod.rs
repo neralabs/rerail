@@ -33,6 +33,10 @@ mod search_index;
 mod snapshots;
 mod tree_diff;
 mod tree_pages;
+/// G's tree result segments as copied, beside `tree_pages` (O19).
+#[cfg(test)]
+#[allow(dead_code)]
+mod tree_result_segments;
 #[cfg(test)]
 mod tests;
 mod workspaces;

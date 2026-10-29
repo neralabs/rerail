@@ -25,13 +25,13 @@ fn temporary_database(label: &str) -> std::path::PathBuf {
     ))
 }
 
-fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
+pub(super) fn store(label: &str) -> (std::path::PathBuf, ContentStore) {
     let path = temporary_database(label);
     let store = ContentStore::open(&path).unwrap();
     (path, store)
 }
 
-fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
+pub(super) fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
     CandidateCatalogIdentity::new(
         HashKey::sha256(label.as_bytes()),
         HashKey::sha256(b"grammar-set"),
@@ -42,7 +42,7 @@ fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
 }
 
 /// Publishes `id` as a complete empty Git tree, so a snapshot may use it as its root.
-fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
+pub(super) fn published_tree(store: &ContentStore, id: HashKey) -> HashKey {
     store
         .put_git_trees_bulk(&[GitTree {
             id,

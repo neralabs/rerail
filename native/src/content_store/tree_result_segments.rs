@@ -1,8 +1,24 @@
+//! Tempo's tree result segments as copied (94c50115, again in 5ebee3f9), test-only beside
+//! `tree_pages`, their adaptation (open item O19). Mutations: wrapped in `impl ContentStore`;
+//! G's schema 9 and 10 tables are created on first use (`IF NOT EXISTS`); the end of
+//! `complete_snapshot_trees` (8fe9ffed4 l.3072-3080, recording the workspace revision), which
+//! the fragment copy left out, is G's; the collection fragment is `collect_tree_result_segments`.
 // COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
 // l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
 // l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
+use super::{
+    CandidateCatalogIdentity, ContentStore, HashKey, SnapshotId, StoreError, StoreResult,
+    WorkspaceCompletion, rows::intern_hash,
+};
+use rusqlite::params;
+use std::io::Cursor;
+
+mod snapshot_trees;
+#[cfg(test)]
+mod tests;
+
 const SCHEMA_V10: &str = r#"
-CREATE TABLE tree_result_segments (
+CREATE TABLE IF NOT EXISTS tree_result_segments (
     tree_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
     prefix TEXT NOT NULL,
     catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
@@ -13,7 +29,7 @@ CREATE TABLE tree_result_segments (
     frame BLOB NOT NULL,
     PRIMARY KEY (tree_hash_id, prefix, catalog_hash_id, page_index)
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX tree_result_segments_by_catalog
+CREATE INDEX IF NOT EXISTS tree_result_segments_by_catalog
 ON tree_result_segments(catalog_hash_id, prefix, tree_hash_id);
 "#;
 
@@ -37,6 +53,17 @@ pub struct StoredTreeResultSegment {
     pub bytes: Vec<u8>,
 }
 
+impl ContentStore {
+    /// G's schema 9 and 10 tables, which W's schema does not have (created on first use).
+    fn tree_result_segment_schema(&self) -> StoreResult<()> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        connection.execute_batch(snapshot_trees::SCHEMA_V9)?;
+        connection.execute_batch(SCHEMA_V10)?;
+        Ok(())
+    }
 
     pub fn complete_snapshot_trees(
         &self,
@@ -46,6 +73,7 @@ pub struct StoredTreeResultSegment {
         trees: &[(String, HashKey)],
         segments: Vec<TreeResultSegmentPublication>,
     ) -> StoreResult<()> {
+        self.tree_result_segment_schema()?;
         if trees.is_empty() {
             return self.complete_workspace_revision(
                 completion.workspace_id,
@@ -148,12 +176,22 @@ pub struct StoredTreeResultSegment {
                     ));
                 }
             }
+            transaction.execute(
+                "INSERT INTO completed_workspace_revisions(workspace_id,revision,catalog_hash_id,completed_at) \
+                 VALUES (?1,?2,?3,?4) ON CONFLICT(workspace_id) DO UPDATE SET \
+                 revision=excluded.revision,catalog_hash_id=excluded.catalog_hash_id,completed_at=excluded.completed_at",
+                params![completion.workspace_id.0, completion.revision, catalog_hash_id, completion.completed_at],
+            )?;
+            Ok(())
+        })
+    }
 
     pub fn tree_result_segments(
         &self,
         catalog: CandidateCatalogIdentity,
         trees: &[(String, HashKey)],
     ) -> StoreResult<Vec<StoredTreeResultSegment>> {
+        self.tree_result_segment_schema()?;
         if trees.is_empty() {
             return Ok(Vec::new());
         }
@@ -242,6 +280,12 @@ pub struct StoredTreeResultSegment {
             .collect()
     }
 
+    /// G's collection of segments no completed snapshot tree names (8fe9ffed4 l.3439-3446),
+    /// as a function of its own: W's collection pass has no tree result segments.
+    pub(crate) fn collect_tree_result_segments(
+        transaction: &rusqlite::Transaction<'_>,
+        limit: i64,
+    ) -> StoreResult<()> {
         transaction.execute(
             "DELETE FROM tree_result_segments WHERE (tree_hash_id,prefix,catalog_hash_id) IN (\
              SELECT r.tree_hash_id,r.prefix,r.catalog_hash_id FROM tree_result_segments r \
@@ -250,3 +294,6 @@ pub struct StoredTreeResultSegment {
              ORDER BY r.catalog_hash_id,r.prefix,r.tree_hash_id LIMIT ?1)",
             [limit],
         )?;
+        Ok(())
+    }
+}
