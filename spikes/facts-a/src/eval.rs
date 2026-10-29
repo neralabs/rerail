@@ -879,6 +879,11 @@ pub struct Output {
     /// When set, each clause's counts per file evaluation are also pushed here, in order (the
     /// caller drains it per file: `repo`'s memo stores them).
     pub file_counts: Option<Vec<((usize, usize), Counts)>>,
+    /// When set, each per-file relational run's top-level fixpoint rounds are also pushed here,
+    /// one entry per stage with a fixpoint: ((rule index, clause index), stage, admitted rows per
+    /// round, `StageCounts::fix`). Observation only; the caller drains it per file (`repo
+    /// --file-counts`).
+    pub file_fix: Option<Vec<((usize, usize), String, Vec<u64>)>>,
     /// (rule index, clause index) of clauses `eval_file` does not evaluate: their results for the
     /// current file come from elsewhere (`repo`'s memo).
     pub skip: rustc_hash::FxHashSet<(usize, usize)>,
@@ -916,11 +921,14 @@ impl Output {
         }
     }
     /// The last `rel::run`'s counts into `c` and the stage totals (K1 keys that did not hold
-    /// count in `bounds_unproven`).
-    fn add_run(&mut self, ri: usize, ci: usize, c: &mut Counts) {
+    /// count in `bounds_unproven`); `file`: a per-file run, whose fixpoint rounds `file_fix` keeps.
+    fn add_run(&mut self, ri: usize, ci: usize, c: &mut Counts, file: bool) {
         let r = rel::last_counts();
         c.leaf_rows += r.leaf_rows;
         c.bounds_unproven += r.unproven;
+        if let (true, Some(v)) = (file, self.file_fix.as_mut()) {
+            v.extend(r.stages.iter().filter(|(_, s)| !s.fix.is_empty()).map(|(name, s)| ((ri, ci), name.clone(), s.fix.clone())));
+        }
         for (name, s) in r.stages {
             c.add_stage(&s);
             add_stage_counts(self.stage_counts.entry((ri, ci, name)).or_default(), &s);
@@ -1127,7 +1135,7 @@ pub fn eval_file(rules: &[Rule], ctx: &FileCtx<'_>, out: &mut Output, repo: &mut
                     } else if plan.per_file {
                         let r = rel::run(plan, rel::Partition { inputs: tables, anchors, facts: Some((ctx.f, ctx.path)), source: ctx.source, path: ctx.path, budget: Some((limits, c.match_nodes + c.input_rows)) });
                         out.add_stages(ri, ci, r.stage_ns);
-                        out.add_run(ri, ci, &mut c);
+                        out.add_run(ri, ci, &mut c, true);
                         if let Some(m) = r.failure {
                             fail(out, m);
                         }
@@ -1267,7 +1275,7 @@ pub fn finish(rules: &[Rule], mut load: impl FnMut((usize, usize)) -> Vec<crate:
             let r = rel::run(plan, rel::Partition { inputs, anchors, facts: None, source: "", path: "", budget: None });
             out.add_stages(ri, ci, r.stage_ns);
             let mut c = Counts::default();
-            out.add_run(ri, ci, &mut c);
+            out.add_run(ri, ci, &mut c, false);
             out.add_counts(ri, ci, c, false);
             if let Some(m) = r.failure {
                 out.failures.push(Failure { check: rule.check.clone(), clause: clause.id.clone(), path: String::new(), message: m });

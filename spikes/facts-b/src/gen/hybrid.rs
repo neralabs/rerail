@@ -572,13 +572,15 @@ pub fn run(run_dir: &Path, opts: Opts) {
         };
         let label = |ks: &[usize]| ks.iter().map(|k| plans[*k].name.as_str()).collect::<Vec<_>>().join("+");
         let mut skipped: Vec<usize> = vec![0; plans.len()];
-        // Per run label (its plans joined by `+`): milliseconds of each run, counts, and per stage
-        // the exclusive seconds and rows out; per plan, the runs it took part in.
+        // Per run label (its plans joined by `+`): milliseconds of each run, counts, per stage
+        // the exclusive seconds and rows out, and each run's fixpoint rounds (`batch::FixRounds`);
+        // per plan, the runs it took part in.
         #[derive(Default)]
         struct RunStat {
             ms: Vec<f64>,
             counts: Counts,
             stages: FxHashMap<String, (f64, u64)>,
+            fixes: Vec<serde_json::Value>,
         }
         let run_stats: RefCell<BTreeMap<String, RunStat>> = RefCell::new(BTreeMap::new());
         let plan_runs: RefCell<Vec<usize>> = RefCell::new(vec![0; plans.len()]);
@@ -595,7 +597,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 let o = batch::eval(&names, &plans[ks[0]].graph, &src, files);
                 let ms = t.elapsed().as_secs_f64() * 1e3;
                 let inc: BTreeMap<String, u64> = lower::refusals().0.into_iter().filter_map(|(s, n)| (n > before.get(&s).copied().unwrap_or(0)).then(|| (s.clone(), n - before.get(&s).copied().unwrap_or(0)))).collect();
-                serde_json::to_vec(&json!({"res": res_of(&o).iter().map(put_res).collect::<Vec<_>>(), "counts": o.counts, "stages": o.stages, "refusals": inc, "ms": ms})).unwrap()
+                serde_json::to_vec(&json!({"res": res_of(&o).iter().map(put_res).collect::<Vec<_>>(), "counts": o.counts, "stages": o.stages, "fixes": o.fixes, "refusals": inc, "ms": ms})).unwrap()
             })
         };
         // Its results in the parent (in `ks` order), and the run's milliseconds (the child's
@@ -613,6 +615,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
                 e.0 += v[0].as_f64().unwrap();
                 e.1 += v[1].as_u64().unwrap();
             }
+            st.fixes.push(j["fixes"].clone());
             let mut wr = worker_refusals.borrow_mut();
             for (s, n) in j["refusals"].as_object().unwrap() {
                 *wr.entry(s.clone()).or_default() += n.as_u64().unwrap();
@@ -930,7 +933,7 @@ pub fn run(run_dir: &Path, opts: Opts) {
             "runs": run_stats.borrow().iter().map(|(l, st)| {
                 let mut top: Vec<(&String, &(f64, u64))> = st.stages.iter().collect();
                 top.sort_by(|a, b| b.1 .0.partial_cmp(&a.1 .0).unwrap());
-                json!({"run": l, "ms": summary(&st.ms), "counts": st.counts, "stages_secs_rows": top.iter().map(|(s, (t, r))| json!([s, t, r])).collect::<Vec<_>>()})
+                json!({"run": l, "ms": summary(&st.ms), "counts": st.counts, "stages_secs_rows": top.iter().map(|(s, (t, r))| json!([s, t, r])).collect::<Vec<_>>(), "fixes": st.fixes})
             }).collect::<Vec<_>>(),
             "refused_static": real.refused,
             "events": events.len(),

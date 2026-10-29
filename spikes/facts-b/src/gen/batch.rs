@@ -53,17 +53,31 @@ impl Counts {
     }
 }
 
+/// One set fixpoint's rounds (observation only; docs/facts/LATTICE.md E0): per round, the
+/// variable's new rows it steps from (round 0: the seeds; the frontier), through the first empty
+/// round, and the round's derivations (as `Counts::derivations`, every body operator's candidate
+/// rows before its distinct). `label`: the fixpoint node's (`clause/stage`).
+#[derive(Default, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FixRounds {
+    pub label: String,
+    pub frontier: Vec<u64>,
+    pub derivations: Vec<u64>,
+}
+
 /// One plan's result over one worktree: its name, per output its rows (a multiset), and the
 /// plan's refusals (distinct refusal rows; findings are withheld while any is live).
 pub type PlanResult = (String, Vec<(String, BTreeMap<Row, R>)>, Vec<Row>);
 
 /// The plans evaluated together over one worktree (those of one graph, `norm::Plans`: a node
-/// several of them read is evaluated once), with the work counts and per-stage profile of the run.
+/// several of them read is evaluated once), with the work counts, per-stage profile and per
+/// fixpoint rounds of the run.
 pub struct Outcome {
     pub plans: Vec<PlanResult>,
     pub counts: Counts,
     /// Per stage (`clause/stage` of the node's label): exclusive seconds and rows out.
     pub stages: FxHashMap<String, (f64, u64)>,
+    /// Every fixpoint evaluated, in evaluation order.
+    pub fixes: Vec<FixRounds>,
 }
 
 fn key(row: &Row, k: &Key) -> Option<Row> {
@@ -87,6 +101,7 @@ struct Ev<'a> {
     /// Seconds spent in the current node's inputs (exclusive time per stage).
     child_secs: f64,
     stages: FxHashMap<String, (f64, u64)>,
+    fixes: Vec<FixRounds>,
 }
 
 /// Evaluates the outputs `g` assigns to each of `plans` (`Graph::owners`; every output when the
@@ -118,7 +133,7 @@ pub fn eval(plans: &[&str], g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Ou
     for (_, o) in outs.iter().flatten() {
         uses[*o] += 1;
     }
-    let mut ev = Ev { g, src, files, done: vec![None; n], uses, refused: FxHashSet::default(), built: FxHashSet::default(), counts: Counts::default(), live_rows: 0, child_secs: 0.0, stages: FxHashMap::default() };
+    let mut ev = Ev { g, src, files, done: vec![None; n], uses, refused: FxHashSet::default(), built: FxHashSet::default(), counts: Counts::default(), live_rows: 0, child_secs: 0.0, stages: FxHashMap::default(), fixes: Vec::new() };
     let mut results = Vec::new();
     for (pi, name) in plans.iter().enumerate() {
         let mut outputs = Vec::new();
@@ -144,7 +159,7 @@ pub fn eval(plans: &[&str], g: &Graph, src: &Source, files: &[(Sym, Cid)]) -> Ou
             (name, outputs, refusals)
         })
         .collect();
-    Outcome { plans, counts: ev.counts, stages: ev.stages }
+    Outcome { plans, counts: ev.counts, stages: ev.stages, fixes: ev.fixes }
 }
 
 impl Ev<'_> {
@@ -397,8 +412,11 @@ impl Ev<'_> {
         let var_node = body_nodes.iter().copied().find(|v| matches!(g.nodes[*v], Op::Var(x) if x == var));
         let mut var_all: FxHashSet<Row> = FxHashSet::default();
         let mut var_delta: Vec<Row> = seeds.into_iter().collect();
+        let mut rounds = FixRounds { label: g.labels[node].clone(), ..Default::default() };
         loop {
             self.counts.fix_rounds += 1;
+            rounds.frontier.push(var_delta.len() as u64);
+            let derivations0 = self.counts.derivations;
             for &v in &body_nodes {
                 let cand: Vec<Row> = if refused_ops.contains(&v) {
                     Vec::new()
@@ -428,7 +446,10 @@ impl Ev<'_> {
                 }
             }
             st.end_round();
+            rounds.derivations.push(self.counts.derivations - derivations0);
             if next.is_empty() {
+                rounds.frontier.push(0);
+                rounds.derivations.push(0);
                 break;
             }
             var_delta = next.into_iter().collect();
@@ -444,6 +465,7 @@ impl Ev<'_> {
                 }
             }
         }
+        self.fixes.push(rounds);
         var_all.into_iter().collect()
     }
 }
@@ -587,5 +609,43 @@ impl Semi {
             }
             self.all.get_mut(&n).unwrap().extend(d);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rerail_facts::ir::{self, Aff, Binding, CmpOp, Column, Expr, Plan, Rel, RepoSource, Sink, Violation};
+
+    /// The fixpoint rounds (E0, docs/facts/LATTICE.md): a set fixpoint reports per round the
+    /// variable's new rows it steps from (the frontier), through the first empty round, and the
+    /// round's derivations. Reach from node 1 over 1→2, 1→3, 2→3, 3→4: frontier {1}, {2, 3}, {4},
+    /// then none. Derivations per round are the body's candidate rows (variable, join, project):
+    /// 1 + 2 + 2 (2, 3 from 1), 2 + 2 + 2 (3, 4 from {2, 3}; 3 already in), 1 + 0 + 0.
+    #[test]
+    fn fix_rounds_report_frontier_per_round() {
+        val::install(Rc::new(std::cell::RefCell::new(crate::derive::World::new(crate::store::Store::default()))));
+        let col = |c: u16| Expr::Col { depth: 0, col: c };
+        let n = vec![Column::new("n", Aff::None)];
+        let edges = Rel::Scan { src: RepoSource::Exported(0), schema: vec![Column::new("src", Aff::None), Column::new("dst", Aff::None)] };
+        let local = Rel::Local { id: 0, schema: n.clone() };
+        let on = Expr::Cmp(CmpOp::Eq, Box::new(col(0)), Box::new(col(1)), (Aff::None, Aff::None));
+        let step = Rel::Project { input: Box::new(Rel::Join { kind: ir::JoinKind::Inner, left: Box::new(local.clone()), right: Box::new(edges), on: Some(on) }), exprs: vec![col(2)], schema: n.clone() };
+        let init = Rel::Project { input: Box::new(Rel::Unit), exprs: vec![Expr::Lit(ir::Lit::Int(1))], schema: n.clone() };
+        let rel = Rel::With { bindings: vec![(0, Binding::Fix { init: vec![init], step: vec![step], set: true, schema: n })], body: Box::new(local) };
+        let violation = Violation { code: "t".into(), anchor: ir::Anchor::Span, each: None };
+        let p = Plan { clause: "t".into(), syntax: None, stages: Vec::new(), sink: Sink::Findings { rel, key: Vec::new(), code: None, locations: Vec::new(), violation } };
+        let g = super::super::norm::plan(&p, &[]).unwrap();
+        let rows: Rc<[Row]> = [(1, 2), (1, 3), (2, 3), (3, 4)].iter().map(|(a, b)| Row::from([val::Val::int(*a), val::Val::int(*b)])).collect::<Vec<_>>().into();
+        let src: Source = Rc::new(move |_, _, _| rows.clone());
+        let o = eval(&["t"], &g, &src, &[(0, 0)]);
+        let mut reached: Vec<Row> = o.plans[0].1[0].1.keys().cloned().collect();
+        reached.sort();
+        assert_eq!(reached, [1, 2, 3, 4].iter().map(|v| Row::from([val::Val::int(*v)])).collect::<Vec<_>>());
+        assert_eq!(o.fixes.len(), 1);
+        assert_eq!(o.fixes[0].frontier, vec![1, 2, 1, 0]);
+        assert_eq!(o.fixes[0].derivations, vec![5, 6, 1, 0]);
+        assert_eq!(o.fixes[0].derivations.iter().sum::<u64>(), o.counts.derivations);
+        assert_eq!((o.counts.fix_rounds, o.fixes[0].label.as_str()), (3, "t/<final>"));
     }
 }
