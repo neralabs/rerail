@@ -3,7 +3,7 @@
   "id": "php",
   "name": "PHP",
   "category": "language",
-  "covers": "15 PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail, 5 of them on and 10 off until turned on, each scored against the tool's own findings on its test fixtures.",
+  "covers": "PHP_CodeSniffer, PHPStan and Psalm rules for correct, consistent PHP.",
   "reason": "matches PHP",
   "match": {
     "any": [

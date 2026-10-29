@@ -9,7 +9,8 @@ name: Pack data publish request
 # still in the waiting state, once the pull request has nothing left to publish.
 #
 # pull_request_target, so it also runs for forks, with the base branch's workflow: it checks out nothing, runs nothing
-# of the pull request, and holds only a GITHUB_TOKEN that can write pull request comments. File names and patches are
+# of the pull request, and holds only a GITHUB_TOKEN that can write pull request comments. A fork's pull request is a
+# proposal, published only once a maintainer ports it, so its comment lists the data without the publish steps. File names and patches are
 # untrusted: only the validated pack/tool directories and their counts are rendered, never a name, and nothing reaches
 # a shell but through env. Structure metric #3, not this comment, is what blocks the merge.
 
@@ -92,6 +93,28 @@ jobs:
             # shellcheck disable=SC2016 # literal backticks: markdown code spans
             rows="$(while read -r toolpack files lost; do printf '| `%s` | %s | %s |\n' "$toolpack" "$files" "$lost"; done <<< "$toolpacks")"
           fi
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            # A fork's pull request is a proposal (CONTRIBUTING.md, "Proposing a change from your fork"): its data is
+            # published from the pull request that ports it to a branch here, never from the fork. Same marker and
+            # state, so the comment goes once the fork stops staging data.
+            body="$(cat <<EOF
+          ${marker} state=waiting -->
+          ### Pack data in a proposal from a fork
+
+          This pull request is from a fork, so it is a proposal: its pack data is not published from it. If a maintainer takes the change, they port it to a branch here, and the data is published from that pull request ([how it works](https://github.com/$GITHUB_REPOSITORY/blob/main/CONTRIBUTING.md#proposing-a-change-from-your-fork)).
+
+          | Tool-pack | Files in \`publish/\` | Authored rows removed from \`UPSTREAM.md\` |
+          |---|---|---|
+          ${rows}
+          EOF
+            )"
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body" > /dev/null
+            fi
+            exit 0
+          fi
           environment="$(gh api "repos/$GITHUB_REPOSITORY/environments/test-data-upload" --jq .id)"
           body="$(cat <<EOF
           ${marker} state=waiting -->
@@ -109,7 +132,7 @@ jobs:
           2. Type **\`$PR\`** as the pull request number. GitHub can't pre-fill workflow inputs from a link, so type it yourself.
           3. ${replace_step}
           4. Wait for a code owner (@Moti-Velz or @jeffreysnell) to approve the \`test-data-upload\` deployment. They read the run's **prep** summary first.
-          5. When the run is green, pull this branch: the workflow has committed the new locks and removed \`publish/\`. If someone pushed to the branch meanwhile, or the branch is on a fork, this comment shows the locks to commit instead.
+          5. When the run is green, pull this branch: the workflow has committed the new locks and removed \`publish/\`. If someone pushed to the branch meanwhile, this comment shows the locks to commit instead.
 
           **With the gh CLI (for agents)**
 

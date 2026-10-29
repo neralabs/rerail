@@ -54,7 +54,7 @@ function catalog() {
   const added = shown.filter(isAttached).length;
   return h("div.catalog", null,
     h("div.ghead", null, h("h2", null, "Rule packs", h("span.n2", null, `${fmt(added)} of ${fmt(shown.length)} added`)),
-      h("p", null, `A pack per language or framework, for ${repoName() || "this repo"}. Each pack added gets its own page in the menu, where you turn its rules on or off.`)),
+      h("p", null, "Each pack checks one language or framework. Added packs get their own page in the menu.")),
     h("div.cattools", null,
       h("div.chips", { role: "group", "aria-label": "Pack kind" },
         kinds.map(([k, label]) => h("button.chip", { "data-act": "catkind", "data-i": k, "aria-pressed": String(kind === k) }, label))),
@@ -91,10 +91,10 @@ function review() {
     h("div.cathead", null, h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": "overview" }, icon("back"), repo)),
     h("div.ghead", null, h("h2", null, `Review the rule packs for ${repo}`,
       h("span.n2", null, `${fmt(keptPicked.length)} ${plural(keptPicked.length, "pack")} · ${fmt(keptRules)} ${plural(keptRules, "rule")}`)),
-    h("p", null, "Rerail read ", h("span.mono", null, repo), " and these rule packs look right for it. Switch off any you do not want, or add one from below. Then go back to your coding agent and say yes there; nothing starts from this page.")),
+    h("p", null, "Picked for ", h("span.mono", null, repo), " from its files. Switch off any you don't want, then finish in your coding agent.")),
     h("div.list", null, picked.map(pack => reviewRow(pack, reasons.get(pack.id)))),
     others.length ? h("div.ghead.top", null, h("h2", null, "Other rule packs", h("span.n2", null, `${fmt(others.length)} not picked`)),
-      h("p", null, "They come with Rerail and are off. Add one if it suits how your team works.")) : null,
+      h("p", null, "Not picked for this repo. Add any that fit.")) : null,
     others.length ? h("div.list", null, others.map(pack => reviewRow(pack, null))) : null);
 }
 

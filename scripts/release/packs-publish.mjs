@@ -5,9 +5,10 @@
 // can be run again, with the same tarballs or fresh ones: a version already tagged is skipped, and one already on the
 // registry without its tag is checked and tagged, not published again (releasePacks in packs.mjs).
 //
-// In the release workflow npm authenticates through trusted publishing and the commit is $GITHUB_SHA. By hand (a
-// pack's first publish), npm uses your login, gh your GitHub login with write access, and the commit is HEAD, which
-// must be clean and pushed. Both are checked before anything is published. Writes `released` (each
+// In the release workflow npm authenticates through trusted publishing, publishes with `--provenance` (failing when npm
+// cannot attach an attestation), and the commit is $GITHUB_SHA. By hand (a pack's first publish), npm uses your login
+// and publishes without provenance, which only CI can generate; gh uses your GitHub login with write access, and the
+// commit is HEAD, which must be clean and pushed. Both are checked before anything is published. Writes `released` (each
 // `<name>@<version>:<dist-tag>` it released, space-separated, for dist-tags-check.mjs) to $GITHUB_OUTPUT when it is set.
 //
 //   [HELD="<id> ..."] node scripts/release/packs-publish.mjs <dir>
@@ -43,7 +44,8 @@ async function assertPublic(name, version) {
  * included, go to stderr, which is captured and shown when npm exits.
  */
 function publish(path, distTag) {
-  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "public", "--tag", distTag], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
+  const provenance = process.env.GITHUB_ACTIONS === "true" ? ["--provenance"] : [];
+  const run = spawnSync("npm", ["publish", path, "--registry", REGISTRY, "--access", "public", "--tag", distTag, ...provenance], { stdio: ["inherit", "inherit", "pipe"], encoding: "utf8" });
   process.stderr.write(run.stderr ?? "");
   if (run.error !== undefined) throw run.error;
   return { ok: run.status === 0, output: run.stderr };
