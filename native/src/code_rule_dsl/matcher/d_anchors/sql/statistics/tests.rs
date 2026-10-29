@@ -1,7 +1,7 @@
 use super::*;
 use crate::code_rule_dsl::{
     language::{self, GrammarDialect},
-    matcher::anchors::sql::{store::Store, tests::document},
+    matcher::d_anchors::sql::{store::Store, tests::document},
 };
 
 fn request(kind: u16, term: Option<&str>) -> AnchorPlan {
@@ -190,7 +190,7 @@ fn statistics_upgrade_backfills_old_segments_once_and_removes_the_migration_call
 
 #[test]
 fn statistics_ties_keep_pattern_order_and_an_empty_store_is_safe() {
-    use crate::code_rule_dsl::matcher::anchors::tests::compile_rule;
+    use crate::code_rule_dsl::matcher::d_anchors::tests::compile_rule;
     let lang = GrammarDialect::TypeScript;
     let matcher = compile_rule(
         &serde_json::json!({"pattern":"obj.target($ARG)"}),

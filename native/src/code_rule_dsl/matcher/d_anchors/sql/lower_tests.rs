@@ -853,7 +853,7 @@ fn impossible_kind_branch_does_not_prepare_its_structural_or_source_producers() 
                 exact: true,
                 condition: Condition::Text {
                     regex: regex::Regex::new("expensive_source_predicate").unwrap(),
-                    probe: crate::code_rule_dsl::matcher::anchors::text::TextProbe::compile(
+                    probe: crate::code_rule_dsl::matcher::d_anchors::text::TextProbe::compile(
                         "expensive_source_predicate",
                     ),
                 },

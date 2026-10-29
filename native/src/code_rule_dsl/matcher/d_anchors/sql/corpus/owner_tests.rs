@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::matcher::anchors::tests::compile_rule;
+use crate::code_rule_dsl::matcher::d_anchors::tests::compile_rule;
 use serde_json::json;
 
 fn doc(source: &str) -> TapeDoc {
@@ -29,7 +29,7 @@ fn one_sql_publication_serves_independent_memberships_and_coexisting_versions() 
         "versions coexist in one physical index"
     );
     assert!(
-        a.prepared_file("a.ts", 1, new.index_source_digest())
+        a.prepared_file("a.ts", 1, &new.index_source_digest())
             .is_none()
     );
     b.remove("a.ts").unwrap();
@@ -108,7 +108,7 @@ fn failed_publication_does_not_publish_membership_and_last_owner_releases_the_da
 
 #[test]
 fn complete_structural_index_preserves_first_child_and_absence_for_every_field() {
-    use crate::code_rule_dsl::matcher::anchors::sql::{execute, store::Store};
+    use crate::code_rule_dsl::matcher::d_anchors::sql::{execute, store::Store};
     for (lang, source) in [
         (
             GrammarDialect::TypeScript,

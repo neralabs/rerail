@@ -1,6 +1,6 @@
 //! Reuse admitted fragments across different frontiers. Physical composition keeps exact scopes.
 use super::{Admission, AnchorPlan, Definitions, decode, scope};
-use crate::code_rule_dsl::matcher::anchors::sql::{cache::Cache, statistics};
+use crate::code_rule_dsl::matcher::d_anchors::sql::{cache::Cache, statistics};
 use rusqlite::types::Value;
 use std::{
     collections::{BTreeSet, HashMap},
@@ -25,7 +25,7 @@ pub(super) struct Fragment {
     pub admission: Admission,
     pub anchors: Vec<statistics::Decision>,
 }
-pub(in crate::code_rule_dsl::matcher::anchors::sql) struct Fragments {
+pub(in crate::code_rule_dsl::matcher::d_anchors::sql) struct Fragments {
     cache: Cache<Key, Cached>,
     hits: usize,
     compilations: usize,

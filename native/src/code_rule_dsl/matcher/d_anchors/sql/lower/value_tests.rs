@@ -4,7 +4,7 @@ use rusqlite::{Connection, StatementStatus, params_from_iter};
 #[test]
 fn regex_value_selection_does_not_probe_the_global_vocabulary_for_every_admitted_file() {
     let db = Connection::open_in_memory().unwrap();
-    crate::code_rule_dsl::matcher::anchors::sql::postings::install(&db).unwrap();
+    crate::code_rule_dsl::matcher::d_anchors::sql::postings::install(&db).unwrap();
     db.execute_batch("CREATE TABLE cf(fid INTEGER PRIMARY KEY);
         CREATE TABLE vidx(lang INTEGER,term TEXT,fid INTEGER,kind INTEGER,postings BLOB,
             PRIMARY KEY(lang,term,fid,kind)) WITHOUT ROWID;

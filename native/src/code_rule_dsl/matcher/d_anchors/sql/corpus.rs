@@ -15,7 +15,7 @@ use std::{cell::RefCell, sync::Arc};
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Corpus {
     state: Arc<Mutex<Option<State>>>,
-    sql: crate::code_rule_dsl::relational::pool::Backing,
+    sql: crate::code_rule_dsl::waves::relational::pool::Backing,
     members: Mutex<HashMap<String, (Key, Arc<File>)>>,
 }
 
@@ -105,7 +105,7 @@ impl Corpus {
 
     pub(in crate::code_rule_dsl) fn sql_backing(
         &self,
-    ) -> crate::code_rule_dsl::relational::pool::Backing {
+    ) -> crate::code_rule_dsl::waves::relational::pool::Backing {
         self.sql.clone()
     }
 
@@ -175,7 +175,7 @@ impl Corpus {
                 .expect("tape language"),
         );
         state.collect()?;
-        let key = (Arc::from(path), lang, *doc.index_source_digest());
+        let key = (Arc::from(path), lang, doc.index_source_digest());
         if let Some(file) = state.files.get(&key).cloned() {
             self.bind(state, key, file.clone());
             #[cfg(feature = "code-rule-profile")]
@@ -197,7 +197,7 @@ impl Corpus {
         let file = Arc::new(File {
             fid,
             lang,
-            digest: *doc.index_source_digest(),
+            digest: doc.index_source_digest(),
             nodes: doc.transducer_len(),
             roots: HashMap::new(),
             bytes: 0,

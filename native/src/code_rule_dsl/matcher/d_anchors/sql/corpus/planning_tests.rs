@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::matcher::anchors::{Condition, Required, Requirement};
+use crate::code_rule_dsl::matcher::d_anchors::{Condition, Required, Requirement};
 
 fn doc(source: &str) -> TapeDoc {
     super::super::tests::document(source, GrammarDialect::TypeScript)
@@ -117,7 +117,7 @@ fn anchor_planning_does_not_enter_an_unchosen_posting_arm() {
         .prepare(&BTreeMap::from([(language, vec![plan.clone()])]))
         .unwrap();
     let file = corpus
-        .prepared_file("a.ts", language, doc.index_source_digest())
+        .prepared_file("a.ts", language, &doc.index_source_digest())
         .unwrap();
     assert_eq!(
         file.roots[&(Arc::as_ptr(&plan) as usize)]
@@ -171,7 +171,7 @@ fn anchor_planning_literal_seed_never_enumerates_the_common_root_or_identifier_k
         .prepare(&BTreeMap::from([(language, vec![plan.clone()])]))
         .unwrap();
     let file = corpus
-        .prepared_file("a.ts", language, source.index_source_digest())
+        .prepared_file("a.ts", language, &source.index_source_digest())
         .unwrap();
     assert_eq!(
         file.roots[&(Arc::as_ptr(&plan) as usize)]
@@ -219,7 +219,7 @@ fn anchor_planning_retains_a_cheap_conjunct_when_a_larger_conjunct_exceeds_admis
         .prepare(&BTreeMap::from([(lang, vec![plan.clone()])]))
         .unwrap();
     let file = corpus
-        .prepared_file("a.ts", lang, doc.index_source_digest())
+        .prepared_file("a.ts", lang, &doc.index_source_digest())
         .unwrap();
     assert!(
         file.roots[&(Arc::as_ptr(&plan) as usize)]

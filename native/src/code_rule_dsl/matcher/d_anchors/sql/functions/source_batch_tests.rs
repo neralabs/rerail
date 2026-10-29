@@ -1,7 +1,7 @@
 //! Native corpus coverage for the source-confirmation relation.
 use crate::code_rule_dsl::{
     language::GrammarDialect,
-    matcher::anchors::sql::{store::Store, tests::document},
+    matcher::d_anchors::sql::{store::Store, tests::document},
 };
 use rusqlite::Result;
 

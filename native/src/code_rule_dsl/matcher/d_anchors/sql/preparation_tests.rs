@@ -8,7 +8,7 @@ fn source_confirmation_receives_the_complete_demand_frame() {
     let compiled = compiled(serde_json::json!({"language":"typescript","rule":{
         "kind":"call_expression","regex":"^target\\("
     }}));
-    let plan = &grammar_matchers(&compiled)[0].anchors;
+    let plan = &std::sync::Arc::new(crate::code_rule_dsl::matcher::d_anchors::AnchorPlan::compile(&grammar_matchers(&compiled)[0].matcher));
     let store = store::Store::temporary().unwrap();
     let doc = tests::document("target(value); other(value);", dialect);
     let fid = store.put("selected.ts", &doc).unwrap();
@@ -34,7 +34,7 @@ fn scoped_kind_refinement_never_opens_unrequested_kind_postings() {
     let compiled = compiled(serde_json::json!({"language":"typescript","rule":{
         "kind":"call_expression","has":{"kind":"identifier","field":"function","stopBy":"neighbor"}
     }}));
-    let plan = &grammar_matchers(&compiled)[0].anchors;
+    let plan = &std::sync::Arc::new(crate::code_rule_dsl::matcher::d_anchors::AnchorPlan::compile(&grammar_matchers(&compiled)[0].matcher));
     for (calls, expected) in [("target(value); (0)();", 1), ("(0)();", 0)] {
         let store = store::Store::temporary().unwrap();
         let source = "const a = b;\n".repeat(100) + calls;
@@ -684,7 +684,7 @@ fn a_single_reader_kind_posting_stays_in_the_result_statement() {
         .unwrap();
     let lang = u32::from(crate::code_rule_dsl::language::tape_tag(dialect).unwrap());
     let statement =
-        tests::planned_batch(&store, &[&grammar_matchers(&rule)[0].anchors], lang, &[fid]);
+        tests::planned_batch(&store, &[&std::sync::Arc::new(crate::code_rule_dsl::matcher::d_anchors::AnchorPlan::compile(&grammar_matchers(&rule)[0].matcher))], lang, &[fid]);
     assert!(
         statement.stages.is_empty(),
         "one consumer builds physical candidate stages: {:?}",

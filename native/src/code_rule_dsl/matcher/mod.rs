@@ -4,6 +4,11 @@ mod anchors;
 #[cfg(test)]
 #[allow(dead_code, unused_imports)]
 pub(in crate::code_rule_dsl) mod p_anchors;
+/// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
+/// plan-input statistics (O19).
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+pub(in crate::code_rule_dsl) mod d_anchors;
 mod arguments;
 mod arguments_sql;
 mod binding;

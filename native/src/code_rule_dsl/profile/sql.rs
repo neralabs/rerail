@@ -31,6 +31,17 @@ static ORIGIN: LazyLock<(Instant, u128)> = LazyLock::new(|| {
             .as_micros(),
     )
 });
+/// D's: restricts SQL capture to one scope (`RERAIL_SQL_PROFILE_SCOPE`).
+static CONTEXT_FILTER: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("RERAIL_SQL_PROFILE_SCOPE").ok());
+#[allow(dead_code)]
+pub(in crate::code_rule_dsl) fn captures_scope(scope: &str) -> bool {
+    DIRECTORY.is_some()
+        && CONTEXT_FILTER
+            .as_deref()
+            .is_none_or(|wanted| wanted == scope)
+}
+
 static SERIAL: AtomicUsize = AtomicUsize::new(0);
 const STATUSES: [c_int; 4] = [
     ffi::SQLITE_STMTSTATUS_VM_STEP,
