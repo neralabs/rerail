@@ -4,7 +4,8 @@
  * candidates/README.md keeps those pairs under `### \`<rule id>\``, a `Caught (\`<path>\`):` block and a `Passes (\`<path>\`):` block; this
  * holds every pair to check 3 against the candidate's document: the caught example produces one of the rule's
  * violation codes, the passes example none. Blade's pairs run its embedded PHP through the multi-region embedding. A
- * candidate that ships takes its pair back into pack.json, where check 3 runs it.
+ * candidate that ships takes its pair back into pack.json, where check 3 runs it, so a pack can have no pairs left: it
+ * gets no suite until a candidate brings one back.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -48,8 +49,10 @@ function readmePairs(pack: string): { id: string; caught: Example; passes: Examp
     });
 }
 
-describe.each(PACKS)("pack %s candidate example pairs", pack => {
-  it.each(readmePairs(pack))("$id: the caught example fires, the passes example does not", ({ id, caught, passes }) => {
+const packPairs = PACKS.map(pack => ({ pack, pairs: readmePairs(pack) })).filter(({ pairs }) => pairs.length > 0);
+
+describe.each(packPairs)("pack $pack candidate example pairs", ({ pack, pairs }) => {
+  it.each(pairs)("$id: the caught example fires, the passes example does not", ({ id, caught, passes }) => {
     if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
     const text = readFileSync(repositoryPath("packs", pack, "candidates", "rules", `${id}.json`), "utf8");
     const codes = new Set(documentSchema.parse(JSON.parse(text)).clauses.flatMap(clause => (clause.violation === undefined ? [] : [clause.violation.code])));
