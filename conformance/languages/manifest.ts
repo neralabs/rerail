@@ -50,6 +50,62 @@ const upstreamRuleFactsSchema = z.strictObject({
 });
 export type UpstreamRuleFacts = z.infer<typeof upstreamRuleFactsSchema>;
 
+/** The upstream index files a watch's `code` can name, from which the nightly finds each ported rule's code file. */
+export const WATCH_INDEXES = ["clippy-declared-lints", "ruff-codes"] as const;
+export type WatchIndex = (typeof WATCH_INDEXES)[number];
+
+/**
+ * A path or glob relative to upstream's repository root (`*` stays within a segment, `**` crosses them, as `pathGlob`
+ * reads them), with no `.` or `..` segment; `{rule}` stands for each ported rule where `withRule` allows it.
+ */
+function watchPattern(withRule: boolean) {
+  return z.string().regex(/^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[^\s\\]+$/u, "a path relative to upstream's repository root").refine(
+    (pattern) => withRule || !pattern.includes("{rule}"),
+    "takes no {rule}",
+  ).refine(
+    (pattern) => pattern.replaceAll("{rule}", "").match(/[{}]/u) === null,
+    "holds a brace other than {rule}",
+  );
+}
+
+/** A JSON data file beside the generator, `{ "rules": { "<ported rule>": ["<upstream path>", …] } }`. */
+const dataFile = z.string().regex(/^[A-Za-z0-9._-]+\.json$/u, "a JSON file beside the generator");
+
+/**
+ * A data file whose paths are watched; `with` also watches each path with its extension replaced by each of these
+ * (`tests/ui/x.rs` with `.stderr` is `tests/ui/x.stderr`, the expected output the generator reads beside the test).
+ */
+const watchFileSchema = z.strictObject({
+  file: dataFile,
+  with: unique(z.string().regex(/^(?:\.[A-Za-z0-9_-]+)+$/u, "an extension such as .stderr")).min(1).optional(),
+});
+
+/** A data file listing PHPStan-style tests: the files each names as `__DIR__ . '<relative path>'` are watched. */
+const watchNamedBySchema = z.strictObject({ "named-by": dataFile });
+
+/** One rule's own paths, in place of the `{rule}` patterns of the kinds it names. */
+const watchRuleSchema = z.strictObject({
+  tests: unique(watchPattern(false)).min(1).optional(),
+  code: unique(watchPattern(false)).min(1).optional(),
+});
+
+/**
+ * What the nightly upstream report compares between the pinned commit and upstream's latest release (docs/pack-format.md,
+ * "watch"): the tests the generator reads, the ported rules' code, the code they share, and where upstream adds tests
+ * for a ported rule that the generator does not read. `{rule}` expands over the ported rules: conformance.json's
+ * `upstream.rule` for this tool without `rule-prefix`, plus `extra-rules`.
+ */
+const watchSchema = z.strictObject({
+  "rule-prefix": nonEmpty.optional(),
+  "extra-rules": unique(nonEmpty).min(1).optional(),
+  tests: unique(z.union([watchPattern(true), watchFileSchema, watchNamedBySchema])),
+  code: unique(z.union([watchPattern(true), z.strictObject({ index: z.enum(WATCH_INDEXES) })])),
+  shared: unique(watchPattern(false)),
+  "new-tests": unique(watchPattern(true)).min(1).optional(),
+  rules: z.record(nonEmpty, watchRuleSchema).optional(),
+});
+export type GatesWatch = z.infer<typeof watchSchema>;
+
 export const gatesManifestSchema = z.strictObject({
   /** The upstream's linter family (ADAPTERS), which says where its releases are published. */
   adapter: z.enum(ADAPTERS),
@@ -95,6 +151,7 @@ export const gatesManifestSchema = z.strictObject({
    * name not listed is no rule of the pinned upstream.
    */
   rules: z.record(nonEmpty, upstreamRuleFactsSchema),
+  watch: watchSchema.optional(),
   eslint: eslintSchema.optional(),
 }).superRefine((manifest, context) => {
   if ((manifest.adapter === "eslint") !== (manifest.eslint !== undefined)) {

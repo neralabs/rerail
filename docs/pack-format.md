@@ -28,7 +28,7 @@ against, is `native/src/code_rule_dsl/capabilities.json`.
 packs/<id>/
 ├── package.json        npm package @neralabs/rerail-pack-<id>: licence, files, core range
 ├── pack.json           the pack: rerail.rule-pack/v1, as today
-├── README.md           what the pack covers, for people
+├── README.md           what the pack covers, for people: the rules it ships, never a candidate's details
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
 │   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
@@ -43,7 +43,8 @@ packs/<id>/
 │                       UPSTREAM.md when Rerail wrote files for the tool to score; the tool's copied tests
 │                       (fixtures/, rename variants under fixtures/renamed/) and expected findings (*.expected.json)
 │                       are pack test data, not in git (see Pack data); publish/ while a pull request publishes data
-└── candidates/         ports still being evaluated: scored and reported, never gated, never shipped
+└── candidates/         ports still being evaluated: scored and reported, never gated, never shipped; README.md
+                        says what each is waiting on and holds their rule details
 ```
 
 `<id>` is lowercase letters, digits and dashes. It is the directory name, the `id` in `pack.json`, and the npm name
@@ -122,8 +123,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   with several option sets is scored: one document per option set, each on its own tests.
 - `upstream/<tool>/fixtures.expected.json`: the expected findings, what the tool reported on its own tests, written by
   the generator in the same directory and run through `npm run fixtures:derive` (each tool-pack's recipe in
-  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored),
-  which is paused for now ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)). Where a tool's tests state
+  `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored)
+  ([docs/upstream.md](upstream.md#take-a-new-snapshot)). Where a tool's tests state
   their expected findings (as markup in the test files), the generator reads them instead of running the tool: the
   tool's own test suite requires it to report exactly those. The ESLint-based generators share
   `scripts/pack-data/eslint-expected.mjs`. Its `source` block names the upstream `origin` (repository `@` commit), the
@@ -141,6 +142,37 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
+  Its `watch:` block says what the nightly upstream report ([docs/upstream.md](upstream.md)) compares between the
+  pinned commit and upstream's latest release. Every path is relative to upstream's repository root; a glob takes `*`
+  within a path segment and `**` across segments; `{rule}` stands for each ported rule, which is conformance.json's
+  `upstream.rule` for this tool without `rule-prefix`, plus `extra-rules`:
+
+  ```yaml
+  watch:
+    rule-prefix: "unicorn/"          # optional: removed from upstream.rule to give {rule}
+    extra-rules: [NoArgumentsValidator]  # optional: rules the generator reads that conformance.json does not port
+    tests: ["test/{rule}.js"]        # the tests the generator reads; or { file: fixtures.json [, with: [".stderr"]] } or { named-by: fixtures.json }
+    code: ["rules/{rule}.js"]        # each ported rule's code; or { index: clippy-declared-lints | ruff-codes }
+    shared: ["rules/utils/**"]       # code every ported rule depends on; no {rule}
+    new-tests: ["tests/{rule}/**"]   # optional: where upstream adds tests for a ported rule that the generator does not read
+    rules:                           # optional: a rule's own tests or code, in place of the {rule} patterns
+      DebugDirectiveValidator: { tests: ["tests/Validation/DebugDirectiveTest.php", "src/Compiler/**"] }
+  ```
+
+  `{ file: fixtures.json }` watches the paths a data file beside the generator lists for each rule
+  (`{ "rules": { "<rule>": ["<upstream path>", …] } }`), for a generator that keeps its tests in a list rather than
+  by convention; `with: [".stderr"]` also watches each listed path with its extension replaced by each one given (a
+  Clippy test's expected output, `tests/ui/x.rs` → `tests/ui/x.stderr`), so a change there is a test change.
+  `{ named-by: fixtures.json }` takes that data file's paths as PHPStan-style tests and watches exactly the files each
+  names as `__DIR__ . '<relative path>'` (its `$this->analyse([…])` files): the report reads the tests at both commits
+  and watches the files either names, for the test's rules; the tests themselves are watched only where another entry
+  lists them. `{ index: … }` names the upstream file the report reads to find each rule's code
+  (`clippy_lints/src/declared_lints.rs`, `crates/ruff_linter/src/codes.rs`). `expandWatch` in
+  `conformance/languages/watch.ts` resolves the block. A `new-tests` glob may cover tests the generator reads too; a
+  file counts as a new test only when `tests` does not cover it. `test/scripts/upstream/watch-coverage.test.ts` checks
+  that `tests` covers every upstream file the tool-pack's pulled `provenance.json` records as read; which files a
+  `named-by` test names is upstream's text, which it does not read, so it counts any file under that test's top
+  directory (`tests/`) as covered.
 - `upstream/<tool>/test-data.lock`, `samples.lock` and `SAMPLES.md`: the pins of the tool-pack's pack data
   ([Pack data](#pack-data)).
 - `divergences.json`: each place Rerail and the tool disagree, with its kind (`upstream-wrong`, `not-comparable`,
@@ -239,6 +271,8 @@ description, messages and the block for each of its cases).
 
 Detail a description leaves out (exact counting rules, edge cases, deviations from upstream, scope detail) goes in the
 pack's README, under "Rule details". For example: `Avoid dd() and dump() calls; they leak debug output to users.`
+The README is published, so it holds only the rules `pack.json` lists: a candidate's details go under "Rule details" in
+`candidates/README.md`, which is not, and move to the README when the rule ships (check 5).
 
 ### Message
 
@@ -291,7 +325,7 @@ ported rule: `node --import tsx conformance/languages/cli.ts --pack <id> --rule 
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
 | 3 | Examples | A `caught` example produces no violation of its rule, or a `passes` example produces one |
 | 4 | Ports | With `conformance.json`: a shipped ported rule's violations and the tool's expected findings differ outside `divergences.json`; a divergence matches nothing (stale); a declared capability has neither a ported rule nor an exemption; a port's violation does not carry the suppression comment its tool honours, outside `suppressionExemptions`, or an exemption is stale; a port carries `suppress.oxlint` and `suppress.eslint` on different violations; a violation carries `suppress.eslint` without the Biome rules the same as its ESLint rule under `suppress.biome`, or `suppress.biome` without `suppress.eslint` |
-| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `public`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records |
+| 5 | Package | `package.json` misnames the pack, names another repository or directory, is not `public`, has `dependencies`, or publishes validation material; its licence disagrees with what `licenses/` records; the README's rule details describe a rule `pack.json` does not list, or `candidates/README.md`'s describe one it does |
 | 6 | Licences | A pulled file falls under a `Not copied` glob, or in a tool's subdirectory is neither authored nor under a `Taken from it` glob; a declared glob matches no pulled file; an `UPSTREAM.md` is malformed, or records a licence off the allowlist; the tool's own `UPSTREAM.md` lists a file outside its tool directory or one that does not exist |
 | 7 | Manifest | `pack.json` has no `match`, or its `match` fails the schema; core's generated pack list does not name the pack or is stale |
 | 8 | Text | A rule document's description fails a machine-checkable [description](#description) criterion |
@@ -355,7 +389,9 @@ Precisely:
    `divergences.json`, `upstream` or `candidates`. Some way to satisfy `license` must name exactly Apache-2.0 plus,
    for each `licenses/<project>/UPSTREAM.md`, one way to satisfy the SPDX expression its `License:` line records: an
    `OR` there lets the package elect either side (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`), and an `AND` must
-   be named whole.
+   be named whole. Under `## Rule details` in `README.md`, every `### ` heading names at least one rule in backticks,
+   and every name in backticks there is a rule `pack.json` lists; under `## Rule details` in `candidates/README.md`,
+   none is. A heading inside a fenced code block is not one.
 6. The pack's provenance records ([UPSTREAM.md](#upstreammd)) must parse and agree with the pulled test data. Each
    `licenses/<project>/UPSTREAM.md` needs a well-formed `License:` expression that some way to satisfy uses only
    licences on the repository allowlist (`scripts/check/licence-allowlist.json`), a complete `Source` row, and only
@@ -504,10 +540,15 @@ request ([docs/upstream.md](upstream.md#removing-data)). An `authored/` corpus n
 
 ### provenance.json and LICENSES.md
 
-Each test data archive holds `upstream/<tool>/provenance.json`, every file with its upstream path and how it was made
-(a snapshot taken when the records moved from per-file rows to patterns), and `upstream/<tool>/LICENSES.md`, the
-licence texts. They are for audit: no check, workflow or tool reads them. A samples archive's `LICENSES.md` lists
-each source repository, its licence and the files taken from it ([docs/upstream.md](upstream.md#sample-licences)).
+Each test data archive holds `upstream/<tool>/provenance.json`, every file with its source, its upstream path and how
+it was made, and `upstream/<tool>/LICENSES.md`, each source's licence and licence text. Both are derive output: the
+generator writes them last, through `scripts/pack-data/provenance.mjs`, which refuses to write either when the files
+disagree with the pack's `UPSTREAM.md` records ([docs/upstream.md](upstream.md#what-the-generators-write)). A
+`snapshot` key appears only in archives bootstrapped by the one-off snapshot taken when the records moved from per-file
+rows to patterns, until the tool-pack is derived again. They are for audit: no licence check reads them. The publish
+workflow's prep reads only the key set of provenance.json's `files`, to refuse an archive whose files it does not
+describe. A samples archive's `LICENSES.md` lists each source repository, its licence and the files taken from it
+([docs/upstream.md](upstream.md#sample-licences)).
 
 ### Licence of each file
 

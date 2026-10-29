@@ -8,7 +8,7 @@ and refuses any other; Python 3.9 standard library only):
 `fixtures` writes Rerail's own cases (`PROBES`, listed in UPSTREAM.md) to fixtures/rerail/ and
 copies each lint's own UI tests (rust-clippy `tests/ui/**`, `tests/ui-toml/**`, commit
 49e2f89a2605a9a340e04955fdbefa9803e6027a) to fixtures/ under their upstream paths, with the `auxiliary/` crates they
-`//@aux-build` and the `clippy.toml` each test reads (licenses/clippy/UPSTREAM.md lists them), then runs the pinned
+`//@aux-build` and the `clippy.toml` each test reads (provenance.json names each copy's role), then runs the pinned
 clippy-driver on each test as rust-clippy's tests/compile-test.rs (ui_test 0.30.7) does: edition 2024 unless
 `//@edition`, `//@compile-flags` appended, `clippy_test_deps` built with `cargo +1.99.0 build --locked
 --target=<host>` and its direct dependencies passed with `--extern` to every test and aux build, aux crates built
@@ -42,64 +42,8 @@ import common  # noqa: E402
 
 # Each ported lint's upstream UI tests: every test file whose `//~` annotations name the lint or that is named after
 # it, at rust-clippy 49e2f89a2605a9a340e04955fdbefa9803e6027a.
-TESTS = {
-    "allow_attributes": ["tests/ui/allow_attributes.rs"],
-    "allow_attributes_without_reason": ["tests/ui/allow_attributes_without_reason.rs"],
-    "builtin_type_shadow": ["tests/ui/builtin_type_shadow.rs"],
-    "decimal_literal_representation": [
-        "tests/ui/decimal_literal_representation.rs",
-        "tests/ui-toml/decimal_literal_representation/decimal_literal_representation.rs",
-    ],
-    "double_parens": ["tests/ui/double_parens.rs"],
-    "else_if_without_else": ["tests/ui/else_if_without_else.rs"],
-    "inconsistent_digit_grouping": [
-        "tests/ui/inconsistent_digit_grouping.rs",
-        "tests/ui/literals.rs",
-        "tests/ui-toml/lint_decimal_readability/test.rs",
-    ],
-    "int_plus_one": ["tests/ui/int_plus_one.rs"],
-    "large_digit_groups": ["tests/ui/large_digit_groups.rs"],
-    "many_single_char_names": ["tests/ui/many_single_char_names.rs"],
-    "mixed_case_hex_literals": ["tests/ui/literals.rs"],
-    "needless_arbitrary_self_type": [
-        "tests/ui/needless_arbitrary_self_type.rs",
-        "tests/ui/needless_arbitrary_self_type_unfixable.rs",
-    ],
-    "needless_else": ["tests/ui/needless_else.rs"],
-    "needless_raw_string_hashes": [
-        "tests/ui/needless_raw_string_hashes.rs",
-        "tests/ui-toml/needless_raw_string_hashes_one_allowed/needless_raw_string_hashes.rs",
-    ],
-    "needless_raw_strings": ["tests/ui/needless_raw_string.rs"],
-    "octal_escapes": ["tests/ui/octal_escapes.rs"],
-    "option_env_unwrap": ["tests/ui/option_env_unwrap.rs"],
-    "partial_pub_fields": ["tests/ui/partial_pub_fields.rs"],
-    "precedence": ["tests/ui/precedence.rs"],
-    "precedence_bits": ["tests/ui/precedence_bits.rs"],
-    "redundant_at_rest_pattern": ["tests/ui/redundant_at_rest_pattern.rs"],
-    "redundant_field_names": ["tests/ui/redundant_field_names.rs"],
-    "redundant_static_lifetimes": [
-        "tests/ui/redundant_static_lifetimes.rs",
-        "tests/ui/redundant_static_lifetimes_multiple.rs",
-    ],
-    "single_char_lifetime_names": ["tests/ui/single_char_lifetime_names.rs"],
-    "single_component_path_imports": [
-        "tests/ui/single_component_path_imports.rs",
-        "tests/ui/single_component_path_imports_macro.rs",
-        "tests/ui/single_component_path_imports_nested_first.rs",
-        "tests/ui/single_component_path_imports_self_after.rs",
-        "tests/ui/single_component_path_imports_self_before.rs",
-    ],
-    "unneeded_wildcard_pattern": ["tests/ui/unneeded_wildcard_pattern.rs"],
-    "unnested_or_patterns": ["tests/ui/unnested_or_patterns.rs", "tests/ui/unnested_or_patterns2.rs"],
-    "unreadable_literal": [
-        "tests/ui/unreadable_literal.rs",
-        "tests/ui/inconsistent_digit_grouping.rs",
-        "tests/ui-toml/lint_decimal_readability/test.rs",
-    ],
-    "unusual_byte_groupings": ["tests/ui/literals.rs", "tests/ui/large_digit_groups.rs"],
-    "zero_prefixed_literal": ["tests/ui/literals.rs"],
-}
+# The list is fixtures.json ({"rules": {lint: [upstream path, ...]}}).
+TESTS = json.loads((HERE / "fixtures.json").read_text())["rules"]
 # Ours: inputs the ports once misread, each a golden case (fixtures/rerail/<lint>.rs). Each is recorded with every
 # ported lint on, like Clippy's own tests, and its `//~` annotations are checked against the faithful run.
 PROBES = {
@@ -420,6 +364,37 @@ def aux_files(test: str, text: str) -> list[str]:
             for key, value in directives(text) if key == "aux-build"]
 
 
+def copy_roles(checkout: pathlib.Path, tests: list[str]) -> dict[str, str]:
+    """Every upstream file `fixtures` copies (its path in the checkout, and under fixtures/) and its role there: the UI
+    tests of TESTS, the `auxiliary/` crates they `//@aux-build` (transitively), tests/clippy.toml and the `clippy.toml`
+    beside each tests/ui-toml test."""
+    users: dict[str, set[str]] = {}
+    configurations = {"tests/clippy.toml": "clippy configuration of every tests/ui test (`CLIPPY_CONF_DIR=tests`)"}
+    pending = list(tests)
+    while pending:
+        test = pending.pop()
+        auxes = aux_files(test, (checkout / test).read_text())
+        for aux in auxes:
+            users.setdefault(aux, set()).add(pathlib.PurePosixPath(test).name)
+        pending += auxes
+        if test.startswith("tests/ui-toml/"):
+            configurations[(pathlib.PurePosixPath(test).parent / "clippy.toml").as_posix()] = (
+                "clippy configuration of the tests/ui-toml test beside it")
+    roles = {aux: "aux crate (`//@aux-build`) of " + ", ".join(f"`{name}`" for name in sorted(names))
+             for aux, names in users.items()}
+    roles.update(configurations)
+    for test in tests:
+        lints = sorted(lint for lint, files in TESTS.items() if test in files)
+        roles[test] = "UI test of " + ", ".join(f"`clippy::{lint}`" for lint in lints)
+    return roles
+
+
+def provenance_entries(roles: dict[str, str]) -> dict[str, dict]:
+    """provenance.json's entry for each copy `copy_roles` names: a verbatim copy, under fixtures/, with its role."""
+    return {f"fixtures/{copy}": {"source": "clippy", "from": copy, "how": "verbatim", "detail": f"Role: {role}"}
+            for copy, role in roles.items()}
+
+
 def environment(conf_dir: str | None) -> dict:
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("CLIPPY_", "CARGO_")) and key not in ("RUSTFLAGS", "RUSTC_WRAPPER")}
@@ -627,15 +602,7 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
         shutil.rmtree(scratch / stale, ignore_errors=True)
     tests = sorted({test for files in TESTS.values() for test in files})
     probes = {f"rerail/{name}.rs": text for name, text in PROBES.items()}
-    copies = set(tests) | {"tests/clippy.toml"}
-    pending = list(tests)
-    while pending:
-        test = pending.pop()
-        auxes = aux_files(test, (checkout / test).read_text())
-        copies |= set(auxes)
-        pending += auxes
-        if test.startswith("tests/ui-toml/"):
-            copies.add((pathlib.PurePosixPath(test).parent / "clippy.toml").as_posix())
+    copies = copy_roles(checkout, tests)
     for copy in sorted(copies):
         (target / copy).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(checkout / copy, target / copy)
@@ -671,6 +638,8 @@ def fixtures(checkout: pathlib.Path, scratch: pathlib.Path) -> None:
         {"clippy": common.CLIPPY_VERSION, "origin": common.CLIPPY_ORIGIN,
          "differences": check}, indent=1, sort_keys=True) + "\n")
     common.pack_fixtures.written(HERE / "fixtures.upstream-check.json")
+    common.pack_fixtures.write_provenance("rust", "clippy", provenance_entries(copies),
+                                          {"clippy": common.CLIPPY_COMMIT})
     print(f"{len(tests)} tests ({len(probes)} ours), {len(copies)} files copied, {len(findings)} findings; per lint:")
     for lint, count in sorted(Counter(key[0] for key in findings).items()):
         print(f"  {lint}: {count}")

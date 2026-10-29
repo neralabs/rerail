@@ -55,6 +55,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `host/mixed-repository/` | — | a repository mixing four languages (`test/mixed-repository.test.ts`) |
 | `host/session-enforcement/` | — | golden output of each coding agent in the session enforcement design's scenes: hook JSON, session notes, the OMP steer renderer and the footer (`test/hosts/*/session-enforcement.golden.test.ts`, `test/hosts/omp/steer-renderer.test.ts`, `test/presentation/footer-golden.test.ts`); review a change with design |
 | `host/tool-call-rules/` | — | tool-call rules (`test/tool-call-rules.test.ts`, the rule store and catalog tests) |
+| `host/upstream-watch/` | — | an ESLint and a typescript-eslint test file, each recorded at two releases, for the nightly upstream report's RuleTester case diff (`test/scripts/upstream/rule-tester.test.ts`) |
 | `packs/` | — | pack validator and conformance runner inputs (`test/packs.test.ts`, `test/language-conformance.test.ts`) |
 
 | Family | Upstream tools |

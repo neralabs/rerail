@@ -25,7 +25,8 @@
 // `fixtures/<rule>/rerail-<name>.vue` and listed in `UPSTREAM.md` beside this file. Then every fixture is linted by every
 // rule, and `fixtures.expected.json` records all findings (a fixture of one rule may also be reported by another).
 // Its `source.units` names each upstream case's origin: the rule whose RuleTester cases it came from (Rerail's own
-// cases have none).
+// cases have none). Last, upstream's LICENSE is copied to ../../licenses/eslint-plugin-vue/, and provenance.json and
+// LICENSES.md record each kept case's upstream test file and case.
 //
 // Findings are `{ rule, path, line, column }`: ESLint's line, and its 1-based column converted from UTF-16 code
 // units to code points, as the conformance standard counts them.
@@ -34,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
 import { packFixturesWritten, expectedFindingsWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
 import { load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 import { AUTHORED } from "./authored.mjs";
@@ -234,9 +236,9 @@ function fixtures(checkout) {
   writeAuthoredRecord(authored);
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
   console.log(packFixturesWritten([join(HERE, "cases.json")]));
-  writeLicense(checkout, cases.filter(c => c.kept));
   const sortedUnits = Object.fromEntries(Object.entries(units).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
   write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files, units: sortedUnits }, findings);
+  writeLicenseAndProvenance(checkout, cases.filter(c => c.kept));
   const kept = cases.filter(c => c.kept).length;
   console.log(`cases: ${kept} kept of ${cases.length}`);
 }
@@ -254,24 +256,24 @@ ${rows.join("\n")}
 `);
 }
 
-/** `packs/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
-function writeLicense(checkout, kept) {
+/**
+ * `packs/vue/licenses/eslint-plugin-vue/LICENSE` (upstream's, verbatim) and the tool's provenance.json and
+ * LICENSES.md: every kept case (a `cases.json` entry) with its upstream test file and case, copied verbatim or wrapped.
+ */
+function writeLicenseAndProvenance(checkout, kept) {
   const dir = join(HERE, "../../licenses/eslint-plugin-vue");
   mkdirSync(dir, { recursive: true });
   copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSE"));
-  const rows = kept.map(c => `| \`upstream/eslint-plugin-vue/${c.file}\` | \`${c.upstream}\` case \`${c.case}\` | ${c.copy} |`);
-  writeFileSync(join(dir, "UPSTREAM.md"), `# eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}
-
-Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2017 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
-
-The files listed below are the code of RuleTester cases of the rules the Vue pack ports (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-vue's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`authored.mjs\`, \`cases.json\`, the fixtures \`rerail-*.vue\` (written by Rerail; \`upstream/eslint-plugin-vue/UPSTREAM.md\` lists them) and the expected findings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
-
-This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to the pack directory (\`packs/vue/\`).
-
-| File | Upstream case | Copy |
-|---|---|---|
-${rows.join("\n")}
-`);
+  const source = "eslint-plugin-vue";
+  const entries = new Map(
+    kept.map(c => [
+      c.file,
+      c.copy === "verbatim"
+        ? { source, from: c.upstream, how: "verbatim", detail: `case \`${c.case}\`` }
+        : { source, from: c.upstream, how: "adapted", detail: `case \`${c.case}\`; ${c.copy}` },
+    ]),
+  );
+  writeProvenance({ pack: "vue", tool: source, entries, commits: { [source]: UPSTREAM_COMMIT } });
 }
 
 const [mode, ...rest] = process.argv.slice(2).filter((arg, index, all) => arg !== "--tools" && all[index - 1] !== "--tools");

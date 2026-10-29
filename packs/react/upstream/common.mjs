@@ -7,6 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertPortableCase, isVariantPath, lint, pinnedRequire, REPOSITORY, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
 
 export const UPSTREAM_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
@@ -211,13 +212,14 @@ export function resetDirectory(path) {
 }
 
 /**
- * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, filename?, extension?, drop? }`)
- * and `tool`'s AUTHORED cases under `<directory>/fixtures/`, a rename variant of each extracted case under
- * `fixtures/renamed/` (`writeRenameVariants`), records the pack configuration over them (every chosen rule on every
- * source; the expected findings hold `tool`'s rules, over the files ESLint parses, and each extracted case's origin, its
- * rule), lists the authored files in `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count
- * under the pack configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`. The kept
- * entries it returns hold the kept variants too (kind `renamed`, `of` the original's path).
+ * Writes the extracted cases (`{ rule, directory, kind, index, code, errors, origin, from, detail, filename?,
+ * extension?, drop? }`; `from` is the upstream test file, `detail` locates the case in it) and `tool`'s AUTHORED cases
+ * under `<directory>/fixtures/`, a rename variant of each extracted case under `fixtures/renamed/`
+ * (`writeRenameVariants`), records the pack configuration over them (every chosen rule on every source; the expected
+ * findings hold `tool`'s rules, over the files ESLint parses, and each extracted case's origin, its rule), lists the
+ * authored files in `<directory>/UPSTREAM.md` and checks each case: the rule's own finding count under the pack
+ * configuration against the test's `errors`. The check's report goes to `<tools>/scratch/`. The kept entries it returns
+ * hold the kept variants too (kind `renamed`, `of` the original's path), and `recorded` is withOrigins' result.
  */
 export async function finishFixtures(require, tool, directory, cases, tools) {
   const { ESLint } = require("eslint");
@@ -277,7 +279,7 @@ export async function finishFixtures(require, tool, directory, cases, tools) {
   mkdirSync(join(tools, "scratch"), { recursive: true });
   writeFileSync(join(tools, "scratch", `${tool}-fixtures-report.json`), `${JSON.stringify(report, null, 1)}\n`);
   console.log(`${tool}: ${cases.length} cases, ${dropped.length} dropped (syntax), ${report.unparsable.length} unparsable, ${kept.length} kept, ${renamed.length} rename variants, ${mismatches.length} count mismatches`);
-  return { kept: [...kept, ...renamed], report };
+  return { kept: [...kept, ...renamed], recorded, report };
 }
 
 /** UPSTREAM.md beside the generator: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */
@@ -294,31 +296,23 @@ ${rows.join("\n")}
   writeFileSync(join(directory, "UPSTREAM.md"), text);
 }
 
-/** `licenses/<project>/LICENSE` (verbatim) and `UPSTREAM.md`: every copied file and every extracted fixture. */
-export function writeLicense(tool, upstream, copied, kept) {
+/**
+ * `licenses/<project>/LICENSE` (verbatim at the pinned commit) and the tool's provenance.json and LICENSES.md: every
+ * copied test file (`copied`: `{ file, upstream }`), every extracted case kept (`kept`, its `from` and `detail`) and
+ * every rename variant of one (`recorded`, withOrigins' result).
+ */
+export function writeLicenseAndProvenance(tool, upstream, copied, kept, recorded) {
   const meta = UPSTREAM[tool];
   const directory = join(UPSTREAM_DIRECTORY, "..", "licenses", meta.project);
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "LICENSE"), join(directory, "LICENSE"));
-  const originOf = new Map(kept.map(entry => [entry.path, entry.origin]));
-  const rows = [
-    ...copied.map(entry => `| \`upstream/${tool}/${entry.file}\` | \`${entry.upstream}\` | verbatim |`),
-    ...kept.filter(entry => entry.kind !== "authored" && entry.kind !== "renamed").map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${entry.origin}\` | extracted (its \`code\`, verbatim) |`),
-    ...kept
-      .filter(entry => entry.kind === "renamed")
-      .map(entry => `| \`upstream/${tool}/fixtures/${entry.path}\` | \`${originOf.get(entry.of)}\` | derived (\`fixtures/${entry.of}\` with its names and literals renamed) |`),
-  ];
-  const text = `# ${meta.title}
-
-Upstream: [${meta.repository.replace("https://github.com/", "")}](${meta.repository}/tree/${meta.commit}) at ${meta.reference} (commit \`${meta.commit}\`). License: ${meta.license}; [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that commit.
-
-The files listed below are the upstream tests of the rules the React pack ports (\`conformance.json\`, \`upstream/common.mjs\` \`RULES\`), and the test cases extracted from them, one case per file, and remain under ${meta.project}'s license. Every other file under \`upstream/${tool}/\` is Rerail's, under the Apache License 2.0 (the pack's \`LICENSE\`): \`generate.mjs\` (with its stub RuleTester), \`../common.mjs\` and the expected findings they write by running the pinned plugin. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them.
-
-Paths are relative to the pack directory, \`packs/react/\`. \`<file> valid[i]\` / \`invalid[i]\` is the i-th case of the \`valid\` / \`invalid\` list the test file passes to \`RuleTester.run\`. A \`derived\` row is a rename variant of the extracted case it names.
-
-| File | Upstream path | Copy |
-|---|---|---|
-${rows.join("\n")}
-`;
-  writeFileSync(join(directory, "UPSTREAM.md"), text);
+  const originals = new Map(
+    kept.filter(entry => entry.kind !== "authored" && entry.kind !== "renamed").map(entry => [`fixtures/${entry.path}`, { source: meta.project, from: entry.from, how: "extracted", detail: entry.detail }]),
+  );
+  const entries = new Map([
+    ...copied.map(entry => [entry.file, { source: meta.project, from: entry.upstream, how: "verbatim" }]),
+    ...originals,
+    ...variantEntries(originals, recorded),
+  ]);
+  writeProvenance({ pack: "react", tool, entries, commits: { [meta.project]: meta.commit } });
 }

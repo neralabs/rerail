@@ -50,3 +50,25 @@ rules:
   "ForElseStructureValidator":
     deprecated: null
     recommended: { config: "blade.validation", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator also reads NoArgumentsTest.php and RequiredArgumentsTest.php, which conformance.json does not
+# map; DebugDirectiveTest's cases come from the Compiler's directives, so src/Compiler is its test input too.
+watch:
+  extra-rules: ["NoArgumentsValidator", "RequiredArgumentsValidator"]
+  tests: []
+  code:
+    - "src/Validation/Validators/{rule}.php"
+  shared:
+    - "config/validation.php"
+    - "src/Document/**"
+    - "src/Nodes/**"
+    - "src/Parser/**"
+    - "src/Validation/AbstractNodeValidator.php"
+    - "src/Validation/Validators/Concerns/**"
+  rules:
+    "ComponentShorthandVariableParameterValidator": { tests: ["tests/Validation/ComponentShorthandVariableParameterTest.php"] }
+    "DebugDirectiveValidator": { tests: ["tests/Validation/DebugDirectiveTest.php", "src/Compiler/**"] }
+    "DuplicateConditionExpressionsValidator": { tests: ["tests/Validation/DuplicateConditionExpressionsTest.php"] }
+    "ForElseStructureValidator": { tests: ["tests/Validation/ForElseStructureTest.php"] }
+    "NoArgumentsValidator": { tests: ["tests/Validation/NoArgumentsTest.php"] }
+    "RequiredArgumentsValidator": { tests: ["tests/Validation/RequiredArgumentsTest.php"] }

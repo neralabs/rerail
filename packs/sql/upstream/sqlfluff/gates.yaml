@@ -100,3 +100,21 @@ rules:
   "ST10":
     deprecated: null
     recommended: { config: "default", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads test/fixtures/rules/std_rule_cases/<code>.yml; a rule's code is under its group's directory.
+watch:
+  tests:
+    - "test/fixtures/rules/std_rule_cases/{rule}.yml"
+  code:
+    - "src/sqlfluff/rules/*/{rule}.py"
+  shared:
+    - "src/sqlfluff/core/default_config.cfg"
+    - "src/sqlfluff/core/parser/**"
+    - "src/sqlfluff/core/rules/**"
+    - "src/sqlfluff/dialects/dialect_ansi*.py"
+    - "src/sqlfluff/dialects/dialect_mysql*.py"
+    - "src/sqlfluff/dialects/dialect_postgres*.py"
+    - "src/sqlfluff/dialects/dialect_sqlite*.py"
+    - "src/sqlfluff/rules/*/__init__.py"
+    - "src/sqlfluff/utils/analysis/**"
+    - "src/sqlfluff/utils/functional/**"

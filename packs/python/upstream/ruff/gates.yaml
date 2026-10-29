@@ -504,3 +504,20 @@ rules:
   "W605":
     deprecated: null
     recommended: { config: "default", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads fixtures.json's paths; N999 checks module names, so its whole directory tree is its test.
+# Each rule's code file is found through crates/ruff_linter/src/codes.rs.
+watch:
+  tests:
+    - { file: "fixtures.json" }
+    - "crates/ruff_linter/resources/test/fixtures/pep8_naming/N999/**"
+  code:
+    - { index: ruff-codes }
+  shared:
+    - "crates/ruff_linter/src/checkers/ast/analyze/**"
+    - "crates/ruff_linter/src/linter.rs"
+    - "crates/ruff_linter/src/noqa.rs"
+    - "crates/ruff_linter/src/settings/**"
+    - "crates/ruff_python_parser/src/**"
+    - "crates/ruff_python_semantic/src/**"
+    - "crates/ruff_python_stdlib/src/**"

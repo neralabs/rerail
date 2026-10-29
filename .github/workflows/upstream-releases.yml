@@ -1,15 +1,14 @@
 name: Upstream releases
 
-# Once a day, and on demand: reports every gated tool-pack whose upstream has published a stable release newer than its
-# pin (npm run upstream:releases), and starts the night's one bump of all of them. It never fails on what upstream
-# published: a release ahead of a pin, breaking or not, pins that disagree, and a registry it cannot read are each a
-# warning and a row of the job summary, and the bump is the fix (docs/upstream.md, "Upstream releases").
-# bump-dispatch points the work branch auto/bump-run/upstream at this commit and dispatches upstream-bump.yml there
-# once, with the list, which in a leg per tool-pack moves the pins and, holding no credential, derives on Linux the
-# test data of every tool-pack the bump made stale; upstream-bump-publish.yml, on main, then checks each leg's result,
-# composes the verified ones into a commit per tool-pack carrying its pins and its derived data in publish/, opens one
-# pull request on auto/bump-upstream and dispatches pack-data-publish.yml for it, whose upload a code owner approves.
-# Upstream code at a release nobody has reviewed never runs here, in main's cache scope, or next to a credential.
+# Once a day, and on demand: reports, for every gated tool-pack, what its upstream's latest stable release changed
+# since Rerail's pin (npm run upstream:watch; docs/upstream.md, "Upstream releases"). It reads only GitHub's API and the
+# registries, statically: the trees at the pinned commit and at the release's, compared by blob over the paths each
+# gates.yaml's `watch:` names, and the changed test files from both. Per tool-pack the job summary says whether the
+# tests the generator reads changed (with RuleTester case counts for the ESLint family), whether the ported rules' code
+# changed, whether shared code changed, and which new upstream tests for ported rules the generator does not read. It
+# starts nothing: a maintainer reads the report and starts a bump by hand (upstream-bump-start.yml; docs/upstream.md,
+# "Start a bump"). It never fails on what upstream published, only on its own errors; a tool-pack it cannot read is an
+# error row, and the others are still reported. No upstream code runs here.
 
 on:
   schedule:
@@ -24,20 +23,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Reports, never fails on upstream: gates.yaml's version and the runtime's pin under scripts/pack-data/runtimes/,
-  # against npm, PyPI, Packagist and the Rust channel (Clippy, pinned by packs/rust/upstream/common.py, compared on
-  # major.minor: a Rust patch release is not behind). Every tool-pack behind, breaking or not, goes to bump-dispatch:
-  # the night's bump pull request is the fix (docs/upstream.md, "Upstream releases").
+  # One row per tool-pack in the job summary: current, behind with nothing relevant changed, or changed (tests, rule
+  # code, shared code, new tests not read), or an error. GITHUB_TOKEN, read-only, raises GitHub's API rate limit.
   upstream-releases:
     name: Upstream releases
     # Main's pins; forks that turn scheduled workflows back on skip it.
     if: github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      # Every tool-pack behind upstream, breaking or not, as JSON (scripts/upstream/releases.ts, behindToolPacks):
-      # bump-dispatch's list.
-      behind: ${{ steps.check.outputs.behind }}
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -47,87 +40,7 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      - id: check
-        name: Report the upstream releases
-        run: |
-          set -euo pipefail
-          npm run upstream:releases -- --behind "$RUNNER_TEMP/behind.json"
-          echo "behind=$(jq -c . "$RUNNER_TEMP/behind.json")" >> "$GITHUB_OUTPUT"
-
-  # One run for the night: points the work branch auto/bump-run/upstream at this run's commit, then starts
-  # upstream-bump.yml on it once, with every tool-pack behind upstream (JSON [{pack, tool, version}], sorted by pack then
-  # tool), which in a leg per tool-pack moves the pins and derives every tool-pack the bump made stale;
-  # upstream-bump-publish.yml then composes the verified legs into one commit each, opens the pull request with the
-  # derived data in publish/, and dispatches its publish. The producer runs upstream's code at a release nobody has reviewed, so it runs on the
-  # work branch and never here, where its cache token would write main's cache scope, which every pull request and push
-  # to main reads. This job checks nothing out and installs nothing. A bump a maintainer closed without merging is left
-  # out until a newer release appears: each pull request's body starts with a marker per bump it carries,
-  # `<!-- bump: <pack>/<tool>@<version> -->`, and only the neralabs-ci app's own same-repository pull requests on
-  # auto/bump-upstream count; its token, read-only, lists them and names the app. A branch an earlier run left behind
-  # is deleted and created again rather than moved, since GitHub may refuse GITHUB_TOKEN a move across a change to a
-  # workflow file. A workflow_dispatch made with GITHUB_TOKEN starts a run; a branch it creates starts none.
-  bump-dispatch:
-    name: Start the bump of the tool-packs behind upstream
-    needs: upstream-releases
-    # Paused until generators write per-repo provenance (follow-up to the per-repo provenance change): a derive would
-    # fail, or rewrite licenses/*/UPSTREAM.md back to per-file rows. The job above still reports what is behind. To
-    # resume, drop the leading `false &&`.
-    if: false && github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main' && needs.upstream-releases.outputs.behind != '' && needs.upstream-releases.outputs.behind != '[]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: write
-      actions: write
-    steps:
-      - id: app-token
-        name: Get the neralabs-ci app token, read-only
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-pull-requests: read
-
-      - name: Point the work branch at this commit and start the bump on it
+      - name: Report what upstream changed since the pins
         env:
-          BEHIND: ${{ needs.upstream-releases.outputs.behind }}
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          behind="$(jq -c '[.[] | { pack, tool, version: .latest }] | sort_by(.pack, .tool)' <<< "$BEHIND")"
-          mapfile -t values < <(jq -r '.[] | .pack, .tool, .version' <<< "$behind")
-          for value in "${values[@]}"; do
-            if ! [[ "$value" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
-              echo "::error::'$value' is not a pack, tool or version the bump takes"
-              exit 1
-            fi
-          done
-
-          # The bumps maintainers closed without merging: the markers each such pull request's body starts with.
-          mapfile -t closed < <(GH_TOKEN="$APP_TOKEN" gh api --paginate "repos/$GITHUB_REPOSITORY/pulls?head=$GITHUB_REPOSITORY_OWNER:auto/bump-upstream&state=closed&per_page=100" \
-            | jq -s -r --arg repo "$GITHUB_REPOSITORY" --arg login "${APP_SLUG}[bot]" '
-              (add // [])[] | select(.head.repo.full_name == $repo and .user.type == "Bot" and .user.login == $login and .merged_at == null)
-              | (.body // "") | split("\n") | map(rtrimstr("\r")) as $lines
-              | ([$lines | to_entries[] | select(.value | test("^<!-- bump: [a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*@[a-z0-9][a-z0-9._-]* -->$") | not) | .key][0] // ($lines | length)) as $end
-              | $lines[0:$end][] | capture("^<!-- bump: (?<entry>[^ ]+) -->$").entry
-            ')
-          tool_packs="$(jq -c '[.[] | select("\(.pack)/\(.tool)@\(.version)" as $entry | any($ARGS.positional[]; . == $entry) | not)]' --args "${closed[@]}" <<< "$behind")"
-          jq -r '.[] | "\(.pack)/\(.tool)@\(.version)"' <<< "$behind" | while read -r entry; do
-            if printf '%s\n' "${closed[@]}" | grep -q -x -F -- "$entry"; then
-              echo "not starting $entry: a maintainer closed its bump pull request without merging it"
-            fi
-          done
-          if [ "$(jq length <<< "$tool_packs")" -eq 0 ]; then
-            echo "::notice::every tool-pack behind upstream is at a release whose bump a maintainer closed; nothing to start"
-            exit 0
-          fi
-
-          branch="auto/bump-run/upstream"
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$branch" > /dev/null 2>&1; then
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$branch" > /dev/null
-          fi
-          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$branch" -f sha="$GITHUB_SHA" > /dev/null
-          gh workflow run upstream-bump.yml --repo "$GITHUB_REPOSITORY" --ref "$branch" -f tool-packs="$tool_packs"
-          echo "started the bump on $branch at $GITHUB_SHA of:"
-          jq -r '.[] | "- \(.pack)/\(.tool) to \(.version)"' <<< "$tool_packs"
+        run: npm run upstream:watch

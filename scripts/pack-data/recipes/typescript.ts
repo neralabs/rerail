@@ -5,6 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { npmRuntime, runtimeFile } from "../runtimes.js";
 import type { DeriveRecipe } from "../context.js";
 
@@ -26,14 +27,14 @@ export const recipes: DeriveRecipe[] = [
   {
     pack: "typescript",
     tool: "typescript-eslint",
-    async derive({ root, exec, checkout, npmTools }) {
+    async derive({ root, pack, tool, exec, checkout, npmTools }) {
       // packs/typescript/upstream/generate.mjs records every typescript-eslint tool of the pack; it pins eslint,
       // @typescript-eslint/parser and eslint-plugin, and typescript (VERSIONS), and the checkout (CHECKOUTS). It needs
-      // tsx beside them at no version of its own: the typescript-eslint 8.70.1 runtime's tsx loads the same
-      // test files there.
+      // tsx beside them at no version of its own: the tsx of the runtime typescript-eslint's gates.yaml names loads the
+      // same test files there. Only tsx: the runtime's other pins are not the generator's.
       const generator = join(root, "packs", "typescript", "upstream", "generate.mjs");
       const source = readFileSync(generator, "utf8");
-      const runtime = JSON.parse(readFileSync(runtimeFile("typescript-eslint-8.70.1", "package.json"), "utf8")) as { dependencies: Record<string, string> };
+      const runtime = JSON.parse(readFileSync(runtimeFile(readGatesManifest(root, pack, tool).upstream.runtime, "package.json"), "utf8")) as { dependencies: Record<string, string> };
       const tools = await npmTools("typescript-eslint", { dependencies: { ...constantPins(source, "VERSIONS"), tsx: runtime.dependencies.tsx } });
       const upstream = checkoutPin(source, '"typescript-eslint"');
       // The rules' test files, and the rule sources they import (stubbed or swapped for the published build's).
@@ -44,13 +45,13 @@ export const recipes: DeriveRecipe[] = [
   {
     pack: "typescript",
     tool: "eslint-plugin-vitest",
-    async derive({ toolDirectory, exec, checkout, runtimeCache, runner }) {
-      // generate.mjs's PINS are the vitest-eslint-plugin-1.6.27 runtime's (it says so, and pinnedRequire
-      // checks every version), so that runtime is the one source of truth. The checkout is whole: a test imports its
+    async derive({ root, pack, tool, toolDirectory, exec, checkout, runtimeCache, runner }) {
+      // generate.mjs's PINS are those of the runtime its gates.yaml names (it says so, and pinnedRequire checks every
+      // version), so that runtime is the one source of truth. The checkout is whole: a test imports its
       // rule's source for the rule's name, and the stub the generator falls back to when the source is missing exports it
       // under `default`, which the test's default import of a CommonJS module without `__esModule` does not unwrap.
       const generator = join(toolDirectory, "generate.mjs");
-      const tools = await npmRuntime("vitest-eslint-plugin-1.6.27", runtimeCache, runner);
+      const tools = await npmRuntime(readGatesManifest(root, pack, tool).upstream.runtime, runtimeCache, runner);
       const upstream = checkoutPin(readFileSync(generator, "utf8"), "CHECKOUT");
       const vitest = await checkout(upstream.repository, upstream.commit);
       await exec(["node", generator, "--tools", tools, "--vitest", vitest]);

@@ -232,6 +232,28 @@ rules:
 # - File types (`lints`): of the approved configurations' entries only typescript-eslint/eslint-recommended sets `files`
 #   (**/*.ts, **/*.tsx, **/*.mts, **/*.cts); base and recommended set none, so the plugin's rules also run on ESLint's
 #   defaults .js, .mjs and .cjs.
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads a rule's test from tests/rules/<rule>.test.ts, else from tests/rules/<rule>/<rule>.test.ts
+# (generate.mjs); both are watched so a move is seen. The other tests in a rule's directory (member-ordering's,
+# no-unused-vars-eslint.test.ts, ...) are not read. The helper directories under src/rules/ serve several rules.
+watch:
+  rule-prefix: "@typescript-eslint/"
+  tests:
+    - "packages/eslint-plugin/tests/rules/{rule}.test.ts"
+    - "packages/eslint-plugin/tests/rules/{rule}/{rule}.test.ts"
+  code:
+    - "packages/eslint-plugin/src/rules/{rule}.ts"
+  shared:
+    - "packages/eslint-plugin/package.json"
+    - "packages/eslint-plugin/src/rules/enum-utils/**"
+    - "packages/eslint-plugin/src/rules/naming-convention-utils/**"
+    - "packages/eslint-plugin/src/rules/prefer-optional-chain-utils/**"
+    - "packages/eslint-plugin/src/util/**"
+    - "packages/scope-manager/src/**"
+    - "packages/typescript-estree/src/**"
+    - "packages/utils/src/**"
+  new-tests:
+    - "packages/eslint-plugin/tests/rules/{rule}/**"
 eslint:
   release:
     tag: v8.70.1

@@ -1,12 +1,15 @@
 // Records lizard 1.24.0's cyclomatic complexity for the complexity rule pack's parity corpus
 // (fixtures/ beside this file) into lizard-1.24.0.tsv beside this file, which
-// test/engine/code-rule/complexity-rules.test.ts reads. `npm run fixtures:derive -- --pack complexity` runs it after
-// the corpus changes; it needs uv on PATH. lizard is never a runtime dependency; CI runs it only to derive the TSV. The
-// corpus is authored pack test data, in S3; the TSV is derived, never committed (CONTRIBUTING.md, "Pack test data").
+// test/engine/code-rule/complexity-rules.test.ts reads, then writes provenance.json and LICENSES.md (every file is
+// Rerail's: UPSTREAM.md lists the corpus and the TSV is recorded). `npm run fixtures:derive -- --pack complexity` runs
+// it after the corpus changes; it needs uv on PATH. lizard is never a runtime dependency; CI runs it only to derive the
+// TSV. The corpus is authored pack test data, in S3; the TSV is derived, never committed (CONTRIBUTING.md, "Pack test
+// data").
 import { spawnSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
 import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const LIZARD = "lizard==1.24.0";
@@ -66,3 +69,4 @@ const header = `# Recorded by packs/complexity/upstream/lizard/generate.mjs with
 await writeFile(target, header + rows.map(row => `${row.path}\t${row.name}\t${row.line}\t${row.ccn}\n`).join(""));
 console.log(`lizard: ${rows.length} functions -> ${relative(process.cwd(), fileURLToPath(target))}`);
 console.log(packFixturesWritten([fileURLToPath(target)]));
+writeProvenance({ pack: "complexity", tool: "lizard", entries: {}, commits: {} });

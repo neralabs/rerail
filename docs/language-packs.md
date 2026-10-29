@@ -105,7 +105,7 @@ Suppression is `clippy` (`suppress/clippy.rs`): rustc's and Clippy's lint-level 
 and tokio corpora (`fixtures/rust/suppress`). The attributes are read per file: a level set in another file (a crate
 root's `#![allow(..)]` over its modules) or on the command line is not seen, and a `cfg` predicate other than
 `all`, `any` and `not` over `clippy` is false. Rust refuses `languageOptions`, `resolves.imported` and every other
-family's grammar and format style; the Clippy pack (`packs/rust/`) scores the syntax ports as candidates, which ship no rules until they pass the V1 rule validation gates.
+family's grammar and format style; the Clippy pack (`packs/rust/`) ships the syntax ports that pass the [conformance check](../conformance/README.md#the-gate) and keeps the rest as candidates.
 
 ### The SQL adapter
 
@@ -405,9 +405,9 @@ tool it ports is a tool-pack, `upstream/<tool>/`, with its own pack data ([pack 
    `source.units`), through `npm run fixtures:derive -- --pack <id>`. That is derived pack test data, never in git:
    staged into `upstream/<tool>/publish/` (`npm run fixtures:stage -- --pack <id> --tool <tool>`) and published by the
    publish workflow, which commits the tool-pack's `test-data.lock`
-   ([docs/upstream.md](upstream.md#publishing-pack-data)). **Derive is paused**, so a new tool-pack's data waits
-   until it resumes ([docs/upstream.md](upstream.md#derive-and-bumps-are-paused)); the pack's rule documents,
-   `conformance.json` and records can land before it. Cases you write for the tool are authored: list each in the
+   ([docs/upstream.md](upstream.md#publishing-pack-data)). The generator writes the tool's `provenance.json` and
+   `LICENSES.md` last, from the pack's `licenses/<project>/UPSTREAM.md` records
+   ([docs/upstream.md](upstream.md#what-the-generators-write)). Cases you write for the tool are authored: list each in the
    tool's own `UPSTREAM.md`, or keep a corpus with its ground truth under `upstream/<tool>/authored/`. Get the other
    packs' data with `npm run fixtures:pull`.
 3. `licenses/<project>/`, one per upstream repository: its licence, verbatim, and `UPSTREAM.md` with a

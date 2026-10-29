@@ -91,6 +91,17 @@ rules:
 # - File types (`lints`): eslint-config-next lints **/*.{js,jsx,mjs,ts,tsx,mts,cts}, and ESLint's defaults add .cjs.
 # - No port's message is copied from upstream's rule docs (docs/rules/*.md; no-render-return-value.md quotes the legacy
 #   reactjs.org ReactDOM documentation).
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads tests/lib/rules/<rule>.js for each ported rule (generate.mjs).
+watch:
+  rule-prefix: "react/"
+  tests:
+    - "tests/lib/rules/{rule}.js"
+  code:
+    - "lib/rules/{rule}.js"
+  shared:
+    - "lib/util/**"
+    - "package.json"
 eslint:
   release:
     tag: v7.37.5

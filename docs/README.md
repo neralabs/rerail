@@ -20,7 +20,7 @@
 ## Rules, packs and languages
 - [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
 - [pack-format.md](pack-format.md): the pack layout, its pack data and provenance records, and its validation contract
-- [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots (paused), the
+- [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots, the
   publish workflow, upstream releases and bumps, and CI
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
   request comment, divergences, and promoting a candidate
@@ -36,7 +36,6 @@
   (`npm run check:structure`) that enforces them
 
 ## Design notes
-- [vision.md](vision.md): the coordination problem, the semantic monitor, and Rerail's design principles
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
   [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
 - [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and

@@ -12,8 +12,7 @@ This runbook is the last step of a new pack's way to npm:
 1. The pack is written and passes the validation contract
    ([language-packs.md, "Start a pack"](language-packs.md#start-a-pack)).
 2. A ported pack's test data and samples are staged in the pull request and published by **Publish pack data** once
-   a code owner approves ([upstream.md, "Publishing pack data"](upstream.md#publishing-pack-data)). Deriving test
-   data is paused for now ([upstream.md](upstream.md#derive-and-bumps-are-paused)).
+   a code owner approves ([upstream.md, "Publishing pack data"](upstream.md#publishing-pack-data)).
 3. Its ports start as candidates and are promoted into `rules/` once they pass the conformance check
    ([conformance/README.md](../conformance/README.md#candidates-and-promotion)).
 4. The pull request merges with its changeset, and the Release packs run on `main` then asks for the first publish:

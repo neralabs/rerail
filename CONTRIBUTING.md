@@ -331,7 +331,8 @@ A pack that ports another tool's rules is judged on that tool's test cases and o
 in git. Each tool-pack (one `packs/<pack>/upstream/<tool>/`) has:
 
 - **test data**: the tool's cases (`fixtures/`, `tests/`, the case lists), the expected findings the pinned tool
-  reported on them (`*.expected.json`), Rerail's own cases, and, for audit only, `provenance.json` and `LICENSES.md`.
+  reported on them (`*.expected.json`), Rerail's own cases, and `provenance.json` and `LICENSES.md`, which list every
+  file in the archive.
   It is one archive in S3, which the tracked `test-data.lock` names by sha256.
 - **real-code samples**, when it has a `samples.lock`: whole files from open-source repositories, labelled per rule
   with the lines it should report or as clean for it. They are one archive in S3 too, which `samples.lock` names and
@@ -344,8 +345,7 @@ Everything else in the tool directory is in git: `gates.yaml`, the generators, `
   `upstream/<tool>/UPSTREAM.md` lists as Rerail's, one row per file, and everything under `upstream/<tool>/authored/`
   (a code corpus and its ground truth, when the corpus is no public repository a pin can name).
 - **Derived**: upstream's tests, copied or derived (with the ECMA tool-packs' rename variants under
-  `fixtures/renamed/`), and the expected findings on them, which `npm run fixtures:derive` makes from the pins. Derive
-  is paused for now ([While derive and bumps are paused](#while-derive-and-bumps-are-paused)).
+  `fixtures/renamed/`), and the expected findings on them, which `npm run fixtures:derive` makes from the pins.
 
 What each archive holds, the lock format and what a pull checks are in
 [docs/pack-format.md, "Pack data"](docs/pack-format.md#pack-data); how data is snapshotted, published and read in CI
@@ -366,6 +366,10 @@ checkout holds what publishing would make. Pulled data is ignored by git. Pull a
 changes a lock: without the data, the pack tests (`npm test`, `npm run test:conformance`, `cargo test`) and the
 generators fail, saying to pull. To see what any commit was judged on, check it out and pull
 ([docs/upstream.md, "Replay a commit"](docs/upstream.md#replay-a-commit)).
+
+A CI run names the archives it used: the `pack-test-data` action's `archives` output (and the job's summary) has one
+`<pack> <tool> <kind> <sha256>` line each. To replay the run, check out its commit and pull; those are the sha256s its
+locks name ([docs/upstream.md, "Replay a commit"](docs/upstream.md#replay-a-commit)).
 
 ### How pack data is published
 
@@ -426,14 +430,15 @@ comment in [its own section](conformance/README.md#the-pull-request-comment).
 **Promoting a candidate.** "Ready to promote" means the candidate passes every check; it is necessary, not
 sufficient, and the reviewer decides. Move its document from `candidates/rules/<id>.json` to `rules/<id>.json`, point
 its port's `policy` in `conformance.json` at the new path, add it to `pack.json` with the `on` the comment's *Starts*
-column gives, and list it in the pack's `README.md`. The pull request carries the evidence: the rule's results against
+column gives, and move its rule details from `candidates/README.md` to the pack's `README.md`. The pull request carries the evidence: the rule's results against
 the tool's expected findings, its rename variants and its samples, and any divergence it declares
 ([conformance/README.md, "Candidates and promotion"](conformance/README.md#candidates-and-promotion)).
 
 **Test data.** Pull first (`npm run fixtures:pull`), then write the cases in the pulled layout: a code corpus with its
 ground truth under `upstream/<tool>/authored/`, or a case file under the tool directory with its row in the tool's
-`UPSTREAM.md`. A case file's expected findings are recorded by running the tool through its generator, which waits
-while derive is paused ([below](#while-derive-and-bumps-are-paused)). Then stage what changed and commit `publish/`:
+`UPSTREAM.md`. Then derive (`npm run fixtures:derive -- --pack <id> --tool <tool>`; **Derived data** below): it records
+a case file's expected findings by running the tool through its generator, and rewrites `provenance.json`, which must
+list every file the archive holds, so a new corpus needs it too. Then stage what changed and commit `publish/`:
 
 ```sh
 npm run fixtures:stage -- --pack <id> --tool <tool>   # every file the locked archive lacks or holds differently
@@ -452,11 +457,14 @@ in `scripts/samples/licences.ts` whose licence the sample declares. A copyleft r
 from a new repository, read its licence file at the samples' commits and add its entry in the same pull request
 ([docs/upstream.md, "Sample licences"](docs/upstream.md#sample-licences)).
 
-**Removing a file.** A file the archive holds is in no diff. To remove a file the tool's `UPSTREAM.md` lists as
-Rerail's, delete its row: the waiting comment counts the removed row, and an overlay publish drops the file from the
-archive. To remove any other file (one under `authored/` included), delete it on disk after a pull, stage the whole
-set with `npm run fixtures:stage -- --pack <id> --tool <tool> --all`, and ask for a `replace` publish, which makes the
-archive exactly what `publish/` holds. The old archive stays in S3 for the commits that name it
+**Removing a file.** A file the archive holds is in no diff. Any removal changes the archive's file set, which
+`provenance.json` must match, or publish prep refuses the archive: derive the tool-pack again after the removal
+(`npm run fixtures:derive -- --pack <id> --tool <tool>`, on the pinned toolchain; Linux for `rust/clippy`) and stage
+what changed. To remove a file the tool's `UPSTREAM.md` lists as Rerail's, delete its row before deriving: the waiting
+comment counts the removed row, and an overlay publish drops the file from the archive. To remove any other file (one
+under `authored/` included), delete it on disk after a pull, derive, stage the whole set with
+`npm run fixtures:stage -- --pack <id> --tool <tool> --all`, and ask for a `replace` publish, which makes the archive
+exactly what `publish/` holds. The old archive stays in S3 for the commits that name it
 ([docs/upstream.md, "Removing data"](docs/upstream.md#removing-data)).
 
 **From a fork.** Pull requests from forks run CI without the repository's OIDC token, so the jobs that read pack test
@@ -466,25 +474,12 @@ works the same, except that finish cannot push to your branch: the comment chang
 needed** and gives each new lock. Commit those locks, delete `publish/` and push
 ([docs/upstream.md, "Forks"](docs/upstream.md#forks)).
 
-#### While derive and bumps are paused
-
-`npm run fixtures:derive` refuses every tool-pack, `npm run upstream:bump` only plans a bump (`--dry-run`),
-`upstream-bump.yml` fails at its first step, and the nightly release check reports tool-packs behind but starts no
-bump, until the generators write per-repository provenance
-([docs/upstream.md, "Derive and bumps are paused"](docs/upstream.md#derive-and-bumps-are-paused)). Until then:
-
-- rule changes (scored on the locked data), candidates and promotions, samples, corpora with their ground truth under
-  `upstream/<tool>/authored/`, and removing authored rows go ahead as above;
-- anything a generator makes waits: upstream's cases taken again, expected findings (on Rerail's own cases too, which
-  the generator records by running the tool), a change to a pin, a generator or a recipe under
-  `scripts/pack-data/recipes/`, and a new ported tool-pack's data. Running a generator directly is no way round it: it
-  writes the per-file rows that pack check 6 rejects. Open the issue or the pull request without the data, and say
-  that it waits on the pause.
-
-When the pause lifts, derived data changes again through a pull request that changes the pins, a generator or a
-recipe, derived by a maintainer ([docs/upstream.md, "Take a new snapshot"](docs/upstream.md#take-a-new-snapshot)) or
-by the nightly bump ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)), and published
-like any other pack data.
+**Derived data.** Upstream's cases and the expected findings on them change through a pull request that changes the
+pins, a generator or a recipe under `scripts/pack-data/recipes/`, derived by a maintainer
+([docs/upstream.md, "Take a new snapshot"](docs/upstream.md#take-a-new-snapshot)) or by a bump a maintainer starts
+([docs/upstream.md, "Start a bump"](docs/upstream.md#start-a-bump)), and published like any other pack data. The
+derive writes each tool's `provenance.json` and `LICENSES.md` from the pack's `UPSTREAM.md` records, and fails when a
+file disagrees with them ([docs/upstream.md, "What the generators write"](docs/upstream.md#what-the-generators-write)).
 
 ### Merging (maintainers)
 
@@ -500,7 +495,9 @@ first: its pack data is reviewed like its code ([REVIEW.md](REVIEW.md#what-block
 
    Leave `replace` off to lay `publish/` over the locked archive (the files the pull request's `UPSTREAM.md` stopped
    listing are dropped). Turn it on when the pull request stages a whole set with `--all`, to remove files or
-   regenerate the set.
+   regenerate the set. An upstream bump or re-snapshot pull request (`auto/bump-upstream`, `auto/resnapshot-upstream`)
+   stages whole sets, so it publishes with `replace`, and only this way
+   ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)).
 2. If prep fails, nothing is asked of the approver: its log says what it refused. Fix the pull request and dispatch
    again.
 3. A code owner approves the `test-data-upload` deployment
@@ -522,10 +519,10 @@ licence check and the approval, so it is for maintainers only, to repair S3 outs
 whose archive S3 lacks; new data goes through the publish workflow
 ([docs/upstream.md, "fixtures:push"](docs/upstream.md#fixturespush)).
 
-While derive is paused, no bump pull requests are opened and `fixtures:derive` refuses. Once it lifts, a maintainer
-derives a pull request's data again in a sandbox without credentials
-([docs/upstream.md, "Derive in a sandbox"](docs/upstream.md#derive-in-a-sandbox)), and reviews and merges the nightly
-bump pull requests ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)).
+A maintainer derives a pull request's data again in a sandbox without credentials
+([docs/upstream.md, "Derive in a sandbox"](docs/upstream.md#derive-in-a-sandbox)), starts the upstream bumps worth
+making after reading the nightly report, and reviews, publishes and merges their pull requests
+([docs/upstream.md, "Start a bump"](docs/upstream.md#start-a-bump)).
 
 ### Approving a data upload (code owners)
 
@@ -565,7 +562,8 @@ In a pack (`packs/<id>/`), the record is per upstream repository and covers the 
 - The tool's own `upstream/<tool>/UPSTREAM.md` lists, one row per file, the files in the tool directory that Rerail
   wrote. They are Apache-2.0, like everything else Rerail writes.
 - Each test data archive holds `provenance.json` (every file, its upstream path and how it was made) and `LICENSES.md`
-  (the licence texts), for audit. Nothing reads them.
+  (the licence texts), for audit. No licence check reads them; publish prep reads the file list in `provenance.json`
+  and refuses an archive it does not describe.
 - `REUSE.toml` annotates the rule documents with the pack's licence expression, and the pulled and staged copies of
   the copied files with the upstream licence.
 

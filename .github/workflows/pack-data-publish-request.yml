@@ -37,11 +37,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           CHANGED: ${{ github.event.pull_request.changed_files }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           # The pull request files endpoint lists at most 3,000 files; past that, absence cannot be proved. It omits
           # the patch of a very large diff, whose removed rows then go unseen.
           files_cap=3000
+          # An upstream bump or re-snapshot pull request (upstream-bump-publish.yml, from this repository's
+          # auto/bump-upstream or auto/resnapshot-upstream) stages each tool-pack's whole derived set: it publishes with
+          # replace.
+          replace_step="Leave **replace** off to lay these files over the current data (overlay). Turn it on to make each tool-pack's data exactly what \`publish/\` holds (for deletions or a full regeneration)."
+          replace_flag=""
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] && { [ "$HEAD_REF" = "auto/bump-upstream" ] || [ "$HEAD_REF" = "auto/resnapshot-upstream" ]; }; then
+            replace_step="Turn **replace** on: this upstream bump's \`publish/\` holds each tool-pack's whole derived set, and replace makes each tool-pack's data exactly that."
+            replace_flag=" -f replace=true"
+          fi
           # TOOL_ID in scripts/s3/pack-fixtures.mjs: a pack or tool directory name.
           id_class='[a-z0-9][a-z0-9._-]*'
           gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
@@ -96,15 +107,15 @@ jobs:
 
           1. Open the [publish workflow](https://github.com/$GITHUB_REPOSITORY/actions/workflows/pack-data-publish.yml) and click **Run workflow** (branch \`main\`).
           2. Type **\`$PR\`** as the pull request number. GitHub can't pre-fill workflow inputs from a link, so type it yourself.
-          3. Leave **replace** off to lay these files over the current data (overlay). Turn it on to make each tool-pack's data exactly what \`publish/\` holds (for deletions or a full regeneration).
+          3. ${replace_step}
           4. Wait for a code owner (@Moti-Velz or @jeffreysnell) to approve the \`test-data-upload\` deployment. They read the run's **prep** summary first.
           5. When the run is green, pull this branch: the workflow has committed the new locks and removed \`publish/\`. If someone pushed to the branch meanwhile, or the branch is on a fork, this comment shows the locks to commit instead.
 
           **With the gh CLI (for agents)**
 
           \`\`\`sh
-          # 1. Start the publish (add -f replace=true for replace mode).
-          gh workflow run pack-data-publish.yml -R $GITHUB_REPOSITORY -f pr=$PR
+          # 1. Start the publish (-f replace=true for replace mode).
+          gh workflow run pack-data-publish.yml -R $GITHUB_REPOSITORY -f pr=$PR${replace_flag}
 
           # 2. Find the run. Its title is "Publish pack data for #$PR"; wait a few seconds after step 1.
           gh run list -R $GITHUB_REPOSITORY --workflow pack-data-publish.yml --event workflow_dispatch --limit 5 \\

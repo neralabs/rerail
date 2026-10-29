@@ -1,27 +1,23 @@
 # Rerail rule pack: Vue
 
-Ports of 24 eslint-plugin-vue 10.11.1 rules for Vue single-file components, with their default options. 19 ship, each
+19 eslint-plugin-vue 10.11.1 rules for Vue single-file components, ported to Rerail with their default options, each
 passing the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)), judged against
 eslint-plugin-vue's own findings on its RuleTester cases (`upstream/eslint-plugin-vue/fixtures.expected.json`) and
 against the tool's labelled real-code samples: 18 on, as `flat/recommended` turns them on, and
 `no-setup-props-reactivity-loss` off until turned on (no recommended configuration of eslint-plugin-vue turns it on).
-The ports cover `.vue` files only (`rerail.in_scope`), so each upstream case it lints as a bare script is written as
-the component that holds it, wrapped in `<script>` as `generate.mjs` writes its fixtures, and scored on upstream's
-answer there. The other 5 are candidates under `candidates/rules/`, scored and reported but never gating a check,
-until they pass: 3 differ from upstream on cases no single-file, type-free read can answer as upstream does (a prop
-type imported from another file, a switch the TypeScript checker finds exhaustive, a type the checker infers, a
-TypeScript `<script setup>` without `lang`), 1 fails `compact` (`no-dupe-v-else-if`) and 1 names words found in
-upstream's tests but not its code (`no-unused-refs`). The Vue family has no rename variants (`holds-under-rename`
-covers the ECMAScript packs), so the real-code samples are the pack's only evidence that a port is not fitted to its
-tests. Each
-reads the component's two documents: its tree-sitter-vue tree, and the ECMAScript program its scripts and template
-expressions make (the `script-block` program a clause reads with `ast.embedded`, or reaches from a template node with
-`embedded`; `host` leads back from a program node to the template node it stands for). Each port
-is scored against eslint-plugin-vue's own findings on its RuleTester cases and on cases Rerail wrote for inputs a port
-once misread (`fixtures/<rule>/rerail-*.vue`, listed in `upstream/eslint-plugin-vue/UPSTREAM.md`), and against the
-labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the
-engine's production workspace path. Every port agrees with eslint-plugin-vue on every fixture case: 1,106 findings on
-the 773 fixture files, with no false positive or false negative and no declared divergence.
+The ports cover `.vue` files only (`rerail.in_scope`), so each upstream case it lints as a bare script is written as the
+component that holds it, wrapped in `<script>` as `generate.mjs` writes its fixtures, and scored on upstream's answer
+there. 5 more ports are candidates under `candidates/rules/`, scored and reported but never gating a check, until they
+pass ([candidates/README.md](candidates/README.md) says where each stops). The Vue family has no rename variants
+(`holds-under-rename` covers the ECMAScript packs), so the real-code samples are the pack's only evidence that a port is
+not fitted to its tests. Each reads the component's two documents: its tree-sitter-vue tree, and the ECMAScript program
+its scripts and template expressions make (the `script-block` program a clause reads with `ast.embedded`, or reaches
+from a template node with `embedded`; `host` leads back from a program node to the template node it stands for). Each
+port is scored against eslint-plugin-vue's own findings on its RuleTester cases and on cases Rerail wrote for inputs a
+port once misread (`fixtures/<rule>/rerail-*.vue`, listed in `upstream/eslint-plugin-vue/UPSTREAM.md`), and against the
+labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
+production workspace path. Every shipped rule agrees with eslint-plugin-vue on every fixture case, with no false
+positive or false negative and no declared divergence.
 
 It is checked by:
 
@@ -38,9 +34,10 @@ npm run test:conformance
 | `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and its 19 shipped rules, 18 on and 1 off |
 | `rules/` | The 19 shipped code-rule documents (`rerail.policy/v1`) |
 | `candidates/rules/` | The 5 candidate code-rule documents (`rerail.policy/v1`), scored but never shipped |
+| `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 | `conformance.json` | Each port's upstream rule, how findings compare, and the capabilities it exercises; the pinned parser stack |
 | `divergences.json` | Declared disagreements with eslint-plugin-vue (none) |
-| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`: `generate.mjs`'s `<valid\|invalid>-<n>.vue`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`), the expected findings (`fixtures.expected.json`), the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`), and the upstream manifest (`gates.yaml`: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports). The cases, `cases.json` and the expected findings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches with the samples; a maintainer derives them from the pins (`npm run fixtures:derive`, `scripts/pack-data/recipes/vue.ts`) and publishes them through `upstream/eslint-plugin-vue/publish/` ([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)). Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance ([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)) |
+| `upstream/eslint-plugin-vue/` | The copied RuleTester cases (`fixtures/`: `generate.mjs`'s `<valid\|invalid>-<n>.vue`), the cases Rerail wrote (`authored.mjs`, written as `fixtures/<rule>/rerail-*.vue` and listed in `UPSTREAM.md`), each case's fate (`cases.json`), the expected findings (`fixtures.expected.json`), the lock naming its real-code samples (`samples.lock`) with their sources and licences (`SAMPLES.md`), and the upstream manifest (`gates.yaml`: its pins, approved configurations, the file types it lints and the facts of every rule the pack ports). The cases, `cases.json` and the expected findings are pack test data, not in git: one archive in S3, which `test-data.lock` names and `npm run fixtures:pull` fetches with the samples; a maintainer derives them from the pins (`npm run fixtures:derive`, `scripts/pack-data/recipes/vue.ts`) and publishes them through `upstream/eslint-plugin-vue/publish/` ([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)) |
 | `licenses/eslint-plugin-vue/` | eslint-plugin-vue's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 ## Rule details
@@ -62,14 +59,6 @@ Ports eslint-plugin-vue 10.11.1 `vue/no-child-content` with default options (dir
 ### `eslint-plugin-vue-no-deprecated-v-on-native-modifier`
 
 Ports eslint-plugin-vue 10.11.1 `vue/no-deprecated-v-on-native-modifier`: a `native` modifier token of a `v-on:`/`@` directive (a directive_modifier named native under a directive_attribute that is v-on or starts with `@`). Reported at the modifier name.
-
-### `eslint-plugin-vue-no-dupe-keys`
-
-Ports eslint-plugin-vue 10.11.1 `vue/no-dupe-keys` with default options (groups props, computed, data, methods, setup). Two clauses over the script-block program (`ast.embedded`; a script's marker, the `empty_statement` whose host is the block's start tag, tells `<script setup>` statements apart). `options-api`: in a component object (`export default {...}`, the last object argument of `Vue.component`/`mixin`/`extend`, `X.component`/`X.mixin`, `defineNuxtComponent`, and `component`/`createApp`/`defineComponent` when global or imported from vue, `new Vue({...})`, or an object on the line after a `@vue/component` comment), each name of the `props` array/object, `computed`, `data`, `methods` and `setup` groups (object keys of the group value, of the object a group function returns at its top level, or of an arrow function's expression body; spreads and non-static keys ignored) that an earlier name of the same component already holds is reported at its key, with upstream's getter/setter pairing (a setter paired with a getter of the same name is not a name). `script-setup-props`: a top-level `<script setup>` `defineProps` (alone or in `withDefaults`, as a statement or a declarator initializer) prop name (array element, object key or inline type-literal member, not renamed in a destructuring pattern) whose module-scope binding (variable, function, class, import) is not initialised from the props (a declarator whose initializer holds the `defineProps` call or reads a variable the same declarator binds) is reported at the first binding's declaration node (declarator, function/class declaration, import specifier or clause). Not read: props declared by a referenced interface or type alias, props named by a const identifier, computed group keys, `require('vue')` helpers, `export default` inside `<script setup>` (upstream skips it).
-
-### `eslint-plugin-vue-no-dupe-v-else-if`
-
-Ports eslint-plugin-vue 10.11.1 `vue/no-dupe-v-else-if` with default options. Reads the script-block program's (`ast.embedded`) `if (...) { } else if (...) { }` chain (v-if / v-else-if elements, nested chains stay separate; the `true` written for a condition-less directive, whose host is its directive name, is no condition): for each else-if test it applies eslint-plugin-vue's or/and set-cover (the test and, when it is a `&&`, each flattened `&&` operand are the conditions; a condition is dead when every `||` operand of it is a superset, as a set of `&&` operands compared by tokens with `||`/`&&` operands in either order, of an `||` operand of some earlier test in the chain) and reports the first condition to become dead walking the chain from the nearest earlier branch, operands in source order and the whole test last, at that condition (parentheses excluded, as ESTree).
 
 ### `eslint-plugin-vue-no-duplicate-attributes`
 
@@ -99,10 +88,6 @@ Ports eslint-plugin-vue 10.11.1 `vue/no-side-effects-in-computed-properties` (de
 
 Ports eslint-plugin-vue 10.11.1 `vue/no-template-shadow` with default options (no allow list): a template variable (v-for alias or slot parameter, the parameters of the v-for / slot arrows of the script-block program, `ast.embedded`, inside the statement block whose host is the `<template>` element) whose name is already an outer template variable (a parameter of an enclosing view arrow), a top-level binding of `<script setup>`, a `defineProps` prop name (runtime array or object keys, `defineProps<{...}>()` type-literal properties, a local interface or type alias named as the type argument), or a static key of the Options API groups props, computed, data, asyncData, methods and setup (array strings, object members, and the object a data/asyncData/setup function returns) of `export default {}`, `defineComponent({})`, `Vue.extend/component/mixin(...)` or `new Vue({})`. Names compare as text. Reported at the variable identifier.
 
-### `eslint-plugin-vue-no-unused-refs`
-
-Ports eslint-plugin-vue 10.11.1 vue/no-unused-refs (no options): a static template `ref="name"` attribute is reported at its value literal (quotes included) unless the file uses the name, or has an unknown use of $refs. Used: `$refs.name`/`$refs['name']`/object-pattern destructuring of `$refs` (script `this.$refs` and bare `$refs`, template bare `$refs`), `useTemplateRef('name')`, a name `setup()` of a Vue object (export default, defineComponent/Vue.component/..., new Vue) returns, and, when the file has a <script setup>, any module/global binding of the program. Unknown use (`const a = $refs`, `a = $refs`, `f($refs)`, `return $refs`, `for (k in $refs)`, dynamic key or rest/computed destructuring) suppresses every report in the file. A clause over the file's own tree: the uses are read through `embedded` from the document in the script-block program (syntax, scope binds), each name compared with the attribute value through `host: { compare }`.
-
 ### `eslint-plugin-vue-no-unused-vars`
 
 Ports eslint-plugin-vue 10.11.1 `vue/no-unused-vars` with default options (no ignorePattern): a template variable that nothing reads: a v-for alias or a slot parameter (`v-slot`, `#name`, Vue 2 `slot-scope`/`scope`). Reads the script-block program (`ast.embedded`): the parameters of the arrow that stands for a v-for (`expression_statement > sequence_expression > arrow_function`) or a slot (`expression_statement > arrow_function`) inside the template block, resolved by the engine's per-binding occurrences (a reference that is neither the definition nor the bare `Tag;` read the view writes for a component tag, which vue-eslint-parser does not make a reference). A Vue 2 filter's name is no reference either: vue-eslint-parser 10.4.1 splits an interpolation's or a `v-bind`'s expression at its top-level `|` into the expression and its filters (`{{ value | x }}`, `:a="v | f(y)"`) and references a filter's arguments, not its name (filter-callee: the right operand, or the callee of a call that is the right operand, of a chain of `|` that is the whole parenthesized statement whose host is an interpolation or a `v-bind`). A variable that is unreferenced is still exempt when a descendant element's raw tag name is the variable's (upstream's isUsedAsComponentTag: through `host`, the start tag of any element below the one whose `v-for` or slot directive declares the variable, a native tag included, compared by its tag name; a dotted tag's raw name is never an identifier). Parameters before a referenced one in the same arrow are exempt (after-used) unless destructured (an object-pattern property or an array-pattern element; a rest element of an object pattern is not). A v-for alias that a v-if/v-else-if condition of the same element reads (the v-for statement's host element holds that directive) is used (upstream resolves that condition in the element's scope; Vue 3 compiles it outside the v-for). Reported at the parameter identifier.
@@ -126,14 +111,6 @@ Ports eslint-plugin-vue 10.11.1 `vue/no-watch-after-await` (default options): a 
 ### `eslint-plugin-vue-require-v-for-key`
 
 Ports eslint-plugin-vue 10.11.1 `vue/require-v-for-key` (no options): an element that a `v-for` governs and that has no `v-bind:key`/`:key`/`.key` directive, reported at its start tag. An element is governed by its own `v-for`, or, when it is a child of a `<template>` or `<slot>` without a key, by that element's governors (checkKey recurses through keyless `<template>`/`<slot>` children), each governing `v-for` reporting once (`each` over the `v-for` directive, as ESLint reports once per visited `v-for`). `<template>` and `<slot>` elements themselves are never reported, nor is a component (utils.isCustomComponent: a static `is`, `:is`/`v-bind:is`/`.is` or `v-is`, or a raw tag name that is not a well-known name of its namespace, the `custom-tag` family shared with `no-v-text-v-html-on-component`). The `v-for` on the SFC's root `<template>` is never visited by ESLint and governs nothing. Reads the Vue tree only.
-
-### `eslint-plugin-vue-require-valid-default-prop`
-
-Ports eslint-plugin-vue 10.11.1 `vue/require-valid-default-prop` with default options: a prop's default must match the native constructors (String, Number, Boolean, Function, Object, Array, Symbol, BigInt) its `type` names; Object, Array and Function values must come from a factory, whose returns are checked too. Reads Options-API component objects (export default outside script setup, Vue.component/mixin/extend, component/createApp/defineComponent/defineNuxtComponent calls, new Vue, `// @vue/component` marks), top-level script-setup defineProps({...}) objects with withDefaults defaults and destructured defaults, and defineModel options. Props typed only by a TypeScript type argument (defineProps<T>(), defineModel<T>()) and a defineProps argument held in a const are not read.
-
-### `eslint-plugin-vue-return-in-computed-property`
-
-Ports eslint-plugin-vue 10.11.1 `vue/return-in-computed-property` (default options, treatUndefinedAsUnspecified: true). Reports a computed getter that can fall off its end or whose last `return` has no value: an Options API getter (`foo() {}`, `foo: function () {}`, `foo: { get() {} }`, `foo: { get: function () {} }`) of the `computed` object of a Vue object (`export default` outside `<script setup>`, `Vue.component`/`mixin`/`extend`, `app.component`/`mixin`, `defineComponent`, `createApp`, `defineNuxtComponent`, `new Vue`, or an object on the line after a `@vue/component` comment), and a composition getter given to `computed(...)` imported from `vue`, `@vue/composition-api`, `@nuxtjs/composition-api` or `#imports` (a function, or `{ get }`). Reads ESLint's code-path end reachability as the recursive `nc` utility (return, throw, break, continue, blocks, if/else, switch with a default, try/catch/finally, labelled statements, loops with a constant truthy test) and the last `return` statement in source order. Reported at the function (a method at its parameters).
 
 ### `eslint-plugin-vue-v-on-event-hyphenation`
 
