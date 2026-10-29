@@ -118,7 +118,7 @@ describe("Rerail daemon", () => {
       incoming.on("end", () => {
         const text = Buffer.concat(chunks).toString();
         const json = incoming.headers["content-type"]?.startsWith("application/json") === true;
-        resolve({ status: incoming.statusCode!, body: json ? JSON.parse(text) : text });
+        resolve({ status: incoming.statusCode!, body: json && text !== "" ? JSON.parse(text) : text });
       });
       incoming.on("error", reject);
     });
@@ -1000,43 +1000,50 @@ describe("Rerail daemon", () => {
     expect(await rawRequest(daemon, "/healthz", { headers: { host: "evil.example" } })).toEqual({ status: 421, body: { error: "host-not-allowed" } });
   });
 
-  it("requires its access capability on every request, on loopback too", async () => {
+  it("requires its access capability on every request but the page's own files, on loopback too", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
-    const daemon = await start();
+    const uiRoot = join(root, "ui");
+    await mkdir(join(uiRoot, "css"), { recursive: true });
+    await writeFile(join(uiRoot, "index.html"), "<title>Rerail</title>");
+    await writeFile(join(uiRoot, "app.js"), "export {};");
+    await writeFile(join(uiRoot, "css", "a.css"), "a{}");
+    const daemon = await start({ uiRoot });
     const host = "127.0.0.1";
     const refused = { status: 401, body: { error: "access-required", message: expect.stringContaining("x-rerail-access") } };
-    // `Host: 127.0.0.1` and a matching `Origin` are only claims; without the capability nothing answers, not even health.
-    for (const [path, method] of [["/healthz", "GET"], ["/api/sessions", "GET"], ["/openapi.json", "GET"], ["/", "GET"], ["/mcp", "POST"], ["/native/session", "POST"]] as const) {
-      const body = method === "POST" ? { body: "{}" } : {};
-      expect(await rawRequest(daemon, path, { method, headers: { host, origin: `http://${host}`, [ACCESS_HEADER]: "" }, ...body })).toEqual(refused);
-      expect(await rawRequest(daemon, path, { method, headers: { host, [ACCESS_HEADER]: `${ACCESS}x` }, ...body })).toEqual(refused);
+    const without = { host, [ACCESS_HEADER]: "" };
+
+    // Every operation the API document lists, and every route beside it: `Host: 127.0.0.1`, a matching `Origin`, a
+    // capability one character longer or shorter, or one in a cookie or the query, are not the capability.
+    const document = await (await fetch(new URL("/openapi.json", daemon.url))).json() as { paths: Record<string, Record<string, unknown>> };
+    const routes = Object.entries(document.paths).flatMap(([path, methods]) =>
+      Object.keys(methods).map(method => [path.replaceAll(/\{[^}]+\}/gu, "x"), method.toUpperCase()] as const));
+    expect(routes.length).toBeGreaterThan(30);
+    for (const [path, method] of [...routes, ["/healthz", "GET"], ["/healthz", "HEAD"], ["/openapi.json", "GET"], ["/mcp", "POST"], ["/native/session", "POST"], ["/sessions/abc", "GET"]] as const) {
+      const body = method === "GET" || method === "HEAD" ? {} : { body: "{}" };
+      const answer = (headers: Record<string, string>) => rawRequest(daemon, path, { method, headers, ...body });
+      const expected = method === "HEAD" ? { status: 401, body: "" } : refused;
+      expect(await answer({ ...without, origin: `http://${host}` }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ host, [ACCESS_HEADER]: `${ACCESS}x` }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ host, [ACCESS_HEADER]: ACCESS.slice(0, -1) }), `${method} ${path}`).toEqual(expected);
+      expect(await answer({ ...without, cookie: `rerail-access=${ACCESS}` }), `${method} ${path}`).toEqual(expected);
     }
+    expect(await rawRequest(daemon, `/api/sessions?rerail-access=${ACCESS}`, { headers: without })).toEqual(refused);
     expect(await rawRequest(daemon, "/api/sessions", { headers: { host } })).toEqual({ status: 200, body: { sessions: [], total: 0, nextCursor: null } });
-    expect((await rawRequest(daemon, "/api/sessions", { headers: { host, [ACCESS_HEADER]: "", cookie: `other=1; rerail-access=${ACCESS}` } })).status).toBe(200);
     // The capability guards the native bridge too, on top of that bridge's own bearer token.
     expect((await rawRequest(daemon, "/native/session", { method: "POST", headers: { host }, body: "{}" })).body).toEqual({ error: "native-authorization-invalid" });
 
-    // The printed link sets the cookie and drops the capability from the address, staying on this daemon.
-    const linked = Promise.withResolvers<IncomingMessage>();
-    httpRequest({ host, port: daemon.port, path: `//evil.example/session?repository=r&rerail-access=${ACCESS}` }, linked.resolve)
-      .on("error", linked.reject).end();
-    const link = await linked.promise;
-    link.resume();
-    expect(link.statusCode).toBe(303);
-    expect(link.headers.location).toBe("/evil.example/session?repository=r");
-    expect(link.headers["set-cookie"]).toEqual([`rerail-access=${ACCESS}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax`]);
-    // A browser that already holds the cookie still has the capability taken out of its address bar.
-    expect((await rawRequest(daemon, `/?rerail-access=${ACCESS}`, { headers: { host, [ACCESS_HEADER]: "", cookie: `rerail-access=${ACCESS}` } })).status).toBe(303);
-    // Behind an https proxy the cookie is marked Secure.
-    const forwarded = Promise.withResolvers<IncomingMessage>();
-    httpRequest({ host, port: daemon.port, path: `/?rerail-access=${ACCESS}`, headers: { "x-forwarded-proto": "https" } }, forwarded.resolve)
-      .on("error", forwarded.reject).end();
-    const secure = await forwarded.promise;
-    secure.resume();
-    expect(secure.headers["set-cookie"]).toEqual([`rerail-access=${ACCESS}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure`]);
-    // Only a page load takes it from the query; a write must hold the capability already.
-    expect((await rawRequest(daemon, `/api/presentation-preferences?repository=&host=&rerail-access=${ACCESS}`, { method: "DELETE", headers: { host, [ACCESS_HEADER]: "" } })).status).toBe(401);
-  });
+    // The page's own files load without it: they are the package's, and the page then sends the capability it keeps.
+    // The address that opened it may carry the capability, so nothing it loads names that address.
+    for (const path of ["/", `/?rerail-access=${ACCESS}`, "/index.html", "/app.js", "/css/a.css"]) {
+      const page = await globalThis.fetch(new URL(path, daemon.url));
+      expect(page.status, path).toBe(200);
+      expect(page.headers.get("referrer-policy"), path).toBe("no-referrer");
+    }
+    expect((await globalThis.fetch(new URL("/app.js", daemon.url), { method: "HEAD" })).status).toBe(200);
+    // Only those: no file under `/api/`, and no other method, is one of them.
+    expect((await rawRequest(daemon, "/api/x.js", { headers: without })).status).toBe(401);
+    expect((await rawRequest(daemon, "/app.js", { method: "POST", headers: without, body: "{}" })).status).toBe(401);
+  }, 30_000);
 
   it("keeps a loopback daemon's capability in its home across restarts, and mints one per start off loopback", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));

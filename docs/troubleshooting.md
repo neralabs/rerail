@@ -308,14 +308,18 @@ restart. Anyone holding the link can read and change your rules, so do not paste
 interface: any other container on the same Docker network (a Compose service, a sidecar) reaches it directly, and is
 refused without the capability.
 
-### The dashboard answers `{"error":"access-required"}`
+### The dashboard says "This browser needs the dashboard link"
 
-Every request to the daemon needs its access capability, which your browser holds as a cookie once it has opened the
-link `rerail daemon start` prints or `rerail manage` opens. A bookmark, a new browser, a cleared cookie jar or a link
-pasted from a coding agent's session has none: run `rerail manage` (or `rerail daemon start --open`) and the page
-opens with it. The cookie lasts 30 days and, on loopback, the capability lasts across restarts (`access-token` in your
-Rerail home; delete it to rotate). `curl` and scripts send it as the `x-rerail-access` header, reading `accessToken`
-from `daemon.json`.
+Every request for your data needs the daemon's access capability, which the page keeps in your browser once it has
+been opened from the link `rerail manage` opens or `rerail daemon start` prints. A bookmark, a new browser or
+profile, cleared site data, or a link pasted from a coding agent's session has none: run `rerail manage` (or
+`rerail daemon start --open`) and the page opens with it. On loopback the capability lasts across restarts
+(`access-token` in your Rerail home; delete it to rotate, then open the link again). `curl` and scripts send it as the
+`x-rerail-access` header, reading `accessToken` from `daemon.json`; without it they get
+`401 {"error":"access-required"}`.
+
+If `rerail status` says the daemon "refused the access capability in daemon.json", the running daemon and its state
+file disagree (one was edited or replaced): `rerail daemon stop`, then `rerail daemon start`.
 
 ## WSL
 

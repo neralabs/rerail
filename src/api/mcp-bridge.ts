@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { DAEMON_STATE_FILE, daemonAccessHeaders, probeDaemon, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, daemonEndpoint, probeDaemon, processAlive, readDaemonState, type DaemonEndpoint, type DaemonState } from "../runtime/daemon-control.js";
 import { CALLER_CWD_HEADER } from "../engine/catalog/repository-model.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -72,6 +72,8 @@ async function writeLine(output: Writable, line: string): Promise<void> {
 }
 
 const DAEMON_NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon start";
+/** The daemon is up but does not accept the capability its state file records: what to do, not "not running". */
+const DAEMON_REFUSED = "Rerail daemon refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start";
 
 function sameDaemon(left: DaemonState, right: DaemonState): boolean {
   return left.pid === right.pid && left.url === right.url && left.startedAt === right.startedAt;
@@ -90,16 +92,17 @@ class DaemonLocator {
   constructor(private readonly home: string, private readonly fetchImpl: RerailMcpBridgeFetch) {}
 
   /** The `/mcp` endpoint of the home's live daemon and the headers that admit a request to it. */
-  async endpoint(): Promise<{ url: URL; headers: Record<string, string> }> {
+  async endpoint(): Promise<DaemonEndpoint> {
     const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE));
     if (state === undefined || !processAlive(state.pid)) throw new Error(DAEMON_NOT_RUNNING);
     if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) {
       this.#confirmed = undefined;
-      const health = await probeDaemon(state, this.fetchImpl);
-      if (health?.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
+      const probe = await probeDaemon(state, this.fetchImpl);
+      if (probe.status === "refused") throw new Error(DAEMON_REFUSED);
+      if (probe.status !== "ok" || probe.health.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
       this.#confirmed = state;
     }
-    return { url: new URL("/mcp", state.url), headers: daemonAccessHeaders(state) };
+    return daemonEndpoint(state, "/mcp");
   }
 
   /** After a request failed to connect: checks the home's daemon again, and throws when none answers. */
@@ -121,6 +124,7 @@ async function relay(
   try {
     response = await fetchImpl(endpoint.url, {
       method: "POST",
+      // The capability last: nothing the bridge was started with names another.
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...callerHeaders, ...endpoint.headers },
       body: request,
       signal: AbortSignal.timeout(30_000),
@@ -131,6 +135,8 @@ async function relay(
   }
   const body = await response.text();
   if (response.ok) return body === "" ? undefined : body;
+  // A refusal is not an MCP answer: the client gets a JSON-RPC error that says what to do, not the daemon's body.
+  if (response.status === 401) throw new Error(DAEMON_REFUSED);
   const json = response.headers.get("content-type")?.includes("application/json") ?? false;
   if (json || isJsonRpcBody(body)) return body;
   throw new Error(`Rerail MCP bridge request failed (${response.status}): ${body}`);

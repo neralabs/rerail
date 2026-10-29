@@ -3,7 +3,9 @@
  * deployment state. Whatever reads a checkout for a model conversation leaves them out, because what a model is shown
  * can end up in its replies, its provider's logs and other tools' input, and nothing a prompt says stops that: the
  * check is here, in code. Matched against a path's last segment, case-insensitively; `*` stands for any run of
- * characters. Hidden names (`.ssh/`, `.aws/`, `.git-credentials`) are left out as hidden, so none is listed here.
+ * characters and `{a,b}` for either word. A hidden name (`.ssh/`, `.git-credentials`) is denied as hidden by
+ * {@link deniedByPathBoundary}; the hidden names listed here are those {@link sensitiveByName} must judge secret-like
+ * without that rule.
  */
 export const SENSITIVE_FILE_NAMES: readonly string[] = [
   ".env",
@@ -33,6 +35,8 @@ export const SENSITIVE_FILE_NAMES: readonly string[] = [
   "*.keytab",
   "credentials",
   "credentials.*",
+  // `credentials-prod.json`, `credentials_old.yml`: a data file only, so `credentials-helper.ts` is source still.
+  "credentials{-,_}*.{json,yaml,yml,xml,ini,toml,conf,cfg,properties,txt,csv}",
   "secrets.*",
   "*.secret",
   "*.secrets",
@@ -49,10 +53,14 @@ export const SENSITIVE_FILE_NAMES: readonly string[] = [
 /** Folders whose every file is a credential or key: a path through one is secret-like whatever the file is called. */
 export const SENSITIVE_FOLDER_NAMES: readonly string[] = [".ssh", ".aws", ".gnupg", ".kube", ".docker", ".gcloud", ".azure"];
 
-const SENSITIVE_FILE = new RegExp(
-  `^(?:${SENSITIVE_FILE_NAMES.map(name => name.split("*").map(part => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")).join("|")})$`,
-  "i",
-);
+/** A {@link SENSITIVE_FILE_NAMES} entry as a regular expression's source: `*` is any run of characters, `{a,b}` either word. */
+function globSource(glob: string): string {
+  const literal = (text: string): string => text.replace(/[.+?^${}()|[\]\\]/gu, "\\$&");
+  return glob.replace(/\{([^{}]*)\}|\*|[^*{]+|\{/gu, (match: string, choices: string | undefined) =>
+    choices !== undefined ? `(?:${choices.split(",").map(literal).join("|")})` : match === "*" ? ".*" : literal(match));
+}
+
+const SENSITIVE_FILE = new RegExp(`^(?:${SENSITIVE_FILE_NAMES.map(globSource).join("|")})$`, "i");
 const SENSITIVE_FOLDERS: ReadonlySet<string> = new Set(SENSITIVE_FOLDER_NAMES);
 
 /**

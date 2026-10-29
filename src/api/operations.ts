@@ -375,7 +375,8 @@ export const operations: readonly Operation[] = [
       const activity = stores.audits.ruleActivity(input.since, ids);
       const rerails = stores.reader.steersByRule(input.since, ids);
       const rules: Record<string, z.infer<typeof ruleActivitySchema>> = {};
-      for (const { id, kind, rule } of activityRules(stores, input.repository)) {
+      // A coding agent's rules are its own repository's, as its counts are: never the machine's whole library.
+      for (const { id, kind, rule } of activityRules(stores, callerRepositoryKey(stores, caller) ?? input.repository)) {
         // Every rule is reported, so a caller never has to infer absence from a missing key.
         const { inactive } = inactiveOf(kind, rule);
         const totals = kind === "conversation" ? undefined : activity.get(id);
@@ -611,7 +612,7 @@ export const operations: readonly Operation[] = [
     id: "session_events",
     method: "GET",
     path: "/api/sessions/{sessionId}/events",
-    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page: forward from \`after\`, or backward from \`before\` (the latest page is before a sequence past the end). A coding agent gets every tool output withheld, and the input of a call that names a hidden or secret-like path.`,
+    summary: `Page through one session's transcript events in sequence order, at most ${SESSION_EVENT_PAGE_LIMIT} per page: forward from \`after\`, or backward from \`before\` (the latest page is before a sequence past the end). A coding agent gets every tool output withheld, the input of a call that names a hidden or secret-like path, and the payload of an event kind Rerail does not know.`,
     params: sessionId,
     query: z.object({
       after: countParameter.optional().describe("Return events with a sequence strictly greater than this value."),

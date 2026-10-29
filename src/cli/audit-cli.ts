@@ -1,4 +1,4 @@
-import { daemonAccessHeaders, findRunningDaemon } from "../runtime/daemon-control.js";
+import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
 
 import {
   auditSettingsPatchSchema, auditSettingsSchema, type AuditControls, type AuditSettings, type AuditSettingsPatch, type AuditRequest,
@@ -96,17 +96,11 @@ function parseCommon(args: readonly string[]): ParsedCommon {
   };
 }
 
-/** Where the daemon listens, and the headers that admit a request to it. */
-interface DaemonEndpoint {
-  url: URL;
-  headers: Record<string, string>;
-}
-
 /** The Rerail home's daemon serves every session recorded in its database, whichever repository ran it. */
 async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
   const daemon = await findRunningDaemon(options.home);
   if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
-  return { url: new URL(daemon.state.url), headers: daemonAccessHeaders(daemon.state) };
+  return daemonEndpoint(daemon.state);
 }
 
 async function api<T>(base: DaemonEndpoint, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { eq } from "drizzle-orm";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -264,6 +264,23 @@ describe("rerail rules test", () => {
 
     expect(report.repository).toMatchObject({ matches: 2, leftOut: 2 });
     expect(report.repository?.examples.map(example => example.path)).toEqual(["app.json", "local.json"]);
+  });
+
+  it("never follows a symlink out of the checkout, to a file or a folder", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "rerail-rule-draft-outside-"));
+    directories.push(outside);
+    mkdirSync(join(outside, "folder"));
+    writeFileSync(join(outside, "secret.ts"), "console.log('outside');\n");
+    writeFileSync(join(outside, "folder", "b.ts"), "console.log('outside folder');\n");
+    const repo = await repository({ "src/a.ts": "console.log('inside');\n" });
+    symlinkSync(join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
+    symlinkSync(join(outside, "folder"), join(repo, "src", "linked"), "dir");
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
+
+    const { exit, report } = await testReport(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report.repository).toMatchObject({ matches: 1, examples: [{ path: "src/a.ts", text: "console.log('inside');" }] });
   });
 
   it("reports a case and repo files a clause could not check, rather than passing them", async () => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
@@ -29,15 +29,18 @@ import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
-import { assertHostBindable, DAEMON_ACCESS_TOKEN_FILE, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
+import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
+  accessTokenKept,
+  dashboardAccessLink,
+  dashboardLink,
   lookupDaemon,
   openInBrowser,
   openDashboard,
   startDaemon,
   stopDaemon,
-  DAEMON_ACCESS_COOKIE,
+  DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
@@ -205,20 +208,16 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
   // The capability is shown to the person at a terminal, starting or finding the daemon; `rerail status` never
   // prints it, and neither does a start whose output is piped, as a coding agent's shell would be: the link would
   // land in its transcript and its provider's logs.
-  const { accessToken } = result.daemon.state;
-  const page = new URL(result.daemon.state.url);
-  // A browser cannot open the unspecified address the daemon was bound to; the local one reaches it, and the person
-  // swaps in another when the browser is on another machine.
-  if (page.hostname === "0.0.0.0" || page.hostname === "[::]") page.hostname = "127.0.0.1";
-  if (accessToken !== undefined) {
-    page.searchParams.set(DAEMON_ACCESS_COOKIE, accessToken);
-    const kept = existsSync(join(home, DAEMON_ACCESS_TOKEN_FILE)) && readFileSync(join(home, DAEMON_ACCESS_TOKEN_FILE), "utf8").trim() === accessToken;
-    const lifetime = kept ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}` : "it changes on every start";
+  const link = dashboardLink(result.daemon.state);
+  if (result.daemon.state.accessToken !== undefined) {
+    const lifetime = accessTokenKept(home, result.daemon.state)
+      ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}`
+      : "it changes on every start";
     process.stdout.write(process.stdout.isTTY
-      ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${page.href}\n`
+      ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
       : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
   }
-  if (flags.has("--open")) openInBrowser(page.href);
+  if (flags.has("--open")) openInBrowser(link);
   return 0;
 }
 
@@ -261,6 +260,10 @@ async function runStatusCommand(home: string): Promise<number> {
     process.stdout.write(`Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.\n`);
     return 4;
   }
+  if (lookup.status === "refused") {
+    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.\n`);
+    return 4;
+  }
   printDaemon({ state: lookup.state, health: lookup.health });
   return 0;
 }
@@ -295,7 +298,11 @@ function runSeedCommand(args: readonly string[]): number {
   return 0;
 }
 
-/** The rules page of the daemon serving this checkout; `--print` only reports the URL. */
+/**
+ * The rules page of the daemon serving this checkout; `--print` only reports the URL. At a terminal the printed URL
+ * carries the daemon's capability, so it opens in any browser of this machine; piped, as a coding agent runs it, the
+ * URL is the plain one.
+ */
 async function runManageCommand(args: readonly string[]): Promise<number> {
   const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown manage option: ${argument}\n\n${usage()}`);
   const page = await readRulesDashboard({ cwd: claudeWorkspace(process.cwd()) });
@@ -303,7 +310,7 @@ async function runManageCommand(args: readonly string[]): Promise<number> {
     process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start the daemon with rerail daemon start --open.\n`);
     return 3;
   }
-  process.stdout.write(`${page.url}\n`);
+  process.stdout.write(`${process.stdout.isTTY ? await dashboardAccessLink(page.url, defaultRerailHome()) : page.url}\n`);
   if (!flags.has("--print") && await openDashboard(page.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
   return 0;
 }

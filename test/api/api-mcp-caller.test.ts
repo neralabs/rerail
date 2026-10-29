@@ -359,6 +359,14 @@ describe("MCP callers and the agent guard", () => {
     expect(await (await person.request("/api/violations?since=0&ruleId=no-plaintext")).json())
       .toMatchObject({ total: 2, violations: expect.arrayContaining([expect.objectContaining({ message: "`API_KEY: hunter2` is plaintext", fix: { text: "API_KEY: ${SECRET}", span: expect.anything() } })]) });
     expect((await call("rules_activity", { since: 0 }, caller)).result).toMatchObject({ sessions: { started: 1 } });
+    // Its rules are its own repository's too: a library rule only the nested repository runs is the person's to see.
+    const elsewhere = MOCK_CODE_RULES[1]!;
+    upsertLibraryRule(stores.database(), loadRuleCatalog(), elsewhere, "code");
+    addAttachment(stores.database(), { repositoryKey: nestedKey, folder: "", sourceKind: "library_rule", sourceId: elsewhere.id });
+    const agentActivity = (await call("rules_activity", { since: 0 }, caller)).result;
+    expect(agentActivity).toHaveProperty("rules");
+    expect(agentActivity).not.toHaveProperty(["rules", elsewhere.id]);
+    expect(await (await person.request("/api/rules/activity?since=0")).json()).toHaveProperty(["rules", elsewhere.id]);
     // The agent's view of its own repository's transcript: tool outputs withheld, as is a call over a secret-like path.
     const view = (await call("session_events", { sessionId: "in-app" }, caller)).result as { events: Array<{ eventId: string; payload: Record<string, unknown> }> };
     expect(view.events.map(event => [event.eventId, event.payload.text ?? event.payload.input ?? event.payload.output])).toEqual([

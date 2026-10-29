@@ -31,9 +31,13 @@ function updatedAgo(at) {
 }
 
 function status() {
-  if (!data.loaded && !data.disconnected) return { cls: "", text: "Connecting…", title: "" };
+  if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: "" };
   const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
+  if (data.accessRequired) {
+    return { cls: "down", text: "This browser needs the dashboard link · run rerail manage",
+      title: "Rerail answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer." };
+  }
   if (data.disconnected) {
     if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
       return { cls: "down", text: `Daemon not reachable · data from ${rel} · new sessions are not steered`,
