@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +8,8 @@ import { pathToFileURL } from "node:url";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  // A test that timed out keeps running, and its CLI children may still be writing under the directory (ENOTEMPTY).
+  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true, maxRetries: 5 })));
 });
 
 interface PackageManifest {
@@ -133,21 +134,37 @@ process.exit(1);
 }
 
 describe("Rerail managed launcher", () => {
-  // npm packs the whole package (about 20 MB with the native engine and the model) and installs it from the registry,
-  // then runs the CLI a dozen times: about 50 s on a CI runner, so it gets the heavy tests' 180 s.
+  let packageRoot: string | undefined;
+  /** This checkout, packed and installed into a consumer directory as `npm install @neralabs/rerail` would install it. */
+  let packaged: { manifest: PackageManifest; root: string } | undefined;
+
+  // The pack and the install take the registry's and the runner's time, not the updater's: about 13s locally and
+  // twice that in CI, so they have their own budget and the tests' limits cover the CLI alone.
+  beforeAll(async () => {
+    packageRoot = await mkdtemp(join(tmpdir(), "rerail-launcher-package-"));
+    const manifest = await packageManifest();
+    const packed = await run(["npm", "pack", "--pack-destination", packageRoot], process.env);
+    expect(packed.exitCode, packed.stderr).toBe(0);
+    const archive = join(packageRoot, `${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`);
+    const consumer = join(packageRoot, "consumer");
+    // A clean install from the tarball's declared dependencies, so one missing from package.json fails here; packages
+    // already in the npm cache (CI restores it and runs npm ci first) are taken from it instead of the registry.
+    const installed = await run(["npm", "install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive], process.env);
+    expect(installed.exitCode, installed.stderr).toBe(0);
+    packaged = { manifest, root: join(consumer, "node_modules", ...manifest.name.split("/")) };
+  }, 120_000);
+
+  afterAll(async () => {
+    if (packageRoot !== undefined) await rm(packageRoot, { recursive: true, force: true, maxRetries: 5 });
+  });
+
   test("installs the packaged launcher and accepts then rejects deterministic local updates", async () => {
+    if (packaged === undefined) throw new Error("The launcher was not packaged and installed");
+    const { manifest, root: launcherRoot } = packaged;
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
     temporaryDirectories.push(root);
-    const manifest = await packageManifest();
     const acceptedVersion = laterPatch(manifest.version, 1);
     const rejectedVersion = laterPatch(manifest.version, 2);
-    const packaged = await run(["npm", "pack", "--pack-destination", root], process.env);
-    expect(packaged.exitCode).toBe(0);
-    const archive = join(root, `${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`);
-    const consumer = join(root, "consumer");
-    const installed = await run(["npm", "install", "--prefix", consumer, "--no-audit", "--no-fund", archive], process.env);
-    expect(installed.exitCode).toBe(0);
-    const launcherRoot = join(consumer, "node_modules", ...manifest.name.split("/"));
     const accepted = await createPackageFixture(launcherRoot, join(root, "registry"), acceptedVersion, true);
     const rejected = await createPackageFixture(launcherRoot, join(root, "registry"), rejectedVersion, false);
     const bin = await createLocalRegistry(root);
@@ -238,7 +255,7 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 180_000);
+  }, 60_000); // Twelve CLI runs, four of them updates that health-check the version they install: about 16s locally, twice that in CI.
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
