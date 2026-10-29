@@ -3,8 +3,8 @@
   "id": "complexity",
   "name": "Cyclomatic complexity (limit 6)",
   "category": "language",
-  "covers": "Flags a Python, TypeScript or JavaScript function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6.",
-  "reason": "matches Python, TypeScript or JavaScript source",
+  "covers": "Flags a Python, TypeScript, JavaScript, PHP, Rust or Vue function, or one a Blade template's PHP defines, whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6.",
+  "reason": "matches Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source",
   "match": {
     "any": [
       {
@@ -77,6 +77,72 @@
           "**/__tests__/**"
         ],
         "label": "*.js files"
+      },
+      {
+        "files": [
+          "**/*.php"
+        ],
+        "exclude": [
+          "**/*.blade.php",
+          "**/vendor/**",
+          "**/node_modules/**",
+          "**/generated/**",
+          "**/__generated__/**",
+          "**/test/**",
+          "**/tests/**",
+          "**/Test/**",
+          "**/Tests/**",
+          "**/spec/**",
+          "**/*Test.php",
+          "**/*TestCase.php"
+        ],
+        "label": "*.php files"
+      },
+      {
+        "files": [
+          "**/*.blade.php"
+        ],
+        "exclude": [
+          "**/vendor/**",
+          "**/node_modules/**",
+          "**/tests/**",
+          "**/Tests/**"
+        ],
+        "label": "*.blade.php files"
+      },
+      {
+        "files": [
+          "**/*.rs"
+        ],
+        "exclude": [
+          "**/target/**",
+          "**/generated/**",
+          "**/tests/**",
+          "**/tests.rs",
+          "**/*_test.rs",
+          "**/*_tests.rs"
+        ],
+        "label": "*.rs files"
+      },
+      {
+        "files": [
+          "**/*.vue"
+        ],
+        "exclude": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/out/**",
+          "**/.nuxt/**",
+          "**/.output/**",
+          "**/coverage/**",
+          "**/generated/**",
+          "**/__generated__/**",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/__tests__/**"
+        ],
+        "label": "*.vue files"
       }
     ]
   },
@@ -126,6 +192,70 @@
         "passes": {
           "path": "src/grade.js",
           "text": "export function grade(score, late) {\n  if (late) return \"F\";\n  return score > 90 ? \"A\" : \"B\";\n}\n"
+        }
+      }
+    },
+    {
+      "id": "complexity-cyclomatic-php",
+      "document": "rules/complexity-cyclomatic-php.json",
+      "title": "Keep PHP functions at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/Grade.php",
+          "text": "<?php\nfunction grade(int $score, bool $late, bool $extra): string\n{\n    if ($score > 90 && !$late) {\n        return 'A';\n    } elseif ($score > 80 || $extra) {\n        return 'B';\n    } elseif ($score > 70) {\n        return 'C';\n    }\n    foreach ([1, 2] as $bonus) {\n        if ($bonus > $score) {\n            return 'D';\n        }\n    }\n    return 'F';\n}\n"
+        },
+        "passes": {
+          "path": "src/Grade.php",
+          "text": "<?php\nfunction grade(int $score, bool $late): string\n{\n    if ($late) {\n        return 'F';\n    }\n    return $score > 90 ? 'A' : 'B';\n}\n"
+        }
+      }
+    },
+    {
+      "id": "complexity-cyclomatic-blade",
+      "document": "rules/complexity-cyclomatic-blade.json",
+      "title": "Keep the functions in Blade templates at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "resources/views/grade.blade.php",
+          "text": "@php\n    $grade = function (int $score, bool $late, bool $extra): string {\n        if ($score > 90 && !$late) return 'A';\n        if ($score > 80 || $extra) return 'B';\n        if ($score > 70) return 'C';\n        foreach ([1, 2] as $bonus) {\n            if ($bonus > $score) return 'D';\n        }\n        return 'F';\n    };\n@endphp\n<p>{{ $grade($score, $late, $extra) }}</p>\n"
+        },
+        "passes": {
+          "path": "resources/views/grade.blade.php",
+          "text": "@if ($late)\n    <p>F</p>\n@elseif ($score > 90 && !$extra)\n    <p>A</p>\n@elseif ($score > 80 || $extra)\n    <p>B</p>\n@elseif ($score > 70)\n    <p>C</p>\n@else\n    @foreach ([1, 2] as $bonus)\n        @if ($bonus > $score)\n            <p>D</p>\n        @endif\n    @endforeach\n@endif\n"
+        }
+      }
+    },
+    {
+      "id": "complexity-cyclomatic-rust",
+      "document": "rules/complexity-cyclomatic-rust.json",
+      "title": "Keep Rust functions at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/grade.rs",
+          "text": "pub fn grade(score: u32, late: bool, extra: bool) -> &'static str {\n    if score > 90 && !late {\n        \"A\"\n    } else if score > 80 || extra {\n        \"B\"\n    } else if score > 70 {\n        \"C\"\n    } else {\n        for bonus in [1, 2] {\n            if bonus > score {\n                return \"D\";\n            }\n        }\n        \"F\"\n    }\n}\n"
+        },
+        "passes": {
+          "path": "src/grade.rs",
+          "text": "pub fn grade(score: u32, late: bool) -> &'static str {\n    if late {\n        return \"F\";\n    }\n    match score {\n        91.. => \"A\",\n        _ => \"B\",\n    }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "complexity-cyclomatic-vue",
+      "document": "rules/complexity-cyclomatic-vue.json",
+      "title": "Keep Vue component functions at cyclomatic complexity 6 or lower",
+      "group": "Complexity",
+      "examples": {
+        "caught": {
+          "path": "src/components/Grade.vue",
+          "text": "<script setup lang=\"ts\">\nconst props = defineProps<{ score: number; late: boolean; extra: boolean }>();\n\nfunction grade(): string {\n  if (props.score > 90 && !props.late) return \"A\";\n  if (props.score > 80 || props.extra) return \"B\";\n  if (props.score > 70) return \"C\";\n  for (const bonus of [1, 2]) {\n    if (bonus > props.score) return \"D\";\n  }\n  return \"F\";\n}\n</script>\n\n<template>\n  <p>{{ grade() }}</p>\n</template>\n"
+        },
+        "passes": {
+          "path": "src/components/Grade.vue",
+          "text": "<script setup lang=\"ts\">\nconst props = defineProps<{ score: number; late: boolean }>();\n\nfunction grade(): string {\n  if (props.late) return \"F\";\n  return props.score > 90 ? \"A\" : \"B\";\n}\n</script>\n\n<template>\n  <p v-if=\"props.late && props.score > 0\">{{ props.score > 90 ? grade() : \"B\" }}</p>\n</template>\n"
         }
       }
     }

@@ -34,6 +34,12 @@ const ruleSchema = z.strictObject({
    * unit.
    */
   fixtures: z.array(nonEmpty).min(1).optional(),
+  /**
+   * The file types this port covers, when it covers fewer than its tool-pack (`gates.yaml`'s `upstream.lints`,
+   * narrowed by `rerail.in_scope`): `loads`'s in-scope check then asks for these alone. A tool with one port per
+   * language (lizard) names each port's own. Each must be one of the tool-pack's types (`declared-lints`).
+   */
+  lints: z.array(z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .py or .blade.php")).min(1).optional(),
 });
 export type PackRule = z.infer<typeof ruleSchema>;
 
@@ -70,10 +76,16 @@ export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 const suppressionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: z.string().trim().min(20) });
 export type SuppressionExemption = z.infer<typeof suppressionExemptionSchema>;
 
+const familySchema = z.enum(CODE_RULE_LANGUAGE_FAMILIES);
+
 export const packSchema = z
   .strictObject({
     pack: z.string().regex(/^[a-z0-9][a-z0-9-]*$/u),
-    family: z.enum(CODE_RULE_LANGUAGE_FAMILIES),
+    /**
+     * The language family its ports are written in, or the families, for a pack whose ports span languages (the
+     * complexity pack's one rule per language).
+     */
+    family: z.union([familySchema, z.array(familySchema).min(1)]),
     /** Every capability the pack declares; T4 needs a rule for each, T2 an oracle for each. */
     capabilities: z.array(nonEmpty).min(1),
     /** Declared capabilities T4 covers by exemption instead of a rule. */
@@ -91,6 +103,7 @@ export const packSchema = z
     for (const id of duplicates(pack.rules.map(rule => rule.id))) issue(`duplicate rule id ${id}`);
     for (const name of duplicates(pack.tools.map(tool => tool.name))) issue(`duplicate tool ${name}`);
     for (const capability of duplicates(pack.capabilities)) issue(`duplicate capability ${capability}`);
+    for (const family of duplicates(packFamilies(pack))) issue(`duplicate family ${family}`);
     for (const capability of duplicates(pack.exemptCapabilities.map(exemption => exemption.capability))) issue(`duplicate exemption for ${capability}`);
     const tools = new Set(pack.tools.map(tool => tool.name));
     const capabilities = new Set(pack.capabilities);
@@ -106,6 +119,11 @@ export const packSchema = z
     for (const { rule } of pack.suppressionExemptions) if (!rules.has(rule)) issue(`suppression exemption for ${rule}, which is not a rule of the pack`);
   });
 export type Pack = z.infer<typeof packSchema>;
+
+/** The language families of `pack`'s ports: its `family`, one or several. */
+export function packFamilies(pack: Pick<Pack, "family">): readonly z.infer<typeof familySchema>[] {
+  return typeof pack.family === "string" ? [pack.family] : pack.family;
+}
 
 const findingSchema = z.strictObject({
   rule: nonEmpty,

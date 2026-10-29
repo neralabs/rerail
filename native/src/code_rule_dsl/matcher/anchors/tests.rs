@@ -516,7 +516,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 387, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 394, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
@@ -533,6 +533,29 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             "javascript",
             GrammarDialect::JavaScript,
             "function route(a, b, c) {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
+        ),
+        (
+            "php",
+            GrammarDialect::Php,
+            "<?php\nfunction route($a, $b, $c) {\n  if ($a) return 1;\n  if ($b) return 2;\n  if ($c) return 3;\n  foreach ($a as $x) { if ($x) return 4; }\n  return $a && $b ? 5 : 6;\n}\n",
+        ),
+        // A Blade clause reads the compiled view, a PHP program (`ast.embedded: compiled-view`).
+        (
+            "blade",
+            GrammarDialect::Php,
+            "<?php\n$route = function ($a, $b, $c) {\n  if ($a) return 1;\n  if ($b) return 2;\n  if ($c) return 3;\n  foreach ($a as $x) { if ($x) return 4; }\n  return $a && $b ? 5 : 6;\n};\n",
+        ),
+        (
+            "rust",
+            GrammarDialect::Rust,
+            "fn route(a: bool, b: bool, c: bool, v: Vec<u32>) -> u32 {\n    if a { return 1; }\n    if b { return 2; }\n    if c { return 3; }\n    for x in v { if x > 0 { return 4; } }\n    if a && b { 5 } else { 6 }\n}\n",
+        ),
+        // A Vue clause reads the program its scripts make (`ast.embedded: script-block`): TypeScript
+        // for `lang="ts"`.
+        (
+            "vue",
+            GrammarDialect::TypeScript,
+            "function route(a: any, b: any, c: any): number {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
         ),
     ];
     for (query, _) in &queries {

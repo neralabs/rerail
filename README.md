@@ -95,7 +95,7 @@ rerail manage                 # Rule packs page: add it to this repository
 | `rust` | Clippy (Rust 1.99) |
 | `blade` | Bladestan v0.11, tlint v9, stillat/blade-parser v2 |
 | `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
-| `complexity` | lizard v1: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
+| `complexity` | lizard v1: cyclomatic complexity above 6, for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue |
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
