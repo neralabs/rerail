@@ -6,7 +6,7 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 | Item | State | Owner | Branch | Notes |
 |---|---|---|---|---|
-| Lattice facts (exploration) | **E0 census and E1 regular CPU fixpoint launched 2026-10-29** | decider | `Moti-Velz/facts-engine-lattice-census`, `Moti-Velz/facts-engine-lattice-cpu` | `docs/facts/LATTICE.md` (L1–L10, H1–H7); E2 (Metal) waits on E0's frontier widths |
+| Lattice facts (exploration) | **E0 and E1 done, merged (`0f43efb4e`, `26dbfee62`).** H1 holds with rewrites, H2 killed for graph fixpoints (tree closures are the cost → L11), H3 killed as stated, H4 holds (44.7× one core), H5 killed within a round (2.12× at 6) and holds across worktrees (5.1–5.3× at 6, 9.4–11.2× at 18) | decider | branches `Moti-Velz/facts-engine-lattice-{census,cpu}` (worktrees removed) | `docs/facts/LATTICE.md` amended (L1–L11, verdicts); next: E4 tree closures, E3 maintenance incl. CSR rows, E2 Metal with the fleet as unit |
 | Phase 1 plan | written | decider | `Moti-Velz/facts-plan` | `docs/facts/{PLAN,PHASE-1,SCRATCHPAD}.md` |
 | Spike A: facts once + in-memory evaluation | **done, verified (A, A2, A3 runs)** | — | `Moti-Velz/facts-spike-a` @ `49027eb04` (A3 gate binary `f5feb80d6`) | A4 pass; A1 9 of 10 rules exact; A2 38.8% of native after substitution (kill band > 25%); per-file phase O(file); peak from the repository clause |
 | Spike B: base + delta dataflow | **done, verified** | SpikeB (Opus 5.5) | `Moti-Velz/facts-spike-b` @ `23d89d3e6` (gate binary `3019c8adf`) | B1, B2, B4, B5 pass; B3 255 MB under the strict-majority base, 195–198 MB with per-path or cluster bases |
@@ -106,6 +106,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 - Divergence of the 47 worktrees from a common base (B reports it; it sets per-worktree state).
 
 ## Log
+
+- LatticeE0Census (32 min) and LatticeE1Cpu (1 h 26 min) done; merged; decider's gate on the merge: 28/29, 46/46 mutants, `count-regression` failed on 12 counts in 7 clauses that grew under P3b's K1 (merge `eee7d6ac3`) and were never named because the baseline stayed at `17c20dd0f`; E0's engine change is observation-only (diff read). Rows named in REWRITES.md § Count changes and baseline refreshed from `20261029T145301-gate`. `LATTICE.md` amended. Worktrees `lattice-census`, `lattice-cpu` removed.
 
 - Lattice exploration opened: `LATTICE.md` written; E0 census and E1 regular CPU fixpoint launched in sub-worktrees under `.worktrees/`.
 
