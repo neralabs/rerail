@@ -1,5 +1,5 @@
-# Operational commands for working on Rerail. Every recipe wraps a script under scripts/ (or playground/ and
-# conformance/), so `npm` users can run the same thing without `just`.
+# Operational commands for working on Rerail. Every recipe wraps a script under scripts/ (or conformance/), so `npm`
+# users can run the same thing without `just`.
 
 # List the recipes.
 default:
@@ -24,10 +24,6 @@ rerail-setup:
 # Build and (re)start this checkout's isolated dev daemon; --install-bridge registers this checkout's build with every coding agent; --restore [dir] restores a nuke-rerail backup's database into it.
 rerail-dev *args:
     @node scripts/dev/rerail-dev.mjs up {{ args }}
-
-# Run the development rule playground beside this checkout's dev daemon (attended macOS only).
-rerail-playground *args:
-    @node playground/scripts/playground-dev.mjs {{ args }}
 
 # Delete this repository's session history, across all its worktrees, from this checkout's dev database; rules are kept.
 rerail-reset:

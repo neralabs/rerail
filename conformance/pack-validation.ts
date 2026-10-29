@@ -26,7 +26,7 @@ import {
 import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "../scripts/generate/packs/pack-list.js";
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
-import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
+import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -857,7 +857,9 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   // the generator (files directly in it) are Rerail's; every file in its subdirectories (fixtures/, tests/;
   // inToolSubdirectory, which the publish licence check shares) must match no "Not copied" glob, and is then Rerail's
   // when the tool's own upstream/<tool>/UPSTREAM.md lists it, and otherwise must match a "Taken from it" glob
-  // (sourceFailures). Per-file provenance is in each test-data archive's provenance.json, which no check reads.
+  // (sourceFailures). Per-file provenance is in each test-data archive's provenance.json, which no check reads. A
+  // tool's publish/ is left out: a pull lays it over the tool directory, where its test data is judged, and its staged
+  // samples are licensed through scripts/samples/licences.ts and checked by the publish's prep (publishedSamples).
   for (const failure of sources.failures) fail("licences", failure);
   if (!existsSync(join(directory, "LICENSE"))) fail("licences", "LICENSE is missing");
   for (const [project, licence] of sources.recorded) {
@@ -866,7 +868,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   }
   const { authored, failures: authoredFailures } = readAuthored(directory);
   for (const failure of authoredFailures) fail("licences", failure);
-  const deeper = filesUnder(directory, join(directory, "upstream")).filter(inToolSubdirectory);
+  const deeper = filesUnder(directory, join(directory, "upstream")).filter(path => inToolSubdirectory(path) && path.split("/")[2] !== PUBLISH_DIRECTORY);
   for (const failure of sourceFailures(directory, sources, authored, deeper)) fail("licences", failure);
 
   // Check 7: manifest. Set-up can recommend the pack: its match is there, and core's pack list names it.

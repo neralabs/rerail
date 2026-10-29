@@ -1,0 +1,1177 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-deprecated",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace deprecated React APIs, such as ReactDOM.render, React.createClass, React.PropTypes and unprefixed componentWillMount, with their current equivalents.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "default-pragma": {
+            "not": {
+              "inside": {
+                "kind": "program",
+                "stopBy": "end",
+                "has": {
+                  "kind": "comment",
+                  "stopBy": "end",
+                  "regex": "@jsx\\s+[_$a-zA-Z][_$a-zA-Z0-9]*(?:[.\\s]|\\*/$|$)",
+                  "not": {
+                    "regex": "@jsx\\s+React(?:[.\\s]|\\*/$|$)"
+                  }
+                }
+              }
+            }
+          },
+          "react": {
+            "kind": "identifier",
+            "regex": "^React$",
+            "matches": "default-pragma"
+          },
+          "unwrapped": {
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "member_expression"
+                  }
+                },
+                "any": [
+                  {
+                    "kind": "type_query"
+                  },
+                  {
+                    "kind": "jsx_opening_element"
+                  },
+                  {
+                    "kind": "jsx_closing_element"
+                  },
+                  {
+                    "kind": "jsx_self_closing_element"
+                  }
+                ]
+              }
+            }
+          },
+          "property-key": {
+            "has": {
+              "field": "property",
+              "pattern": "$KEY"
+            }
+          },
+          "destructured": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier_pattern",
+                "all": [
+                  {
+                    "pattern": "$KEY"
+                  },
+                  {
+                    "pattern": "$OLD"
+                  }
+                ]
+              },
+              {
+                "kind": "object_assignment_pattern",
+                "has": {
+                  "field": "left",
+                  "kind": "shorthand_property_identifier_pattern",
+                  "all": [
+                    {
+                      "pattern": "$KEY"
+                    },
+                    {
+                      "pattern": "$OLD"
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "pair_pattern",
+                "has": {
+                  "field": "key",
+                  "any": [
+                    {
+                      "kind": "property_identifier",
+                      "all": [
+                        {
+                          "pattern": "$KEY"
+                        },
+                        {
+                          "pattern": "$OLD"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "computed_property_name",
+                      "has": {
+                        "kind": "identifier",
+                        "all": [
+                          {
+                            "pattern": "$KEY"
+                          },
+                          {
+                            "pattern": "$OLD"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "inside": {
+              "kind": "object_pattern"
+            }
+          },
+          "module-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "kind": "import"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "optional_chain"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "new_expression"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "api",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "regex": "^(?:React\\.(?:renderComponent|renderComponentToString|renderComponentToStaticMarkup|isValidComponent|PropTypes(?:\\.component|\\.renderable)?|isValidClass|addons\\.(?:classSet|cloneWithProps|LinkedStateMixin|TestUtils)|render|unmountComponentAtNode|findDOMNode|renderToString|renderToStaticMarkup|createClass|DOM)|this\\.transferPropsTo|ReactDOM\\.(?:render|hydrate|unmountComponentAtNode)|ReactDOMServer\\.renderToNodeStream|(?:ReactPerf|Perf)\\.(?:printDOM|getMeasurementsSummaryMap))$",
+                "pattern": "$OLD",
+                "matches": "unwrapped",
+                "all": [
+                  {
+                    "matches": "property-key"
+                  },
+                  {
+                    "any": [
+                      {
+                        "not": {
+                          "regex": "^React\\."
+                        }
+                      },
+                      {
+                        "matches": "default-pragma"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "member_expression",
+                "regex": "^[_$a-zA-Z][_$a-zA-Z0-9]*\\.(?:renderComponent|renderComponentToString|renderComponentToStaticMarkup|isValidComponent|PropTypes(?:\\.component|\\.renderable)?|isValidClass|addons\\.(?:classSet|cloneWithProps|LinkedStateMixin|TestUtils)|render|unmountComponentAtNode|findDOMNode|renderToString|renderToStaticMarkup|createClass|DOM)$",
+                "not": {
+                  "regex": "^React\\."
+                },
+                "pattern": "$OLD",
+                "matches": "unwrapped",
+                "all": [
+                  {
+                    "matches": "property-key"
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "stopBy": "end",
+                      "kind": "identifier",
+                      "pattern": "$PID"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "program",
+                      "stopBy": "end",
+                      "has": {
+                        "kind": "comment",
+                        "stopBy": "end",
+                        "regex": "@jsx\\s+\\S",
+                        "pattern": "$CM"
+                      }
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "PID",
+                      "op": "eq",
+                      "right": "PRAGMA"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "import_specifier",
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "all": [
+                    {
+                      "pattern": "$KEY"
+                    },
+                    {
+                      "pattern": "$OLD"
+                    }
+                  ]
+                },
+                "inside": {
+                  "kind": "import_statement",
+                  "stopBy": "end",
+                  "has": {
+                    "field": "source",
+                    "pattern": "$SRC"
+                  }
+                },
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:renderComponent|renderComponentToString|renderComponentToStaticMarkup|isValidComponent|isValidClass|render|unmountComponentAtNode|findDOMNode|renderToString|renderToStaticMarkup|createClass|PropTypes|DOM)$"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "end",
+                          "has": {
+                            "field": "source",
+                            "regex": "^(?:'react'|\"react\")$"
+                          }
+                        }
+                      },
+                      {
+                        "matches": "default-pragma"
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:render|hydrate|unmountComponentAtNode)$"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "end",
+                          "has": {
+                            "field": "source",
+                            "regex": "^(?:'react-dom'|\"react-dom\")$"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^renderToNodeStream$"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "end",
+                          "has": {
+                            "field": "source",
+                            "regex": "^(?:'react-dom/server'|\"react-dom/server\")$"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:printDOM|getMeasurementsSummaryMap)$"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "import_statement",
+                          "stopBy": "end",
+                          "has": {
+                            "field": "source",
+                            "regex": "^(?:'react-addons-perf'|\"react-addons-perf\")$"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "matches": "destructured",
+                "any": [
+                  {
+                    "regex": "^(?:\\[\\s*)?(?:renderComponent|renderComponentToString|renderComponentToStaticMarkup|isValidComponent|isValidClass|render|unmountComponentAtNode|findDOMNode|renderToString|renderToStaticMarkup|createClass|PropTypes|DOM)(?:\\s*\\])?(?:\\s*[:=][\\s\\S]*)?$",
+                    "inside": {
+                      "kind": "object_pattern",
+                      "inside": {
+                        "kind": "variable_declarator",
+                        "field": "name",
+                        "has": {
+                          "field": "value",
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "kind": "identifier",
+                              "regex": "^React$"
+                            },
+                            {
+                              "matches": "module-call",
+                              "has": {
+                                "field": "arguments",
+                                "regex": "^\\(\\s*(?:'react'|\"react\")\\s*[,)]"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "default-pragma"
+                  },
+                  {
+                    "regex": "^(?:\\[\\s*)?(?:render|hydrate|unmountComponentAtNode)(?:\\s*\\])?(?:\\s*[:=][\\s\\S]*)?$",
+                    "inside": {
+                      "kind": "object_pattern",
+                      "inside": {
+                        "kind": "variable_declarator",
+                        "field": "name",
+                        "has": {
+                          "field": "value",
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "kind": "identifier",
+                              "regex": "^ReactDOM$"
+                            },
+                            {
+                              "matches": "module-call",
+                              "has": {
+                                "field": "arguments",
+                                "regex": "^\\(\\s*(?:'react-dom'|\"react-dom\")\\s*[,)]"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "regex": "^(?:\\[\\s*)?(?:renderToNodeStream)(?:\\s*\\])?(?:\\s*[:=][\\s\\S]*)?$",
+                    "inside": {
+                      "kind": "object_pattern",
+                      "inside": {
+                        "kind": "variable_declarator",
+                        "field": "name",
+                        "has": {
+                          "field": "value",
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "kind": "identifier",
+                              "regex": "^ReactDOMServer$"
+                            },
+                            {
+                              "matches": "module-call",
+                              "has": {
+                                "field": "arguments",
+                                "regex": "^\\(\\s*(?:'react-dom/server'|\"react-dom/server\")\\s*[,)]"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "regex": "^(?:\\[\\s*)?(?:printDOM|getMeasurementsSummaryMap)(?:\\s*\\])?(?:\\s*[:=][\\s\\S]*)?$",
+                    "inside": {
+                      "kind": "object_pattern",
+                      "inside": {
+                        "kind": "variable_declarator",
+                        "field": "name",
+                        "has": {
+                          "field": "value",
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "kind": "identifier",
+                              "regex": "^(?:ReactPerf|Perf)$"
+                            },
+                            {
+                              "matches": "module-call",
+                              "has": {
+                                "field": "arguments",
+                                "regex": "^\\(\\s*(?:'react-addons-perf'|\"react-addons-perf\")\\s*[,)]"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "C1": {
+              "replace": {
+                "source": "$CM",
+                "replace": "(?s)^(?://(.*)|/\\*(.*)\\*/)$",
+                "by": "${1}${2}"
+              }
+            },
+            "PRAGMA": {
+              "replace": {
+                "source": "$C1",
+                "replace": "(?s)^.*?@jsx\\s+([^\\s.]*)[\\s\\S]*$",
+                "by": "${1}"
+              }
+            },
+            "N1": {
+              "replace": {
+                "source": "$KEY",
+                "replace": "^(?:renderComponent|render)$",
+                "by": "createRoot(container).render(element) from react-dom/client"
+              }
+            },
+            "N2": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^(?:hydrate)$",
+                "by": "hydrateRoot(container, element) from react-dom/client"
+              }
+            },
+            "N3": {
+              "replace": {
+                "source": "$N2",
+                "replace": "^(?:unmountComponentAtNode)$",
+                "by": "root.unmount() on the root that createRoot returned"
+              }
+            },
+            "N4": {
+              "replace": {
+                "source": "$N3",
+                "replace": "^(?:renderComponentToString|renderToString)$",
+                "by": "renderToString from react-dom/server"
+              }
+            },
+            "N5": {
+              "replace": {
+                "source": "$N4",
+                "replace": "^(?:renderComponentToStaticMarkup|renderToStaticMarkup)$",
+                "by": "renderToStaticMarkup from react-dom/server"
+              }
+            },
+            "N6": {
+              "replace": {
+                "source": "$N5",
+                "replace": "^(?:renderToNodeStream)$",
+                "by": "renderToPipeableStream from react-dom/server"
+              }
+            },
+            "N7": {
+              "replace": {
+                "source": "$N6",
+                "replace": "^(?:isValidComponent)$",
+                "by": "isValidElement from react"
+              }
+            },
+            "N8": {
+              "replace": {
+                "source": "$N7",
+                "replace": "^(?:isValidClass)$",
+                "by": "a check that the class extends React.Component"
+              }
+            },
+            "N9": {
+              "replace": {
+                "source": "$N8",
+                "replace": "^(?:component)$",
+                "by": "PropTypes.element from the prop-types package"
+              }
+            },
+            "N10": {
+              "replace": {
+                "source": "$N9",
+                "replace": "^(?:renderable)$",
+                "by": "PropTypes.node from the prop-types package"
+              }
+            },
+            "N11": {
+              "replace": {
+                "source": "$N10",
+                "replace": "^(?:PropTypes)$",
+                "by": "PropTypes from the prop-types package"
+              }
+            },
+            "N12": {
+              "replace": {
+                "source": "$N11",
+                "replace": "^(?:transferPropsTo)$",
+                "by": "spreading this.props onto the child element"
+              }
+            },
+            "N13": {
+              "replace": {
+                "source": "$N12",
+                "replace": "^(?:classSet)$",
+                "by": "the classnames package"
+              }
+            },
+            "N14": {
+              "replace": {
+                "source": "$N13",
+                "replace": "^(?:cloneWithProps)$",
+                "by": "cloneElement from react"
+              }
+            },
+            "N15": {
+              "replace": {
+                "source": "$N14",
+                "replace": "^(?:LinkedStateMixin)$",
+                "by": "an explicit value prop and onChange handler"
+              }
+            },
+            "N16": {
+              "replace": {
+                "source": "$N15",
+                "replace": "^(?:TestUtils)$",
+                "by": "act from react with a testing library such as @testing-library/react"
+              }
+            },
+            "N17": {
+              "replace": {
+                "source": "$N16",
+                "replace": "^(?:findDOMNode)$",
+                "by": "a ref on the element"
+              }
+            },
+            "N18": {
+              "replace": {
+                "source": "$N17",
+                "replace": "^(?:createClass)$",
+                "by": "a class extending React.Component, or the create-react-class package"
+              }
+            },
+            "N19": {
+              "replace": {
+                "source": "$N18",
+                "replace": "^(?:DOM)$",
+                "by": "JSX or createElement from react"
+              }
+            },
+            "N20": {
+              "replace": {
+                "source": "$N19",
+                "replace": "^(?:printDOM)$",
+                "by": "printOperations"
+              }
+            },
+            "NEW": {
+              "replace": {
+                "source": "$N20",
+                "replace": "^(?:getMeasurementsSummaryMap)$",
+                "by": "getWasted"
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-deprecated",
+        "message": "Replace $OLD with $NEW; React has removed it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-deprecated"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "lifecycle",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "lifecycle-key": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "property_identifier"
+                    },
+                    {
+                      "kind": "private_property_identifier"
+                    }
+                  ],
+                  "inside": {
+                    "inside": {
+                      "any": [
+                        {
+                          "kind": "class_body"
+                        },
+                        {
+                          "kind": "object"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "kind": "computed_property_name",
+                    "inside": {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "class_body"
+                          },
+                          {
+                            "kind": "object"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "shorthand_property_identifier",
+                  "inside": {
+                    "kind": "object"
+                  }
+                }
+              ]
+            },
+            "jsdoc-component": {
+              "follows": {
+                "kind": "comment",
+                "regex": "^/\\*\\*[\\s\\S]*@(?:extends|augments)\\s+React\\.(?:Pure)?Component(?:\\s|\\*/$)",
+                "layout": {
+                  "after": {
+                    "to": "token",
+                    "blank": {
+                      "eq": 0
+                    }
+                  }
+                }
+              }
+            },
+            "create-class-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^createReactClass$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "react"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^createReactClass$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "create-class-argument": {
+              "inside": {
+                "kind": "arguments",
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "matches": "create-class-callee"
+                      }
+                    },
+                    {
+                      "kind": "new_expression",
+                      "has": {
+                        "field": "constructor",
+                        "matches": "create-class-callee"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "component-superclass": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:Pure)?Component$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "react"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:Pure)?Component$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "superclass-expression": {
+              "any": [
+                {
+                  "matches": "component-superclass"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "superclass-expression"
+                  }
+                }
+              ]
+            },
+            "component-class": {
+              "any": [
+                {
+                  "kind": "class_declaration"
+                },
+                {
+                  "kind": "abstract_class_declaration"
+                },
+                {
+                  "kind": "class"
+                }
+              ],
+              "all": [
+                {
+                  "any": [
+                    {
+                      "has": {
+                        "kind": "class_heritage",
+                        "has": {
+                          "any": [
+                            {
+                              "matches": "superclass-expression"
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "matches": "superclass-expression"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "any": [
+                            {
+                              "kind": "class_declaration"
+                            },
+                            {
+                              "kind": "abstract_class_declaration"
+                            }
+                          ]
+                        },
+                        {
+                          "any": [
+                            {
+                              "matches": "jsdoc-component"
+                            },
+                            {
+                              "inside": {
+                                "kind": "export_statement",
+                                "matches": "jsdoc-component"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "class",
+                      "inside": {
+                        "inside": {
+                          "matches": "jsdoc-component"
+                        }
+                      }
+                    },
+                    {
+                      "matches": "create-class-argument"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "lifecycle-key",
+            "regex": "^#?componentWill(?:Mount|ReceiveProps|Update)$",
+            "pattern": "$KEY",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "class_body"
+                      },
+                      {
+                        "kind": "object"
+                      }
+                    ]
+                  },
+                  "any": [
+                    {
+                      "kind": "class_body",
+                      "inside": {
+                        "matches": "component-class"
+                      }
+                    },
+                    {
+                      "kind": "object",
+                      "matches": "create-class-argument"
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "class_body"
+                          },
+                          {
+                            "kind": "object"
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "kind": "class_body",
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "class_declaration"
+                              },
+                              {
+                                "kind": "abstract_class_declaration"
+                              },
+                              {
+                                "kind": "class"
+                              }
+                            ],
+                            "has": {
+                              "kind": "class_heritage",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "member_expression",
+                                    "all": [
+                                      {
+                                        "has": {
+                                          "field": "object",
+                                          "kind": "identifier",
+                                          "not": {
+                                            "regex": "^React$"
+                                          },
+                                          "pattern": "$PID"
+                                        }
+                                      },
+                                      {
+                                        "has": {
+                                          "field": "property",
+                                          "regex": "^(?:Pure)?Component$"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "value",
+                                      "all": [
+                                        {
+                                          "kind": "member_expression",
+                                          "all": [
+                                            {
+                                              "has": {
+                                                "field": "object",
+                                                "kind": "identifier",
+                                                "not": {
+                                                  "regex": "^React$"
+                                                },
+                                                "pattern": "$PID"
+                                              }
+                                            },
+                                            {
+                                              "has": {
+                                                "field": "property",
+                                                "regex": "^(?:Pure)?Component$"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "kind": "object",
+                          "inside": {
+                            "kind": "arguments",
+                            "inside": {
+                              "any": [
+                                {
+                                  "kind": "call_expression",
+                                  "has": {
+                                    "field": "function",
+                                    "all": [
+                                      {
+                                        "kind": "member_expression",
+                                        "all": [
+                                          {
+                                            "has": {
+                                              "field": "object",
+                                              "kind": "identifier",
+                                              "not": {
+                                                "regex": "^React$"
+                                              },
+                                              "pattern": "$PID"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "property",
+                                              "regex": "^createReactClass$"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "kind": "new_expression",
+                                  "has": {
+                                    "field": "constructor",
+                                    "all": [
+                                      {
+                                        "kind": "member_expression",
+                                        "all": [
+                                          {
+                                            "has": {
+                                              "field": "object",
+                                              "kind": "identifier",
+                                              "not": {
+                                                "regex": "^React$"
+                                              },
+                                              "pattern": "$PID"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "property",
+                                              "regex": "^createReactClass$"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "program",
+                      "stopBy": "end",
+                      "has": {
+                        "kind": "comment",
+                        "stopBy": "end",
+                        "regex": "@jsx\\s+\\S",
+                        "pattern": "$CM"
+                      }
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "PID",
+                      "op": "eq",
+                      "right": "PRAGMA"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "C1": {
+              "replace": {
+                "source": "$CM",
+                "replace": "(?s)^(?://(.*)|/\\*(.*)\\*/)$",
+                "by": "${1}${2}"
+              }
+            },
+            "PRAGMA": {
+              "replace": {
+                "source": "$C1",
+                "replace": "(?s)^.*?@jsx\\s+([^\\s.]*)[\\s\\S]*$",
+                "by": "${1}"
+              }
+            },
+            "NAME": {
+              "replace": {
+                "source": "$KEY",
+                "replace": "^#",
+                "by": ""
+              }
+            },
+            "N1": {
+              "replace": {
+                "source": "$NAME",
+                "replace": "^componentWillMount$",
+                "by": "componentDidMount or the constructor"
+              }
+            },
+            "N2": {
+              "replace": {
+                "source": "$N1",
+                "replace": "^componentWillReceiveProps$",
+                "by": "componentDidUpdate or getDerivedStateFromProps"
+              }
+            },
+            "NEW": {
+              "replace": {
+                "source": "$N2",
+                "replace": "^componentWillUpdate$",
+                "by": "componentDidUpdate with getSnapshotBeforeUpdate"
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-deprecated",
+        "message": "Move the logic of $NAME to $NEW, or rename it UNSAFE_$NAME if it must stay; the unprefixed name is deprecated.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-deprecated"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

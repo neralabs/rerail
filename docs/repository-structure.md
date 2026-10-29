@@ -16,7 +16,6 @@ structure review on PR #1 plus #25, the generated-file manifest.
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
 | `e2e/` | The dashboard's Playwright browser specs over seeded scenarios (`e2e/README.md`); helpers in `support/` |
-| `playground/` | The rule playground, its own npm package |
 | `scripts/generate/` | Generators of engine, host and pack data, listed in `scripts/generate/README.md` |
 
 ## Running the gate
@@ -103,12 +102,12 @@ the item a `#[cfg(test)]` attribute applies to: its brace-matched body (comments
 literals skipped), or up to its `;` when it has none. `#[cfg(test)] mod tests;` declares a module in
 another file and exempts nothing after it.
 
-### 5. Test roots — target `test/`, `integration/`, `e2e/` (+ `playground/`)
+### 5. Test roots — target `test/`, `integration/`, `e2e/`
 
 Every test file is under `test/`, `integration/` or `e2e/` (the dashboard's Playwright browser specs, kept out of
 `test/` because vitest runs every spec file under it).
-Exemptions: `playground-package` (`playground/` is its own package) and `data-roots` (upstream projects'
-copied tests). Rust `#[cfg(test)]` modules are part of the crate and not counted.
+Exemption: `data-roots` (upstream projects' copied tests). Rust `#[cfg(test)]` modules are part of the crate and not
+counted.
 
 ### 6. Generators follow one known pattern — target 0 misplaced
 
@@ -176,11 +175,10 @@ This metric is the result of the layer boundary lint, `scripts/check/check-bound
 (`checkBoundaries(root, { files })`; run alone as `npm run check:boundaries`). Its rules, stated in its header
 and tested in `test/structure/boundaries.test.mjs`: `engine-isolation` (`src/engine/` imports no other
 layer), `host-isolation` (no host imports another), `layer-order` (each layer imports only the layers
-listed for it, the order in `src/README.md`), `src-self-contained` (`src/` imports nothing outside `src/`),
+listed for it, the order in `src/README.md`), `src-self-contained` (`src/` imports nothing outside `src/`) and
 `entry-points` (code outside `src/` imports a layer's `index.ts` or `src/index.ts`; unit tests under
 `test/<layer>/` may import their own layer's internals, and a vitest mock seam names the module it
-replaces) and `playground-public-api` (`playground/` imports only the package's `exports`, in code and in
-tsconfig `paths`). The metric fails when the lint is not tracked.
+replaces). The metric fails when the lint is not tracked.
 
 ### 14. Production reads `fixtures/`; one root resolver per language — target 0; ≤1 per language
 
@@ -225,8 +223,7 @@ TS/JS file basenames (first dot part; later parts lowercase) and their directori
 Python file names are snake_case. The `.generated` infix (#20) is not part of a stem: `builtins.generated.rs`
 is checked as `builtins`.
 Exemptions: `data-roots` (named after upstream tools and engine modules), `vendored`, `fixture-trees`
-(framework route files such as `pages/_app.tsx`), `react-components` (under `playground/ui/src/`, a
-component's `.tsx` file is PascalCase and a hook's file is `useThing`).
+(framework route files such as `pages/_app.tsx`).
 
 ## Hygiene
 

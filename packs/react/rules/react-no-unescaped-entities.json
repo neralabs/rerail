@@ -3,7 +3,7 @@
   "id": "react-no-unescaped-entities",
   "revision": 1,
   "mode": "steer",
-  "description": "Escape >, \", ' and } in JSX text as HTML entities or expressions; unescaped they are usually typos for a closing tag or brace.",
+  "description": "Escape \" and ' in JSX text as HTML entities or string expressions; a stray quote there is often a leftover from a string or attribute.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -19,13 +19,13 @@
   },
   "clauses": [
     {
-      "id": "entity-1",
+      "id": "double-quote",
       "forbid": {
         "ast": {
           "language": "typescript",
           "rule": {
             "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){1}"
+            "regex": "(?<ENTITY>\")"
           },
           "file": {
             "jsxRuntime": [
@@ -36,9 +36,10 @@
         }
       },
       "violation": {
-        "anchor": "witness.start",
+        "anchor": "capture.ENTITY",
         "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
+        "message": "Write this \" in JSX text as &quot; or wrap it in a {'\"'} string expression.",
+        "each": "ENTITY",
         "suppress": {
           "eslint": {
             "rules": [
@@ -54,13 +55,13 @@
       }
     },
     {
-      "id": "entity-2",
+      "id": "single-quote",
       "forbid": {
         "ast": {
           "language": "typescript",
           "rule": {
             "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){2}"
+            "regex": "(?<ENTITY>')"
           },
           "file": {
             "jsxRuntime": [
@@ -71,219 +72,10 @@
         }
       },
       "violation": {
-        "anchor": "witness.start",
+        "anchor": "capture.ENTITY",
         "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
-        "suppress": {
-          "eslint": {
-            "rules": [
-              "react/no-unescaped-entities"
-            ]
-          },
-          "oxlint": {
-            "rules": [
-              "no-unescaped-entities"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "id": "entity-3",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){3}"
-          },
-          "file": {
-            "jsxRuntime": [
-              "react",
-              "unknown"
-            ]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.start",
-        "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
-        "suppress": {
-          "eslint": {
-            "rules": [
-              "react/no-unescaped-entities"
-            ]
-          },
-          "oxlint": {
-            "rules": [
-              "no-unescaped-entities"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "id": "entity-4",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){4}"
-          },
-          "file": {
-            "jsxRuntime": [
-              "react",
-              "unknown"
-            ]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.start",
-        "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
-        "suppress": {
-          "eslint": {
-            "rules": [
-              "react/no-unescaped-entities"
-            ]
-          },
-          "oxlint": {
-            "rules": [
-              "no-unescaped-entities"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "id": "entity-5",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){5}"
-          },
-          "file": {
-            "jsxRuntime": [
-              "react",
-              "unknown"
-            ]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.start",
-        "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
-        "suppress": {
-          "eslint": {
-            "rules": [
-              "react/no-unescaped-entities"
-            ]
-          },
-          "oxlint": {
-            "rules": [
-              "no-unescaped-entities"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "id": "entity-6",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){6}"
-          },
-          "file": {
-            "jsxRuntime": [
-              "react",
-              "unknown"
-            ]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.start",
-        "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
-        "suppress": {
-          "eslint": {
-            "rules": [
-              "react/no-unescaped-entities"
-            ]
-          },
-          "oxlint": {
-            "rules": [
-              "no-unescaped-entities"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "id": "entity-7",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){7}"
-          },
-          "file": {
-            "jsxRuntime": [
-              "react",
-              "unknown"
-            ]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.start",
-        "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
-        "suppress": {
-          "eslint": {
-            "rules": [
-              "react/no-unescaped-entities"
-            ]
-          },
-          "oxlint": {
-            "rules": [
-              "no-unescaped-entities"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "id": "entity-8",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "jsx_text",
-            "regex": "\\A(?:[^\\n>\"'}]*[>\"'}]){8}"
-          },
-          "file": {
-            "jsxRuntime": [
-              "react",
-              "unknown"
-            ]
-          }
-        }
-      },
-      "violation": {
-        "anchor": "witness.start",
-        "code": "react/no-unescaped-entities",
-        "message": "Escape each >, \", ' or } in this JSX text as &gt;, &quot;, &apos; or &#125;, or wrap it in a {\"…\"} string expression.",
+        "message": "Write this ' in JSX text as &apos; or wrap it in a {\"'\"} string expression.",
+        "each": "ENTITY",
         "suppress": {
           "eslint": {
             "rules": [

@@ -38,6 +38,3 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `npm run check:ui-tokens` checks them, and that `index.html` links every sheet under `css/`.
 
 The browser specs in `e2e/` drive it over seeded scenarios (`e2e/README.md`); `test/ui/` unit-tests its pure modules.
-
-This is the shipped product UI. `playground/ui/` is a separate React tool for developing rules: it is never published
-and does not share code with this one.

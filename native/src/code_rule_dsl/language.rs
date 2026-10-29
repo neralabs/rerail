@@ -2898,4 +2898,58 @@ mod tests {
             assert_eq!(statements, ["expression_statement", "statement_block"]);
         }
     }
+
+    /// A tagged template may take type arguments, as TypeScript reads it: a `call_expression` with
+    /// `type_arguments` and a `template_string` as its `arguments`, whether the type is a name or an
+    /// object type with optional or `;`-separated members, and `a < b > \`c\`` is one too (Patch 27 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`). A tagged template without type arguments and
+    /// `new A<T>` keep their readings.
+    #[test]
+    fn a_typescript_tagged_template_takes_type_arguments() {
+        for root in typescript_and_tsx(
+            "const A = styled.div<{ open?: boolean; size: number }>`\n  top: ${({ open }) => (open ? 0 : 1)}px;\n`;\n\
+             const B = styled(C)<{ x: boolean }>`top: 0;`;\nconst D = f<T>`x`;\nx = a < b > `c`;\n\
+             const E = css`top: 0;`;\nconst F = new G<T>;\n",
+        ) {
+            assert!(!root.root().get_inner_node().has_error());
+            let tagged = root
+                .root()
+                .dfs()
+                .filter(|node| {
+                    node.kind() == "call_expression"
+                        && node
+                            .field("arguments")
+                            .is_some_and(|arguments| arguments.kind() == "template_string")
+                })
+                .map(|node| {
+                    let function = node.field("function").expect("a call has a function");
+                    let type_arguments = node
+                        .field("type_arguments")
+                        .map(|types| types.text().into_owned());
+                    format!("{}{}", function.text(), type_arguments.unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tagged,
+                [
+                    "styled.div<{ open?: boolean; size: number }>",
+                    "styled(C)<{ x: boolean }>",
+                    "f<T>",
+                    "a< b >",
+                    "css"
+                ]
+            );
+            assert!(
+                root.root()
+                    .dfs()
+                    .any(|node| node.kind() == "new_expression")
+            );
+            assert!(
+                !root
+                    .root()
+                    .dfs()
+                    .any(|node| node.kind() == "binary_expression")
+            );
+        }
+    }
 }

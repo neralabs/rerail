@@ -379,22 +379,6 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
-# shadcn/ui components adapted for the rule playground (a development tool, never published).
-[[annotations]]
-path = [
-  "playground/ui/src/components/ui/badge.tsx",
-  "playground/ui/src/components/ui/button.tsx",
-  "playground/ui/src/components/ui/card.tsx",
-  "playground/ui/src/components/ui/checkbox.tsx",
-  "playground/ui/src/components/ui/select.tsx",
-  "playground/ui/src/components/ui/tabs.tsx",
-  "playground/ui/src/components/ui/textarea.tsx",
-  "playground/ui/src/lib/utils.ts",
-]
-precedence = "override"
-SPDX-FileCopyrightText = ["2023 shadcn", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
-
 # Rule packs under packs/ (see packs/README.md): the tools' copied tests, one entry per
 
 # packs/python
