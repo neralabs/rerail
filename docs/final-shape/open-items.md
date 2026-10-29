@@ -20,8 +20,8 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
-| O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | open, **plan gap, decision needed** (closure includes excluded `anchors/sql/lower*`) |
-| O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | open, **decision needed** |
+| O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
+| O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | dependency ported (`6ba8fe1d`); open only: which crate is the global allocator, **decision needed** |
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | open, **decision needed** |
 
 ## O1. Stale-fact detection after a crash
@@ -512,4 +512,10 @@ production; P's `a_three_valued_rule_keeps_its_source_prefilter` is `#[ignore]`d
 and P's line is kept as a comment beside W's. **Decision needed:** take P's prefilter (and make an
 evicted read failure on a consumers' pass non-fatal, as `api.rs` already does for one file), or
 keep W's guard and retire P's test.
+
+2026-10-29 (O19, placement): rows 119 and 224 of 05 now have modules at their planned paths.
+`prefilter::vocabulary` names `content_store::vocabulary` (P's vocabulary functions, made
+`pub(crate)`). `residency::metal` names `transducer::packed::metal_backend` (G's no-copy buffers,
+the module and `MappedBuffer` widened to `pub(in crate::code_rule_dsl)`). The code stays where its
+closure was placed, so nothing is copied twice.
 

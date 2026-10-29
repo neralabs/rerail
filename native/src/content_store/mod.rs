@@ -16,7 +16,7 @@ mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(test)]
 pub(crate) mod positional_search;
-mod vocabulary;
+pub(crate) mod vocabulary;
 #[allow(unused_imports)]
 pub(crate) use postings::append_delta;
 #[allow(dead_code)]

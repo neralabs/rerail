@@ -14,7 +14,7 @@ fn invalid(message: impl Into<String>) -> rusqlite::Error {
 }
 
 /// Registers the term matchers and `generate_series` on `db`.
-pub(super) fn install(db: &Connection) -> Result<()> {
+pub(crate) fn install(db: &Connection) -> Result<()> {
     rusqlite::vtab::series::load_module(db)?;
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_INNOCUOUS;
     db.create_scalar_function(

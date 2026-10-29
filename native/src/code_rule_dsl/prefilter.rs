@@ -14,6 +14,7 @@ use crate::content_store::{ContentStore, StoreError, StoreResult, TapeId, TapePr
 use ast_grep_core::Doc;
 
 mod candidates;
+mod vocabulary;
 mod execute;
 mod graph;
 mod kinds;

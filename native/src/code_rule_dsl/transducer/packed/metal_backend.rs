@@ -235,7 +235,7 @@ impl Drop for MappedRegion {
     }
 }
 
-pub(super) struct MappedBuffer {
+pub(in crate::code_rule_dsl) struct MappedBuffer {
     // The Metal deallocator retains the mapping and its budget reservation.
     pub(super) buffer: Buffer,
 }

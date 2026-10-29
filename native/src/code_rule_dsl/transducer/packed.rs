@@ -39,7 +39,7 @@ mod capture_run_entry_tests;
 mod capture_run_tests;
 
 #[cfg(target_os = "macos")]
-mod metal_backend;
+pub(in crate::code_rule_dsl) mod metal_backend;
 #[cfg(all(test, target_os = "macos"))]
 pub(super) use metal_backend::launch::LaunchScope as MetalTestScope;
 mod metal_batch_abi;
