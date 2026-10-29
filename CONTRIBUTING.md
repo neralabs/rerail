@@ -10,12 +10,16 @@ decisions are made is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 ## Who opens pull requests
 
 Rerail is open source with closed contribution, for now: anyone can open an issue, and only Nera Software employees
-open pull requests.
+and the project's own automation open pull requests.
 
 | | Nera Software employees | Anyone else |
 | --- | --- | --- |
 | Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes, in an issue |
 | Open a pull request | Yes, from a branch in this repository | No |
+
+The automation is Dependabot, for dependency updates, and the GitHub Actions workflows that open the **Release** pull
+request (`release-pr.yml`) and upstream bump pull requests (`upstream-bump-publish.yml`) as the `neralabs-ci` app.
+Their pull requests are reviewed and merged like any other.
 
 A maintainer closes a pull request from anyone else with a link to this section. That says nothing about the change
 itself: describe it in an issue, with the case that shows the problem, and a maintainer answers there.

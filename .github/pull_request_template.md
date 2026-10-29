@@ -1,5 +1,5 @@
 <!--
-Pull requests come from Nera Software employees only:
+Pull requests come only from Nera Software employees and the project's automation:
 https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#who-opens-pull-requests
 -->
 

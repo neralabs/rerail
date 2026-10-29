@@ -6,7 +6,7 @@ contribute day to day is in [CONTRIBUTING.md](../CONTRIBUTING.md).
 Rerail is an open-source project developed by Nera Software Inc. and licensed under the Apache License 2.0. At this
 stage it is open source with closed contribution: anyone can use, fork and redistribute the code under the licence,
 and anyone can send bug reports, feature requests and questions through the issues, but only Nera Software employees
-open pull requests. If that changes, this document changes first.
+and the project's own automation open pull requests. If that changes, this document changes first.
 
 ## Roles
 
@@ -14,6 +14,7 @@ open pull requests. If that changes, this document changes first.
 | --- | --- | --- |
 | Anyone | Anyone | Opens and comments on issues: bug reports, rule misfires, feature and integration requests, questions |
 | Nera Software employee | Nera Software employees with write access | Opens pull requests, from a branch in this repository |
+| Automation | Dependabot, and the GitHub Actions release and upstream bump workflows ([Who opens pull requests](../CONTRIBUTING.md#who-opens-pull-requests)) | Opens dependency update, release and upstream bump pull requests, reviewed and merged like any other |
 | Maintainer | The Nera Software employees in [.github/CODEOWNERS](../.github/CODEOWNERS) | Reviews and merges pull requests, triages issues, agrees the approach for work that starts with an issue, and enforces the [Code of Conduct](../CODE_OF_CONDUCT.md) |
 
 A pull request from anyone else is closed with a link to
