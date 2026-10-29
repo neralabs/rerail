@@ -1,6 +1,7 @@
 {
  "clauses": {
   "execution_authority_bypass/authority-sites": {
+   "bounds_unproven": 0,
    "fix_rounds": 2616,
    "fix_rows": 22868,
    "index_builds": 2688,
@@ -12,13 +13,14 @@
    "probes": 71444,
    "range_builds": 872,
    "range_rows": 22986,
-   "rows_joined": 120106,
-   "rows_out": 120104,
-   "rows_scanned": 2036879,
+   "rows_joined": 126976,
+   "rows_out": 126974,
+   "rows_scanned": 2057118,
    "stage_rows": 81822,
    "subquery_runs": 22872
   },
   "impl_direct_execution/direct-execution-lines": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 465,
@@ -37,6 +39,7 @@
    "subquery_runs": 371
   },
   "legacy_execution_surfaces/graph-fallback-text": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -55,6 +58,7 @@
    "subquery_runs": 0
   },
   "legacy_execution_surfaces/inventory-export_cursor.py": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -73,6 +77,7 @@
    "subquery_runs": 0
   },
   "legacy_execution_surfaces/inventory-fts_searcher.py": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -91,6 +96,7 @@
    "subquery_runs": 0
   },
   "legacy_execution_surfaces/inventory-legacy_wrappers.py": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -109,6 +115,7 @@
    "subquery_runs": 0
   },
   "legacy_execution_surfaces/legacy-execution-graphs": {
+   "bounds_unproven": 0,
    "fix_rounds": 1557,
    "fix_rows": 530282,
    "index_builds": 2711,
@@ -117,16 +124,17 @@
    "leaf_rows": 337636,
    "match_nodes": 17106525,
    "match_roots": 337636,
-   "probes": 3792818,
+   "probes": 4128278,
    "range_builds": 131,
    "range_rows": 6521,
-   "rows_joined": 2870137,
-   "rows_out": 2515280,
-   "rows_scanned": 7676524,
+   "rows_joined": 2870189,
+   "rows_out": 2515332,
+   "rows_scanned": 8347392,
    "stage_rows": 1696517,
    "subquery_runs": 701423
   },
   "legacy_execution_surfaces/post-fetch-filter_query_results": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -145,6 +153,7 @@
    "subquery_runs": 0
   },
   "legacy_execution_surfaces/post-fetch-filter_query_results_async": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -163,6 +172,7 @@
    "subquery_runs": 0
   },
   "legacy_execution_surfaces/removed-read-leaves": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -181,6 +191,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/mixed-marker-0": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -199,6 +210,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/mixed-marker-1": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -217,6 +229,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/mixed-marker-2": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -235,6 +248,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/mixed-marker-3": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -253,6 +267,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/mixed-marker-4": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -271,6 +286,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/removed-calls": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -289,6 +305,7 @@
    "subquery_runs": 0
   },
   "raw_execute_regression/removed-definitions": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -307,6 +324,7 @@
    "subquery_runs": 0
   },
   "serverplan_bypass/bypass-_execute_raw_sql": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -325,6 +343,7 @@
    "subquery_runs": 0
   },
   "serverplan_bypass/bypass-_execute_raw_sql_async": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -343,6 +362,7 @@
    "subquery_runs": 0
   },
   "serverplan_bypass/bypass-_query_raw_sql_async": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -361,6 +381,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/backend-family": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -379,6 +400,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/backend-identity": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -397,6 +419,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/dialect-compare": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -415,6 +438,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/dialect-truth": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -433,6 +457,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/executor-provenance": {
+   "bounds_unproven": 0,
    "fix_rounds": 310,
    "fix_rows": 0,
    "index_builds": 1922,
@@ -451,6 +476,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/step-class-match": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -469,6 +495,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/step-isinstance": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -487,6 +514,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/step-name-compare": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -505,6 +533,7 @@
    "subquery_runs": 0
   },
   "serverplan_dispatch_architecture/step-type-compare": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -523,6 +552,7 @@
    "subquery_runs": 0
   },
   "serverplan_quality/quality-conditional-1": {
+   "bounds_unproven": 0,
    "fix_rounds": 38,
    "fix_rows": 209654,
    "index_builds": 49,
@@ -531,16 +561,17 @@
    "leaf_rows": 195015,
    "match_nodes": 74183500,
    "match_roots": 195015,
-   "probes": 1134230,
+   "probes": 1329245,
    "range_builds": 5,
    "range_rows": 229955,
-   "rows_joined": 1733816,
-   "rows_out": 1538867,
-   "rows_scanned": 4291806,
+   "rows_joined": 1734966,
+   "rows_out": 1540017,
+   "rows_scanned": 4680686,
    "stage_rows": 1105379,
    "subquery_runs": 7124
   },
   "serverplan_quality/quality-contracts-1": {
+   "bounds_unproven": 0,
    "fix_rounds": 7577,
    "fix_rows": 490506,
    "index_builds": 71572,
@@ -552,13 +583,14 @@
    "probes": 10036516,
    "range_builds": 12095,
    "range_rows": 2662949,
-   "rows_joined": 3647857,
-   "rows_out": 3294410,
-   "rows_scanned": 23202421,
+   "rows_joined": 3652578,
+   "rows_out": 3299131,
+   "rows_scanned": 23207142,
    "stage_rows": 3528590,
    "subquery_runs": 444219
   },
   "serverplan_quality/quality-contracts-2": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 12742,
@@ -577,6 +609,7 @@
    "subquery_runs": 126901
   },
   "serverplan_quality/quality-contracts-3": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 6919,
@@ -595,6 +628,7 @@
    "subquery_runs": 46
   },
   "serverplan_quality/quality-local-taxonomy": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -613,6 +647,7 @@
    "subquery_runs": 0
   },
   "serverplan_quality/quality-project-taxonomy": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -631,6 +666,7 @@
    "subquery_runs": 0
   },
   "serverplan_quality/strategy-file-size": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -649,6 +685,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/compiled-ir-value": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -667,6 +704,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/context-authority": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -685,6 +723,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/direct-planning-io": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -703,6 +742,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/executor-ir-dispatch": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -721,6 +761,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/executor-plan-execution": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -739,6 +780,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/graph-id-config": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -757,6 +799,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/graph-terminal-chain": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -775,6 +818,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/large-column-hydration": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -793,6 +837,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/large-column-reentry": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -811,6 +856,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/lazy-callback-terminal": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -829,6 +875,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/legacy-preop": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -847,6 +894,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/materialized-pipeline": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -865,6 +913,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/mcp-default-graph": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -883,6 +932,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/nested-plan-execution": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -901,6 +951,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/preprocess-io": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -919,6 +970,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/private-lazy-ref": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -937,6 +989,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/production-ir-class": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -955,6 +1008,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/production-ir-construction": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -973,6 +1027,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/provider-io": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -991,6 +1046,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/query-planning-io": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1009,6 +1065,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/queue-auth-calls": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1027,6 +1084,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/queue-auth-definitions": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1045,6 +1103,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/queue-udf-symbols": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1063,6 +1122,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/resolved-ref-access": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1081,6 +1141,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/serverplan-ddl": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1099,6 +1160,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/state-flow-1": {
+   "bounds_unproven": 68,
    "fix_rounds": 7838,
    "fix_rows": 3884135,
    "index_builds": 19827,
@@ -1107,16 +1169,17 @@
    "leaf_rows": 623565,
    "match_nodes": 49284456,
    "match_roots": 623565,
-   "probes": 10811917,
+   "probes": 11435463,
    "range_builds": 808,
    "range_rows": 50403,
-   "rows_joined": 9660092,
-   "rows_out": 9030602,
-   "rows_scanned": 23509066,
+   "rows_joined": 9660211,
+   "rows_out": 9030721,
+   "rows_scanned": 24756039,
    "stage_rows": 6799759,
    "subquery_runs": 214578
   },
   "serverplan_state_tripwires/state-flow-project-1": {
+   "bounds_unproven": 0,
    "fix_rounds": 7,
    "fix_rows": 0,
    "index_builds": 51,
@@ -1135,6 +1198,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/state-projection-recovery-2": {
+   "bounds_unproven": 0,
    "fix_rounds": 925,
    "fix_rows": 129626,
    "index_builds": 3596,
@@ -1143,16 +1207,17 @@
    "leaf_rows": 20040,
    "match_nodes": 47584992,
    "match_roots": 20040,
-   "probes": 86076,
+   "probes": 106115,
    "range_builds": 7,
    "range_rows": 54805,
-   "rows_joined": 258925,
-   "rows_out": 238665,
-   "rows_scanned": 2103062,
+   "rows_joined": 258928,
+   "rows_out": 238668,
+   "rows_scanned": 2143137,
    "stage_rows": 198582,
    "subquery_runs": 1589
   },
   "serverplan_state_tripwires/state-signatures-1": {
+   "bounds_unproven": 0,
    "fix_rounds": 2283,
    "fix_rows": 1979486,
    "index_builds": 10827,
@@ -1161,16 +1226,17 @@
    "leaf_rows": 195341,
    "match_nodes": 42486600,
    "match_roots": 195341,
-   "probes": 1140486,
+   "probes": 1335827,
    "range_builds": 810,
    "range_rows": 207933,
-   "rows_joined": 3200846,
-   "rows_out": 3004344,
-   "rows_scanned": 4578307,
+   "rows_joined": 3200860,
+   "rows_out": 3004358,
+   "rows_scanned": 4968975,
    "stage_rows": 2613596,
    "subquery_runs": 218130
   },
   "serverplan_state_tripwires/step-aware-eager-helper": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1189,6 +1255,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/terminal-hydration-definitions": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1207,6 +1274,7 @@
    "subquery_runs": 0
   },
   "serverplan_state_tripwires/test-only-acknowledgement": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 398,
@@ -1225,6 +1293,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/cannot-batch": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1243,6 +1312,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/closed-migration-postop": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1261,6 +1331,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/closed-migration-refs": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1279,6 +1350,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/closed-migration-with-refs": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1297,6 +1369,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/compile-object-manipulation": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1315,6 +1388,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/empty-result-assertion": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1333,6 +1407,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/misc-runtime-definition": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1351,6 +1426,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/misc-runtime-member": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1369,6 +1445,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/parse-error": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1387,6 +1464,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/runtime-builder-string-name": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1405,6 +1483,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/runtime-reference-summaries": {
+   "bounds_unproven": 0,
    "fix_rounds": 83,
    "fix_rows": 15,
    "index_builds": 465,
@@ -1423,6 +1502,7 @@
    "subquery_runs": 3450
   },
   "serverplan_steps/runtime-state": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1441,6 +1521,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/side-effect-tags": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1459,6 +1540,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/source-ref-ingress": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1477,6 +1559,7 @@
    "subquery_runs": 0
   },
   "serverplan_steps/step-contracts-1": {
+   "bounds_unproven": 0,
    "fix_rounds": 754,
    "fix_rows": 141408,
    "index_builds": 1616,
@@ -1485,16 +1568,17 @@
    "leaf_rows": 23051,
    "match_nodes": 835930,
    "match_roots": 23051,
-   "probes": 493127,
+   "probes": 516176,
    "range_builds": 38,
    "range_rows": 1003,
-   "rows_joined": 249308,
-   "rows_out": 225726,
-   "rows_scanned": 1335792,
+   "rows_joined": 249345,
+   "rows_out": 225763,
+   "rows_scanned": 1381853,
    "stage_rows": 202467,
    "subquery_runs": 236045
   },
   "serverplan_steps/step-contracts-2": {
+   "bounds_unproven": 0,
    "fix_rounds": 554,
    "fix_rows": 62393,
    "index_builds": 1029,
@@ -1503,16 +1587,17 @@
    "leaf_rows": 11707,
    "match_nodes": 835930,
    "match_roots": 11707,
-   "probes": 290403,
+   "probes": 302108,
    "range_builds": 114,
    "range_rows": 7057,
-   "rows_joined": 119348,
-   "rows_out": 107246,
-   "rows_scanned": 411777,
+   "rows_joined": 119385,
+   "rows_out": 107283,
+   "rows_scanned": 435150,
    "stage_rows": 95500,
    "subquery_runs": 224080
   },
   "serverplan_steps/step-contracts-3": {
+   "bounds_unproven": 0,
    "fix_rounds": 375,
    "fix_rows": 67939,
    "index_builds": 722,
@@ -1531,6 +1616,7 @@
    "subquery_runs": 254029
   },
   "serverplan_steps/step-contracts-4": {
+   "bounds_unproven": 0,
    "fix_rounds": 300,
    "fix_rows": 6214,
    "index_builds": 856,
@@ -1539,16 +1625,17 @@
    "leaf_rows": 6214,
    "match_nodes": 835930,
    "match_roots": 6214,
-   "probes": 51943,
+   "probes": 58155,
    "range_builds": 38,
    "range_rows": 0,
-   "rows_joined": 29051,
-   "rows_out": 22875,
-   "rows_scanned": 101243,
+   "rows_joined": 29088,
+   "rows_out": 22912,
+   "rows_scanned": 113630,
    "stage_rows": 22837,
    "subquery_runs": 25088
   },
   "serverplan_steps/step-contracts-5": {
+   "bounds_unproven": 0,
    "fix_rounds": 935,
    "fix_rows": 189969,
    "index_builds": 918,
@@ -1557,16 +1644,17 @@
    "leaf_rows": 28003,
    "match_nodes": 835930,
    "match_roots": 28003,
-   "probes": 230930,
+   "probes": 258931,
    "range_builds": 0,
    "range_rows": 0,
-   "rows_joined": 319251,
-   "rows_out": 290857,
-   "rows_scanned": 562270,
+   "rows_joined": 319288,
+   "rows_out": 290894,
+   "rows_scanned": 618235,
    "stage_rows": 262761,
    "subquery_runs": 29816
   },
   "serverplan_steps/step-contracts-6": {
+   "bounds_unproven": 0,
    "fix_rounds": 133,
    "fix_rows": 2229,
    "index_builds": 576,
@@ -1575,16 +1663,17 @@
    "leaf_rows": 320,
    "match_nodes": 835930,
    "match_roots": 320,
-   "probes": 2249,
+   "probes": 2569,
    "range_builds": 0,
    "range_rows": 0,
-   "rows_joined": 3855,
-   "rows_out": 3532,
-   "rows_scanned": 6362,
+   "rows_joined": 3856,
+   "rows_out": 3533,
+   "rows_scanned": 7001,
    "stage_rows": 3210,
    "subquery_runs": 367
   },
   "serverplan_steps/terminal-projection-dispatch": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1603,6 +1692,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/backend-names": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1621,6 +1711,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/executor-imports": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1639,6 +1730,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/executor-parameters": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1657,6 +1749,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-physical_program.py-direct": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1675,6 +1768,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-physical_program.py-from": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1693,6 +1787,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-planning_contract.py-direct": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1711,6 +1806,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-planning_contract.py-from": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1729,6 +1825,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-runtime_application.py-direct": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1747,6 +1844,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-runtime_application.py-from": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1765,6 +1863,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/legacy-symbols": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1783,6 +1882,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/receipt-accounting": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1801,6 +1901,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/required-contracts": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 10,
@@ -1819,6 +1920,7 @@
    "subquery_runs": 39
   },
   "serverplan_target_architecture/strategy-getattr": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1837,6 +1939,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/strategy-isinstance": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1855,6 +1958,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/tag-conditions": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1873,6 +1977,7 @@
    "subquery_runs": 0
   },
   "serverplan_target_architecture/tag-matches": {
+   "bounds_unproven": 0,
    "fix_rounds": 0,
    "fix_rows": 0,
    "index_builds": 0,
@@ -1891,6 +1996,6 @@
    "subquery_runs": 0
   }
  },
- "commit": "a105ba71bae0516bfac74a709dc0f3e9f86daf9e",
+ "commit": "26dbfee6248c882597df9f08bb22eaf0786ccc54",
  "format": "rerail.facts-counts/v1"
 }
