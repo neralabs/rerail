@@ -21,7 +21,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
-| O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | dependency ported (`6ba8fe1d`); open only: which crate is the global allocator, **decision needed** |
+| O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | closed (2026-10-29): jemalloc stays the global allocator (user decision); `mimalloc` remains a dependency only |
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | open, **decision needed** |
 
 ## O1. Stale-fact detection after a crash
@@ -519,3 +519,4 @@ keep W's guard and retire P's test.
 the module and `MappedBuffer` widened to `pub(in crate::code_rule_dsl)`). The code stays where its
 closure was placed, so nothing is copied twice.
 
+2026-10-29, O16 closed by the user's decision: W's tuned jemalloc stays the global allocator.
