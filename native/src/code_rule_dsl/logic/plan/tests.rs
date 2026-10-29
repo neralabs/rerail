@@ -62,6 +62,58 @@ fn t_programs_plan_and_run_like_t() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// T's native modes (`RDL_NATIVE`) on T's extension derive T's outputs: each component a mode runs natively gives
+/// the rows T's pure SQL mode gives (the goldens). T runs one program per process, and its extension keeps
+/// process-wide state (the loaded tape, the native inputs cached by their SQL, the symbols), so each case runs in a
+/// child process of this test, as T's `rdl.py` does.
+#[test]
+fn t_programs_run_natively_like_t() {
+    const CASE: &str = "RERAIL_RDL_NATIVE_CASE";
+    if let Ok(case) = std::env::var(CASE) {
+        let (modes, name) = case.split_once(' ').expect("modes and program");
+        let load = |db: &Connection| {
+            let rc = unsafe {
+                crate::code_rule_dsl::logic::native::extension::sqlite3_extension_init(db.handle(), std::ptr::null_mut(), std::ptr::null_mut())
+            };
+            assert_eq!(rc, rusqlite::ffi::SQLITE_OK);
+            Ok(())
+        };
+        let got = run_sql_native(&program(name), &facts(), modes, load).unwrap_or_else(|e| panic!("{case}: {e}"));
+        let golden = root().join(format!("plan/golden/{name}"));
+        for (rel, rows) in &got.outputs {
+            let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
+            let expected: Vec<&str> = expected.lines().collect();
+            assert_eq!(rows.iter().map(String::as_str).collect::<Vec<_>>(), expected, "{case} {rel}");
+        }
+        println!("NATIVE {}", got.native.iter().cloned().collect::<Vec<_>>().join(" "));
+        return;
+    }
+    let mut failures = Vec::new();
+    let mut ran = BTreeSet::new();
+    let exe = std::env::current_exe().unwrap();
+    for modes in ["nearest", "fixpoint", "fixpoint,kseed", "fixpoint,vtab", "fixpoint,direct", "upsert", "setfix", "setfix,join,nearest", "all", "program"] {
+        for name in ["workload", "workload_demand", "calls"] {
+            let out = std::process::Command::new(&exe)
+                .args(["--exact", "code_rule_dsl::logic::plan::tests::t_programs_run_natively_like_t", "--nocapture", "--test-threads=1"])
+                .env(CASE, format!("{modes} {name}"))
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if !out.status.success() {
+                failures.push(format!("{modes} {name}: {}", String::from_utf8_lossy(&out.stderr).lines().filter(|l| l.contains("panicked") || l.contains(name)).collect::<Vec<_>>().join(" | ")));
+            }
+            // The harness prints the test's name first, on the same line.
+            for line in stdout.lines().filter_map(|l| l.split_once("NATIVE ").map(|(_, c)| c)) {
+                ran.extend(line.split_whitespace().map(|c| format!("{modes} {name} {c}")));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    for mode in ["fixpoint", "setfix", "program"] {
+        assert!(ran.iter().any(|c| c.starts_with(mode)), "no component ran natively under {mode}: {ran:?}");
+    }
+}
+
 /// T's statistics with T's strings lowered as the program's are (decision 0009) and T's node ids as the vtabs':
 /// `stat_kind`/`stat_edge` by kind atoms, `stat_val` by its column's domain, `stat_docrange` as id intervals.
 fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, first: &HashMap<i64, i64>) {

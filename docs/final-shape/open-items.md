@@ -331,6 +331,9 @@ choice, not a port. Keeping jemalloc until it is decided: replacing it means mea
 on the data-layer gate (M1) with each, including the purge behaviour that keeps nothing dirty at
 rest. Closure: keep jemalloc and drop `mimalloc` from 05, or measure and switch.
 
+2026-10-29: the dependency is ported (`6ba8fe1d`, with `cranelift-jit`'s `selinux-fix`); only the global
+allocator choice remains.
+
 
 ## O17. N's contract suites against W's semantics
 
@@ -406,7 +409,10 @@ beside the adaptations made from them:
 - D's projection (`facts::d_projection`, `06abf031`) beside `facts::runs`.
 - D's anchors module and SQL anchor engine with statistics (`matcher::d_anchors`, `c857812b`)
   beside W's `matcher::anchors` and `prefilter`, as P's (O20).
-- T's SQLite extension entry (`logic::native::extension`, `eceb3b3e`) beside `logic::native`.
+- T's SQLite extension entry (`logic::native::extension`, `eceb3b3e`) and its own set engine
+  (`extension::setfix`, `45ae696b`) beside `logic::native` and `logic::native::setfix` (symbols as the
+  store's atoms). The planner's native modes run on T's pair in tests; production would run them on
+  the adaptation once the planner's native strata read atoms (O13).
 - S's async-call oracle as copied (`findings::tests::s_native_oracle`) beside `native_oracle` (O15).
 Closure: per pair, decide which survives. The adaptation carries the plan's shape, so the copy is
 removed (a mutation, after its tests are carried over or retired), or the copy replaces it.

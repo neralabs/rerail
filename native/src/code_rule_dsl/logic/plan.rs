@@ -11,11 +11,15 @@
 //! the statistics in an attached schema (`run_atoms`). The planner is the same in both; only the rendering of symbol
 //! operations (`@cat`, its splits, `flat_bin`'s operator) and where inputs and statistics live differ.
 //!
-//! Not yet ported: the native strata (`native_stratum`, `native_set_fixpoint`, `native_fixpoint`, `join_spec`,
-//! `live_stats`), which run on `logic::native`. Adaptations still to come: the emitted SQL through `sql::sql_ast` and
-//! plans into `compiled_plans`. Left out of the
-//! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, traces and profiles) and its 1 GB
-//! page caches (over the 500 MB budget; SQLite's defaults instead).
+//! T's native modes (`RDL_NATIVE`, `run_sql_native`) are ported too: `native_stratum` (the native set engine for a
+//! whole stratum, `program`), `native_fixpoint` (a flat-lattice component, `fixpoint` with `kseed`, `vtab`,
+//! `direct`), `native_set_fixpoint` (`setfix`), `join_spec` (`join`), `observe` and `live_stats` (statistics the
+//! native store reports), `merge_upsert` (`upsert`) and the `tape_nearest` climb (`nearest`). They call the SQL
+//! functions of T's extension (`logic::native`), which the caller registers on the connection, as T loads it.
+//! Adaptations still to come: the emitted SQL through `sql::sql_ast` and plans into `compiled_plans`. Left out of the
+//! port: T's measurement switches (`RDL_PLAN0`, `RDL_SQL_REPLAN`, `RDL_CLUSTER=0`, `RDL_WHOLE=0`, `RDL_REPLAN`, traces
+//! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
+//! defaults instead).
 
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
 use super::native::TOP;
@@ -73,12 +77,38 @@ pub(in crate::code_rule_dsl) struct Inputs {
     stats: String,
     /// Symbols are atoms: the name atoms of `flat_bin`'s operators `+`, `-` and `*`. `None`: symbols are text.
     atoms: Option<[i64; 3]>,
+    /// T's `RDL_NATIVE` modes (`native_modes`); empty is T's pure SQL mode.
+    native: BTreeSet<String>,
+}
+
+/// T's `NATIVE`: the comma-separated modes, `all` as every one but `direct` and `upsert`, and `program` with the
+/// pieces it runs on.
+fn native_modes(modes: &str) -> BTreeSet<String> {
+    let mut native: BTreeSet<String> = modes.split(',').filter(|m| !m.is_empty()).map(str::to_owned).collect();
+    if native.remove("all") {
+        native.extend(["nearest", "fixpoint", "kseed", "vtab", "setfix", "join"].map(str::to_owned));
+    }
+    if native.contains("program") {
+        native.extend(["nearest", "setfix", "join"].map(str::to_owned));
+    }
+    native
+}
+
+/// Lowercase hex of a string's bytes (Python's `s.encode().hex()`).
+fn hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A string from its hex (Python's `bytes.fromhex(v).decode()`).
+fn unhex(s: &str) -> Option<String> {
+    let bytes = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
 }
 
 impl Inputs {
     /// T's facts file attached as `f`, statistics in it.
     fn file() -> Self {
-        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None }
+        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new() }
     }
     /// `sym_text` of an expression in atoms mode, the expression itself in text mode.
     fn text(&self, e: &str) -> String {
@@ -907,6 +937,16 @@ impl Model {
                     };
                     env.insert(var.clone(), format!("(SELECT {what} FROM {} {al} WHERE {conds})", self.table(prog, &atom.rel, "")));
                 }
+                Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
+                    // The climb is a native function over the tape: no CTE, and its result is just a column expression.
+                    let near = format!("tape_nearest({}, '{}')", env[n], prog.kindsets[kindset].join(","));
+                    if let Some(e) = env.get(a) {
+                        wh.push(format!("{near} = {e}"));
+                    } else {
+                        env.insert(a.clone(), near.clone());
+                        wh.push(format!("{near} IS NOT NULL"));
+                    }
+                }
                 Literal::Nearest { n, a, kindset } => {
                     // A lowered program's members are kind atoms.
                     let ks = prog.kindsets[kindset]
@@ -989,6 +1029,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) chosen: Vec<Chosen>,
     pub(in crate::code_rule_dsl) outputs: BTreeMap<String, Vec<String>>,
     pub(in crate::code_rule_dsl) iterations: BTreeMap<String, usize>,
+    /// The components a native mode ran (T's `iterations` value `"native"`).
+    pub(in crate::code_rule_dsl) native: BTreeSet<String>,
     /// Each output's node columns (atoms mode: node ids are the vtabs', `d << 32 | index`).
     pub(in crate::code_rule_dsl) nodes: BTreeMap<String, Vec<usize>>,
 }
@@ -1000,6 +1042,8 @@ struct Run<'a> {
     model: Model,
     views: HashSet<String>,
     made: HashSet<(String, Vec<usize>)>,
+    /// Relations held only by the native set engine (`program`) until `materialize`.
+    native_rels: BTreeSet<String>,
 }
 
 /// A recursive atom's delta variant: the rule's head, its plan with that atom first, and the atom's plan position.
@@ -1072,6 +1116,9 @@ impl Run<'_> {
     /// Joins candidate values per key (flat lattice: equal stays, different becomes top) into `rel`; with `delta`,
     /// records the keys whose value changed in `new_<rel>`. Returns the number of changed keys.
     fn merge_lattice(&self, rel: &str, select: &str, delta: bool) -> Result<i64> {
+        if self.model.inputs.native.contains("upsert") {
+            return self.merge_upsert(rel, select, delta);
+        }
         let k = self.prog.lattice[rel].keys;
         let keys = (0..k).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
         let v = format!("c{k}");
@@ -1146,6 +1193,737 @@ impl Run<'_> {
     }
 }
 
+/// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
+/// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
+/// skipped.
+fn observe(stats: &mut Stats, order: &[Step], line: &str) {
+    if line.is_empty() {
+        return;
+    }
+    let counts: Vec<(i64, i64)> = line
+        .split(',')
+        .filter_map(|x| {
+            let (i, o) = x.split_once(':')?;
+            Some((i.parse().ok()?, o.parse().ok()?))
+        })
+        .collect();
+    let mut bound = BTreeSet::new();
+    for (i, (s, &(n_in, n_out))) in order.iter().zip(&counts).enumerate() {
+        if i > 0
+            && let Literal::Atom(l) = &s.lit
+            && !l.neg
+            && n_in != 0
+        {
+            let o = stats.obs.entry(atom_sig(l, &bound)).or_insert([0, 0]);
+            o[0] += n_in;
+            o[1] += n_out;
+        }
+        if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
+            bound.extend(s.lit.vars());
+        }
+    }
+}
+
+/// A relation's column types (T's `prog_types`).
+fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
+    prog.decls[r].iter().map(|(_, t)| t.as_str()).collect()
+}
+
+/// A relation's statistics from the native store (`set_fixpoint_stats`, T's `live_stats`): rows, then per column
+/// the distinct count and the sum of squared postings, whose ratio to rows is the skew-weighted fanout ingestion
+/// gives inputs.
+fn live_stats(prog: &Program, model: &mut Model, r: &str, line: &str) {
+    let mut parts = line.split(" |");
+    let nums: Vec<i64> = parts.next().unwrap_or("").split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    let Some((&n, rest)) = nums.split_first() else { return };
+    let k = rest.len() / 2;
+    model.stats.card.insert(r.to_owned(), (n as f64).max(1.0));
+    for c in 0..k {
+        model.ndv.insert((r.to_owned(), c), rest[c].max(1) as f64);
+        model.stats.fan.insert((r.to_owned(), c), if n != 0 { rest[k + c] as f64 / n as f64 } else { 1.0 });
+        model.stats.dfreq.remove(&(r.to_owned(), c));
+    }
+    let types = prog_types(prog, r);
+    for f in parts {
+        let Some((c, vals)) = f.trim().split_once(':') else { continue };
+        let Ok(c) = c.parse::<usize>() else { continue };
+        let freq = vals
+            .split(',')
+            .filter(|x| !x.is_empty())
+            .filter_map(|x| {
+                let (v, m) = x.split_once('=')?;
+                let v = unhex(v)?;
+                let v = if types.get(c) == Some(&"sym") { Constant::Str(v) } else { Constant::Int(v.parse().ok()?) };
+                Some((v, m.parse().ok()?))
+            })
+            .collect();
+        model.stats.dfreq.insert((r.to_owned(), c), freq);
+    }
+}
+
+/// A plan's step strings, which say whether a replan changed it.
+fn shown(order: &[Step]) -> Vec<String> {
+    order.iter().map(|s| s.lit.to_string()).collect()
+}
+
+/// Positive body atoms of `scc`, by body position.
+fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r Atom)> {
+    body.iter()
+        .enumerate()
+        .filter_map(|(i, l)| match l {
+            Literal::Atom(a) if !a.neg && scc.contains(&a.rel) => Some((i, a)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn atom_of(rel: String, args: Vec<Term>) -> Atom {
+    Atom { rel, args, neg: false, gated: false }
+}
+
+/// A native spec's token for a constant.
+fn const_tok(t: &Term) -> Option<String> {
+    match t {
+        Term::Int(i) => Some(format!("i:{i}")),
+        Term::Str(s) => Some(format!("x:{}", hex(s))),
+        _ => None,
+    }
+}
+
+impl Run<'_> {
+    /// Moves the native set engine's relations among `rels` into their tables (`set_fixpoint_materialize`).
+    fn materialize(&mut self, rels: &[String]) -> Result<()> {
+        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect();
+        for r in held {
+            self.db.query_row("SELECT set_fixpoint_materialize(?1)", [&r], |_| Ok(()))?;
+            self.native_rels.remove(&r);
+        }
+        Ok(())
+    }
+
+    /// A probe's planned body as a native join spec (sqlite-ext `setfix.rs`, "native join probes", T's `join_spec`),
+    /// or `None` where a literal has no native step (an aggregate other than `count`, a descent, a document range,
+    /// top): that probe stays SQL.
+    fn join_spec(
+        &self,
+        h: &Atom,
+        order: &[Step],
+        at: Option<usize>,
+        ri: &BTreeMap<String, usize>,
+        scc: &BTreeSet<String>,
+        native_rels: &BTreeSet<String>,
+    ) -> Option<String> {
+        let prog = self.prog;
+        let mut slots: HashMap<String, usize> = HashMap::new();
+        let typ = |t: &Term| -> Option<String> {
+            match t {
+                Term::Int(_) => Some("int".to_owned()),
+                Term::Str(_) => Some("sym".to_owned()),
+                Term::Var(n) => order.iter().find_map(|s| match &s.lit {
+                    Literal::Atom(l) if !l.neg => l
+                        .args
+                        .iter()
+                        .position(|x| matches!(x, Term::Var(v) if v == n))
+                        .map(|c| prog.decls[&l.rel][c].1.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            }
+        };
+        fn tok(t: &Term, slots: &mut HashMap<String, usize>) -> Option<String> {
+            match t {
+                Term::Wild => Some("_".to_owned()),
+                Term::Var(n) => {
+                    let len = slots.len();
+                    Some(format!("v{}", *slots.entry(n.clone()).or_insert(len)))
+                }
+                Term::Int(_) | Term::Str(_) => const_tok(t),
+                _ => None,
+            }
+        }
+        // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
+        // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
+        let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(String, Vec<String>)> {
+            if scc.contains(&l.rel) {
+                let src = format!("{}{}", if idx.is_some() && idx == at { "d" } else { "c" }, ri[&l.rel]);
+                return Some((src, l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?));
+            }
+            if native_rels.contains(&l.rel) {
+                return Some((format!("r:{}", hex(&l.rel)), l.args.iter().map(|t| tok(t, slots)).collect::<Option<_>>()?));
+            }
+            let is_const = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_));
+            let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
+            let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
+            let cols = if cols.is_empty() { "1".to_owned() } else { cols };
+            let mut wheres = Vec::new();
+            for (c, t) in l.args.iter().enumerate() {
+                if is_const(t) {
+                    wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?));
+                }
+            }
+            let types: String = keep.iter().map(|&c| if prog.decls[&l.rel][c].1 == "sym" { 's' } else { 'i' }).collect();
+            let types = if types.is_empty() { "i".to_owned() } else { types };
+            let mut sel = self.model.table(prog, &l.rel, "");
+            if !wheres.is_empty() {
+                sel += &format!(" WHERE {}", wheres.join(" AND "));
+            }
+            let mut toks: Vec<String> = keep.iter().map(|&c| tok(&l.args[c], slots)).collect::<Option<_>>()?;
+            if toks.is_empty() {
+                toks.push("_".to_owned());
+            }
+            let base = if prog.inputs.contains(&l.rel) || self.model.view_src.contains_key(&l.rel) { "b" } else { "d" };
+            Some((format!("t:{base}:{}:{}:{types}", hex(&sel), hex(&cols)), toks))
+        };
+        let kinds = |kset: &str| hex(&prog.kindsets[kset].join(","));
+        let mut lines = Vec::new();
+        for (idx, s) in order.iter().enumerate() {
+            match &s.lit {
+                Literal::Atom(l) => {
+                    if s.mode == Some(Mode::Range) {
+                        return None;
+                    }
+                    let (sc, toks) = atom(l, Some(idx), &mut slots)?;
+                    lines.push(format!("{} {sc} {}", if l.neg { "neg" } else { "pos" }, toks.join(" ")));
+                }
+                Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
+                    if let Term::Call(f, args) = r {
+                        if *op != "=" || f != "cat" || !matches!(l, Term::Var(_)) {
+                            return None;
+                        }
+                        let (a, b) = (&args[0], &args[1]);
+                        let (tl, ta) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
+                        lines.push(format!("cat {tl} {ta} {}", tok(b, &mut slots)?));
+                    } else {
+                        let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v));
+                        // The bound side goes right.
+                        let (a, b) = if unbound(r, &slots) { (r, l) } else { (l, r) };
+                        if unbound(b, &slots) {
+                            return None;
+                        }
+                        let ta = tok(a, &mut slots)?;
+                        lines.push(format!("{} {ta} {}", if *op == "=" { "eq" } else { "ne" }, tok(b, &mut slots)?));
+                    }
+                }
+                Literal::Cmp { l, op, r } if matches!(*op, "<" | "<=" | ">" | ">=") => {
+                    // Integers (and nodes) only: symbols are numbered in the order they are met.
+                    let bad = |t: &Term| {
+                        matches!(t, Term::Call(..))
+                            || matches!(t, Term::Var(v) if !slots.contains_key(v))
+                            || matches!(typ(t).as_deref(), None | Some("sym"))
+                    };
+                    if bad(l) || bad(r) {
+                        return None;
+                    }
+                    let (a, b) = if matches!(*op, "<" | "<=") { (l, r) } else { (r, l) };
+                    let ta = tok(a, &mut slots)?;
+                    lines.push(format!("{} {ta} {}", if matches!(*op, "<" | ">") { "lt" } else { "le" }, tok(b, &mut slots)?));
+                }
+                Literal::Agg { var, op: AggOp::Count, atom: a, .. } => {
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) {
+                        return None;
+                    }
+                    let (sc, toks) = atom(a, None, &mut slots)?;
+                    lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                }
+                Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
+                    let tn = tok(&Term::Var(n.clone()), &mut slots)?;
+                    lines.push(format!("near {tn} {} {}", tok(&Term::Var(a.clone()), &mut slots)?, kinds(kindset)));
+                }
+                Literal::Nearest { n, a, kindset } if slots.contains_key(a) && !slots.contains_key(n) => {
+                    let tn = tok(&Term::Var(n.clone()), &mut slots)?;
+                    lines.push(format!("down {tn} {} {}", tok(&Term::Var(a.clone()), &mut slots)?, kinds(kindset)));
+                }
+                _ => return None,
+            }
+        }
+        let mut head = Vec::new();
+        for t in &h.args {
+            match t {
+                Term::Call(f, args) if f == "cat" && args.iter().all(|x| matches!(x, Term::Var(_))) => {
+                    let t0 = tok(&args[0], &mut slots)?;
+                    head.push(format!("cat:{t0}:{}", tok(&args[1], &mut slots)?));
+                }
+                _ => head.push(tok(t, &mut slots)?),
+            }
+        }
+        lines.push(format!("head {}", head.join(" ")));
+        Some(lines.join("\n"))
+    }
+
+    /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it.
+    fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+        let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
+        self.model.stats.solving = if reads { scc.clone() } else { BTreeSet::new() };
+        let out = self.native_stratum_(scc, rules);
+        self.model.stats.solving.clear();
+        out
+    }
+
+    /// One stratum on the native set engine, as a component of seed joins (rules without a recursive atom, run once)
+    /// and join probes (one per recursive atom, planned with its delta first), all planned by `plan_rule` and
+    /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
+    /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
+    /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+        let prog = self.prog;
+        if scc.iter().any(|r| prog.lattice.contains_key(r)) {
+            return Ok(false);
+        }
+        let rels: Vec<&String> = scc.iter().collect();
+        let ri: BTreeMap<String, usize> = rels.iter().enumerate().map(|(i, r)| ((*r).clone(), i)).collect();
+        let name = format!("prog_{}", rels[0]);
+        let mut gates: Vec<&(String, crate::code_rule_dsl::logic::magic::Gate)> = prog.gates.iter().filter(|(g, _)| scc.contains(g)).collect();
+        gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
+        // A gate's rule only placed it here.
+        let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
+        let types = |r: &str| prog_types(prog, r).iter().map(|t| if *t == "sym" { 's' } else { 'i' }).collect::<String>();
+        let mut lines = vec![format!("name {name}")];
+        lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
+        lines.push("nowrite".to_owned());
+        let native_rels = self.native_rels.clone();
+        let mut est: HashMap<&str, f64> = HashMap::new();
+        let mut orders = Vec::new();
+        let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
+        for r in &seeds {
+            let (order, _, rows) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
+            let Some(spec) = self.join_spec(&r.head, &order, None, &ri, scc, &native_rels) else { return Ok(false) };
+            *est.entry(r.head.rel.as_str()).or_default() += rows;
+            lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
+            orders.push(order);
+        }
+        for r in &rels {
+            self.model.stats.card.insert((*r).clone(), est.get(r.as_str()).copied().unwrap_or(0.0).max(1.0));
+        }
+        let mut probes = Vec::new();
+        for r in &rules {
+            for (ai, a) in recursive(&r.body, scc) {
+                let (order, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
+                let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
+                let Some(spec) = self.join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else { return Ok(false) };
+                // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
+                let (whole, _, _) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
+                let wspec = if whole[0].at != ai { self.join_spec(&r.head, &whole, None, &ri, scc, &native_rels) } else { None };
+                let mut line = format!("join {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&spec));
+                if let Some(w) = wspec {
+                    line += &format!(" {}", hex(&w));
+                }
+                lines.push(line);
+                probes.push((*r, ai, order));
+            }
+        }
+        for (g, d) in &gates {
+            let idx = |rs: &[String]| {
+                let s = rs.iter().filter_map(|r| ri.get(r)).map(usize::to_string).collect::<Vec<_>>().join(",");
+                if s.is_empty() { "-".to_owned() } else { s }
+            };
+            let deps = d.deps.iter().filter_map(|x| gates.iter().position(|(g2, _)| g2 == x)).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+            lines.push(format!(
+                "gate {} {} {} {}",
+                ri[g],
+                d.src.as_ref().map_or("-".to_owned(), |s| ri[s].to_string()),
+                idx(&d.quiet),
+                if deps.is_empty() { "-".to_owned() } else { deps }
+            ));
+        }
+        self.db.query_row("SELECT set_fixpoint_open(?1)", [lines.join("\n")], |_| Ok(()))?;
+        let mut chunk: i64 = 2;
+        loop {
+            let f: String = self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, chunk], |r| r.get(0))?;
+            let f: Vec<&str> = f.split_whitespace().collect();
+            let steps: String = self.db.query_row("SELECT set_fixpoint_steps(?1)", [&name], |r| r.get(0))?;
+            for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(steps.split('\n')) {
+                observe(&mut self.model.stats, o, line);
+            }
+            let live: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [&name], |r| r.get(0))?;
+            for (r, line) in rels.iter().zip(live.split('\n')) {
+                live_stats(prog, &mut self.model, r, line);
+            }
+            if f.last() == Some(&"1") || chunk == 0 {
+                break;
+            }
+            for k in 0..probes.len() {
+                let (r, ai) = (probes[k].0, probes[k].1);
+                let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
+                if shown(&new) == shown(&probes[k].2) {
+                    continue;
+                }
+                let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
+                let spec = self
+                    .join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
+                    .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
+                self.db.query_row(
+                    "SELECT set_fixpoint_reprobe(?1, ?2, 'join', ?3)",
+                    rusqlite::params![name, (seeds.len() + k) as i64, hex(&spec)],
+                    |_| Ok(()),
+                )?;
+                probes[k].2 = new;
+            }
+            chunk *= 2;
+        }
+        self.db.query_row("SELECT set_fixpoint_close(?1)", [&name], |_| Ok(()))?;
+        self.native_rels.extend(scc.iter().cloned());
+        Ok(true)
+    }
+
+    /// Runs a one-relation flat-lattice component natively (sqlite-ext `lattice_fixpoint`, T's `native_fixpoint`)
+    /// if every rule is a seed (no recursive atom), a copy (`R($n, $v) :- ..., R($x, $v)`) or a binary transfer
+    /// (`R($n, @flat_bin($o, $a, $b)) :- ..., R($l, $a), R($r, $b)`). The rest of each body is non-recursive, so SQL
+    /// evaluates it once, planned as usual, into the component's seed and edge tables. Returns false to fall back.
+    fn native_fixpoint(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+        let prog = self.prog;
+        let native = &self.model.inputs.native;
+        let [rel] = scc.iter().collect::<Vec<_>>()[..] else { return Ok(false) };
+        if !prog.lattice.contains_key(rel) || prog.decls[rel].len() != 2 {
+            return Ok(false);
+        }
+        let mut parts: Vec<(&str, Atom, Vec<Literal>)> = Vec::new();
+        for r in rules {
+            let (h, body) = (&r.head, &r.body);
+            let rec: Vec<&Atom> = body.iter().filter_map(|l| if let Literal::Atom(a) = l && a.rel == *rel { Some(a) } else { None }).collect();
+            let rest: Vec<Literal> = body.iter().filter(|l| !matches!(l, Literal::Atom(a) if a.rel == *rel)).cloned().collect();
+            if rec.iter().any(|a| a.neg) {
+                return Ok(false);
+            }
+            let rvals: BTreeSet<&String> = rec.iter().filter_map(|a| if let Term::Var(v) = &a.args[1] { Some(v) } else { None }).collect();
+            if rvals.len() != rec.len() || rest.iter().any(|l| l.vars().iter().any(|v| rvals.contains(v))) {
+                return Ok(false);
+            }
+            let (key, val) = (&h.args[0], &h.args[1]);
+            let kinds: Vec<usize> = body
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| {
+                    matches!(l, Literal::Atom(a) if !a.neg && a.rel == "kind" && matches!((key, &a.args[0]), (Term::Var(k), Term::Var(x)) if k == x))
+                })
+                .map(|(i, _)| i)
+                .collect();
+            let mut val_vars = BTreeSet::new();
+            val.vars(&mut val_vars);
+            let kseed = match (key, kinds.as_slice()) {
+                (Term::Var(kn), [ki]) if rec.is_empty() && native.contains("kseed") => {
+                    let Literal::Atom(ka) = &body[*ki] else { unreachable!() };
+                    matches!(&ka.args[1], Term::Var(_))
+                        && body.iter().enumerate().all(|(i, l)| i == *ki || !l.vars().contains(kn))
+                        && !val_vars.contains(kn)
+                }
+                _ => false,
+            };
+            if kseed {
+                // A per-kind default (`R($n, v) :- kind($n, $k), <tests of $k>`): evaluated over the distinct kinds,
+                // and the native side seeds every node of those kinds from the tape. No row per node.
+                let Literal::Atom(ka) = &body[kinds[0]] else { unreachable!() };
+                let k = ka.args[1].clone();
+                let mut b = vec![Literal::Atom(atom_of("rdl_kinds".to_owned(), vec![k.clone()]))];
+                b.extend(body.iter().enumerate().filter(|(i, _)| *i != kinds[0]).map(|(_, l)| l.clone()));
+                parts.push(("kseed", atom_of(format!("lfx_{rel}_kseed"), vec![k, val.clone()]), b));
+            } else if rec.is_empty() {
+                parts.push(("seed", atom_of(format!("lfx_{rel}_seed"), vec![key.clone(), val.clone()]), body.clone()));
+            } else if rec.len() == 1 && matches!((val, &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x) {
+                parts.push(("copy", atom_of(format!("lfx_{rel}_copy"), vec![key.clone(), rec[0].args[0].clone()]), rest));
+            } else if let Term::Call(f, a) = val
+                && rec.len() == 2
+                && f == "flat_bin"
+                && matches!((&a[1], &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x)
+                && matches!((&a[2], &rec[1].args[1]), (Term::Var(v), Term::Var(x)) if v == x)
+            {
+                let head = atom_of(format!("lfx_{rel}_bin"), vec![key.clone(), a[0].clone(), rec[0].args[0].clone(), rec[1].args[0].clone()]);
+                parts.push(("bin", head, rest));
+            } else {
+                return Ok(false);
+            }
+        }
+        let schema = self.model.inputs.facts.trim_end_matches('.').to_owned();
+        let has_kseed = parts.iter().any(|(k, _, _)| *k == "kseed");
+        if has_kseed && !self.views.contains("rdl_kinds") {
+            self.db.execute(&format!("CREATE TEMP VIEW rdl_kinds AS SELECT kind AS c0 FROM {}stat_kind", self.model.inputs.stats), [])?;
+            self.views.insert("rdl_kinds".to_owned());
+            let n = self.model.stats.kfreq.len() as f64;
+            self.model.stats.card.insert("rdl_kinds".to_owned(), n);
+            self.model.ndv.insert(("rdl_kinds".to_owned(), 0), n);
+            if !self.model.inputs.native.contains("nearest") {
+                self.db.query_row("SELECT tape_load(?1)", [&schema], |_| Ok(()))?;
+            }
+        }
+        for (kind, cols) in [("seed", 2), ("copy", 2), ("bin", 4), ("kseed", 2)] {
+            self.db.execute(&format!("DROP TABLE IF EXISTS lfx_{rel}_{kind}"), [])?;
+            if kind != "kseed" || has_kseed {
+                let cs = (0..cols).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+                self.db.execute(&format!("CREATE TEMP TABLE lfx_{rel}_{kind}({cs})"), [])?;
+            }
+        }
+        for (_, head, body) in &parts {
+            let (order, _, _) = self.model.plan_rule(prog, head, body, None)?;
+            self.ensure_indexes(&order)?;
+            let select = self.model.sql_select(prog, head, &order, None, None)?;
+            self.db.execute(&format!("INSERT INTO {} {select}", head.rel), [])?;
+        }
+        let native = &self.model.inputs.native;
+        if native.contains("vtab") {
+            // Kept in memory; the relation becomes a virtual table over it (no rows written).
+            self.db.query_row(&format!("SELECT lattice_fixpoint('lfx_{rel}', '@{rel}')"), [], |_| Ok(()))?;
+            self.db.execute_batch(&format!("DROP TABLE {rel}; CREATE VIRTUAL TABLE temp.{rel} USING lattice_result({rel});"))?;
+            self.views.insert(rel.clone());
+        } else if native.contains("direct") {
+            // Written straight into the relation: no output table to copy back.
+            self.db.query_row(&format!("SELECT lattice_fixpoint('lfx_{rel}', '{rel}')"), [], |_| Ok(()))?;
+        } else {
+            self.db.query_row(&format!("SELECT lattice_fixpoint('lfx_{rel}')"), [], |_| Ok(()))?;
+            self.db.execute(&format!("INSERT INTO {rel} SELECT c0, c1 FROM lfx_{rel}_out"), [])?;
+        }
+        Ok(true)
+    }
+
+    /// Runs a component of set-valued relations natively (sqlite-ext `set_fixpoint_*`, `set_rel`; T's
+    /// `native_set_fixpoint`). Seeds (rules with no recursive atom) run once in SQL. Each recursive rule is then an
+    /// edge rule (a linear rule whose non-recursive rest SQL evaluates once into an edge table, chosen when that is
+    /// cheaper than one delta pass and than one pass over the tape) or a probe (every other rule: its SQL, or with
+    /// `join` its native join, runs once per wave for each recursive atom whose delta is non-empty, reading that atom
+    /// from a `set_rel` delta vtab and the others from full ones). The native side keeps the tuples, deduplicates
+    /// them and schedules the waves.
+    fn native_set_fixpoint(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+        let prog = self.prog;
+        if scc.iter().any(|r| prog.lattice.contains_key(r)) {
+            return Ok(false);
+        }
+        let rels: Vec<&String> = scc.iter().collect();
+        let ri: BTreeMap<String, usize> = rels.iter().enumerate().map(|(i, r)| ((*r).clone(), i)).collect();
+        let name = format!("sfx{}_{}", self.made.len(), rels[0]);
+        let mut seed_plans = Vec::new();
+        for r in rules.iter().filter(|r| recursive(&r.body, scc).is_empty()) {
+            seed_plans.push((&r.head, self.model.plan_rule(prog, &r.head, &r.body, None)?));
+        }
+        for r in &rels {
+            let rows: f64 = seed_plans.iter().filter(|(h, _)| h.rel == **r).map(|(_, p)| p.2).sum();
+            self.model.stats.card.insert((*r).clone(), rows.max(1.0));
+        }
+        let var_type = |v: &str, body: &[Literal]| -> Option<char> {
+            body.iter().find_map(|l| match l {
+                Literal::Atom(a) if !a.neg => a
+                    .args
+                    .iter()
+                    .position(|t| matches!(t, Term::Var(x) if x == v))
+                    .map(|c| if prog.decls[&a.rel][c].1 == "sym" { 's' } else { 'i' }),
+                _ => None,
+            })
+        };
+        let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
+        let types = |r: &str| prog_types(prog, r).iter().map(|t| if *t == "sym" { 's' } else { 'i' }).collect::<String>();
+        let mut lines = vec![format!("name {name}")];
+        lines.extend(rels.iter().map(|r| format!("rel {r} {}", types(r))));
+        let mut edges: Vec<(Atom, Vec<Step>)> = Vec::new();
+        let mut probes: Vec<(&Rule, Vec<Step>, usize, usize)> = Vec::new();
+        for (j, r) in rules.iter().enumerate() {
+            let (h, body) = (&r.head, &r.body);
+            let rec = recursive(body, scc);
+            if rec.is_empty() {
+                continue;
+            }
+            if let [(ai, a)] = rec[..] {
+                let rest: Vec<Literal> = body.iter().enumerate().filter(|(i, _)| *i != ai).map(|(_, l)| l.clone()).collect();
+                // The spec line and edge plan of a linear rule, or the reason it is a probe.
+                let edge_rule = || -> Result<std::result::Result<(String, Option<(Atom, Vec<Step>)>), String>> {
+                    let restvars: BTreeSet<String> = rest.iter().flat_map(|l| l.vars()).collect();
+                    let mut hvars = BTreeSet::new();
+                    h.args.iter().for_each(|t| t.vars(&mut hvars));
+                    let avars = a.vars();
+                    let key: Vec<String> = avars.intersection(&restvars).cloned().collect();
+                    let ecols: Vec<String> = hvars.intersection(&restvars).filter(|v| !avars.contains(*v)).cloned().collect();
+                    if hvars.iter().any(|v| !avars.contains(v) && !restvars.contains(v)) {
+                        return Ok(Err("head variable from nowhere".to_owned()));
+                    }
+                    let slot: HashMap<&String, usize> = avars.iter().chain(&ecols).enumerate().map(|(i, v)| (v, i)).collect();
+                    let mut pat = Vec::new();
+                    for t in &a.args {
+                        pat.push(match t {
+                            Term::Wild => "_".to_owned(),
+                            Term::Var(v) => format!("v{}", slot[v]),
+                            Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            _ => return Ok(Err("pattern term".to_owned())),
+                        });
+                    }
+                    let mut head = Vec::new();
+                    for t in &h.args {
+                        head.push(match t {
+                            Term::Var(v) => format!("v{}", slot[v]),
+                            Term::Int(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
+                                let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
+                                format!("cat:v{}:v{}", slot[x0], slot[x1])
+                            }
+                            _ => return Ok(Err("head term".to_owned())),
+                        });
+                    }
+                    let mut edge = None;
+                    let src = if !rest.is_empty() {
+                        if !rest.iter().any(|l| matches!(l, Literal::Atom(x) if !x.neg)) {
+                            return Ok(Err("rest has no atom".to_owned()));
+                        }
+                        let ehead = atom_of(format!("sfx_{}_{j}", h.rel), key.iter().chain(&ecols).map(|v| Term::Var(v.clone())).collect());
+                        let Ok((order, work, _)) = self.model.plan_rule(prog, &ehead, &rest, None) else {
+                            return Ok(Err("rest cannot be planned alone".to_owned()));
+                        };
+                        if work > self.model.stats.nodes {
+                            return Ok(Err(format!("rest costs {work:.0} > {} nodes alone", self.model.stats.nodes)));
+                        }
+                        let delta = self.model.plan_rule(prog, h, body, Some(ai))?.1;
+                        if work > delta {
+                            return Ok(Err(format!("edges cost {work:.0} > one delta pass {delta:.0}")));
+                        }
+                        let t: String = key.iter().chain(&ecols).map(|v| var_type(v, &rest).unwrap_or('i')).collect();
+                        let src = format!("{} {}", ehead.rel, if t.is_empty() { "-".to_owned() } else { t });
+                        edge = Some((ehead, order));
+                        src
+                    } else {
+                        "- -".to_owned()
+                    };
+                    let vs = |vs: &[String]| vs.iter().map(|v| format!("v{}", slot[v])).collect::<Vec<_>>().join(" ");
+                    let line = format!(
+                        "rule {} {} {src} key {} ; ecols {} ; pat {} ; head {}",
+                        ri[&h.rel],
+                        ri[&a.rel],
+                        vs(&key),
+                        vs(&ecols),
+                        pat.join(" "),
+                        head.join(" ")
+                    );
+                    Ok(Ok((line, edge)))
+                };
+                if let Ok((line, edge)) = edge_rule()? {
+                    lines.push(line);
+                    edges.extend(edge);
+                    continue;
+                }
+            }
+            // A probe per recursive atom, planned with that atom's delta first.
+            for (ai, _) in rec {
+                let (order, _, _) = self.model.plan_rule(prog, h, body, Some(ai))?;
+                let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
+                probes.push((*r, order, at, ai));
+            }
+        }
+        for (h, (order, _, _)) in &seed_plans {
+            self.ensure_indexes(order)?;
+            let select = self.model.sql_select(prog, h, order, None, None)?;
+            self.insert_rows(h, &select)?;
+        }
+        for (ehead, order) in &edges {
+            self.ensure_indexes(order)?;
+            let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", ehead.rel))?;
+            if !ehead.args.is_empty() {
+                let select = self.model.sql_select(prog, ehead, order, None, None)?;
+                self.db.execute(&format!("INSERT INTO {} {select}", ehead.rel), [])?;
+            }
+        }
+        let join = self.model.inputs.native.contains("join");
+        let none = BTreeSet::new();
+        for (r, order, at, ai) in &probes {
+            let rel = match &r.body[*ai] {
+                Literal::Atom(a) => a.rel.clone(),
+                _ => unreachable!(),
+            };
+            if join && let Some(spec) = self.join_spec(&r.head, order, Some(*at), &ri, scc, &none) {
+                lines.push(format!("join {} {} {}", ri[&r.head.rel], ri[&rel], hex(&spec)));
+                continue;
+            }
+            self.ensure_indexes(order)?;
+            let sql = self.model.sql_select(prog, &r.head, order, Some(*at), Some(&tables))?;
+            lines.push(format!("probe {} {} {}", ri[&r.head.rel], ri[&rel], hex(&sql)));
+        }
+        self.db.query_row("SELECT set_fixpoint_open(?1)", [lines.join("\n")], |_| Ok(()))?;
+        for r in &rels {
+            let (full, delta) = &tables[*r];
+            for (which, vt) in [("full", full), ("delta", delta)] {
+                self.db.execute(&format!("CREATE VIRTUAL TABLE temp.{vt} USING set_rel({name}, {}, {which})", ri[*r]), [])?;
+            }
+        }
+        // The probes were planned from seed estimates, and a derived relation's columns have no distinct counts then
+        // (each is taken as 1, so a join on one looks unselective). Run a few waves, take the live counts from the
+        // native store's hash indexes, replan the probes and resume, doubling the chunk until the fixpoint.
+        let mut chunk: i64 = 2;
+        loop {
+            let f: String = self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, chunk], |r| r.get(0))?;
+            if f.split_whitespace().last() == Some("1") || chunk == 0 {
+                break;
+            }
+            let live: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [&name], |r| r.get(0))?;
+            for (r, line) in rels.iter().zip(live.split('\n')) {
+                live_stats(prog, &mut self.model, r, line);
+            }
+            for k in 0..probes.len() {
+                let (r, ai) = (probes[k].0, probes[k].3);
+                let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
+                if shown(&new) == shown(&probes[k].1) {
+                    continue;
+                }
+                let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");
+                let spec = if join { self.join_spec(&r.head, &new, Some(nat), &ri, scc, &none) } else { None };
+                let (kind, body) = match spec {
+                    Some(spec) => ("join", hex(&spec)),
+                    None => {
+                        self.ensure_indexes(&new)?;
+                        ("sql", hex(&self.model.sql_select(prog, &r.head, &new, Some(nat), Some(&tables))?))
+                    }
+                };
+                self.db.query_row(
+                    "SELECT set_fixpoint_reprobe(?1, ?2, ?3, ?4)",
+                    rusqlite::params![name, k as i64, kind, body],
+                    |_| Ok(()),
+                )?;
+                probes[k].1 = new;
+                probes[k].2 = nat;
+            }
+            chunk *= 2;
+        }
+        for r in &rels {
+            let (full, delta) = &tables[*r];
+            self.db.execute_batch(&format!("DROP TABLE temp.{full}; DROP TABLE temp.{delta};"))?;
+        }
+        self.db.query_row("SELECT set_fixpoint_close(?1)", [&name], |_| Ok(()))?;
+        self.made.insert((format!("sfx:{name}"), Vec::new()));
+        Ok(true)
+    }
+
+    /// The same merge as `merge_lattice`, as one UPSERT (T's `merge_upsert`): each candidate either inserts its key
+    /// or joins into the stored value (flat lattice: a different constant makes top). Triggers record the keys that
+    /// changed, so there is no candidate table, GROUP BY, or compare pass.
+    fn merge_upsert(&self, rel: &str, select: &str, delta: bool) -> Result<i64> {
+        let k = self.prog.lattice[rel].keys;
+        let keys = (0..k).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+        let v = format!("c{k}");
+        let exists: Option<i64> =
+            self.db.query_row(&format!("SELECT 1 FROM sqlite_temp_master WHERE name = 'chg_{rel}'"), [], |r| r.get(0)).ok();
+        if exists.is_none() {
+            let cols = (0..=k).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+            let news = (0..=k).map(|i| format!("NEW.c{i}")).collect::<Vec<_>>().join(", ");
+            self.db.execute(&format!("CREATE TEMP TABLE chg_{rel}({cols}, PRIMARY KEY ({keys}))"), [])?;
+            for ev in ["INSERT", "UPDATE"] {
+                self.db.execute(
+                    &format!(
+                        "CREATE TEMP TRIGGER chg_{rel}_{} AFTER {ev} ON {rel} BEGIN \
+                         INSERT INTO chg_{rel} VALUES ({news}) ON CONFLICT({keys}) DO UPDATE SET {v} = excluded.{v}; END",
+                        ev.to_lowercase()
+                    ),
+                    [],
+                )?;
+            }
+        }
+        self.db.execute(
+            &format!(
+                "INSERT INTO {rel} SELECT * FROM ({select}) WHERE true ON CONFLICT({keys}) DO UPDATE SET {v} = {TOP} \
+                 WHERE {v} <> {TOP} AND {v} <> excluded.{v}"
+            ),
+            [],
+        )?;
+        let n = self.count(&format!("SELECT count(*) FROM chg_{rel}"))?;
+        if delta {
+            self.db.execute(&format!("INSERT INTO new_{rel} SELECT * FROM chg_{rel}"), [])?;
+        }
+        self.db.execute(&format!("DELETE FROM chg_{rel}"), [])?;
+        Ok(n)
+    }
+}
+
 /// Evaluates `prog` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
 /// one input, typed tables for the rest, then each stratum planned from the statistics and the counts of the strata
 /// before it, non-recursive ones once and recursive ones semi-naively.
@@ -1158,6 +1936,21 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     run(prog, &db, Inputs::file(), None)
 }
 
+/// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
+/// connection before anything runs, as T's `run_sql` loads `RDL_EXT`.
+pub(in crate::code_rule_dsl) fn run_sql_native(
+    prog: &Program,
+    facts: &Path,
+    modes: &str,
+    load: impl FnOnce(&Connection) -> rusqlite::Result<()>,
+) -> Result<Outcome> {
+    let db = Connection::open_in_memory()?;
+    db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
+    db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
+    load(&db)?;
+    run(prog, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None)
+}
+
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
 /// symbols the run makes are appended to its `atoms`, and derived relations are `temp` tables, dropped by the next
@@ -1165,7 +1958,7 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register_symbols(db)?;
-    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops) };
+    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new() };
     let out = run(&lowered.program, db, inputs, Some(lowered));
     super::native::flush_symbols(db)?;
     out
@@ -1184,13 +1977,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     db.execute_batch("CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT INTO rdl_int WITH RECURSIVE i(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM i WHERE i < 4096) SELECT i FROM i;")?;
     let atoms = inputs.atoms.is_some();
     let facts = inputs.facts.clone();
+    if inputs.native.contains("nearest") {
+        db.query_row("SELECT tape_load(?1)", [facts.trim_end_matches('.')], |_| Ok(()))?;
+    }
     let model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new() };
+    let native = model.inputs.native.clone();
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new() };
     for (&rel, rs) in &rules_by {
         let [rule] = rs.as_slice() else { continue };
         if prog.lattice.contains_key(rel) || prog.facts.contains_key(rel) {
@@ -1263,6 +2060,26 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let mut outcome = Outcome::default();
     for scc in &sccs {
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
+        if native.contains("program") && !scc.iter().all(|r| run.views.contains(r)) {
+            if run.native_stratum(scc, &rules)? {
+                outcome.native.insert(key);
+                continue;
+            }
+            if prog.gates.iter().any(|(g, _)| scc.contains(g)) {
+                return Err(Error::Plan(format!("gated negations in {scc:?} need native steps for every rule")));
+            }
+            // This stratum runs in SQL, which reads the native relations it joins from their tables.
+            let read: Vec<String> = rules
+                .iter()
+                .flat_map(|r| &r.body)
+                .filter_map(|l| match l {
+                    Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                    _ => None,
+                })
+                .collect();
+            run.materialize(&read)?;
+        }
         let mut planned = Vec::new();
         for rule in &rules {
             let (order, work, _) = run.model.plan_rule(prog, &rule.head, &rule.body, None)?;
@@ -1291,31 +2108,42 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             for r in scc {
                 db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"), [])?;
             }
-            // First round: every rule over the full (initially empty or seeded) relations.
-            let mut changed = run.semi_naive_round(scc, &planned, true, &[])?;
-            let mut n = 1;
-            // Each delta variant is planned with its delta first, from the first round's counts; a still-growing
-            // relation scanned unjoined is priced as the native planner prices it (`atom_rows`).
-            for r in scc {
-                run.refresh(r, true)?;
+            if native.contains("fixpoint") && run.native_fixpoint(scc, &rules)? {
+                outcome.native.insert(key);
+                for r in scc {
+                    run.refresh(r, false)?;
+                }
+                continue;
             }
-            run.model.stats.solving = scc.clone();
-            let mut deltas = Vec::new();
-            for rule in &rules {
-                for (i, l) in rule.body.iter().enumerate() {
-                    if matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)) {
-                        let (order, _, _) = run.model.plan_rule(prog, &rule.head, &rule.body, Some(i))?;
-                        let at = order.iter().position(|s| s.at == i).expect("the delta atom");
-                        deltas.push((rule.head.clone(), order, at));
+            if native.contains("setfix") && run.native_set_fixpoint(scc, &rules)? {
+                outcome.native.insert(key);
+            } else {
+                // First round: every rule over the full (initially empty or seeded) relations.
+                let mut changed = run.semi_naive_round(scc, &planned, true, &[])?;
+                let mut n = 1;
+                // Each delta variant is planned with its delta first, from the first round's counts; a still-growing
+                // relation scanned unjoined is priced as the native planner prices it (`atom_rows`).
+                for r in scc {
+                    run.refresh(r, true)?;
+                }
+                run.model.stats.solving = scc.clone();
+                let mut deltas = Vec::new();
+                for rule in &rules {
+                    for (i, l) in rule.body.iter().enumerate() {
+                        if matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)) {
+                            let (order, _, _) = run.model.plan_rule(prog, &rule.head, &rule.body, Some(i))?;
+                            let at = order.iter().position(|s| s.at == i).expect("the delta atom");
+                            deltas.push((rule.head.clone(), order, at));
+                        }
                     }
                 }
+                run.model.stats.solving.clear();
+                while changed != 0 {
+                    changed = run.semi_naive_round(scc, &planned, false, &deltas)?;
+                    n += 1;
+                }
+                outcome.iterations.insert(key, n);
             }
-            run.model.stats.solving.clear();
-            while changed != 0 {
-                changed = run.semi_naive_round(scc, &planned, false, &deltas)?;
-                n += 1;
-            }
-            outcome.iterations.insert(scc.iter().cloned().collect::<Vec<_>>().join("/"), n);
         }
         for r in scc {
             run.refresh(r, false)?;
@@ -1325,6 +2153,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    run.materialize(&prog.outputs)?;
     let text = |e: &str| if atoms { format!("sym_text({e})") } else { e.to_owned() };
     for rel in &prog.outputs {
         // Each column's decoding: symbols as text (names in SQL, kinds and fields from the dialect's grammar).

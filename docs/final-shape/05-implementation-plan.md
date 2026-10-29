@@ -71,7 +71,7 @@ Each phase ends with a short targeted check, not a corpus run.
 - **Adapt.** Drop the `bench-backends` gate on Metal. Keep W's `bundled` and `limits`.
 - **Interner (C12).** Decide where the single u32 atom table lives (§10.6) before Phase 1 writes atoms. Write new: one `atoms` table in the content store, append-only and dense, shared by `text_vocab`/`tid`, fact atoms, paths and type terms. The CAS `strings` table maps into it.
 
-**Status (2026-10-27): done except `mimalloc`: W already runs a tuned jemalloc as its global allocator, so the swap is a decision (O16). `block` added with Phase 4 row 3 (`bb4c9605`).**
+**Status (2026-10-27): done except `mimalloc`: W already runs a tuned jemalloc as its global allocator, so the swap is a decision (O16). `block` added with Phase 4 row 3 (`bb4c9605`). 2026-10-29: `mimalloc` (and `cranelift-jit` `selinux-fix`) ported as dependencies (`6ba8fe1d`); jemalloc stays the allocator until O16.**
 
 ### Phase 1: fact store, derivations, overlay, push path (C1–C19)
 
@@ -190,7 +190,7 @@ Check: N's `production_contract_tests.rs` and `policy_lowering_tests.rs` on the 
 
 **Status (2026-10-27): copies done (`8934168d` native fixpoint; `091b65fb` `rdl.py` and its programs, the port's source); adaptations outstanding. The YAML row is W's own `compile/*`, so it has no copy.**
 
-**Status (2026-10-27): rows 1 (steps 1–3), 2 and 4 adapted: `logic::native` (lattices, `widen`, store atoms), `logic::front`, and `logic::magic` (T's `magic_sets`, `magic_adorn` and `gate_negations`, matching T's transformed programs on its five programs in all three modes). Row 5 step 1: `logic::plan`, T's planner and SQL evaluation, choosing T's plans and deriving T's outputs on three of its programs over a nine-module fixture. Row 3: `logic::front::yaml`, every pack's `rerail.policy/v1` document round-tripping through the logic AST and Datalog text, forbid matchers as `violation(…) :- ast($D, $N, {…})` rules and the rest as `.policy {…}`. Outstanding: row 1 step 4 (after Phases 7–8), row 5's native strata (after O13, symbols as atoms in the planner's SQL), `sql_ast` lowering and `compiled_plans`; O11, O12, O13.**
+**Status (2026-10-27): rows 1 (steps 1–3), 2 and 4 adapted: `logic::native` (lattices, `widen`, store atoms), `logic::front`, and `logic::magic` (T's `magic_sets`, `magic_adorn` and `gate_negations`, matching T's transformed programs on its five programs in all three modes). Row 5 step 1: `logic::plan`, T's planner and SQL evaluation, choosing T's plans and deriving T's outputs on three of its programs over a nine-module fixture. Row 3: `logic::front::yaml`, every pack's `rerail.policy/v1` document round-tripping through the logic AST and Datalog text, forbid matchers as `violation(…) :- ast($D, $N, {…})` rules and the rest as `.policy {…}`. 2026-10-29: row 5's native strata ported (T's `RDL_NATIVE` modes: `native_stratum`, `native_fixpoint`, `native_set_fixpoint`, `join_spec`, `observe`, `live_stats`, `merge_upsert`, the `tape_nearest` climb), on T's extension and its own set engine (restored `d0a8636d`), every mode deriving T's outputs on its three programs. Outstanding: row 1 step 4 (after Phases 7–8), the native strata over atoms (O13), `sql_ast` lowering and `compiled_plans`; O11, O12, O13.**
 
 Check: T's goldens (`score_calls.py`, `score_rust.py`) reproduced by the Rust port on T's 574/331-file workloads; CPU and RSS ≤ T's numbers.
 
