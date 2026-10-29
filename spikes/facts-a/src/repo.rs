@@ -48,11 +48,13 @@ fn clause_inputs(c: &eval::Clause) -> Vec<usize> {
 }
 
 /// One `--file-counts` row (docs/facts/PHASE-3.md G3b.2): the content's size (`nodes`, `depth`),
-/// the clause and its class (and fallback class), its counts on the file (`crate::counts`), and
-/// the matcher's physical work on the inputs it reads (`pred_tests`, shared by the rule's
-/// clauses: each reader sees it).
-fn file_count_row(path: &str, nodes: u64, depth: u64, rule: &eval::Rule, c: &eval::Clause, counts: &crate::counts::Counts, pred_tests: u64) -> String {
-    json!({"path": path, "nodes": nodes, "depth": depth, "clause": format!("{}/{}", rule.check, c.id), "class": c.class.name(), "fallback": c.fallback.name(), "counts": counts, "pred_tests": pred_tests}).to_string()
+/// the clause and its class (and fallback class), its counts on the file (`crate::counts`), the
+/// matcher's physical work on the inputs it reads (`pred_tests`, shared by the rule's clauses:
+/// each reader sees it), and per stage with a top-level fixpoint its admitted rows per round
+/// (`fix`: round 0 the initial select; the frontier of each round).
+fn file_count_row(path: &str, nodes: u64, depth: u64, rule: &eval::Rule, c: &eval::Clause, counts: &crate::counts::Counts, pred_tests: u64, fix: &[(&str, &[u64])]) -> String {
+    let fix: serde_json::Map<String, Json> = fix.iter().map(|(s, r)| (s.to_string(), json!(r))).collect();
+    json!({"path": path, "nodes": nodes, "depth": depth, "clause": format!("{}/{}", rule.check, c.id), "class": c.class.name(), "fallback": c.fallback.name(), "counts": counts, "pred_tests": pred_tests, "fix": fix}).to_string()
 }
 
 /// The worker's repository sink: the spill, and while a file's results are being memoised, a
@@ -194,6 +196,9 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
         if fm.is_some() || file_counts {
             out.file_counts = Some(Vec::new());
         }
+        if file_counts {
+            out.file_fix = Some(Vec::new());
+        }
         if fm.is_some() {
             repo.capture = Some(Vec::new());
         }
@@ -209,13 +214,15 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
                 eval::eval_file(rules, &ctx, &mut out, &mut repo, &mut budget);
                 stat.eval_ns = t_eval.elapsed().as_nanos() as u64;
                 let counts = out.file_counts.take().unwrap_or_default();
+                let fixes = out.file_fix.take().unwrap_or_default();
                 if file_counts {
                     let depth = u64::from(f.depth());
                     let tests = |ri: usize, ii: usize| out.input_counts.get(&(ri, ii)).map_or(0, |c| c.pred_tests) - tests0.get(&(ri, ii)).copied().unwrap_or(0);
                     for ((ri, ci), c) in &counts {
                         let (rule, clause) = (&rules[*ri], &rules[*ri].clauses[*ci]);
                         let pred_tests = clause_inputs(clause).into_iter().map(|ii| tests(*ri, ii)).sum();
-                        file_rows.push((path.clone(), file_count_row(path, f.len() as u64, depth, rule, clause, c, pred_tests)));
+                        let fix: Vec<(&str, &[u64])> = fixes.iter().filter(|(k, _, _)| *k == (*ri, *ci)).map(|(_, s, r)| (s.as_str(), r.as_slice())).collect();
+                        file_rows.push((path.clone(), file_count_row(path, f.len() as u64, depth, rule, clause, c, pred_tests, &fix)));
                     }
                 }
                 // Each evaluated clause's results become its memo entry.
@@ -246,6 +253,7 @@ fn worker(rules: &[eval::Rule], paths: &[String], root: &Path, next: &AtomicUsiz
             }
         }
         out.file_counts = None;
+        out.file_fix = None;
         repo.capture = None;
         out.skip.clear();
         if let Some(m) = fm {
@@ -618,4 +626,43 @@ pub fn compare(args: &[String]) {
         o.remove("fn");
     }
     println!("{}", serde_json::to_string_pretty(&brief).unwrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--file-counts`' fixpoint rounds (E0, docs/facts/LATTICE.md): a per-file stage's top-level
+    /// fixpoint reports its admitted rows per round, round 0 the initial select, through the
+    /// first empty round. A set chain 1 → 4 admits one row per round; a bag fan-out (each row
+    /// below 4 derives two) doubles its frontier until it stops. A stage without recursion
+    /// reports nothing, and the row's `fix` carries exactly these.
+    #[test]
+    fn file_counts_report_fixpoint_rounds() {
+        let doc = json!({"id": "t", "clauses": [{"id": "c", "relational": {"partitionBy": "file",
+            "inputs": {"mods": {"evidence": {"as": "row", "query": {"ast": {"language": "python", "syntax": "valid", "rule": {"kind": "module"}}}}}},
+            "stages": [
+                {"name": "chain", "query": "WITH RECURSIVE r(n) AS (SELECT 1 FROM mods UNION SELECT n+1 FROM r WHERE n<4) SELECT n FROM r"},
+                {"name": "fan", "query": "WITH RECURSIVE r(n) AS (SELECT 1 FROM mods UNION ALL SELECT 2*n FROM r WHERE n<4 UNION ALL SELECT 2*n+1 FROM r WHERE n<4) SELECT n FROM r"},
+                {"name": "plain", "query": "SELECT n FROM chain"}],
+            "query": "SELECT __path AS path, __start AS start_byte, __end AS end_byte FROM mods WHERE 0"},
+            "violation": {"code": "x", "anchor": "witness.span"}}]});
+        let rule = eval::Rule::compile(&doc, &Map::new(), None, &facts::GRAMMAR).unwrap();
+        let source = Arc::new("x = 1\n".to_owned());
+        let Ok(facts::Built::Facts(f)) = facts::build("t.py", source.clone()) else { panic!("facts") };
+        let mut out = eval::Output { file_counts: Some(Vec::new()), file_fix: Some(Vec::new()), ..Default::default() };
+        let rules = std::slice::from_ref(&rule);
+        eval::eval_file(rules, &eval::FileCtx { f: &f, path: "t.py", source: &source }, &mut out, &mut crate::spill::Memory::default(), &mut BTreeMap::new());
+        assert!(out.failures.is_empty(), "{:?}", out.failures.iter().map(|f| &f.message).collect::<Vec<_>>());
+        let fixes = out.file_fix.take().unwrap();
+        let got: Vec<(&str, &[u64])> = fixes.iter().map(|(k, s, r)| {
+            assert_eq!(*k, (0, 0));
+            (s.as_str(), r.as_slice())
+        }).collect();
+        assert_eq!(got, vec![("chain", &[1, 1, 1, 1, 0][..]), ("fan", &[1, 2, 4, 0][..])]);
+        let counts = out.file_counts.take().unwrap();
+        let row: Json = serde_json::from_str(&file_count_row("t.py", 0, 0, &rule, &rule.clauses[0], &counts[0].1, 0, &got)).unwrap();
+        assert_eq!(row["fix"], json!({"chain": [1, 1, 1, 1, 0], "fan": [1, 2, 4, 0]}));
+        assert_eq!((counts[0].1.fix_rounds, counts[0].1.fix_rows), (9, 11));
+    }
 }
