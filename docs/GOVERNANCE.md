@@ -6,7 +6,7 @@ contribute day to day is in [CONTRIBUTING.md](../CONTRIBUTING.md).
 Rerail is an open-source project developed by Nera Software Inc. and licensed under the Apache License 2.0, and it
 stays under that licence. It is open source with gated contribution: anyone can use, fork and redistribute the code
 under the licence, and propose a change from their fork, but code reaches this repository only through a pull request
-from a branch here, which Nera Software employees, approved contributors and the project's own automation open.
+from a branch here, which contributors and the project's own automation open.
 [Reviewing the gate](#reviewing-the-gate) says when and how that is looked at again.
 
 Nera Software Inc. holds the copyright ([NOTICE](../NOTICE)). The licence does not grant use of the Rerail name
@@ -17,10 +17,9 @@ Nera Software Inc. holds the copyright ([NOTICE](../NOTICE)). The licence does n
 | Role | Who | What they do |
 | --- | --- | --- |
 | Anyone | Anyone | Opens and comments on issues: bug reports, rule misfires, feature and integration requests, questions. Proposes a change from their fork, as a pull request or a branch linked from an issue, with no CI ([Proposing a change from your fork](../CONTRIBUTING.md#proposing-a-change-from-your-fork)) |
-| Contributor | The list in [CONTRIBUTING.md](../CONTRIBUTING.md#the-list), approved by the maintainers | Pushes branches here and opens pull requests from them, with CI; claims `good first issue` and `help wanted` issues |
-| Nera Software employee | Nera Software employees with write access | Opens pull requests from branches here |
+| Contributor | Nera Software employees, and people outside Nera Software the maintainers approve ([the list](../CONTRIBUTING.md#the-list)) | Pushes branches here and opens pull requests from them, with CI; claims `good first issue` and `help wanted` issues |
 | Automation | Dependabot, and the GitHub Actions release and upstream bump workflows ([How contribution works](../CONTRIBUTING.md#how-contribution-works)) | Opens dependency update, release and upstream bump pull requests, reviewed and merged like any other |
-| Maintainer | The Nera Software employees in [.github/CODEOWNERS](../.github/CODEOWNERS), appointed by Nera Software | Reviews and merges pull requests, ports changes proposed from forks, triages issues, agrees the approach for work that starts with an issue, keeps the contributor list, and enforces the [Code of Conduct](../CODE_OF_CONDUCT.md) |
+| Maintainer | The code owners ([.github/CODEOWNERS](../.github/CODEOWNERS)), appointed by Nera Software | Reviews and merges pull requests, ports changes proposed from forks, triages issues, agrees the approach for work that starts with an issue, keeps the contributor list, and enforces the [Code of Conduct](../CODE_OF_CONDUCT.md) |
 
 A pull request from a fork is a proposal. A maintainer who takes it ports it onto a branch here in their own pull
 request, credits its author with `Co-authored-by:`, and closes it with a link to the new one.

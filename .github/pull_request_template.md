@@ -1,6 +1,6 @@
 <!--
 From a fork, this pull request is a proposal: it gets no CI, and a maintainer who takes it ports it to a branch here
-and closes this one with a link. Contributors and Nera Software employees open pull requests from branches here:
+and closes this one with a link. Contributors, which Nera Software employees are by default, open pull requests from branches here:
 https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#how-contribution-works
 -->
 

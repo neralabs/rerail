@@ -10,15 +10,15 @@ decisions are made is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 ## How contribution works
 
 Rerail is open source with gated contribution. Anyone can propose a change, from their fork. Code reaches this
-repository only through a pull request from a branch here, which Nera Software employees, approved contributors and the
-project's own automation open.
+repository only through a pull request from a branch here, which contributors and the project's own automation open.
+Nera Software employees are contributors by being on the team; anyone else becomes one by approval.
 
-| | Anyone | Contributors | Nera Software employees |
-| --- | --- | --- | --- |
-| Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes | Yes |
-| Propose a change from a fork: a pull request, or a branch linked from an issue ([below](#proposing-a-change-from-your-fork)) | Yes, with no CI | Yes, with no CI | Not needed |
-| Push branches here and open pull requests from them, with CI | [Become a contributor](#becoming-a-contributor) | Yes | Yes |
-| Claim a `good first issue` or `help wanted` issue | Become a contributor | Yes | Yes |
+| | Anyone | Contributors |
+| --- | --- | --- |
+| Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes |
+| Propose a change from a fork: a pull request, or a branch linked from an issue ([below](#proposing-a-change-from-your-fork)) | Yes, with no CI | Not needed |
+| Push branches here and open pull requests from them, with CI | [Become a contributor](#becoming-a-contributor) | Yes |
+| Claim a `good first issue` or `help wanted` issue | Become a contributor | Yes |
 
 The automation is Dependabot, for dependency updates, and the GitHub Actions workflows that open the **Release** pull
 request (`release-pr.yml`) and upstream bump pull requests (`upstream-bump-publish.yml`) as the `neralabs-ci` app.
@@ -44,9 +44,10 @@ submit is licensed under Apache-2.0 ([Licence of contributions](#licence-of-cont
 
 ## Contributors
 
-Contributors push branches to this repository and open pull requests from them, so CI runs on their changes. They
-apply, and the maintainers approve them. Being a contributor is not a path to maintainer: Nera Software appoints
-maintainers ([docs/GOVERNANCE.md](docs/GOVERNANCE.md#who-the-maintainers-are)).
+Contributors push branches to this repository and open pull requests from them, so CI runs on their changes. Nera
+Software employees are contributors by being on the team. Anyone else applies, and the maintainers approve them. Being
+a contributor is not a path to maintainer: Nera Software appoints maintainers
+([docs/GOVERNANCE.md](docs/GOVERNANCE.md#who-the-maintainers-are)).
 
 ### Becoming a contributor
 
@@ -65,16 +66,17 @@ Maintainers look at:
 A maintainer answers in the issue. If it's a yes, they add you to the list below and assign you the issue. If it's not
 yet, they say why and what would change it.
 
-Push access comes once the repository is set up for contributors: secrets and OIDC scoped to branches, and a
-contributor role narrower than write. Until then, an approved contributor proposes from their fork like anyone else
+Push access for contributors outside Nera Software comes once the repository is set up for it: secrets and OIDC
+scoped to branches, and a role narrower than write. Until then, an approved contributor proposes from their fork like
+anyone else
 ([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
 
 ### The list
 
-The list changes only through a maintainer's pull request that links the issue where it was agreed, so every name on
-it has a public reason.
+Contributors from outside Nera Software are listed here. The list changes only through a maintainer's pull request
+that links the issue where it was agreed, so every name on it has a public reason.
 
-Contributors: none yet.
+Contributors outside Nera Software: none yet.
 
 ### Leaving the list
 
@@ -96,7 +98,7 @@ Open an issue before you start on:
 Agree on the approach with a maintainer in the issue before you write the code. A pull request for work nobody agreed
 on may be closed, however good it is.
 
-Nera Software employees and contributors take these straight to a pull request, with no issue; from a fork, they are a
+Contributors take these straight to a pull request, with no issue; from a fork, they are a
 proposal like any other:
 
 - typo and documentation fixes;
@@ -112,7 +114,7 @@ is open to others again.
 
 ## Contribution flow
 
-**From a branch here** (Nera Software employees and contributors):
+**From a branch here** (contributors):
 
 1. Find an issue, or open one ([Start with an issue](#start-with-an-issue)).
 2. Claim it or assign it to yourself, and agree on the approach with a maintainer when the issue needs one.
