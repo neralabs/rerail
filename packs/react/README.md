@@ -1,6 +1,6 @@
 # Rerail rule pack: React
 
-The pack ships 31 eslint-plugin-react and 10 eslint-plugin-react-hooks rules, ports of eslint-plugin-react 7.37.5 and
+The pack ships 30 eslint-plugin-react and 10 eslint-plugin-react-hooks rules, ports of eslint-plugin-react 7.37.5 and
 eslint-plugin-react-hooks 7.1.1. A port starts in `candidates/rules/` (none today) and moves to `rules/` and
 `pack.json` once it passes the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)), which
 CI runs on every port. Every port is scored against the plugins' own findings on the
@@ -11,9 +11,8 @@ path. The conformance check (`--check`, run in CI) scores the test cases and the
 their own here (upstream tests them through the compiler's fixtures), so their test-case answers are the plugin's
 findings on the rules-of-hooks and exhaustive-deps cases, and the samples carry them; the four of them those cases never
 report on (`error-boundaries`, `purity`, `set-state-in-render`, `static-components`) ship off, as `upstream-status` asks.
-`react-react-in-jsx-scope` also ships off, though `flat.recommended` turns it on: on React 17's automatic JSX runtime a
-file needs no `React` in scope, so it would report every component there. The plugin's `jsx-runtime` configuration
-turns it off for those projects; a project on the classic runtime turns it on.
+The pack does not port `react/react-in-jsx-scope`, though `flat.recommended` turns it on: on React 17's automatic JSX
+runtime a file needs no `React` in scope, so it would report every component there.
 
 Most samples come from the React test set: 738 real files from 57 MIT and Apache-2.0 repositories, each at the commit
 that introduced a violation of one rule, labelled with ESLint's findings for that rule (the plugins at their defaults);
@@ -28,15 +27,14 @@ another library is skipped. The runtime is the file's `@jsxImportSource` pragma 
 library), or its `@jsx` pragma when that names `React`; else an `h` or `createElement` imported from Stencil, Preact,
 Vue, Solid, Hyperapp or Mithril (another library); else its nearest `package.json`: React when it depends on react,
 react-dom, react-native or next and on none of vue, @stencil/core, preact, solid-js, @builder.io/qwik, inferno or
-mithril, another library in the reverse case, unknown otherwise. `react-in-jsx-scope` asks for the factory a file's
-`@jsx` pragma names (Emotion's `jsx`, for one) instead of `React`, as the plugin does.
+mithril, another library in the reverse case, unknown otherwise.
 
 The pack follows the [pack structure and validation contract](../../docs/pack-format.md): it is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack react"`.
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and the 41 rules it ships, with an example each rule catches and one it lets pass |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and the 40 rules it ships, with an example each rule catches and one it lets pass |
 | `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools. Written by `candidates/build.mjs` |
 | `upstream/<tool>/` | The plugin's copied tests (`tests/`), the cases extracted from them (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `upstream/common.mjs` and `scripts/pack-data/eslint-expected.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `UPSTREAM.md` lists the fixtures Rerail wrote beside them (`common.mjs` `AUTHORED`): files of other JSX libraries, which the plugins report and the ports skip, and React files whose JSX goes through Emotion, which both report |
 | `divergences.json` | Where the ports and the expected findings disagree by design: the plugins' findings on the authored files of other JSX libraries, and sample lines under an `oxlint-disable` comment (or an `eslint-disable` naming another plugin's same-named rule), which silence the port as they silence Oxlint and not ESLint |
@@ -220,10 +218,6 @@ Port of eslint-plugin-react 7.37.5 react/no-unsafe at its default `checkAliases:
 ### `react-no-unstable-nested-components`
 
 Port of eslint-plugin-react 7.37.5 react/no-unstable-nested-components, default options (allowAsProps false, propNamePattern `render*`). It reproduces the plugin's component detection: a function declaration named `X…` (or `_X…`) returning JSX or null, a function or arrow assigned to `X…`, exported by default, returned, returned by an arrow, or the value of an `X…` property, a `React.memo`/`React.forwardRef` call (or `memo`/`forwardRef` imported from react) around an inline function, a class extending `Component`/`PureComponent`/`React.Component`/`React.PureComponent` (or documented `@extends React.Component`), and a `createReactClass` object; "returns JSX" follows the plugin's walk through blocks, if/else, for, while and switch (not try, do-while, for-in/of or labels), through conditionals, logical operators, sequences, `React.createElement`/imported `createElement` and a name bound to JSX. It reports, inside the nearest enclosing component (unless that component's name starts with a lower-case letter, `_` or `$`), a nested component that returns JSX, a class component, or a memo/forwardRef call, and any function returning JSX that is an object property's value or sits anywhere inside a JSX attribute's expression; inside a class component declaration, any function or method returning JSX is also reported when it, or the nearest enclosing function that is a component, is a function component (inside or outside the class), as upstream does. Not reported: functions under a `render*` property or attribute, the `children` attribute or a direct `{…}` element child (the nearest expression container decides), `.map(…)` callbacks, functions returned inside a `useX(…)` call, the argument of memo/forwardRef, a class's `render` method, and a `React.memo(() => <Child/>)` whose `Child` is a component declared earlier in the file (upstream's wrapped-component exception). Known limits: a component found only through `Foo.propTypes`/`defaultProps` references, computed or string property keys as component names, and sequence expressions nested deeper than one level are not modelled; a file whose syntax tree-sitter cannot parse is not evaluated, since the clause relies on negated and stop-rule relations.
-
-### `react-react-in-jsx-scope`
-
-Port of eslint-plugin-react 7.37.5 react/react-in-jsx-scope. A JSX opening element or fragment is reported when the file's JSX factory has no visible binding: `React`, or the first `.`-segment of the first `@jsx` pragma comment when that is an identifier (`/** @jsx h */` asks for `h`, `/** @jsx Foo.bar */` for `Foo`), as the plugin's pragma util reads it. A binding is visible when it is declared at the top level (import, var/let/const, function, class), in an enclosing block's own declarations, or as an enclosing function's parameter.
 
 ### `react-self-closing-comp`
 

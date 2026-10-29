@@ -228,20 +228,6 @@
       "match": "line+column"
     },
     {
-      "id": "react-react-in-jsx-scope",
-      "upstream": {
-        "tool": "eslint-plugin-react",
-        "rule": "react/react-in-jsx-scope"
-      },
-      "policy": "rules/react-react-in-jsx-scope.json",
-      "capabilities": [
-        "syntax",
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "react-no-unescaped-entities",
       "upstream": {
         "tool": "eslint-plugin-react",

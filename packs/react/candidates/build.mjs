@@ -84,7 +84,6 @@ function document(spec) {
             rule: check.rule,
             ...(local(spec, check) ? { utils: local(spec, check) } : {}),
             ...(check.constraints ? { constraints: check.constraints } : {}),
-            ...(check.transform ? { transform: check.transform } : {}),
             file: { ...check.file, jsxRuntime: JSX_RUNTIMES },
           },
         },

@@ -224,58 +224,6 @@ const JSX_KEY_UTILS = {
   "iterator-element": { any: [{ matches: "callback-body" }, { matches: "callback-branch" }, { matches: "returned" }] },
 };
 
-/**
- * react-in-jsx-scope: a binding of the pragma an element sees, approximated syntactically (see the policy description).
- * `name` matches a declared name: `React`'s text, or a name equal to the file's `@jsx` pragma (PRAGMA).
- */
-const scopeUtils = (prefix, name) => {
-  const declared = `declares-${prefix}`;
-  return {
-    [declared]: {
-      any: [
-        { kind: "import_statement", has: { stopBy: "end", kind: "identifier", ...name } },
-        {
-          any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }],
-          has: {
-            kind: "variable_declarator",
-            has: {
-              field: "name",
-              any: [
-                { kind: "identifier", ...name },
-                { has: { stopBy: "end", any: [{ kind: "identifier" }, { kind: "shorthand_property_identifier_pattern" }], ...name } },
-              ],
-            },
-          },
-        },
-        { any: [{ kind: "function_declaration" }, { kind: "class_declaration" }], has: { field: "name", ...name } },
-        { kind: "export_statement", has: { field: "declaration", matches: declared } },
-      ],
-    },
-    [`${prefix}-visible`]: {
-      any: [
-        { inside: { stopBy: "end", kind: "program", has: { matches: declared } } },
-        { inside: { stopBy: "end", kind: "statement_block", has: { matches: declared } } },
-        { inside: { stopBy: "end", any: [...FUNCTION_KINDS, { kind: "function_declaration" }, { kind: "method_definition" }], matches: `${prefix}-parameter` } },
-      ],
-    },
-    [`${prefix}-parameter`]: {
-      any: [
-        { has: { field: "parameters", has: { stopBy: "end", kind: "identifier", ...name, binds: { form: "parameter" } } } },
-        { has: { field: "parameter", kind: "identifier", ...name } },
-      ],
-    },
-  };
-};
-/** A comment whose `@jsx` pragma (its first `.`-segment) is an identifier: plugin's JSX_ANNOTATION_REGEX and JS_IDENTIFIER_REGEX. */
-const PRAGMA_COMMENT = { kind: "comment", regex: "@jsx\\s+[_$a-zA-Z][_$a-zA-Z0-9]*(?:[.\\s]|\\*/$|$)" };
-const REACT_PRAGMA = "@jsx\\s+React(?:[.\\s]|\\*/$|$)";
-const REACT_SCOPE_UTILS = {
-  ...scopeUtils("react", { regex: "^React$" }),
-  "other-pragma-file": { inside: { stopBy: "end", kind: "program", has: { ...PRAGMA_COMMENT, not: { regex: REACT_PRAGMA } } } },
-};
-/** Only where PRAGMA is bound: the compare runs in the check that captures the pragma comment. */
-const PRAGMA_SCOPE_UTILS = scopeUtils("pragma", { all: [{ pattern: "$DN" }, { compare: { left: "DN", op: "eq", right: "PRAGMA" } }] });
-
 /** jsx-no-target-blank's attribute readings. */
 const attr = name => ({ kind: "jsx_attribute", has: { kind: "property_identifier", regex: `^${name}$` } });
 const lastAttr = name => ({ ...attr(name), not: { precedes: { stopBy: "end", ...attr(name) } } });
@@ -1010,42 +958,6 @@ export const SPECS = [
           "member-root": { inside: { field: "object", kind: "member_expression", matches: "name-chain" } },
         },
         message: "'$NAME' is not defined.",
-      },
-    ],
-  },
-  // Ships off when promoted: its pack.json entry takes `"on": false`, mirroring plugin:react/jsx-runtime.
-  // Under React 17's automatic JSX runtime (tsconfig `"jsx": "react-jsx"`, babel `runtime: "automatic"`, Next.js,
-  // Vite) `React` need not be in scope, so the rule flags every JSX file and steers agents to add an unused
-  // `import React`. Upstream has no option for this either, and a policy cannot read the project's runtime. A repo should
-  // turn it on itself when its ESLint config enables react/react-in-jsx-scope or it uses the classic runtime. Evaluation
-  // runs must not attach this candidate directly.
-  {
-    id: "react-react-in-jsx-scope",
-    tool: R,
-    upstream: "react/react-in-jsx-scope",
-    capabilities: ["syntax", "scope", "suppression"],
-    match: "line+column",
-    description: "Import React in every file that uses JSX; the classic JSX transform compiles tags to React.createElement calls.",
-    checks: [
-      {
-        id: "upstream",
-        rule: {
-          any: [{ kind: "jsx_opening_element" }, { kind: "jsx_self_closing_element" }],
-          not: { any: [{ matches: "react-visible" }, { matches: "other-pragma-file" }] },
-        },
-        utils: REACT_SCOPE_UTILS,
-        message: "'React' must be in scope when using JSX",
-      },
-      {
-        id: "pragma",
-        rule: {
-          any: [{ kind: "jsx_opening_element" }, { kind: "jsx_self_closing_element" }],
-          inside: { stopBy: "end", kind: "program", has: { ...PRAGMA_COMMENT, not: { regex: REACT_PRAGMA }, pattern: "$CM" } },
-          not: { matches: "pragma-visible" },
-        },
-        utils: PRAGMA_SCOPE_UTILS,
-        transform: { PRAGMA: { replace: { source: "$CM", replace: "(?s)^.*?@jsx\\s+([_$a-zA-Z][_$a-zA-Z0-9]*)[\\s\\S]*$", by: "${1}" } } },
-        message: "'$PRAGMA' must be in scope when using JSX",
       },
     ],
   },

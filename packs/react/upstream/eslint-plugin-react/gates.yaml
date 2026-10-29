@@ -15,8 +15,9 @@ upstream:
   # rules, 21 on without options and react/no-unsafe off, with parserOptions.ecmaFeatures.jsx. Team decision, in the
   # form of tslint:latest: `configs.flat['jsx-runtime']` is the overlay a project on React 17's JSX transform spreads
   # after it. It turns react-in-jsx-scope and jsx-uses-react off and turns nothing on, so listed second it would change
-  # no result (a rule takes the first approved configuration that turns it on); applied as an overlay it would start
-  # react-react-in-jsx-scope off. `configs.flat.all` turns every rule on and is not a recommendation.
+  # no result (a rule takes the first approved configuration that turns it on). The pack does not port react-in-jsx-scope:
+  # on that transform, the default since React 17, it would report every component. `configs.flat.all` turns every rule
+  # on and is not a recommendation.
   recommended_configs:
     - flat.recommended
   # The file types upstream lints with its approved configuration at the pins (declared; reviewed at each bump).
@@ -113,9 +114,6 @@ rules:
   "react/no-unstable-nested-components":
     deprecated: null
     recommended: null
-  "react/react-in-jsx-scope":
-    deprecated: null
-    recommended: { config: "flat.recommended", options: [] }
   "react/self-closing-comp":
     deprecated: null
     recommended: null

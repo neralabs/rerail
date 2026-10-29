@@ -651,23 +651,6 @@
       }
     },
     {
-      "id": "react-react-in-jsx-scope",
-      "document": "rules/react-react-in-jsx-scope.json",
-      "title": "eslint-plugin-react react-in-jsx-scope: Disallow missing React when using JSX",
-      "group": "eslint-plugin-react",
-      "on": false,
-      "examples": {
-        "caught": {
-          "path": "src/Hello.jsx",
-          "text": "export function Hello() {\n  return <p>Hello</p>;\n}\n"
-        },
-        "passes": {
-          "path": "src/Hello.jsx",
-          "text": "import React from \"react\";\n\nexport function Hello() {\n  return <p>Hello</p>;\n}\n"
-        }
-      }
-    },
-    {
       "id": "react-self-closing-comp",
       "document": "rules/react-self-closing-comp.json",
       "title": "eslint-plugin-react self-closing-comp: Disallow extra closing tags for components without children",
