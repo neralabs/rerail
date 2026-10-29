@@ -76,17 +76,18 @@ Ask in the issue you are working on, or open an issue with your question.
 
 ### Response times
 
-Rerail is maintained by a small team. These are the times we aim to reply in, counted in business days; they are
-not times to a fix, a merge or a release.
+These are the times we aim for, counted in business days: a first response within 5, and a fix or a decision within
+10. A fix is merged to `main` by then; when it ships depends on the next release
+([docs/release.md](docs/release.md)).
 
-| You sent | We reply within |
-| --- | --- |
-| A vulnerability report ([SECURITY.md](SECURITY.md)) | 2 business days |
-| A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days |
-| A bug report | 5 business days: triaged, labelled, or asked for a reproduction |
-| A feature request | 10 business days: accepted, declined, or "not now" with a reason |
-| A change linked from your fork ([Proposing a change from your fork](#proposing-a-change-from-your-fork)) | 5 business days to a first response; 10 business days to a decision: taken in, or declined with a reason |
-| A question | Best effort |
+| You sent | First response | Fix or decision |
+| --- | --- | --- |
+| A vulnerability report ([SECURITY.md](SECURITY.md)) | 2 business days | As [SECURITY.md](SECURITY.md) describes |
+| A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days | As the [Code of Conduct](CODE_OF_CONDUCT.md#what-happens-next) describes |
+| A bug report or rule misfire | 5 business days: triaged, labelled, or asked for a reproduction | 10 business days: fixed, or a decision with a reason |
+| A feature or integration request | 5 business days | 10 business days: accepted, declined, or "not now" with a reason |
+| A change linked from your fork ([Proposing a change from your fork](#proposing-a-change-from-your-fork)) | 5 business days | 10 business days: taken in, or declined with a reason |
+| A question | 5 business days | 10 business days: answered |
 
 If an issue gets no reply within its window, comment on it to bring it back up.
 
