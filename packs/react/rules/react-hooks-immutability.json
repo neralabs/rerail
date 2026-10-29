@@ -1977,32 +1977,41 @@
             }
           },
           "reassigning-fn": {
-            "matches": "depth1-fn",
-            "has": {
-              "stopBy": {
-                "any": [
-                  {
-                    "kind": "function_declaration"
-                  },
-                  {
-                    "kind": "generator_function_declaration"
-                  },
-                  {
-                    "kind": "function_expression"
-                  },
-                  {
-                    "kind": "generator_function"
-                  },
-                  {
-                    "kind": "arrow_function"
-                  },
-                  {
-                    "kind": "method_definition"
-                  }
-                ]
+            "all": [
+              {
+                "matches": "fn"
               },
-              "matches": "local-reassign"
-            }
+              {
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "matches": "local-reassign"
+                }
+              },
+              {
+                "matches": "depth1-fn"
+              }
+            ]
           },
           "async-fn": {
             "matches": "fn",
@@ -2157,39 +2166,976 @@
               }
             ]
           },
-          "memo-result-last-name": {
-            "any": [
-              {
-                "kind": "shorthand_property_identifier"
-              },
-              {
-                "kind": "pair",
-                "has": {
-                  "field": "value",
-                  "kind": "identifier",
-                  "pattern": "$LAST"
+          "hoisted-ref": {
+            "kind": "identifier",
+            "pattern": "$HN",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "ref-hook-call"
+                  },
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "inside": {
+                      "matches": "component-body"
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "pattern": "$HO",
+                        "compare": {
+                          "left": "HO",
+                          "op": "eq",
+                          "right": "HN",
+                          "text": "name"
+                        },
+                        "inside": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "function_expression"
+                            }
+                          ],
+                          "inside": {
+                            "kind": "arguments",
+                            "inside": {
+                              "matches": "hook-call"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
-            ],
-            "nthChild": {
-              "position": 1,
-              "reverse": true,
-              "ofRule": {
+            }
+          },
+          "rooted-at-same-ref": {
+            "any": [
+              {
+                "matches": "same-ref"
+              },
+              {
                 "any": [
                   {
-                    "kind": "pair"
+                    "kind": "member_expression"
                   },
                   {
-                    "kind": "shorthand_property_identifier"
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "rooted-at-same-ref"
+                }
+              }
+            ]
+          },
+          "deps-frozen-root": {
+            "kind": "identifier",
+            "pattern": "$N",
+            "all": [
+              {
+                "matches": "store-object"
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "pattern": "$SITE",
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "component-body"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "method_definition"
+                      }
+                    ]
+                  },
+                  "matches": "fn-expr",
+                  "pattern": "$F",
+                  "nthChild": 1,
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "matches": "manual-memo-call",
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "component-body"
+                      }
+                    }
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "variable_declarator",
+                      "pattern": "$D",
+                      "compare": {
+                        "left": "D",
+                        "op": "eq",
+                        "right": "SITE",
+                        "text": "node"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "not": {
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "has": {
+                              "field": "value",
+                              "matches": "ref-hook-call"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "inside": {
+                      "stopBy": "end",
+                      "pattern": "$F2",
+                      "compare": {
+                        "left": "F2",
+                        "op": "eq",
+                        "right": "F",
+                        "text": "node"
+                      },
+                      "inside": {
+                        "kind": "arguments",
+                        "has": {
+                          "nthChild": 2,
+                          "matches": "deps-array",
+                          "has": {
+                            "matches": "rooted-at-same-ref"
+                          }
+                        }
+                      }
+                    }
                   },
                   {
-                    "kind": "spread_element"
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "has": {
+                            "field": "value",
+                            "matches": "ref-hook-call"
+                          }
+                        }
+                      }
+                    },
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "member_expression"
+                            },
+                            {
+                              "kind": "subscript_expression"
+                            }
+                          ]
+                        }
+                      },
+                      "kind": "member_expression",
+                      "pattern": "$A",
+                      "inside": {
+                        "field": "object",
+                        "any": [
+                          {
+                            "kind": "member_expression"
+                          },
+                          {
+                            "kind": "subscript_expression"
+                          }
+                        ]
+                      },
+                      "not": {
+                        "has": {
+                          "field": "property",
+                          "regex": "^current$"
+                        }
+                      }
+                    },
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "pattern": "$F3",
+                          "compare": {
+                            "left": "F3",
+                            "op": "eq",
+                            "right": "F",
+                            "text": "node"
+                          },
+                          "inside": {
+                            "kind": "arguments",
+                            "has": {
+                              "nthChild": 2,
+                              "matches": "deps-array",
+                              "has": {
+                                "pattern": "$E",
+                                "compare": {
+                                  "left": "E",
+                                  "op": "eq",
+                                  "right": "A",
+                                  "text": "tokens"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "matches": "frozen-ident"
+                }
+              }
+            ]
+          },
+          "hoisted-chain": {
+            "any": [
+              {
+                "matches": "hoisted-ref"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "member_expression"
                   },
                   {
-                    "kind": "method_definition"
+                    "kind": "subscript_expression"
+                  }
+                ],
+                "has": {
+                  "field": "object",
+                  "matches": "hoisted-chain"
+                }
+              }
+            ]
+          },
+          "hoisted-frozen": {
+            "kind": "identifier",
+            "all": [
+              {
+                "not": {
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "any": [
+                          {
+                            "matches": "write-name"
+                          },
+                          {
+                            "matches": "rest-name"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "matches": "hoisted-ref"
+                  },
+                  {
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "any": [
+                              {
+                                "kind": "member_expression"
+                              },
+                              {
+                                "kind": "subscript_expression"
+                              }
+                            ],
+                            "matches": "hoisted-chain"
+                          }
+                        }
+                      }
+                    }
                   }
                 ]
               }
+            ]
+          },
+          "array-created": {
+            "any": [
+              {
+                "kind": "array"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "kind": "array"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memo-array": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "memo-call",
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": 1,
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "matches": "array-created"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "kind": "statement_block",
+                                  "has": {
+                                    "stopBy": {
+                                      "matches": "fn"
+                                    },
+                                    "kind": "return_statement",
+                                    "has": {
+                                      "nthChild": 1,
+                                      "matches": "array-created"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "identifier",
+                        "matches": "memo-array"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "set-created": {
+            "any": [
+              {
+                "kind": "new_expression",
+                "has": {
+                  "field": "constructor",
+                  "kind": "identifier",
+                  "regex": "^Set$"
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^Set$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memo-set": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "memo-call",
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": 1,
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "matches": "set-created"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "kind": "statement_block",
+                                  "has": {
+                                    "stopBy": {
+                                      "matches": "fn"
+                                    },
+                                    "kind": "return_statement",
+                                    "has": {
+                                      "nthChild": 1,
+                                      "matches": "set-created"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "identifier",
+                        "matches": "memo-set"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "map-created": {
+            "any": [
+              {
+                "kind": "new_expression",
+                "has": {
+                  "field": "constructor",
+                  "kind": "identifier",
+                  "regex": "^Map$"
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^Map$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memo-map": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "memo-call",
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": 1,
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "matches": "map-created"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "kind": "statement_block",
+                                  "has": {
+                                    "stopBy": {
+                                      "matches": "fn"
+                                    },
+                                    "kind": "return_statement",
+                                    "has": {
+                                      "nthChild": 1,
+                                      "matches": "map-created"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "identifier",
+                        "matches": "memo-map"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "weak-set-created": {
+            "any": [
+              {
+                "kind": "new_expression",
+                "has": {
+                  "field": "constructor",
+                  "kind": "identifier",
+                  "regex": "^WeakSet$"
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^WeakSet$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memo-weak-set": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "memo-call",
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": 1,
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "matches": "weak-set-created"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "kind": "statement_block",
+                                  "has": {
+                                    "stopBy": {
+                                      "matches": "fn"
+                                    },
+                                    "kind": "return_statement",
+                                    "has": {
+                                      "nthChild": 1,
+                                      "matches": "weak-set-created"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "identifier",
+                        "matches": "memo-weak-set"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "weak-map-created": {
+            "any": [
+              {
+                "kind": "new_expression",
+                "has": {
+                  "field": "constructor",
+                  "kind": "identifier",
+                  "regex": "^WeakMap$"
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "kind": "new_expression",
+                        "has": {
+                          "field": "constructor",
+                          "kind": "identifier",
+                          "regex": "^WeakMap$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memo-weak-map": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "memo-call",
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": 1,
+                            "any": [
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "matches": "weak-map-created"
+                                }
+                              },
+                              {
+                                "has": {
+                                  "field": "body",
+                                  "kind": "statement_block",
+                                  "has": {
+                                    "stopBy": {
+                                      "matches": "fn"
+                                    },
+                                    "kind": "return_statement",
+                                    "has": {
+                                      "nthChild": 1,
+                                      "matches": "weak-map-created"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "kind": "identifier",
+                        "matches": "memo-weak-map"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "mutable-closure": {
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "matches": "store-target",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "member_expression",
+                    "has": {
+                      "field": "property",
+                      "regex": "^current$"
+                    }
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "property",
+                    "regex": "^current$"
+                  },
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "stopBy": "end",
+                      "pattern": "$MF2",
+                      "compare": {
+                        "left": "MF2",
+                        "op": "eq",
+                        "right": "MF",
+                        "text": "node"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "kind": "member_expression",
+                          "has": {
+                            "field": "property",
+                            "regex": "^current$"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "arguments",
+                    "inside": {
+                      "stopBy": "end",
+                      "pattern": "$MF2",
+                      "compare": {
+                        "left": "MF2",
+                        "op": "eq",
+                        "right": "MF",
+                        "text": "node"
+                      }
+                    }
+                  }
+                },
+                {
+                  "matches": "store-target",
+                  "has": {
+                    "field": "object",
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "member_expression"
+                          },
+                          {
+                            "kind": "subscript_expression"
+                          }
+                        ]
+                      }
+                    },
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "not": {
+                            "inside": {
+                              "stopBy": "end",
+                              "pattern": "$MF3",
+                              "compare": {
+                                "left": "MF3",
+                                "op": "eq",
+                                "right": "MF",
+                                "text": "node"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "reaches-gf": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "function_expression"
+                  }
+                ],
+                "pattern": "$RV",
+                "compare": {
+                  "left": "RV",
+                  "op": "eq",
+                  "right": "GF",
+                  "text": "node"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "function_expression"
+                  }
+                ],
+                "not": {
+                  "has": {
+                    "stopBy": {
+                      "matches": "fn"
+                    },
+                    "matches": "memo-local-reassign"
+                  }
+                },
+                "has": {
+                  "stopBy": {
+                    "matches": "fn"
+                  },
+                  "kind": "identifier",
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression"
+                  },
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "any": [
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "function_expression"
+                            }
+                          ],
+                          "matches": "reaches-gf"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "reassigns-transitively": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "has": {
+              "stopBy": {
+                "matches": "fn"
+              },
+              "any": [
+                {
+                  "matches": "memo-local-reassign"
+                },
+                {
+                  "kind": "identifier",
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression"
+                  },
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "any": [
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "function_expression"
+                            }
+                          ],
+                          "matches": "reassigns-transitively"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
             }
           }
         }
@@ -2205,10 +3151,29 @@
             "pattern": "$V",
             "all": [
               {
-                "matches": "mutation-root"
+                "any": [
+                  {
+                    "matches": "mutation-root"
+                  },
+                  {
+                    "matches": "store-object",
+                    "all": [
+                      {
+                        "matches": "hoisted-frozen"
+                      }
+                    ]
+                  }
+                ]
               },
               {
-                "matches": "frozen-ident"
+                "any": [
+                  {
+                    "matches": "frozen-ident"
+                  },
+                  {
+                    "matches": "hoisted-frozen"
+                  }
+                ]
               },
               {
                 "matches": "in-react-file"
@@ -2345,6 +3310,260 @@
                     }
                   }
                 ]
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Copy `$V` into a new local value and change the copy; props, state, context and hook results must not be mutated.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "memo-collection-mutation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$V",
+            "all": [
+              {
+                "matches": "own-fn-is-compiled"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "memo-array",
+                    "inside": {
+                      "field": "object",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:push|pop)$"
+                      },
+                      "inside": {
+                        "field": "function",
+                        "kind": "call_expression"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "memo-set",
+                    "inside": {
+                      "field": "object",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:add|clear|delete)$"
+                      },
+                      "inside": {
+                        "field": "function",
+                        "kind": "call_expression"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "memo-map",
+                    "inside": {
+                      "field": "object",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:set|clear|delete)$"
+                      },
+                      "inside": {
+                        "field": "function",
+                        "kind": "call_expression"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "memo-weak-set",
+                    "inside": {
+                      "field": "object",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:add|delete)$"
+                      },
+                      "inside": {
+                        "field": "function",
+                        "kind": "call_expression"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "memo-weak-map",
+                    "inside": {
+                      "field": "object",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:delete)$"
+                      },
+                      "inside": {
+                        "field": "function",
+                        "kind": "call_expression"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "in-react-file"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/immutability",
+        "message": "Copy `$V` into a new local value and change the copy; props, state, context and hook results must not be mutated.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/immutability"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "immutability"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "deps-frozen-mutation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$V",
+            "all": [
+              {
+                "matches": "deps-frozen-root"
+              },
+              {
+                "matches": "in-react-file"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        },
+                        {
+                          "kind": "statement_block",
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "kind": "method_definition"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": {
+                          "any": [
+                            {
+                              "kind": "function_declaration"
+                            },
+                            {
+                              "kind": "generator_function_declaration"
+                            },
+                            {
+                              "kind": "function_expression"
+                            },
+                            {
+                              "kind": "generator_function"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "method_definition"
+                            }
+                          ]
+                        },
+                        "kind": "identifier",
+                        "matches": "store-object",
+                        "pattern": "$W",
+                        "compare": {
+                          "left": "W",
+                          "op": "eq",
+                          "right": "V",
+                          "text": "name"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             ]
           },
@@ -2790,6 +4009,39 @@
                         }
                       }
                     ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "matches": "fn-expr",
+                          "pattern": "$MF",
+                          "all": [
+                            {
+                              "inside": {
+                                "kind": "arguments",
+                                "inside": {
+                                  "matches": "hook-call"
+                                }
+                              }
+                            },
+                            {
+                              "matches": "own-fn-is-compiled"
+                            },
+                            {
+                              "matches": "mutable-closure"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "matches": "before-declaration"
+                      },
+                      {
+                        "matches": "first-ref"
+                      }
+                    ]
                   }
                 ]
               },
@@ -2839,6 +4091,35 @@
               },
               {
                 "matches": "in-react-file"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_declaration"
+                        },
+                        {
+                          "kind": "generator_function_declaration"
+                        },
+                        {
+                          "kind": "function_expression"
+                        },
+                        {
+                          "kind": "generator_function"
+                        },
+                        {
+                          "kind": "arrow_function"
+                        },
+                        {
+                          "kind": "method_definition"
+                        }
+                      ]
+                    },
+                    "matches": "deps-frozen-root"
+                  }
+                }
               }
             ]
           },
@@ -3281,29 +4562,143 @@
                               },
                               "all": [
                                 {
-                                  "matches": "memo-result-last-name"
-                                },
-                                {
                                   "any": [
                                     {
-                                      "kind": "shorthand_property_identifier",
-                                      "pattern": "$LAST2",
-                                      "compare": {
-                                        "left": "LAST2",
-                                        "op": "eq",
-                                        "right": "G",
-                                        "text": "name"
+                                      "kind": "pair",
+                                      "has": {
+                                        "field": "value",
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "arrow_function"
+                                              },
+                                              {
+                                                "kind": "function_expression"
+                                              }
+                                            ],
+                                            "matches": "reaches-gf"
+                                          },
+                                          {
+                                            "kind": "identifier",
+                                            "resolves": {
+                                              "binding": {
+                                                "site": {
+                                                  "kind": "variable_declarator",
+                                                  "has": {
+                                                    "field": "value",
+                                                    "any": [
+                                                      {
+                                                        "kind": "arrow_function"
+                                                      },
+                                                      {
+                                                        "kind": "function_expression"
+                                                      }
+                                                    ],
+                                                    "matches": "reaches-gf"
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        ]
                                       }
                                     },
                                     {
-                                      "compare": {
-                                        "left": "LAST",
-                                        "op": "eq",
-                                        "right": "G",
-                                        "text": "name"
+                                      "kind": "shorthand_property_identifier",
+                                      "resolves": {
+                                        "binding": {
+                                          "site": {
+                                            "kind": "variable_declarator",
+                                            "has": {
+                                              "field": "value",
+                                              "any": [
+                                                {
+                                                  "kind": "arrow_function"
+                                                },
+                                                {
+                                                  "kind": "function_expression"
+                                                }
+                                              ],
+                                              "matches": "reaches-gf"
+                                            }
+                                          }
+                                        }
                                       }
                                     }
                                   ]
+                                },
+                                {
+                                  "not": {
+                                    "precedes": {
+                                      "stopBy": "end",
+                                      "any": [
+                                        {
+                                          "kind": "pair",
+                                          "has": {
+                                            "field": "value",
+                                            "any": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "arrow_function"
+                                                  },
+                                                  {
+                                                    "kind": "function_expression"
+                                                  }
+                                                ],
+                                                "matches": "reassigns-transitively"
+                                              },
+                                              {
+                                                "kind": "identifier",
+                                                "resolves": {
+                                                  "binding": {
+                                                    "site": {
+                                                      "kind": "variable_declarator",
+                                                      "has": {
+                                                        "field": "value",
+                                                        "any": [
+                                                          {
+                                                            "kind": "arrow_function"
+                                                          },
+                                                          {
+                                                            "kind": "function_expression"
+                                                          }
+                                                        ],
+                                                        "matches": "reassigns-transitively"
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        {
+                                          "kind": "shorthand_property_identifier",
+                                          "resolves": {
+                                            "binding": {
+                                              "site": {
+                                                "kind": "variable_declarator",
+                                                "has": {
+                                                  "field": "value",
+                                                  "any": [
+                                                    {
+                                                      "kind": "arrow_function"
+                                                    },
+                                                    {
+                                                      "kind": "function_expression"
+                                                    }
+                                                  ],
+                                                  "matches": "reassigns-transitively"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
                                 }
                               ]
                             }
@@ -3311,7 +4706,8 @@
                         }
                       }
                     }
-                  }
+                  },
+                  "pattern": "$GF"
                 }
               },
               {

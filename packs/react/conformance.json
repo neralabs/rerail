@@ -233,7 +233,7 @@
         "tool": "eslint-plugin-react",
         "rule": "react/react-in-jsx-scope"
       },
-      "policy": "candidates/rules/react-react-in-jsx-scope.json",
+      "policy": "rules/react-react-in-jsx-scope.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -514,7 +514,7 @@
         "tool": "eslint-plugin-react-hooks",
         "rule": "react-hooks/immutability"
       },
-      "policy": "candidates/rules/react-hooks-immutability.json",
+      "policy": "rules/react-hooks-immutability.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -544,7 +544,7 @@
         "tool": "eslint-plugin-react-hooks",
         "rule": "react-hooks/refs"
       },
-      "policy": "candidates/rules/react-hooks-refs.json",
+      "policy": "rules/react-hooks-refs.json",
       "capabilities": [
         "syntax",
         "scope",

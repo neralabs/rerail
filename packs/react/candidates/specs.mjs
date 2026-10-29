@@ -224,46 +224,57 @@ const JSX_KEY_UTILS = {
   "iterator-element": { any: [{ matches: "callback-body" }, { matches: "callback-branch" }, { matches: "returned" }] },
 };
 
-/** react-in-jsx-scope: a binding of `React` an element sees, approximated syntactically (see the policy description). */
-const declares = name => ({
-  any: [
-    { kind: "import_statement", has: { stopBy: "end", kind: "identifier", regex: `^${name}$` } },
-    {
-      any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }],
-      has: {
-        kind: "variable_declarator",
-        has: {
-          field: "name",
-          any: [
-            { kind: "identifier", regex: `^${name}$` },
-            { has: { stopBy: "end", any: [{ kind: "identifier" }, { kind: "shorthand_property_identifier_pattern" }], regex: `^${name}$` } },
-          ],
+/**
+ * react-in-jsx-scope: a binding of the pragma an element sees, approximated syntactically (see the policy description).
+ * `name` matches a declared name: `React`'s text, or a name equal to the file's `@jsx` pragma (PRAGMA).
+ */
+const scopeUtils = (prefix, name) => {
+  const declared = `declares-${prefix}`;
+  return {
+    [declared]: {
+      any: [
+        { kind: "import_statement", has: { stopBy: "end", kind: "identifier", ...name } },
+        {
+          any: [{ kind: "lexical_declaration" }, { kind: "variable_declaration" }],
+          has: {
+            kind: "variable_declarator",
+            has: {
+              field: "name",
+              any: [
+                { kind: "identifier", ...name },
+                { has: { stopBy: "end", any: [{ kind: "identifier" }, { kind: "shorthand_property_identifier_pattern" }], ...name } },
+              ],
+            },
+          },
         },
-      },
+        { any: [{ kind: "function_declaration" }, { kind: "class_declaration" }], has: { field: "name", ...name } },
+        { kind: "export_statement", has: { field: "declaration", matches: declared } },
+      ],
     },
-    { any: [{ kind: "function_declaration" }, { kind: "class_declaration" }], has: { field: "name", regex: `^${name}$` } },
-    { kind: "export_statement", has: { field: "declaration", matches: "declares-react" } },
-  ],
-});
-const REACT_SCOPE_UTILS = {
-  "declares-react": declares("React"),
-  "react-visible": {
-    any: [
-      { inside: { stopBy: "end", kind: "program", has: { matches: "declares-react" } } },
-      { inside: { stopBy: "end", kind: "statement_block", has: { matches: "declares-react" } } },
-      { inside: { stopBy: "end", any: [...FUNCTION_KINDS, { kind: "function_declaration" }, { kind: "method_definition" }], matches: "react-parameter" } },
-    ],
-  },
-  "react-parameter": {
-    any: [
-      { has: { field: "parameters", has: { stopBy: "end", kind: "identifier", regex: "^React$", binds: { form: "parameter" } } } },
-      { has: { field: "parameter", kind: "identifier", regex: "^React$" } },
-    ],
-  },
-  "other-pragma-file": {
-    inside: { stopBy: "end", kind: "program", has: { kind: "comment", regex: "@jsx\\s", not: { regex: "@jsx\\s+React(?:[.\\s]|$)" } } },
-  },
+    [`${prefix}-visible`]: {
+      any: [
+        { inside: { stopBy: "end", kind: "program", has: { matches: declared } } },
+        { inside: { stopBy: "end", kind: "statement_block", has: { matches: declared } } },
+        { inside: { stopBy: "end", any: [...FUNCTION_KINDS, { kind: "function_declaration" }, { kind: "method_definition" }], matches: `${prefix}-parameter` } },
+      ],
+    },
+    [`${prefix}-parameter`]: {
+      any: [
+        { has: { field: "parameters", has: { stopBy: "end", kind: "identifier", ...name, binds: { form: "parameter" } } } },
+        { has: { field: "parameter", kind: "identifier", ...name } },
+      ],
+    },
+  };
 };
+/** A comment whose `@jsx` pragma (its first `.`-segment) is an identifier: plugin's JSX_ANNOTATION_REGEX and JS_IDENTIFIER_REGEX. */
+const PRAGMA_COMMENT = { kind: "comment", regex: "@jsx\\s+[_$a-zA-Z][_$a-zA-Z0-9]*(?:[.\\s]|\\*/$|$)" };
+const REACT_PRAGMA = "@jsx\\s+React(?:[.\\s]|\\*/$|$)";
+const REACT_SCOPE_UTILS = {
+  ...scopeUtils("react", { regex: "^React$" }),
+  "other-pragma-file": { inside: { stopBy: "end", kind: "program", has: { ...PRAGMA_COMMENT, not: { regex: REACT_PRAGMA } } } },
+};
+/** Only where PRAGMA is bound: the compare runs in the check that captures the pragma comment. */
+const PRAGMA_SCOPE_UTILS = scopeUtils("pragma", { all: [{ pattern: "$DN" }, { compare: { left: "DN", op: "eq", right: "PRAGMA" } }] });
 
 /** jsx-no-target-blank's attribute readings. */
 const attr = name => ({ kind: "jsx_attribute", has: { kind: "property_identifier", regex: `^${name}$` } });
@@ -1010,7 +1021,6 @@ export const SPECS = [
   // runs must not attach this candidate directly.
   {
     id: "react-react-in-jsx-scope",
-    candidate: true,
     tool: R,
     upstream: "react/react-in-jsx-scope",
     capabilities: ["syntax", "scope", "suppression"],
@@ -1025,6 +1035,17 @@ export const SPECS = [
         },
         utils: REACT_SCOPE_UTILS,
         message: "'React' must be in scope when using JSX",
+      },
+      {
+        id: "pragma",
+        rule: {
+          any: [{ kind: "jsx_opening_element" }, { kind: "jsx_self_closing_element" }],
+          inside: { stopBy: "end", kind: "program", has: { ...PRAGMA_COMMENT, not: { regex: REACT_PRAGMA }, pattern: "$CM" } },
+          not: { matches: "pragma-visible" },
+        },
+        utils: PRAGMA_SCOPE_UTILS,
+        transform: { PRAGMA: { replace: { source: "$CM", replace: "(?s)^.*?@jsx\\s+([_$a-zA-Z][_$a-zA-Z0-9]*)[\\s\\S]*$", by: "${1}" } } },
+        message: "'$PRAGMA' must be in scope when using JSX",
       },
     ],
   },
@@ -1885,7 +1906,7 @@ export const HAND_WRITTEN = [
   {
     id: "react-hooks-immutability",
     upstream: { tool: H, rule: "react-hooks/immutability" },
-    policy: "candidates/rules/react-hooks-immutability.json",
+    policy: "rules/react-hooks-immutability.json",
     capabilities: ["syntax", "scope", "compare", "suppression"],
     match: "line+column",
   },
@@ -1899,7 +1920,7 @@ export const HAND_WRITTEN = [
   {
     id: "react-hooks-refs",
     upstream: { tool: H, rule: "react-hooks/refs" },
-    policy: "candidates/rules/react-hooks-refs.json",
+    policy: "rules/react-hooks-refs.json",
     capabilities: ["syntax", "scope", "compare", "suppression"],
     match: "line+column",
   },

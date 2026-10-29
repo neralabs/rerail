@@ -94,6 +94,23 @@
       }
     },
     {
+      "id": "react-hooks-immutability",
+      "document": "rules/react-hooks-immutability.json",
+      "title": "eslint-plugin-react-hooks immutability: Validates against mutating props, state, and other values that are immutable",
+      "group": "eslint-plugin-react-hooks",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/Card.jsx",
+          "text": "export function Card({ user }) {\n  user.name = user.name.trim();\n  return <h2>{user.name}</h2>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Card.jsx",
+          "text": "export function Card({ user }) {\n  const name = user.name.trim();\n  return <h2>{name}</h2>;\n}\n"
+        }
+      }
+    },
+    {
       "id": "react-hooks-purity",
       "document": "rules/react-hooks-purity.json",
       "title": "eslint-plugin-react-hooks purity: Validates that components/hooks are pure by checking known-impure functions",
@@ -107,6 +124,23 @@
         "passes": {
           "path": "src/Stamp.jsx",
           "text": "import { useState } from \"react\";\n\nexport function Stamp() {\n  const [now] = useState(() => Date.now());\n  return <time>{now}</time>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-refs",
+      "document": "rules/react-hooks-refs.json",
+      "title": "eslint-plugin-react-hooks refs: Validates correct usage of refs, not reading/writing during render",
+      "group": "eslint-plugin-react-hooks",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/Counter.jsx",
+          "text": "import { useRef } from \"react\";\n\nexport function Counter() {\n  const count = useRef(0);\n  return <p>{count.current}</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Counter.jsx",
+          "text": "import { useRef } from \"react\";\n\nexport function Counter() {\n  const count = useRef(0);\n  const onClick = () => {\n    count.current += 1;\n  };\n  return <button type=\"button\" onClick={onClick}>Count</button>;\n}\n"
         }
       }
     },
@@ -634,6 +668,23 @@
         "passes": {
           "path": "src/List.jsx",
           "text": "function Row({ item }) {\n  return <li>{item.name}</li>;\n}\n\nexport function List({ items }) {\n  return <ul>{items.map(item => <Row key={item.id} item={item} />)}</ul>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-react-in-jsx-scope",
+      "document": "rules/react-react-in-jsx-scope.json",
+      "title": "eslint-plugin-react react-in-jsx-scope: Disallow missing React when using JSX",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Hello.jsx",
+          "text": "export function Hello() {\n  return <p>Hello</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Hello.jsx",
+          "text": "import React from \"react\";\n\nexport function Hello() {\n  return <p>Hello</p>;\n}\n"
         }
       }
     },

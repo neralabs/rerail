@@ -1060,10 +1060,20 @@
       "kind": "member_expression",
       "all": [
        {
-        "has": {
-         "field": "property",
-         "regex": "^current$"
-        }
+        "any": [
+         {
+          "has": {
+           "field": "property",
+           "regex": "^current$"
+          }
+         },
+         {
+          "has": {
+           "field": "object",
+           "matches": "typed-ref-object"
+          }
+         }
+        ]
        },
        {
         "has": {
@@ -1254,7 +1264,6 @@
        "RO"
       ],
       "rule": {
-       "kind": "identifier",
        "resolves": {
         "binding": {
          "destructuredValue": false,
@@ -1271,7 +1280,8 @@
           }
          }
         }
-       }
+       },
+       "matches": "named-read"
       }
      },
      "alias-phi": {
@@ -1280,7 +1290,6 @@
        "RO"
       ],
       "rule": {
-       "kind": "identifier",
        "resolves": {
         "binding": {
          "destructuredValue": false,
@@ -1299,7 +1308,6 @@
         }
        },
        "not": {
-        "kind": "identifier",
         "resolves": {
          "binding": {
           "destructuredValue": false,
@@ -1316,8 +1324,10 @@
            }
           }
          }
-        }
-       }
+        },
+        "matches": "named-read"
+       },
+       "matches": "named-read"
       }
      },
      "alias-chain": {
@@ -1326,7 +1336,6 @@
        "RO"
       ],
       "rule": {
-       "kind": "identifier",
        "resolves": {
         "binding": {
          "destructuredValue": false,
@@ -1345,7 +1354,6 @@
         }
        },
        "not": {
-        "kind": "identifier",
         "resolves": {
          "binding": {
           "destructuredValue": false,
@@ -1362,8 +1370,10 @@
            }
           }
          }
-        }
-       }
+        },
+        "matches": "named-read"
+       },
+       "matches": "named-read"
       }
      },
      "alias-destructured": {
@@ -1372,7 +1382,6 @@
        "RO"
       ],
       "rule": {
-       "kind": "identifier",
        "resolves": {
         "binding": {
          "site": {
@@ -1397,7 +1406,6 @@
            {
             "has": {
              "field": "value",
-             "regex": "current",
              "matches": {
               "rv-val": {
                "LOC": "$LOC",
@@ -1409,7 +1417,8 @@
           ]
          }
         }
-       }
+       },
+       "matches": "named-read"
       }
      },
      "member-read-of": {
@@ -1540,7 +1549,6 @@
        "RO"
       ],
       "rule": {
-       "kind": "identifier",
        "pattern": "$LOC",
        "all": [
         {
@@ -1602,7 +1610,8 @@
           }
          ]
         }
-       ]
+       ],
+       "matches": "named-read"
       }
      },
      "rv-base": {
@@ -1704,10 +1713,20 @@
       "kind": "member_expression",
       "all": [
        {
-        "has": {
-         "field": "property",
-         "regex": "^current$"
-        }
+        "any": [
+         {
+          "has": {
+           "field": "property",
+           "regex": "^current$"
+          }
+         },
+         {
+          "has": {
+           "field": "object",
+           "matches": "typed-ref-object"
+          }
+         }
+        ]
        },
        {
         "has": {
@@ -2096,6 +2115,14 @@
          }
         },
         {
+         "matches": {
+          "rv-lost-load": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
+        },
+        {
          "any": [
           {
            "kind": "member_expression"
@@ -2337,6 +2364,38 @@
            "RO": "$RO"
           }
          }
+        },
+        {
+         "matches": {
+          "literal-known": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
+        },
+        {
+         "matches": {
+          "literal-lost-member": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
+        },
+        {
+         "matches": {
+          "alias-prop-load": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
+        },
+        {
+         "matches": {
+          "alias-lost-load": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
         }
        ]
       }
@@ -2556,6 +2615,14 @@
            "RO": "$RO"
           }
          }
+        },
+        {
+         "matches": {
+          "literal-known": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
         }
        ]
       }
@@ -2587,6 +2654,15 @@
             "LOC": "$LOC",
             "RO": "$RO"
            }
+          }
+         }
+        },
+        {
+         "kind": "shorthand_property_identifier",
+         "matches": {
+          "rv-val": {
+           "LOC": "$LOC",
+           "RO": "$RO"
           }
          }
         }
@@ -2630,6 +2706,23 @@
             "LOC": "$L6",
             "RO": "$R6"
            }
+          }
+         }
+        }
+       },
+       {
+        "kind": "shorthand_property_identifier",
+        "matches": {
+         "rv-val": {
+          "LOC": "$L7",
+          "RO": "$R7"
+         }
+        },
+        "not": {
+         "matches": {
+          "rv-known": {
+           "LOC": "$L6",
+           "RO": "$R6"
           }
          }
         }
@@ -2937,6 +3030,12 @@
                 "kind": "object"
                }
               }
+             },
+             {
+              "kind": "shorthand_property_identifier",
+              "inside": {
+               "kind": "object"
+              }
              }
             ]
            }
@@ -3144,6 +3243,55 @@
           }
          }
         }
+       },
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "shorthand_property_identifier"
+         }
+        ],
+        "resolves": {
+         "binding": {
+          "destructuredValue": false,
+          "value": {
+           "kind": "call_expression",
+           "all": [
+            {
+             "has": {
+              "field": "function",
+              "matches": "use-callback-callee"
+             }
+            },
+            {
+             "has": {
+              "field": "arguments",
+              "has": {
+               "nthChild": 1,
+               "any": [
+                {
+                 "kind": "arrow_function"
+                },
+                {
+                 "kind": "function_expression"
+                }
+               ],
+               "matches": "reads-refs"
+              }
+             }
+            }
+           ]
+          },
+          "site": {
+           "inside": {
+            "stopBy": "end",
+            "matches": "fn"
+           }
+          }
+         }
+        }
        }
       ]
      },
@@ -3335,6 +3483,740 @@
           "matches": "current-object"
          }
         }
+       }
+      ]
+     },
+     "typed-ref-object": {
+      "any": [
+       {
+        "matches": "use-ref-call"
+       },
+       {
+        "kind": "identifier",
+        "matches": "ref-typed"
+       },
+       {
+        "any": [
+         {
+          "kind": "non_null_expression"
+         },
+         {
+          "kind": "parenthesized_expression"
+         },
+         {
+          "kind": "as_expression"
+         },
+         {
+          "kind": "satisfies_expression"
+         }
+        ],
+        "has": {
+         "nthChild": 1,
+         "matches": "typed-ref-object"
+        }
+       }
+      ]
+     },
+     "rv-lost-load": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "kind": "member_expression",
+       "pattern": "$LOC",
+       "all": [
+        {
+         "not": {
+          "has": {
+           "field": "property",
+           "kind": "property_identifier",
+           "regex": "^current$"
+          }
+         }
+        },
+        {
+         "has": {
+          "field": "object",
+          "matches": "typed-ref-object",
+          "pattern": "$RO"
+         }
+        }
+       ]
+      }
+     },
+     "named-read": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "shorthand_property_identifier"
+       }
+      ]
+     },
+     "literal-lost": {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "array"
+         },
+         {
+          "kind": "object"
+         }
+        ]
+       },
+       {
+        "any": [
+         {
+          "has": {
+           "stopBy": {
+            "not": {
+             "any": [
+              {
+               "kind": "array"
+              },
+              {
+               "kind": "object"
+              },
+              {
+               "kind": "pair"
+              }
+             ]
+            }
+           },
+           "matches": {
+            "structure-value": {
+             "LOC": "$L7",
+             "RO": "$R7"
+            }
+           },
+           "not": {
+            "matches": {
+             "rv-known": {
+              "LOC": "$L6",
+              "RO": "$R6"
+             }
+            }
+           }
+          }
+         },
+         {
+          "all": [
+           {
+            "has": {
+             "stopBy": {
+              "not": {
+               "any": [
+                {
+                 "kind": "array"
+                },
+                {
+                 "kind": "object"
+                },
+                {
+                 "kind": "pair"
+                }
+               ]
+              }
+             },
+             "matches": {
+              "structure-value": {
+               "LOC": "$L1",
+               "RO": "$R1"
+              }
+             }
+            }
+           },
+           {
+            "has": {
+             "stopBy": {
+              "not": {
+               "any": [
+                {
+                 "kind": "array"
+                },
+                {
+                 "kind": "object"
+                },
+                {
+                 "kind": "pair"
+                }
+               ]
+              }
+             },
+             "matches": {
+              "structure-value": {
+               "LOC": "$L2",
+               "RO": "$R2"
+              }
+             },
+             "all": [
+              {
+               "compare": {
+                "left": "R2",
+                "op": "ne",
+                "right": "R1",
+                "text": "tokens"
+               }
+              }
+             ]
+            }
+           }
+          ]
+         },
+         {
+          "kind": "array",
+          "has": {
+           "matches": {
+            "rv-val": {
+             "LOC": "$L1",
+             "RO": "$R1"
+            }
+           },
+           "precedes": {
+            "stopBy": "end",
+            "kind": "identifier",
+            "matches": "ref-id"
+           }
+          }
+         }
+        ]
+       }
+      ]
+     },
+     "member-pos": {
+      "any": [
+       {
+        "inside": {
+         "kind": "array"
+        }
+       },
+       {
+        "inside": {
+         "field": "value",
+         "kind": "pair",
+         "inside": {
+          "kind": "object"
+         }
+        }
+       }
+      ]
+     },
+     "literal-known": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "all": [
+        {
+         "any": [
+          {
+           "kind": "array"
+          },
+          {
+           "kind": "object"
+          }
+         ]
+        },
+        {
+         "matches": "member-pos"
+        },
+        {
+         "has": {
+          "stopBy": {
+           "not": {
+            "any": [
+             {
+              "kind": "array"
+             },
+             {
+              "kind": "object"
+             },
+             {
+              "kind": "pair"
+             }
+            ]
+           }
+          },
+          "matches": {
+           "structure-known": {
+            "LOC": "$LOC",
+            "RO": "$RO"
+           }
+          }
+         }
+        },
+        {
+         "not": {
+          "matches": "literal-lost"
+         }
+        }
+       ]
+      }
+     },
+     "literal-lost-member": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "all": [
+        {
+         "any": [
+          {
+           "kind": "array"
+          },
+          {
+           "kind": "object"
+          }
+         ]
+        },
+        {
+         "pattern": "$LOC"
+        },
+        {
+         "matches": "member-pos"
+        },
+        {
+         "has": {
+          "stopBy": {
+           "not": {
+            "any": [
+             {
+              "kind": "array"
+             },
+             {
+              "kind": "object"
+             },
+             {
+              "kind": "pair"
+             }
+            ]
+           }
+          },
+          "matches": {
+           "structure-value": {
+            "LOC": "$L4",
+            "RO": "$RO"
+           }
+          }
+         }
+        },
+        {
+         "matches": "literal-lost"
+        }
+       ]
+      }
+     },
+     "structure-value": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "all": [
+        {
+         "not": {
+          "any": [
+           {
+            "kind": "array"
+           },
+           {
+            "kind": "object"
+           },
+           {
+            "kind": "pair"
+           }
+          ]
+         }
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "kind": "array"
+           }
+          },
+          {
+           "inside": {
+            "field": "value",
+            "kind": "pair"
+           }
+          },
+          {
+           "kind": "shorthand_property_identifier",
+           "inside": {
+            "kind": "object"
+           }
+          }
+         ]
+        },
+        {
+         "matches": {
+          "rv-val": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
+        }
+       ]
+      }
+     },
+     "structure-known": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "all": [
+        {
+         "not": {
+          "any": [
+           {
+            "kind": "array"
+           },
+           {
+            "kind": "object"
+           },
+           {
+            "kind": "pair"
+           }
+          ]
+         }
+        },
+        {
+         "any": [
+          {
+           "inside": {
+            "kind": "array"
+           }
+          },
+          {
+           "inside": {
+            "field": "value",
+            "kind": "pair"
+           }
+          },
+          {
+           "kind": "shorthand_property_identifier",
+           "inside": {
+            "kind": "object"
+           }
+          }
+         ]
+        },
+        {
+         "matches": {
+          "rv-known": {
+           "LOC": "$LOC",
+           "RO": "$RO"
+          }
+         }
+        }
+       ]
+      }
+     },
+     "alias-prop-load": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "all": [
+        {
+         "matches": "named-read"
+        },
+        {
+         "pattern": "$LOC"
+        },
+        {
+         "resolves": {
+          "binding": {
+           "destructuredValue": false,
+           "site": {
+            "matches": "render-decl"
+           },
+           "value": {
+            "any": [
+             {
+              "kind": "member_expression"
+             },
+             {
+              "kind": "subscript_expression"
+             }
+            ],
+            "has": {
+             "field": "object",
+             "kind": "identifier",
+             "pattern": "$RO",
+             "resolves": {
+              "binding": {
+               "site": {
+                "inside": {
+                 "stopBy": "end",
+                 "matches": "fn"
+                }
+               },
+               "occurrence": {
+                "matches": "ref-attr-object"
+               }
+              }
+             }
+            }
+           }
+          }
+         }
+        },
+        {
+         "matches": "at-render"
+        },
+        {
+         "any": [
+          {
+           "matches": {
+            "after-ref-attr": {
+             "PN": "$RO"
+            }
+           }
+          },
+          {
+           "inside": {
+            "stopBy": {
+             "matches": "fn"
+            },
+            "matches": "fn",
+            "all": [
+             {
+              "not": {
+               "matches": "fn-reads-current"
+              }
+             },
+             {
+              "has": {
+               "stopBy": {
+                "matches": "fn"
+               },
+               "matches": {
+                "ref-attr-of": {
+                 "PN": "$RO"
+                }
+               },
+               "not": {
+                "matches": {
+                 "p-load-follows": {
+                  "PN": "$RO"
+                 }
+                }
+               }
+              }
+             }
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     "alias-lost-load": {
+      "params": [
+       "LOC",
+       "RO"
+      ],
+      "rule": {
+       "all": [
+        {
+         "matches": "named-read"
+        },
+        {
+         "pattern": "$LOC"
+        },
+        {
+         "resolves": {
+          "binding": {
+           "destructuredValue": false,
+           "site": {
+            "matches": "render-decl"
+           },
+           "value": {
+            "matches": {
+             "rv-lost-load": {
+              "LOC": "$L5",
+              "RO": "$RO"
+             }
+            }
+           }
+          }
+         }
+        },
+        {
+         "matches": "at-render"
+        }
+       ]
+      }
+     },
+     "use-callback-callee": {
+      "any": [
+       {
+        "kind": "identifier",
+        "regex": "^useCallback$"
+       },
+       {
+        "kind": "member_expression",
+        "all": [
+         {
+          "has": {
+           "field": "object",
+           "kind": "identifier",
+           "regex": "^React$"
+          }
+         },
+         {
+          "has": {
+           "field": "property",
+           "regex": "^useCallback$"
+          }
+         }
+        ]
+       }
+      ]
+     },
+     "holds-ref-effect": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "array"
+         },
+         {
+          "kind": "object"
+         }
+        ],
+        "has": {
+         "stopBy": {
+          "not": {
+           "any": [
+            {
+             "kind": "array"
+            },
+            {
+             "kind": "object"
+            },
+            {
+             "kind": "pair"
+            }
+           ]
+          }
+         },
+         "any": [
+          {
+           "any": [
+            {
+             "kind": "arrow_function"
+            },
+            {
+             "kind": "function_expression"
+            }
+           ],
+           "matches": "reads-refs"
+          },
+          {
+           "matches": "fn-name-reads-refs"
+          }
+         ]
+        }
+       },
+       {
+        "kind": "identifier",
+        "resolves": {
+         "binding": {
+          "destructuredValue": false,
+          "site": {
+           "matches": "render-decl"
+          },
+          "value": {
+           "matches": "ref-effect-expr"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "ref-effect-expr": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "array"
+         },
+         {
+          "kind": "object"
+         }
+        ],
+        "matches": "holds-ref-effect"
+       },
+       {
+        "any": [
+         {
+          "kind": "arrow_function"
+         },
+         {
+          "kind": "function_expression"
+         }
+        ],
+        "matches": "reads-refs"
+       },
+       {
+        "kind": "identifier",
+        "matches": "fn-name-reads-refs"
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "nthChild": 1,
+         "matches": "ref-effect-expr"
+        }
+       },
+       {
+        "kind": "ternary_expression",
+        "any": [
+         {
+          "has": {
+           "field": "consequence",
+           "matches": "ref-effect-expr"
+          }
+         },
+         {
+          "has": {
+           "field": "alternative",
+           "matches": "ref-effect-expr"
+          }
+         }
+        ]
+       },
+       {
+        "kind": "binary_expression",
+        "has": {
+         "field": "operator",
+         "regex": "^(?:&&|\\|\\||\\?\\?)$"
+        },
+        "any": [
+         {
+          "has": {
+           "field": "left",
+           "matches": "ref-effect-expr"
+          }
+         },
+         {
+          "has": {
+           "field": "right",
+           "matches": "ref-effect-expr"
+          }
+         }
+        ]
        }
       ]
      }
@@ -4921,6 +5803,15 @@
          },
          {
           "kind": "binary_expression"
+         },
+         {
+          "kind": "shorthand_property_identifier"
+         },
+         {
+          "kind": "array"
+         },
+         {
+          "kind": "object"
          }
         ]
        },
@@ -4938,6 +5829,12 @@
            "inside": {
             "kind": "object"
            }
+          }
+         },
+         {
+          "kind": "shorthand_property_identifier",
+          "inside": {
+           "kind": "object"
           }
          }
         ]
@@ -4976,6 +5873,16 @@
             }
            }
           }
+         },
+         {
+          "kind": "shorthand_property_identifier",
+          "inside": {
+           "kind": "object",
+           "matches": "alive",
+           "not": {
+            "matches": "memo-deps"
+           }
+          }
          }
         ]
        }
@@ -4991,6 +5898,140 @@
    },
    "violation": {
     "anchor": "capture.LOC",
+    "code": "react-hooks/refs",
+    "message": "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "react-hooks/refs"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "refs"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "ref-beside-lost-load",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "kind": "identifier",
+        "matches": "typed-ref-object",
+        "pattern": "$BR"
+       },
+       {
+        "any": [
+         {
+          "inside": {
+           "kind": "array"
+          }
+         },
+         {
+          "inside": {
+           "field": "value",
+           "kind": "pair",
+           "inside": {
+            "kind": "object"
+           }
+          }
+         },
+         {
+          "kind": "shorthand_property_identifier",
+          "inside": {
+           "kind": "object"
+          }
+         }
+        ]
+       },
+       {
+        "matches": "at-render"
+       },
+       {
+        "inside": {
+         "stopBy": {
+          "any": [
+           {
+            "kind": "array"
+           },
+           {
+            "kind": "object"
+           }
+          ]
+         },
+         "any": [
+          {
+           "kind": "array"
+          },
+          {
+           "kind": "object"
+          }
+         ],
+         "matches": "alive",
+         "not": {
+          "matches": "memo-deps"
+         },
+         "has": {
+          "any": [
+           {
+            "matches": {
+             "rv-lost-load": {
+              "LOC": "$LL",
+              "RO": "$LR"
+             }
+            }
+           },
+           {
+            "kind": "pair",
+            "has": {
+             "field": "value",
+             "matches": {
+              "rv-lost-load": {
+               "LOC": "$LL",
+               "RO": "$LR"
+              }
+             }
+            }
+           },
+           {
+            "kind": "shorthand_property_identifier",
+            "matches": {
+             "rv-lost-load": {
+              "LOC": "$LL",
+              "RO": "$LR"
+             }
+            }
+           }
+          ]
+         }
+        }
+       },
+       {
+        "compare": {
+         "left": "BR",
+         "op": "eq",
+         "right": "LR",
+         "text": "tokens"
+        }
+       }
+      ]
+     },
+     "file": {
+      "jsxRuntime": [
+       "react",
+       "unknown"
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.start",
     "code": "react-hooks/refs",
     "message": "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.",
     "suppress": {
@@ -5042,6 +6083,15 @@
          },
          {
           "kind": "binary_expression"
+         },
+         {
+          "kind": "array"
+         },
+         {
+          "kind": "object"
+         },
+         {
+          "kind": "shorthand_property_identifier"
          }
         ]
        },
@@ -5061,6 +6111,13 @@
             "kind": "object",
             "matches": "literal-sink"
            }
+          }
+         },
+         {
+          "kind": "shorthand_property_identifier",
+          "inside": {
+           "kind": "object",
+           "matches": "literal-sink"
           }
          }
         ]
@@ -5190,6 +6247,45 @@
             }
            }
           }
+         },
+         {
+          "kind": "shorthand_property_identifier",
+          "inside": {
+           "kind": "object",
+           "not": {
+            "any": [
+             {
+              "has": {
+               "kind": "pair",
+               "has": {
+                "field": "value",
+                "matches": {
+                 "rv-val": {
+                  "LOC": "$L9",
+                  "RO": "$R9"
+                 }
+                }
+               },
+               "all": [
+                {
+                 "compare": {
+                  "left": "R9",
+                  "op": "ne",
+                  "right": "RO",
+                  "text": "tokens"
+                 }
+                }
+               ]
+              }
+             },
+             {
+              "has": {
+               "matches": "literal-lost-value"
+              }
+             }
+            ]
+           }
+          }
          }
         ]
        }
@@ -5242,63 +6338,7 @@
         "matches": "literal-sink"
        },
        {
-        "any": [
-         {
-          "has": {
-           "matches": "literal-lost-value"
-          }
-         },
-         {
-          "all": [
-           {
-            "has": {
-             "matches": {
-              "literal-value": {
-               "LOC": "$L1",
-               "RO": "$R1"
-              }
-             }
-            }
-           },
-           {
-            "has": {
-             "matches": {
-              "literal-value": {
-               "LOC": "$L2",
-               "RO": "$R2"
-              }
-             },
-             "all": [
-              {
-               "compare": {
-                "left": "R2",
-                "op": "ne",
-                "right": "R1",
-                "text": "tokens"
-               }
-              }
-             ]
-            }
-           }
-          ]
-         },
-         {
-          "kind": "array",
-          "has": {
-           "matches": {
-            "rv-val": {
-             "LOC": "$L1",
-             "RO": "$R1"
-            }
-           },
-           "precedes": {
-            "stopBy": "end",
-            "kind": "identifier",
-            "matches": "ref-id"
-           }
-          }
-         }
-        ]
+        "matches": "literal-lost"
        },
        {
         "matches": "at-render"
@@ -5708,6 +6748,145 @@
          },
          {
           "matches": "fn-name-reads-refs"
+         },
+         {
+          "kind": "identifier",
+          "matches": "holds-ref-effect"
+         }
+        ]
+       }
+      ]
+     },
+     "file": {
+      "jsxRuntime": [
+       "react",
+       "unknown"
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.start",
+    "code": "react-hooks/refs",
+    "message": "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "react-hooks/refs"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "refs"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "function-tested",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "arrow_function"
+         },
+         {
+          "kind": "function_expression"
+         }
+        ]
+       },
+       {
+        "any": [
+         {
+          "inside": {
+           "kind": "parenthesized_expression",
+           "inside": {
+            "any": [
+             {
+              "kind": "if_statement"
+             },
+             {
+              "kind": "while_statement"
+             },
+             {
+              "kind": "do_statement"
+             },
+             {
+              "kind": "switch_statement"
+             }
+            ]
+           }
+          }
+         },
+         {
+          "inside": {
+           "field": "condition",
+           "kind": "ternary_expression"
+          }
+         },
+         {
+          "inside": {
+           "field": "left",
+           "kind": "binary_expression",
+           "has": {
+            "field": "operator",
+            "regex": "^(?:&&|\\|\\||\\?\\?)$"
+           }
+          }
+         },
+         {
+          "inside": {
+           "kind": "binary_expression",
+           "not": {
+            "kind": "binary_expression",
+            "has": {
+             "field": "operator",
+             "regex": "^(?:&&|\\|\\||\\?\\?)$"
+            }
+           }
+          }
+         },
+         {
+          "inside": {
+           "kind": "unary_expression"
+          }
+         },
+         {
+          "inside": {
+           "kind": "template_substitution"
+          }
+         }
+        ]
+       },
+       {
+        "matches": "at-render"
+       },
+       {
+        "any": [
+         {
+          "any": [
+           {
+            "kind": "arrow_function"
+           },
+           {
+            "kind": "function_expression"
+           }
+          ],
+          "matches": "reads-refs"
+         },
+         {
+          "matches": "fn-name-reads-refs"
+         },
+         {
+          "matches": "holds-ref-effect"
          }
         ]
        }
@@ -5763,30 +6942,104 @@
         "matches": "at-render"
        },
        {
+        "matches": "holds-ref-effect"
+       }
+      ]
+     },
+     "file": {
+      "jsxRuntime": [
+       "react",
+       "unknown"
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.start",
+    "code": "react-hooks/refs",
+    "message": "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.",
+    "suppress": {
+     "eslint": {
+      "rules": [
+       "react-hooks/refs"
+      ]
+     },
+     "oxlint": {
+      "rules": [
+       "refs"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "function-receiver",
+   "forbid": {
+    "ast": {
+     "language": "typescript",
+     "rule": {
+      "all": [
+       {
         "any": [
          {
-          "kind": "array",
-          "has": {
-           "matches": "reads-refs-value"
-          }
+          "kind": "arrow_function"
          },
          {
-          "kind": "object",
+          "kind": "function_expression"
+         },
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "array"
+         },
+         {
+          "kind": "object"
+         }
+        ]
+       },
+       {
+        "inside": {
+         "field": "object",
+         "kind": "member_expression",
+         "not": {
           "has": {
-           "any": [
-            {
-             "kind": "shorthand_property_identifier",
-             "matches": "fn-name-reads-refs"
-            },
-            {
-             "kind": "pair",
-             "has": {
-              "field": "value",
-              "matches": "reads-refs-value"
-             }
-            }
-           ]
+           "kind": "optional_chain"
           }
+         },
+         "inside": {
+          "field": "function",
+          "kind": "call_expression",
+          "not": {
+           "has": {
+            "field": "function",
+            "matches": "hook-callee"
+           }
+          }
+         }
+        }
+       },
+       {
+        "matches": "at-render"
+       },
+       {
+        "any": [
+         {
+          "any": [
+           {
+            "kind": "arrow_function"
+           },
+           {
+            "kind": "function_expression"
+           }
+          ],
+          "matches": "reads-refs"
+         },
+         {
+          "matches": "fn-name-reads-refs"
+         },
+         {
+          "matches": "holds-ref-effect"
          }
         ]
        }
@@ -5937,6 +7190,10 @@
               "kind": "identifier",
               "matches": "ref-typed"
              }
+            },
+            {
+             "kind": "identifier",
+             "matches": "ref-typed"
             }
            ]
           }
