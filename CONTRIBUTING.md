@@ -62,8 +62,12 @@ Maintainers look at:
 - whether the change fits where Rerail is going, at a size you can finish;
 - how you have worked in the issues so far, under the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-A maintainer answers in the issue. If it's a yes, they add you to the list below, give you push access and assign you
-the issue. If it's not yet, they say why and what would change it.
+A maintainer answers in the issue. If it's a yes, they add you to the list below and assign you the issue. If it's not
+yet, they say why and what would change it.
+
+Push access comes once the repository is set up for contributors: secrets and OIDC scoped to branches, and a
+contributor role narrower than write. Until then, an approved contributor proposes from their fork like anyone else
+([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
 
 ### The list
 
