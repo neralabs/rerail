@@ -1,5 +1,9 @@
 mod analysis;
 mod anchors;
+/// P's anchors module and SQL anchor engine as copied (2814d875), test-only (O20).
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+pub(in crate::code_rule_dsl) mod p_anchors;
 mod arguments;
 mod arguments_sql;
 mod binding;

@@ -1669,6 +1669,14 @@ impl TapeSource {
 }
 
 impl TapeDoc {
+    /// P's: the digest of the source the tape was built from (P's SQL anchor engine,
+    /// test-only). W's tape keeps no digest, so it is computed.
+    #[cfg(test)]
+    pub(super) fn index_source_digest(&self) -> [u8; 32] {
+        use sha2::Digest;
+        sha2::Sha256::digest(self.source.as_bytes()).into()
+    }
+
     /// The documents `image` encodes over `source`: the file's own, with the guests derived from
     /// it.
     pub(super) fn restore_with_lines(
@@ -2258,6 +2266,12 @@ pub(super) struct TapeNode<'a> {
 }
 
 impl<'a> TapeNode<'a> {
+    /// P's: the field this node fills in its parent (P's SQL anchor engine, test-only).
+    #[cfg(test)]
+    pub(super) fn incoming_field(&self) -> u16 {
+        self.rec().field
+    }
+
     fn rec(&self) -> &Rec {
         &self.nodes[self.index as usize]
     }

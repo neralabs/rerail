@@ -78,6 +78,8 @@ metal = "0.33.0"
 ast-grep-language = { version = "=0.50.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 # Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work.
 rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks"] }
+# Temporary files in tests copied from P and D (P pins it as a dependency).
+tempfile = "=3.27.0"
 
 [build-dependencies]
 cc = "=1.8.0"

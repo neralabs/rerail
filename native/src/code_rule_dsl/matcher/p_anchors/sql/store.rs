@@ -36,7 +36,7 @@ pub(super) struct Store {
         parking_lot::Mutex<std::collections::HashMap<usize, std::collections::BTreeSet<String>>>,
     // Close incremental read cursors before the database destroys its SQL callbacks.
     pub(super) readers: super::reader::Readers,
-    pub db: crate::code_rule_dsl::relational::database::Database,
+    pub db: crate::code_rule_dsl::residency::admission::relational::database::Database,
     values: parking_lot::Mutex<super::values::Counts>,
     // Connection closes before the temporary database is unlinked, including on Windows.
     _temporary: Option<tempfile::NamedTempFile>,
@@ -56,7 +56,7 @@ impl Store {
         Ok(store)
     }
     pub fn open(path: &Path) -> Result<Self> {
-        let db = crate::code_rule_dsl::relational::database::Database::from_connection(
+        let db = crate::code_rule_dsl::residency::admission::relational::database::Database::from_connection(
             Connection::open(path)?,
         )?;
         #[cfg(feature = "code-rule-profile")]

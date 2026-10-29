@@ -220,6 +220,8 @@ pub(super) enum Walk {
     OrderMentions,
     BindingSitePatterns,
     AnchorInlining,
+    /// P's: an anchor index build (P's SQL anchor engine).
+    AnchorBuild,
     /// A shared utility plan's conditions evaluated by one anchor selection.
     AnchorSelection,
     /// A shared utility plan whose value-posting needs an anchor index build collects.

@@ -982,8 +982,7 @@ fn stop_rule_relations_plan_as_unbounded_supersets() {
 #[test]
 fn anchor_plans_inline_references_and_stay_unrestricted_where_they_recurse() {
     let kinds = |ast: Value| {
-        grammar_matchers(&compiled(ast))[0]
-            .anchors
+        AnchorPlan::compile(&grammar_matchers(&compiled(ast))[0].matcher)
             .root_kinds()
             .map(|kinds| kinds.len())
     };
@@ -1019,16 +1018,18 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     let selection = |ast: Value| {
         let compiled = compiled(ast);
         let grammar = &grammar_matchers(&compiled)[0];
+        // W\'s matchers carry W\'s plan; P\'s is compiled from the matcher (O20).
+        let grammar_anchors = Arc::new(AnchorPlan::compile(&grammar.matcher));
         let (found, roots, _, complete, _) = selected(
             &native,
             &grammar.matcher,
-            &grammar.anchors,
+            &grammar_anchors,
             usize::MAX,
             || false,
         );
         assert!(complete);
         assert_eq!(found, actual(&native, &grammar.matcher), "sound selection");
-        let index = FileAnchorIndex::build(&native, &[&grammar.anchors], usize::MAX, || false);
+        let index = FileAnchorIndex::build(&native, &[&grammar_anchors], usize::MAX, || false);
         let mut postings: Vec<_> = index
             .values
             .iter()
@@ -1113,10 +1114,12 @@ fn field_plans_select_the_actual_edge_including_through_utilities() {
         ] {
             let compiled = compiled(ast.clone());
             let grammar = &grammar_matchers(&compiled)[0];
+            // W\'s matchers carry W\'s plan; P\'s is compiled from the matcher (O20).
+            let grammar_anchors = Arc::new(AnchorPlan::compile(&grammar.matcher));
             let (found, roots, _, complete, _) = selected(
                 &root,
                 &grammar.matcher,
-                &grammar.anchors,
+                &grammar_anchors,
                 usize::MAX,
                 || false,
             );
@@ -1191,11 +1194,13 @@ fn utility_diamonds_select_in_linear_visits() {
         compiled_parameterized_utility_diamonds(DIAMOND_DEPTH),
     ] {
         let grammar = &grammar_matchers(&compiled)[0];
+        // W\'s matchers carry W\'s plan; P\'s is compiled from the matcher (O20).
+        let grammar_anchors = Arc::new(AnchorPlan::compile(&grammar.matcher));
         reset_walks();
         let (found, _, _, complete, _) = selected(
             &native,
             &grammar.matcher,
-            &grammar.anchors,
+            &grammar_anchors,
             usize::MAX,
             || false,
         );
@@ -1225,11 +1230,13 @@ fn utility_plans_reached_from_disjoint_scopes_test_only_those_scopes() {
     let visits = |ast: Value| {
         let compiled = compiled(ast);
         let grammar = &grammar_matchers(&compiled)[0];
+        // W\'s matchers carry W\'s plan; P\'s is compiled from the matcher (O20).
+        let grammar_anchors = Arc::new(AnchorPlan::compile(&grammar.matcher));
         reset_walks();
         let (found, roots, _, complete, _) = selected(
             &native,
             &grammar.matcher,
-            &grammar.anchors,
+            &grammar_anchors,
             usize::MAX,
             || false,
         );

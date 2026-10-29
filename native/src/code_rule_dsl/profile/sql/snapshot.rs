@@ -56,7 +56,7 @@ mod tests {
     use super::*;
     #[test]
     fn failure_snapshot_keeps_temp_values_indexes_and_source_ownership() -> Result<()> {
-        let dir = super::super::tests::tempdir();
+        let dir = tempfile::tempdir().unwrap();
         let source = Connection::open_in_memory()?;
         source.execute_batch("CREATE TABLE unrelated_main(value);INSERT INTO unrelated_main VALUES(99);CREATE TEMP TABLE evidence(path TEXT,owner INTEGER,value);CREATE INDEX evidence_owner ON evidence(path,owner);INSERT INTO evidence VALUES('é.py',3,NULL),('é.py',7,'body');")?;
         let changed = source.total_changes();

@@ -4,7 +4,8 @@ use crate::code_rule_dsl::{language::GrammarDialect, matcher::Semantic};
 pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> AnchorPlan {
     match semantic {
         // Lines and bytes hold on any node.
-        Semantic::Layout(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
+        // P's `Semantic::FilePath` is not in W's matcher.
+        Semantic::Layout(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
             AnchorPlan::unrestricted()
         }
         // Every value predicate except `constant: false` needs a known value, which only the

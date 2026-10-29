@@ -80,7 +80,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         let interrupted = std::cell::RefCell::new(interrupted);
         let poll = || interrupted.borrow_mut()();
         let file = if nodes <= max_nodes && !poll() {
-            CorpusSlot::current().prepared_file(path, lang, doc.index_source_digest())
+            CorpusSlot::current().prepared_file(path, lang, &doc.index_source_digest())
         } else {
             None
         };
