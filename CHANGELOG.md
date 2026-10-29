@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
+- The dashboard's top bar status is shorter and says only what it knows: "Live", "Reconnecting…", "Daemon not responding", "Repo not found", "Not set up" and "Stopped". Each warning's tooltip names the next step, and the tooltips no longer say that new sessions go unsteered while the daemon is down, or that the page is connected when it has only gone quiet.
 
 ## 0.1.0 (2026-10-27)
 
