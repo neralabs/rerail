@@ -23,7 +23,7 @@ export const toolPackName = ({ pack, tool }: ToolPack): string => `${pack}/${too
  * Where a sample's labels came from (a golden, a corpus recording, the ESLint test set, a replacement): provenance the
  * set was built from, which `dedupe` names in a label conflict.
  */
-export type Origin = "golden" | "corpus" | "eslint test set" | "replacement";
+export type Origin = "golden" | "corpus" | "eslint test set" | "php test set" | "replacement";
 
 export interface ContextFile {
   /** Repository-relative, posix. */
