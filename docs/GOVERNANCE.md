@@ -59,7 +59,7 @@ Nera Software reviews the gate at least every six months, in a public issue that
 outcome and why. The first review is due by 30 April 2027. Each review looks at:
 
 - the changes linked from forks since the last review: how many, how many went in, and how long each took to a first
-  review;
+  response and to a decision;
 - whether the maintainers met the response times for issues and fork changes;
 - whether there is a way to let named people outside Nera Software open pull requests without opening them to
   everyone.

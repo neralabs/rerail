@@ -85,7 +85,7 @@ not times to a fix, a merge or a release.
 | A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days |
 | A bug report | 5 business days: triaged, labelled, or asked for a reproduction |
 | A feature request | 10 business days: accepted, declined, or "not now" with a reason |
-| A change linked from your fork ([Proposing a change from your fork](#proposing-a-change-from-your-fork)) | 10 business days to its first review |
+| A change linked from your fork ([Proposing a change from your fork](#proposing-a-change-from-your-fork)) | 5 business days to a first response; 10 business days to a decision: taken in, or declined with a reason |
 | A question | Best effort |
 
 If an issue gets no reply within its window, comment on it to bring it back up.
