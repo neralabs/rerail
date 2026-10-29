@@ -1,50 +1,82 @@
 # Contributing to Rerail
 
-Thank you for helping. This guide covers trusted contributors, how work starts, how to set up a checkout, what a pull
-request needs, and the rules that keep the project open source and its licensing clean.
+Thank you for helping. This guide covers how contribution works, how work starts, how to set up a checkout, what a
+pull request needs, and the rules that keep the project open source and its licensing clean.
 
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
-[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request.
+[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request. Who the maintainers are and how
+decisions are made is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 
-## Trusted contributors
+## How contribution works
 
-Anyone can open an issue. Pull requests come from trusted contributors, each from their own fork. That keeps the
-project's CI, its secrets and its release workflows away from code nobody on the team has read, without closing the
-project to outside work.
+Rerail is open source with gated contribution. Anyone can propose a change, from their fork. Code reaches this
+repository only through a pull request from a branch here, which contributors and the project's own automation open.
+Nera Software employees are contributors by being on the team; anyone else becomes one by approval.
 
-### What trust gives you
-
-| | Trusted contributor | Anyone else |
+| | Anyone | Contributors |
 | --- | --- | --- |
-| Open and comment on issues | Yes | Yes |
-| Claim a `good first issue` or `help wanted` issue | Yes | Ask to become trusted ([below](#becoming-a-trusted-contributor)) |
-| Open a pull request from a fork | Yes | Closed with a link to this section |
-| Write access, merging, triage, the project's secrets | No | No |
+| Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes |
+| Propose a change from a fork: a pull request, or a branch linked from an issue ([below](#proposing-a-change-from-your-fork)) | Yes, with no CI | Not needed |
+| Push branches here and open pull requests from them, with CI | [Become a contributor](#becoming-a-contributor) | Yes |
+| Claim a `good first issue` or `help wanted` issue | Become a contributor | Yes |
 
-CI on a pull request from a fork runs once a maintainer has approved the run, without the project's secrets; the jobs
-that need them skip the pull request and run when the change reaches `main`. A trusted contributor's pull request is
-reviewed like anyone else's.
+The automation is Dependabot, for dependency updates, and the GitHub Actions workflows that open the **Release** pull
+request (`release-pr.yml`) and upstream bump pull requests (`upstream-bump-publish.yml`) as the `neralabs-ci` app.
+Their pull requests are reviewed and merged like any other.
 
-### Becoming a trusted contributor
+### Proposing a change from your fork
 
-Ask in the issue you want to work on, or open one: say what you want to change and how you would go about it. For
-anything in [Start with an issue](#start-with-an-issue), that is the conversation a maintainer has with you anyway.
+Anyone can write the change themselves:
+
+1. Open an issue for it, or find the one that covers it.
+2. Fork the repository and make the change on a branch in your fork, with tests, as
+   [Before you open a pull request](#before-you-open-a-pull-request) describes.
+3. Open a pull request from your fork against `main`, or link the branch in the issue.
+
+No CI runs on a fork's pull request. GitHub holds every fork run until a maintainer approves it, and maintainers do not
+approve them, since CI is costly to run. Run the checks yourself and say in the pull request what you ran.
+
+A maintainer reviews it there. If it goes in, the maintainer ports it onto a branch here in their own pull request,
+credits you with a `Co-authored-by:` trailer on the commit, and closes your pull request with a link to the new one.
+Pack data your change stages in `publish/` comes in with the ported pull request and is published from it. What you
+submit is licensed under Apache-2.0 ([Licence of contributions](#licence-of-contributions)), and
+[Third-party material](#third-party-material) applies to it like any other change.
+
+## Contributors
+
+Contributors push branches to this repository and open pull requests from them, so CI runs on their changes. Nera
+Software employees are contributors by being on the team. Anyone else applies, and the maintainers approve them. Being
+a contributor is not a path to maintainer: Nera Software appoints maintainers
+([docs/GOVERNANCE.md](docs/GOVERNANCE.md#who-the-maintainers-are)).
+
+### Becoming a contributor
+
+Ask in the issue you want to work on, or open one with the
+[contributor form](https://github.com/neralabs/rerail/issues/new?template=5-contributor.yml): say what you want to
+change and how you would go about it. For anything in [Start with an issue](#start-with-an-issue), that is the
+conversation a maintainer has with you anyway.
 
 Maintainers look at:
 
 - the issue itself: a reproduction, a failing case, or an approach that holds up;
+- changes you proposed from your fork, and how they went;
 - whether the change fits where Rerail is going, at a size you can finish;
 - how you have worked in the issues so far, under the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 A maintainer answers in the issue. If it's a yes, they add you to the list below and assign you the issue. If it's not
 yet, they say why and what would change it.
 
+Push access for contributors outside Nera Software comes once the repository is set up for it: secrets and OIDC
+scoped to branches, and a role narrower than write. Until then, an approved contributor proposes from their fork like
+anyone else
+([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
+
 ### The list
 
-The list changes only through a maintainer's pull request that links the issue where it was agreed, so every name on
-it has a public reason.
+Contributors from outside Nera Software are listed here. The list changes only through a maintainer's pull request
+that links the issue where it was agreed, so every name on it has a public reason.
 
-Trusted contributors: none yet.
+Contributors outside Nera Software: none yet.
 
 ### Leaving the list
 
@@ -52,10 +84,7 @@ Trusted contributors: none yet.
 - Twelve months without a pull request, issue or comment here takes you off. Ask again any time.
 - Breaking the Code of Conduct can take you off, as its enforcement steps describe.
 
-### Pull requests from anyone else
-
-A maintainer closes them with a link to this section. That says nothing about the change itself: ask in an issue,
-linking the closed pull request, and once you are trusted, open it again from your fork.
+Leaving the list removes your push access.
 
 ## Start with an issue
 
@@ -69,7 +98,8 @@ Open an issue before you start on:
 Agree on the approach with a maintainer in the issue before you write the code. A pull request for work nobody agreed
 on may be closed, however good it is.
 
-A trusted contributor can take these straight to a pull request, with no issue:
+Contributors take these straight to a pull request, with no issue; from a fork, they are a
+proposal like any other:
 
 - typo and documentation fixes;
 - a bug fix with a test that fails without it;
@@ -77,24 +107,28 @@ A trusted contributor can take these straight to a pull request, with no issue:
 
 ### Claiming an issue
 
-Issues labelled `good first issue` or `help wanted` are open to any trusted contributor, and asking for one is a good
-way to become one ([Becoming a trusted contributor](#becoming-a-trusted-contributor)). Check that the issue is not
-assigned, then comment on it to claim it; a maintainer assigns it to you. If there is no pull request or update from
-you within two weeks, the issue is open to others again.
+Issues labelled `good first issue` or `help wanted` are open to any contributor, and asking for one is a good way to
+become one ([Becoming a contributor](#becoming-a-contributor)). Check that the issue is not assigned, then comment on it
+to claim it; a maintainer assigns it to you. If there is no pull request or update from you within two weeks, the issue
+is open to others again.
 
 ## Contribution flow
 
+**From a branch here** (contributors):
+
 1. Find an issue, or open one ([Start with an issue](#start-with-an-issue)).
-2. Claim it ([Becoming a trusted contributor](#becoming-a-trusted-contributor) the first time), and agree on the
-   approach with a maintainer when the issue needs one.
-3. Fork the repository and create a branch from `main`.
+2. Claim it or assign it to yourself, and agree on the approach with a maintainer when the issue needs one.
+3. Create a branch from `main` in this repository.
 4. Set up your checkout ([Development setup](#development-setup)), make the change, and add tests for the behavior it
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
 6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
-7. A maintainer reviews it. Push fixes to the same branch. Pack data the pull request stages is published by a
-   maintainer first ([How pack data is published](#how-pack-data-is-published)); once it is approved and CI passes, it
-   is squash-merged.
+7. A code owner, or the `neralabs-ci` reviewer for a low-risk change, reviews it. Push fixes to the same branch. Pack
+   data the pull request stages is published by a maintainer first
+   ([How pack data is published](#how-pack-data-is-published)); once it is approved and CI passes, it is squash-merged.
+
+**From a fork** (anyone): steps 1, 4 and 5 as above, on a branch in your fork, then open a pull request from it or link
+the branch in the issue ([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
 
 ## Getting help
 
@@ -102,18 +136,19 @@ Ask in the issue you are working on, or open an issue with your question.
 
 ### Response times
 
-Rerail is maintained by a small team. These are the times we aim to reply in, counted in business days; they are
-not times to a fix, a merge or a release.
+These are the times we aim for, counted in business days: a first response within 5, and a decision within 10. For a
+bug or a rule misfire we also aim to have the fix merged to `main` within the 10 days; when it ships depends on the
+next release ([docs/release.md](docs/release.md)).
 
-| You sent | We reply within |
-| --- | --- |
-| A vulnerability report ([SECURITY.md](SECURITY.md)) | 2 business days |
-| A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days |
-| A bug report | 5 business days: triaged, labelled, or asked for a reproduction |
-| A feature request | 10 business days: accepted, declined, or "not now" with a reason |
-| A request to become a trusted contributor | 10 business days |
-| A pull request, as a trusted contributor | 10 business days to its first review |
-| A question | Best effort |
+| You sent | First response | Decision |
+| --- | --- | --- |
+| A vulnerability report ([SECURITY.md](SECURITY.md)) | 2 business days | As [SECURITY.md](SECURITY.md) describes |
+| A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days | As the [Code of Conduct](CODE_OF_CONDUCT.md#what-happens-next) describes |
+| A bug report or rule misfire | 5 business days: triaged, labelled, or asked for a reproduction | 10 business days: what we will do, with a reason; the fix is the aim |
+| A feature or integration request | 5 business days | 10 business days: accepted, declined, or "not now" with a reason |
+| A change from your fork ([Proposing a change from your fork](#proposing-a-change-from-your-fork)) | 5 business days | 10 business days: ported, or declined with a reason |
+| A request to become a contributor | 5 business days | 10 business days: yes, or not yet with what would change it |
+| A question | 5 business days | 10 business days: answered |
 
 If an issue or pull request gets no reply within its window, comment on it to bring it back up.
 
@@ -393,14 +428,14 @@ flowchart LR
 | Step | Who | What happens |
 | --- | --- | --- |
 | 1 | Contributor | Stages the data in `publish/` ([Adding or changing a pack](#adding-or-changing-a-pack)) and opens the pull request. |
-| 2 | `pack-data-publish-request.yml` | Keeps one comment, **Pack data waiting to publish**, listing each tool-pack's files in `publish/` and authored rows removed, with the publish steps by hand and with the `gh` CLI. It runs on `pull_request_target`, so for forks too, and checks out and runs nothing of the pull request. |
-| 3 | CI | Judges the data as it would be published: `publish/` over the locked archive, `publish/samples/` over the locked samples (not on a fork's pull request: [From a fork](#adding-or-changing-a-pack)). Structure metric #3 (`npm run check`) fails while any `publish/` is tracked, so the pull request cannot merge yet. |
+| 2 | `pack-data-publish-request.yml` | Keeps one comment, **Pack data waiting to publish**, listing each tool-pack's files in `publish/` and authored rows removed, with the publish steps by hand and with the `gh` CLI. It runs on `pull_request_target`, so for forks too, and checks out and runs nothing of the pull request. On a fork's pull request the comment lists the data without the publish steps: it comes in with the ported pull request. |
+| 3 | CI | Judges the data as it would be published: `publish/` over the locked archive, `publish/samples/` over the locked samples. Structure metric #3 (`npm run check`) fails while any `publish/` is tracked, so the pull request cannot merge yet. |
 | 4 | Maintainer | Dispatches **Publish pack data** on `main` with the pull request's number ([Merging](#merging-maintainers)). |
 | 5 | prep | Packs every `publish/` from the pull request head's git blobs with main's code, never checking it out or running it. It refuses a closed pull request, a head on this repository's `main` or another protected branch, a path in `publish/` that is no pack data, a sample set that fails validation, and any file whose licence the allowlist does not take, before anyone is asked to approve, and writes the approver's summary. |
 | 6 | Code owner | Reads the summary and approves the `test-data-upload` deployment ([Approving a data upload](#approving-a-data-upload-code-owners)). |
 | 7 | upload | Fails unless an approval is on record. Puts each archive create-only (an object is never overwritten), tagged with the commit, pull request, run and approver, then downloads each again and verifies it against its lock. |
-| 8 | finish | Commits the new locks and removes `publish/` in one commit on the pull request's branch, pushed with the `neralabs-ci` app's token so CI runs again, and only as a fast-forward. On a fork, or when the branch moved, the comment gives the locks to commit instead. |
-| 9 | CI | **Pack test data is in S3** checks that S3 holds every archive the locks name (on `main`, for a fork's pull request), and the pull request merges like any other. |
+| 8 | finish | Commits the new locks and removes `publish/` in one commit on the pull request's branch, pushed with the `neralabs-ci` app's token so CI runs again, and only as a fast-forward. When the branch moved, the comment gives the locks to commit instead. |
+| 9 | CI | **Pack test data is in S3** checks that S3 holds every archive the locks name, and the pull request merges like any other. |
 
 The workflow's jobs, its guarantees and the comment's states are described in
 [docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data).
@@ -423,8 +458,8 @@ with `npm run conformance:languages -- --pack <id>` (`--samples` adds the sample
 promote, the shipped rules whose `pack.json` `on` disagrees with upstream-status, the checks that pass without
 evidence (a vacuous `holds-under-rename`, for one), and where each other candidate stops. A shipped rule that fails a
 blocking check fails CI: fix it, or move it back to `candidates/`. Everything else in the comment is reported only. On
-a pull request from a fork the conformance check does not run (below); run `npm run test:conformance` yourself and say
-so in the pull request. What each check needs is in [conformance/README.md](conformance/README.md#the-gate), and the
+a pull request from a fork no CI runs (below); run `npm run test:conformance` yourself and say so in the pull
+request. What each check needs is in [conformance/README.md](conformance/README.md#the-gate), and the
 comment in [its own section](conformance/README.md#the-pull-request-comment).
 
 **Promoting a candidate.** "Ready to promote" means the candidate passes every check; it is necessary, not
@@ -467,12 +502,9 @@ under `authored/` included), delete it on disk after a pull, derive, stage the w
 exactly what `publish/` holds. The old archive stays in S3 for the commits that name it
 ([docs/upstream.md, "Removing data"](docs/upstream.md#removing-data)).
 
-**From a fork.** Pull requests from forks run CI without the repository's OIDC token, so the jobs that read pack test
-data (the unit and Rust tests, the conformance check and its comment, and **Pack test data is in S3**) skip, and run
-when the change reaches `main`. Structure metric #3 still blocks the merge while `publish/` is tracked. The publish
-works the same, except that finish cannot push to your branch: the comment changes to **Pack data published: action
-needed** and gives each new lock. Commit those locks, delete `publish/` and push
-([docs/upstream.md, "Forks"](docs/upstream.md#forks)).
+**From a fork.** A fork's pull request runs no CI, and its pack data is not published from it. When a maintainer
+ports the change ([Proposing a change from your fork](#proposing-a-change-from-your-fork)), its `publish/` comes with
+it and is published from the ported pull request ([docs/upstream.md, "Forks"](docs/upstream.md#forks)).
 
 **Derived data.** Upstream's cases and the expected findings on them change through a pull request that changes the
 pins, a generator or a recipe under `scripts/pack-data/recipes/`, derived by a maintainer
@@ -505,13 +537,13 @@ first: its pack data is reviewed like its code ([REVIEW.md](REVIEW.md#what-block
 4. The comment says how the run ended:
    - **Pack data published**: the branch has the new locks and no `publish/`, and CI runs again on it;
    - **Pack data published: action needed**: S3 holds the data, but the locks were not committed, and the comment says
-     why (the branch is on a fork, or it moved since prep). Commit the locks the comment gives, delete `publish/` and
-     push (the contributor does this on a fork), or pull the branch and dispatch again;
+     why (the branch moved since prep). Commit the locks the comment gives, delete `publish/` and push, or pull the
+     branch and dispatch again;
    - **Pack data publish failed**: not every object was put and confirmed, or the approval was rejected. Nothing was
      committed. Re-running is safe: puts are create-only, and an object S3 already holds is accepted once it
      verifies.
-5. Merge once CI passes. **CI result** is the required check; on a fork's pull request, the pack data jobs skip, so
-   pull the head and run `npm run fixtures:pull`, `npm test` and `npm run test:conformance` before you merge.
+5. Merge once CI passes. **CI result** is the required check. A change from a fork is published from the pull
+   request that ports it, never from the fork.
 
 `npm run fixtures:push -- --pack <id> --tool <tool>` (and `node scripts/s3/pack-fixtures.mjs samples push` for a
 samples archive) uploads with a maintainer's own write credentials, tagged with their `gh` login. It skips prep's

@@ -3,7 +3,7 @@
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "46 typescript-eslint rules ported to Rerail, 18 of them on and 28 off until turned on, each scored against the tool's own findings on its test fixtures.",
+  "covers": "typescript-eslint rules for safe, idiomatic TypeScript.",
   "reason": "matches TypeScript",
   "match": {
     "any": [

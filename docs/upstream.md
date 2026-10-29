@@ -212,8 +212,10 @@ Two workflows carry a request. Neither runs any code of the pull request.
    base branch's workflow: it checks out nothing and holds only a token that writes pull request comments. While the
    pull request has anything to publish, it keeps one sticky comment, "Pack data waiting to publish": a row per
    tool-pack with its files in `publish/` and its authored rows removed from `UPSTREAM.md`, and the publish steps by
-   hand and with the `gh` CLI. It deletes that comment, while it is still waiting, once nothing is left to publish.
-   The comment blocks nothing; structure metric #3 does.
+   hand and with the `gh` CLI. On a fork's pull request, a proposal ([Forks](#forks)), the comment is "Pack data in a
+   proposal from a fork": the same rows, saying the data is published from the pull request that ports the change,
+   with no publish steps. It deletes the comment, while it is still waiting, once nothing is left to publish. The
+   comment blocks nothing; structure metric #3 does.
 2. **The dispatch.** A maintainer, or an agent with write access, dispatches **Publish pack data**
    (`pack-data-publish.yml`) on main with the pull request's number. With `replace` off (the default) each tool-pack's
    archive is the locked one, less the files of removed authored rows, with `publish/` laid over it; with `replace`
@@ -249,7 +251,8 @@ Two workflows carry a request. Neither runs any code of the pull request.
    comment then reads "published".
 
 When finish cannot push, the run is red and the comment reads "action needed", with each lock's text and the reason:
-the branch is on a fork ([Forks](#forks)), or someone pushed to it since prep. Commit the locks, delete `publish/` and
+someone pushed to the branch since prep, or the branch is on a fork, which the project never publishes from
+([Forks](#forks)). Commit the locks, delete `publish/` and
 push, or pull and dispatch again. When an object was not put and confirmed (a failed put or confirm, a rejected
 approval, a cancelled job), the **failed** job names each object's failure in the comment; nothing is committed and
 no lock changes. Re-running is safe: puts are create-only and content-addressed, and confirm accepts an object S3
@@ -260,10 +263,12 @@ Once the locks are committed, **Pack test data is in S3** passes and the conform
 
 ### Forks
 
-prep reads a fork's head through `refs/pull/<n>/head`, so a fork's data is packed, approved and uploaded like any
-other, but finish cannot push to a fork's branch: the comment carries the locks, and the contributor commits them and
-deletes `publish/`. CI's jobs that read S3, the conformance check among them, run only for pushes and same-repository
-pull requests ([CI](#ci)), so a fork's data is judged by the approver and, after merge, by main's CI.
+A fork's pull request runs no CI: maintainers don't approve fork runs, since CI is costly to run. Its data is not
+published from the fork either. When a maintainer ports the change to a branch here
+([CONTRIBUTING.md](../CONTRIBUTING.md#proposing-a-change-from-your-fork)), its `publish/` comes with it, CI judges it
+there, and the publish runs for the ported pull request. The workflow can still read a fork's head through
+`refs/pull/<n>/head` and give a fork's locks in the comment, since finish cannot push to a fork's branch, but the
+project does not publish from forks.
 
 ### Removing data
 
@@ -503,6 +508,6 @@ CI verifies the data by sha256 only: it never derives it again or asks upstream.
 artifact, and no CI job checks that it reproduces from the pins; the approving code owner checks that what a pull
 request publishes follows from it, and the conformance check judges the rules on it.
 
-Forks and Dependabot get no OIDC token, so `test-data`, `test-data-in-s3`, `tools` (and with it the conformance
-comment) and the other jobs that read pack data run only for pushes and same-repository pull requests. On a fork's
-pull request, structure metric #3 is what holds `publish/` back from merging.
+A fork's pull request runs no CI: maintainers don't approve fork runs, and what goes in is ported to a branch here
+([Forks](#forks)). Dependabot gets no OIDC token, so `test-data`, `test-data-in-s3`, `tools` (and with it the
+conformance comment) and the other jobs that read pack data run only for pushes and same-repository pull requests.

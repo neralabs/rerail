@@ -11,7 +11,7 @@ import { repoOption } from "../render/repos.js";
 const $ = id => document.getElementById(id);
 
 /* ---------- status ----------
- * One indicator for the daemon and this repo, as v8 words it: "Updating live" while the polls come in, "Updated
+ * One indicator for the daemon and this repo: "Live" while the polls come in, "Updated
  * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
  * page is reconnecting, red once the daemon has not answered for a while. The repo is in the pill beside the
  * wordmark and the install date in Settings: the bar keeps only the dot and how fresh the data is. */
@@ -30,28 +30,31 @@ function updatedAgo(at) {
   return `${Math.round(min / 1440)}d ago`;
 }
 
+/* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
+ * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
+ * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
 function status() {
-  if (!data.loaded && !data.disconnected) return { cls: "", text: "Connecting…", title: "" };
+  if (!data.loaded && !data.disconnected) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
   const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
   if (data.disconnected) {
     if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
-      return { cls: "down", text: `Daemon not reachable · data from ${rel} · new sessions are not steered`,
-        title: `The local daemon did not answer at ${location.origin}. Rules are not steering sessions until it is back; this page keeps retrying.` };
+      const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";
+      return { cls: "down", text: "Daemon not responding",
+        title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
     }
-    return { cls: "warn", text: `Updated ${rel} · reconnecting`, title: "The last refresh failed; this page keeps retrying." };
+    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
   }
-  if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "The dashboard shows one repo at a time. Open it from a session, or pick a repo." };
-  if (data.missing) return { cls: "warn", text: "Unknown repository", title: "The daemon has no record of this repository or checkout." };
-  const name = repoName() || "this repo";
+  if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
+  if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };
   if (data.repository?.setUp === false) {
-    return { cls: "warn", text: `${name} is not set up · nothing runs here`, title: `No rule packs have been chosen for ${name}. Run /rerail-start in a session there.` };
+    return { cls: "warn", text: "Not set up", title: "No rule packs chosen, so no rules run here. Run /rerail-start in a session here." };
   }
   if (stateHere() === "stopped") {
-    return { cls: "warn", text: `Rerail stopped in ${name}`, title: "Nothing is audited or logged here while Rerail is stopped. Start it from the banner on Overview, in Settings, or with /rerail-start in a session." };
+    return { cls: "warn", text: "Stopped", title: "Rerail isn't auditing or logging here. Start it from Overview or Settings, or run /rerail-start." };
   }
-  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Updating live", title: `Connected to the local daemon${version} · refreshing every 5 s` };
-  return { cls: "", text: `Updated ${rel}`, title: `Connected to the local daemon${version} · last refreshed ${new Date(data.updatedAt).toLocaleString()}` };
+  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · refreshing every 5 s.` };
+  return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
 }
 
 /** The status pill; also run on a timer, since "Updated 2 min ago" ages without a poll. */

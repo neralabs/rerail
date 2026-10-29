@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+- The dashboard's rule pack catalog, set-up review and pack panel say less: each intro is one or two short sentences, and the pack panel no longer says a pack's rules start in Log or Steer when some start in Block.
 - Dependency updates, with no change in behavior: the native engine moves to ast-grep 0.51, gix 0.90, rusqlite 0.41, sha2 0.11 and jemalloc 0.7, and the package to diff 9 and hono 4.13.14.
 - `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
+- The dashboard's top bar status is shorter and says only what it knows: "Live", "Reconnecting…", "Daemon not responding", "Repo not found", "Not set up" and "Stopped". Each warning's tooltip names the next step, and the tooltips no longer say that new sessions go unsteered while the daemon is down, or that the page is connected when it has only gone quiet.
 
 ## 0.1.0 (2026-10-27)
 
