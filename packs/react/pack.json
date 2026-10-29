@@ -64,7 +64,6 @@
       "title": "eslint-plugin-react-hooks exhaustive-deps: Verifies the list of dependencies for Hooks like useEffect and similar",
       "mode": "log",
       "group": "eslint-plugin-react-hooks",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Title.jsx",
@@ -81,7 +80,6 @@
       "document": "rules/react-hooks-globals.json",
       "title": "eslint-plugin-react-hooks globals: Validates against assignment/mutation of globals during render",
       "group": "eslint-plugin-react-hooks",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Counter.jsx",
@@ -98,7 +96,6 @@
       "document": "rules/react-hooks-immutability.json",
       "title": "eslint-plugin-react-hooks immutability: Validates against mutating props, state, and other values that are immutable",
       "group": "eslint-plugin-react-hooks",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Card.jsx",
@@ -132,7 +129,6 @@
       "document": "rules/react-hooks-refs.json",
       "title": "eslint-plugin-react-hooks refs: Validates correct usage of refs, not reading/writing during render",
       "group": "eslint-plugin-react-hooks",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Counter.jsx",
@@ -149,7 +145,6 @@
       "document": "rules/react-hooks-rules-of-hooks.json",
       "title": "eslint-plugin-react-hooks rules-of-hooks: Enforces the Rules of Hooks",
       "group": "eslint-plugin-react-hooks",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Profile.jsx",
@@ -166,7 +161,6 @@
       "document": "rules/react-hooks-set-state-in-effect.json",
       "title": "eslint-plugin-react-hooks set-state-in-effect: Validates against calling setState synchronously in an effect",
       "group": "eslint-plugin-react-hooks",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Name.jsx",
@@ -234,7 +228,6 @@
       "document": "rules/react-jsx-key.json",
       "title": "eslint-plugin-react jsx-key: Disallow missing `key` props in iterators/collection literals",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/List.jsx",
@@ -251,7 +244,6 @@
       "document": "rules/react-jsx-no-comment-textnodes.json",
       "title": "eslint-plugin-react jsx-no-comment-textnodes: Disallow comments from being inserted as text nodes",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Banner.jsx",
@@ -285,7 +277,6 @@
       "document": "rules/react-jsx-no-duplicate-props.json",
       "title": "eslint-plugin-react jsx-no-duplicate-props: Disallow duplicate properties in JSX",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Field.jsx",
@@ -336,7 +327,6 @@
       "document": "rules/react-jsx-no-target-blank.json",
       "title": "eslint-plugin-react jsx-no-target-blank: Disallow `target=\"_blank\"` attribute without `rel=\"noreferrer\"`",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Docs.jsx",
@@ -353,7 +343,6 @@
       "document": "rules/react-jsx-no-undef.json",
       "title": "eslint-plugin-react jsx-no-undef: Disallow undeclared variables in JSX",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Page.jsx",
@@ -404,7 +393,6 @@
       "document": "rules/react-no-children-prop.json",
       "title": "eslint-plugin-react no-children-prop: Disallow passing of children as props",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Card.jsx",
@@ -438,7 +426,6 @@
       "document": "rules/react-no-danger-with-children.json",
       "title": "eslint-plugin-react no-danger-with-children: Disallow when a DOM element is using both children and dangerouslySetInnerHTML",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Note.jsx",
@@ -455,7 +442,6 @@
       "document": "rules/react-no-deprecated.json",
       "title": "eslint-plugin-react no-deprecated: Disallow usage of deprecated methods",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/main.jsx",
@@ -506,7 +492,6 @@
       "document": "rules/react-no-direct-mutation-state.json",
       "title": "eslint-plugin-react no-direct-mutation-state: Disallow direct mutation of this.state",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Counter.jsx",
@@ -523,7 +508,6 @@
       "document": "rules/react-no-find-dom-node.json",
       "title": "eslint-plugin-react no-find-dom-node: Disallow usage of findDOMNode",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Focus.jsx",
@@ -540,7 +524,6 @@
       "document": "rules/react-no-is-mounted.json",
       "title": "eslint-plugin-react no-is-mounted: Disallow usage of isMounted",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Loader.jsx",
@@ -574,7 +557,6 @@
       "document": "rules/react-no-render-return-value.json",
       "title": "eslint-plugin-react no-render-return-value: Disallow usage of the return value of ReactDOM.render",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/main.jsx",
@@ -591,7 +573,6 @@
       "document": "rules/react-no-string-refs.json",
       "title": "eslint-plugin-react no-string-refs: Disallow using string references",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Search.jsx",
@@ -608,7 +589,6 @@
       "document": "rules/react-no-unescaped-entities.json",
       "title": "eslint-plugin-react no-unescaped-entities: Disallow unescaped HTML entities from appearing in markup",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Empty.jsx",
@@ -625,7 +605,6 @@
       "document": "rules/react-no-unknown-property.json",
       "title": "eslint-plugin-react no-unknown-property: Disallow usage of unknown DOM property",
       "group": "eslint-plugin-react",
-      "on": true,
       "examples": {
         "caught": {
           "path": "src/Field.jsx",
