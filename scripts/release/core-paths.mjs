@@ -24,6 +24,7 @@ export const NOT_SHIPPED = [
   "scripts/check/",
   "scripts/dev/",
   "scripts/dsl/",
+  "scripts/feedback/",
   "scripts/generate/",
   "scripts/host/",
   "scripts/release/",

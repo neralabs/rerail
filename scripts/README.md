@@ -14,6 +14,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
   dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
 - `dsl/`: the code-rule DSL benchmark.
+- `feedback/`: the weekly feedback digest (`digest.mjs`): a week's GitHub issues, rule misfires by kind, rule and pack,
+  and the open backlog, as a page of the product team's Notion database. `.github/workflows/feedback-digest.yml` runs
+  it every Monday; `--print` prints the digest instead.
 - `generate/`: generators of committed engine and host data and the DSL reference page (manifest: `generate/README.md`).
 - `host/`: real-host runs: OMP install, host smoke, lifecycle and auth checks, the Windows install smoke.
 - `pack-data/`: the derivation of the packs' derived test data from their pins (`derive.ts`, `npm run fixtures:derive`),
