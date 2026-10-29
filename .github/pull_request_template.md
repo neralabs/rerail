@@ -1,6 +1,6 @@
 <!--
-Pull requests come from maintainers and trusted contributors:
-https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#trusted-contributors
+Pull requests come from Nera Software employees only:
+https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#who-opens-pull-requests
 -->
 
 Fixes #

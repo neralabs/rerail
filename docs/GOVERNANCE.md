@@ -1,17 +1,23 @@
 # Governance
 
-How Rerail is run: who decides, how decisions are made and recorded, and how someone becomes a maintainer. How to
+How Rerail is run: who takes part and how, who the maintainers are, and how decisions are made and recorded. How to
 contribute day to day is in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-Rerail is an open-source project started by Nera Software Inc. and licensed under the Apache License 2.0.
+Rerail is an open-source project developed by Nera Software Inc. and licensed under the Apache License 2.0. At this
+stage it is open source with closed contribution: anyone can use, fork and redistribute the code under the licence,
+and anyone can send bug reports, feature requests and questions through the issues, but only Nera Software employees
+open pull requests. If that changes, this document changes first.
 
 ## Roles
 
 | Role | Who | What they do |
 | --- | --- | --- |
-| Contributor | Anyone | Opens and comments on issues |
-| Trusted contributor | The list in [CONTRIBUTING.md](../CONTRIBUTING.md#the-list) | Opens pull requests from a fork |
-| Maintainer | The people in [.github/CODEOWNERS](../.github/CODEOWNERS) | Reviews and merges pull requests, triages issues, agrees the approach for work that starts with an issue, keeps the trusted-contributor list, and enforces the [Code of Conduct](../CODE_OF_CONDUCT.md) |
+| Anyone | Anyone | Opens and comments on issues: bug reports, rule misfires, feature and integration requests, questions |
+| Nera Software employee | Nera Software employees with write access | Opens pull requests, from a branch in this repository |
+| Maintainer | The Nera Software employees in [.github/CODEOWNERS](../.github/CODEOWNERS) | Reviews and merges pull requests, triages issues, agrees the approach for work that starts with an issue, and enforces the [Code of Conduct](../CODE_OF_CONDUCT.md) |
+
+A pull request from anyone else is closed with a link to
+[Who opens pull requests](../CONTRIBUTING.md#who-opens-pull-requests).
 
 ## How decisions are made
 
@@ -31,31 +37,12 @@ Rerail is an open-source project started by Nera Software Inc. and licensed unde
 - **Releases.** Core and the packs publish only after one of the `release` environment's required reviewers, who are
   maintainers, approves the run ([docs/release.md](release.md)).
 
-## Becoming a maintainer
+## Who the maintainers are
 
-Maintainers come from trusted contributors. The maintainers look for:
-
-- merged pull requests and reviews over several months, in at least one part of Rerail;
-- judgement that holds up in issues and reviews: the approach agreed before the code, tests that prove the change;
-- how the person has worked with others, under the [Code of Conduct](../CODE_OF_CONDUCT.md).
-
-The steps:
-
-1. A maintainer nominates the person in an issue, linking the work that shows it. You can ask a maintainer to
-   nominate you.
-2. The nominee accepts in the issue and turns on two-factor authentication for their GitHub account.
-3. A pull request adds them to [.github/CODEOWNERS](../.github/CODEOWNERS), linking the issue. It merges once a
-   majority of the maintainers approve it and none objects, and the new maintainer is then given write access.
-
-## Leaving
-
-- A maintainer can step down at any time, by a pull request that removes them from `.github/CODEOWNERS`.
-- Twelve months without a review, pull request, issue or comment here takes a maintainer off the list. They can come
-  back through the steps above.
-- A Code of Conduct breach is handled as its enforcement steps describe. Otherwise, a maintainer is removed only by a
-  majority of the other maintainers.
+Nera Software appoints and removes maintainers internally. There is no nomination, application or promotion to
+maintainer from contributing here. A pull request to [.github/CODEOWNERS](../.github/CODEOWNERS) adds or removes a
+maintainer, and that file is the public record of who they are.
 
 ## Changing this document
 
-A pull request changes it, under the same rule as adding a maintainer: a majority of the maintainers approve and none
-objects.
+Nera Software decides the policy this document states. A pull request records a change to it and merges like any other.

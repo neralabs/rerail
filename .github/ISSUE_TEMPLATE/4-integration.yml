@@ -37,12 +37,6 @@ body:
       label: Pointers
       description: For a coding agent, the docs of its hooks or extension API. For rules, the linter and the rules you'd want first.
   - type: checkboxes
-    id: contribute
-    attributes:
-      label: Building it
-      options:
-        - label: I'd like to build this myself ([becoming a trusted contributor](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#becoming-a-trusted-contributor)).
-  - type: checkboxes
     id: checks
     attributes:
       label: Before you send it

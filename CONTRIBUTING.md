@@ -1,62 +1,24 @@
 # Contributing to Rerail
 
-Thank you for helping. This guide covers trusted contributors, how work starts, how to set up a checkout, what a pull
-request needs, and the rules that keep the project open source and its licensing clean.
+Thank you for helping. This guide covers who opens pull requests, how work starts, how to set up a checkout, what a
+pull request needs, and the rules that keep the project open source and its licensing clean.
 
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
-[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request. Who the maintainers are, how decisions
-are made and how someone becomes a maintainer is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
+[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request. Who the maintainers are and how
+decisions are made is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 
-## Trusted contributors
+## Who opens pull requests
 
-Anyone can open an issue. Pull requests come from trusted contributors, each from their own fork. That keeps the
-project's CI, its secrets and its release workflows away from code nobody on the team has read, without closing the
-project to outside work.
+Rerail is open source with closed contribution, for now: anyone can open an issue, and only Nera Software employees
+open pull requests.
 
-### What trust gives you
-
-| | Trusted contributor | Anyone else |
+| | Nera Software employees | Anyone else |
 | --- | --- | --- |
-| Open and comment on issues | Yes | Yes |
-| Claim a `good first issue` or `help wanted` issue | Yes | Ask to become trusted ([below](#becoming-a-trusted-contributor)) |
-| Open a pull request from a fork | Yes | Closed with a link to this section |
-| Write access, merging, triage, the project's secrets | No | No |
+| Report a bug or a rule misfire, request a feature or an integration, ask a question | Yes, in an issue | Yes, in an issue |
+| Open a pull request | Yes, from a branch in this repository | No |
 
-CI on a pull request from a fork runs once a maintainer has approved the run, without the project's secrets; the jobs
-that need them skip the pull request and run when the change reaches `main`. A trusted contributor's pull request is
-reviewed like anyone else's.
-
-### Becoming a trusted contributor
-
-Ask in the issue you want to work on, or open one: say what you want to change and how you would go about it. For
-anything in [Start with an issue](#start-with-an-issue), that is the conversation a maintainer has with you anyway.
-
-Maintainers look at:
-
-- the issue itself: a reproduction, a failing case, or an approach that holds up;
-- whether the change fits where Rerail is going, at a size you can finish;
-- how you have worked in the issues so far, under the [Code of Conduct](CODE_OF_CONDUCT.md).
-
-A maintainer answers in the issue. If it's a yes, they add you to the list below and assign you the issue. If it's not
-yet, they say why and what would change it.
-
-### The list
-
-The list changes only through a maintainer's pull request that links the issue where it was agreed, so every name on
-it has a public reason.
-
-Trusted contributors: none yet.
-
-### Leaving the list
-
-- Ask, in any issue or at [opensource@nera.software](mailto:opensource@nera.software), and you are taken off.
-- Twelve months without a pull request, issue or comment here takes you off. Ask again any time.
-- Breaking the Code of Conduct can take you off, as its enforcement steps describe.
-
-### Pull requests from anyone else
-
-A maintainer closes them with a link to this section. That says nothing about the change itself: ask in an issue,
-linking the closed pull request, and once you are trusted, open it again from your fork.
+A maintainer closes a pull request from anyone else with a link to this section. That says nothing about the change
+itself: describe it in an issue, with the case that shows the problem, and a maintainer answers there.
 
 ## Start with an issue
 
@@ -70,25 +32,17 @@ Open an issue before you start on:
 Agree on the approach with a maintainer in the issue before you write the code. A pull request for work nobody agreed
 on may be closed, however good it is.
 
-A trusted contributor can take these straight to a pull request, with no issue:
+These go straight to a pull request, with no issue:
 
 - typo and documentation fixes;
 - a bug fix with a test that fails without it;
 - a rule's false positive or false negative, with the code that triggers it added as a test.
 
-### Claiming an issue
-
-Issues labelled `good first issue` or `help wanted` are open to any trusted contributor, and asking for one is a good
-way to become one ([Becoming a trusted contributor](#becoming-a-trusted-contributor)). Check that the issue is not
-assigned, then comment on it to claim it; a maintainer assigns it to you. If there is no pull request or update from
-you within two weeks, the issue is open to others again.
-
 ## Contribution flow
 
 1. Find an issue, or open one ([Start with an issue](#start-with-an-issue)).
-2. Claim it ([Becoming a trusted contributor](#becoming-a-trusted-contributor) the first time), and agree on the
-   approach with a maintainer when the issue needs one.
-3. Fork the repository and create a branch from `main`.
+2. Assign it to yourself, and agree on the approach with a maintainer when the issue needs one.
+3. Create a branch from `main` in this repository.
 4. Set up your checkout ([Development setup](#development-setup)), make the change, and add tests for the behavior it
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
@@ -112,11 +66,9 @@ not times to a fix, a merge or a release.
 | A conduct report ([CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#reporting)) | 3 business days |
 | A bug report | 5 business days: triaged, labelled, or asked for a reproduction |
 | A feature request | 10 business days: accepted, declined, or "not now" with a reason |
-| A request to become a trusted contributor | 10 business days |
-| A pull request, as a trusted contributor | 10 business days to its first review |
 | A question | Best effort |
 
-If an issue or pull request gets no reply within its window, comment on it to bring it back up.
+If an issue gets no reply within its window, comment on it to bring it back up.
 
 ## Development setup
 
