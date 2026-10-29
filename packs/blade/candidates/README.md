@@ -5,8 +5,8 @@ gated and never shipped. This file is not published; the pack's [README](../READ
 
 ## Candidates
 
-Ten ports stay candidates: seven have no upstream evidence or a template the engine reads only in part, and three
-tlint lints miss findings on real templates. The title is what
+Seven ports stay candidates: the six Bladestan rules have no upstream evidence, and one tlint lint misses a finding on
+a real template. The title is what
 `pack.json` lists for a candidate once it ships; its group is the tool the title names.
 
 | Candidate | Title |
@@ -17,26 +17,16 @@ tlint lints miss findings on real templates. The title is what
 | `bladestan-random-int-parameters` | Bladestan argument.type: random_int() minimum above maximum |
 | `bladestan-if-always-false` | Bladestan if.alwaysFalse: If condition always false |
 | `bladestan-missing-function-return-type` | Bladestan missingType.return: Function without a return type |
-| `blade-parser-duplicate-condition-expressions` | blade-parser DuplicateConditionExpressionsValidator: Duplicate @elseif condition |
 | `tlint-no-json-directive` | tlint NoJsonDirective: No @json directive |
-| `tlint-space-after-blade-directives` | tlint SpaceAfterBladeDirectives: Space after control structure directives |
-| `tlint-spaces-around-blade-render-content` | tlint SpacesAroundBladeRenderContent: One space inside echo delimiters |
 
 The six Bladestan candidates have nothing to match: Bladestan's own test templates hold none of
 their findings (`variable.undefined`'s appear only when a template is rendered with its caller's data), so nothing
-upstream wrote proves them. `blade-parser-duplicate-condition-expressions` is
-`source-incomplete` on two of blade-parser's `DebugDirectiveTest` templates, a malformed `@forelse` and `@foreach` that
-blade-parser accepts and Laravel's `BladeCompiler` rejects: the parsers disagree on them and no known engine gap
-excuses the rule.
+upstream wrote proves them.
 
-`tlint-no-json-directive`, `tlint-space-after-blade-directives` and `tlint-spaces-around-blade-render-content` match
-tlint on its test templates but miss 9, 17 and 10 labelled violations in real Bagisto templates. The engine reads those
-templates only in part (`source-partial` or `source-incomplete`), because they embed large Vue and JavaScript script
-blocks, and the rules find nothing in the part it does not read. Their patterns are not wrong; they wait for the engine
-to read such templates whole.
+`tlint-no-json-directive` matches tlint on its test templates but misses 1 labelled violation in a real Bagisto
+template (`packages/Webkul/Admin/src/Resources/views/catalog/products/edit/types/booking.blade.php:264`).
 
-Each of the six Bladestan candidates, `tlint-no-json-directive` and `tlint-space-after-blade-directives` carried an
-example pair while it shipped. The Bladestan tool's fixture findings are empty or all excused, so the pair is what
+Each of the six Bladestan candidates and `tlint-no-json-directive` carried an example pair while it shipped. The Bladestan tool's fixture findings are empty or all excused, so the pair is what
 proved it then; `test/engine/catalog/candidate-examples.test.ts` still checks each pair below through the engine, so
 they keep guarding Blade's embedded PHP and directives, and the pairs go back into `pack.json` with their rules:
 
@@ -177,31 +167,9 @@ Passes (`resources/views/profile.blade.php`):
 </script>
 ```
 
-### `tlint-space-after-blade-directives`
-
-Caught (`resources/views/profile.blade.php`):
-
-```blade
-@if($user)
-    <p>{{ $user->name }}</p>
-@endif
-```
-
-Passes (`resources/views/profile.blade.php`):
-
-```blade
-@if ($user)
-    <p>{{ $user->name }}</p>
-@endif
-```
-
 ## Rule details
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
-
-### `blade-parser-duplicate-condition-expressions`
-
-Port of stillat/blade-parser 2.1.0 DuplicateConditionExpressionsValidator. Reports only the first @elseif of an @if chain whose condition, as written (source text), equals an earlier branch's; read from the compiled view, where the chain is one if statement. A later duplicate in the same chain is not reported, because blade-parser stops at the first. The chain is the witness and the @elseif a capture of it, so the rule asks nothing negative and reads a view with syntax errors elsewhere, as blade-parser does.
 
 ### `bladestan-array-duplicate-key`
 
@@ -226,11 +194,3 @@ Port of Bladestan 0.11.7 variable.undefined (PHPStan 2.2.16 DefinedVariableRule 
 ### `tlint-no-json-directive`
 
 Port of tlint 9.7.0 NoJsonDirective. Read from the compiled view, where Blade compiles @json to a call, so it is caught in text, attribute values and script alike. A candidate: on Bagisto it misses labelled violations in templates the engine reads only in part, because they embed large script blocks.
-
-### `tlint-space-after-blade-directives`
-
-Port of tlint 9.7.0 SpaceAfterBladeDirectives. Flags a control directive whose name is not followed by a space or tab, where Blade compiles it to control flow. Read from the compiled view's if/elseif/for/foreach/while statement whose host is the directive (not the if a @forelse's @empty compiles to). In an attribute value, where Forte does not pair directives into a block and the statement's host is the whole value, it is read from the directive itself where the view reads it as control flow. A candidate: on Bagisto it misses labelled violations in templates the engine reads only in part, because they embed large script blocks.
-
-### `tlint-spaces-around-blade-render-content`
-
-Port of tlint 9.7.0 SpacesAroundBladeRenderContent. Only single-line echoes; covers {{ }} and {!! !!}, but not {{-- --}} comments or escaped @{{ }} echoes. A candidate: on Bagisto it misses labelled violations in templates the engine reads only in part, because they embed large script blocks.
