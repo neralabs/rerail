@@ -1104,8 +1104,10 @@ impl WorkspaceApplyTask {
             let mut file = state.files.remove(&path).expect("checked above");
             if file.stays_resident() {
                 let only = BTreeSet::from([path.clone()]);
+                // A read that failed comes back transient: its clauses are marked below.
                 if let Ok(Some(stored)) =
                     evicted_file_states(&state, Some(&only), false).map(|mut stored| stored.pop())
+                    && !stored.transient_failure
                 {
                     file.join_other_clauses(stored);
                 }

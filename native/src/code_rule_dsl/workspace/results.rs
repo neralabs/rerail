@@ -247,14 +247,16 @@ pub(super) fn evicted_file_states(
         .flat_map(|(_, key, stamped)| std::iter::once(*key).chain(*stamped))
         .collect::<Vec<_>>();
 
+    let catalog = candidate_catalog(&state.code_rules)?;
     #[cfg(test)]
-    if super::TEST_EVICTED_READ_FAILURE.get() {
-        return Err(invalid("injected evicted-result storage failure"));
-    }
-    let results = storage
-        .store
-        .local_check_results_by_key(&keys, candidate_catalog(&state.code_rules)?)
-        .map_err(|error| invalid(error.to_string()))?;
+    let injected = super::TEST_EVICTED_READ_FAILURE.get();
+    #[cfg(not(test))]
+    let injected = false;
+    // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
+    // resident file: the stored results remain, so a later read answers them (O22).
+    let results = (!injected)
+        .then(|| storage.store.local_check_results_by_key(&keys, catalog).ok())
+        .flatten();
     let mut candidate_sets = CandidateSets::new();
     evicted
         .into_iter()
@@ -286,6 +288,17 @@ pub(super) fn evicted_file_states(
                     file.witnesses.insert(id, Vec::new());
                 }
             }
+            let Some(results) = &results else {
+                for &id in file.candidates.regex.iter().chain(&file.candidates.ast) {
+                    if !file.witnesses.contains_key(&id) {
+                        file.failures
+                            .insert(id, ("adapter-error", super::STORED_RESULT_UNAVAILABLE));
+                        file.unstored.insert(id);
+                    }
+                }
+                file.transient_failure = true;
+                return Ok(file);
+            };
             let mut persisted = results
                 .get(&key)
                 .map_or_else(Vec::new, |results| results.to_vec());

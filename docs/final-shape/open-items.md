@@ -22,7 +22,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | closed (2026-10-29): jemalloc stays the global allocator (user decision); `mimalloc` remains a dependency only |
-| O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | open, **decision needed** |
+| O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | closed (2026-10-29): option (a), user decision |
 
 ## O1. Stale-fact detection after a crash
 
@@ -520,3 +520,10 @@ the module and `MappedBuffer` widened to `pub(in crate::code_rule_dsl)`). The co
 closure was placed, so nothing is copied twice.
 
 2026-10-29, O16 closed by the user's decision: W's tuned jemalloc stays the global allocator.
+
+2026-10-29, O22 closed with option (a), the user's decision: P's prefilter is taken for every clause
+(`compile/mod.rs`), and P's test runs again. An evicted file whose stored results cannot be read
+at result time reports each candidate clause as `adapter-error` (`STORED_RESULT_UNAVAILABLE`),
+transient, rather than failing the apply (`results.rs::evicted_file_states`). `api.rs` treats such
+a transient state as a failed read, so the next apply that offers the file evaluates it in full.
+

@@ -426,8 +426,6 @@ fn a_binds_branch_never_turns_an_unknown_into_no_match() {
 }
 
 #[test]
-#[ignore = "P's prefilter on three-valued clauses; W keeps its `!three_valued` guard, since P's line \
-            fails W's evicted-consumer test (in P at cbee7a03 too). Decision needed: open item O22"]
 fn a_three_valued_rule_keeps_its_source_prefilter() {
     // `needle` is a two-valued source-text requirement; the unknown leaf does not lift it.
     let rule = json!({ "kind": "identifier", "all": [{ "regex": "^needle$" }, { "not": u_or_x() }] });

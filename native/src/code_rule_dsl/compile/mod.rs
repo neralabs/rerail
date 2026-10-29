@@ -1196,14 +1196,9 @@ fn compile_query_as(
                 if !matches!(matcher, AstMatcher::Never) {
                     let anchors = Arc::new(AnchorPlan::compile(&matcher));
                     let three_valued = reads_values(&matcher, &mut BTreeSet::new());
-                    // W's: a clause that reads values has no text requirement, since its consumers'
-                    // pass runs it on files the text test would refuse. P's line, which keeps the
-                    // requirement ("requirements read only source-text tests, never values, through
-                    // monotone connectives"), was
-                    // `let text = RequiredText::of(&matcher).map(Arc::new);` (open item O18).
-                    let text = (!three_valued)
-                        .then(|| RequiredText::of(&matcher).map(Arc::new))
-                        .flatten();
+                    // Requirements read only source-text tests, never values, through monotone
+                    // connectives: a file missing one fails the rule outright, unknown or not.
+                    let text = RequiredText::of(&matcher).map(Arc::new);
                     matchers.push(GrammarMatcher {
                         language: *language,
                         document: (side == Side::Guest)
