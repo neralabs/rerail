@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "259 Ruff and Bandit rules ported to Rerail, each scored against the tool's own findings on its test fixtures.",
+  "covers": "255 Ruff and Bandit rules ported to Rerail, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches Python",
   "match": {
     "any": [
@@ -1661,18 +1661,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-b018-useless-expression",
-      "document": "rules/ruff-b018-useless-expression.json",
-      "title": "Ruff B018: Useless expression",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-b035-static-key-dict-comprehension",
-      "document": "rules/ruff-b035-static-key-dict-comprehension.json",
-      "title": "Ruff B035: Static key dict comprehension",
-      "group": "Ruff"
-    },
-    {
       "id": "ruff-f402-import-shadowed-by-loop-var",
       "document": "rules/ruff-f402-import-shadowed-by-loop-var.json",
       "title": "Ruff F402: Import shadowed by loop var",
@@ -1683,13 +1671,6 @@
       "document": "rules/ruff-f704-yield-outside-function.json",
       "title": "Ruff F704: Yield outside function",
       "group": "Ruff"
-    },
-    {
-      "id": "ruff-f722-forward-annotation-syntax-error",
-      "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
-      "title": "Ruff F722: Forward annotation syntax error",
-      "group": "Ruff",
-      "on": false
     },
     {
       "id": "ruff-sim102-collapsible-if",
@@ -1725,12 +1706,6 @@
       "id": "ruff-sim223-expr-and-false",
       "document": "rules/ruff-sim223-expr-and-false.json",
       "title": "Ruff SIM223: Expr and false",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-w605-invalid-escape-sequence",
-      "document": "rules/ruff-w605-invalid-escape-sequence.json",
-      "title": "Ruff W605: Invalid escape sequence",
       "group": "Ruff"
     }
   ]

@@ -75,6 +75,12 @@ Port of Ruff's B012 (jump-statement-in-finally): a `return`, `break` or `continu
 
 Port of Ruff's B017 (assert-raises-exception): `<x>.assertRaises(...)` or `pytest.raises(...)` whose exception (first positional argument, or `exception=` / `expected_exception=`) resolves to the builtin `Exception` or `BaseException` (the unshadowed name, or through an import of `builtins`; parentheses transparent). `pytest.raises` is exempt with `match=` or a string/bytes literal second positional argument. Reported on a `with` item that has no `as` target, and on any such call with at least two positional arguments or a `func=` keyword (the call form). `pytest.raises` and the exception names resolve with `resolves` (imports, their scope and order, and shadowing, as Ruff's semantic model sees them).
 
+### `ruff-b018-useless-expression`
+
+Port of Ruff's B018 (useless-expression): an expression statement (parentheses transparent; a bare tuple counts) that is not a comparison, a string or f-string literal, or `...`, and has no effect in Ruff's `contains_effect` sense: no call other than an argument-less `set()`/`list()`/`tuple()`/`dict()`/`frozenset()`, no `await`, `yield`, walrus, comprehension, generator or subscript, and no binary operation with an operand that is not a literal or display, anywhere inside (lambda bodies included). An attribute access with an effect is reported as a useless attribute access. The builtin names must resolve to the unshadowed builtins (`resolves`, Ruff's `has_builtin_binding`). Reported on the expression.
+
+Back to candidates in the stable-rules port (NER-1854): on Ruff's `ISC.py` (line 201) the port reports a parenthesised t-string concatenation that Ruff 0.16.9 leaves alone.
+
 ### `ruff-b019-cached-instance-method`
 
 Port of Ruff's B019 (cached-instance-method): a decorator `functools.cache` / `functools.lru_cache` (called or not) on an instance method: a function defined directly in a class body, not decorated with `staticmethod`/`classmethod` (or `abc.abstractstaticmethod`/`abc.abstractclassmethod`), not `__new__`, `__init_subclass__` or `__class_getitem__`, in a class that does not list an `enum` base (`Enum`, `Flag`, `IntEnum`, `IntFlag`, `StrEnum`, `ReprEnum`, `CheckEnum`). Names resolve with `resolves` (imports, their scope and order, and shadowing, as Ruff's semantic model sees them); a base naming a class defined in the file is followed to that class's bases (`resolves.binding` on its definition, cycles fail). Reported on the decorator.
@@ -90,6 +96,12 @@ Port of Ruff's B027 (empty-method-without-abstract-decorator): in a class whose 
 ### `ruff-b031-reuse-of-groupby-generator`
 
 Partial port of Ruff's B031 (reuse-of-groupby-generator): in the body of `for k, g in itertools.groupby(...)`, a use of `g` inside a nested loop body or list/set/dict comprehension, or after an earlier statement (or the enclosing `if` test or `match` subject) that uses it. Ruff's per-branch use counting (maximum over if/match branches), resets at break/continue/return and reassignment of `g` are not modelled.
+
+### `ruff-b035-static-key-dict-comprehension`
+
+Port of Ruff's B035 (static-key-dict-comprehension): the key of a dict comprehension is constant: a literal, a name the comprehension's generators never store (targets and walrus targets, nested ones included), or an attribute, subscript, operator or tuple built only from such parts. Reported on the key, inside any parentheses.
+
+Back to candidates in the stable-rules port (NER-1854): on Ruff's `C420.py` (line 96) the port reports a dict comprehension split across lines by comments at a position Ruff 0.16.9 does not.
 
 ### `ruff-b911-batched-without-explicit-strict`
 
@@ -142,6 +154,12 @@ Port of Ruff's F631 (assert-tuple) with default settings: an `assert` whose test
 ### `ruff-f634-if-tuple`
 
 Port of Ruff's F634 (if-tuple) with default settings: the test of an `if` or `elif` branch (not a conditional expression, not `while`) that is a non-empty tuple, reported on the tuple (inside any extra parentheses).
+
+### `ruff-f722-forward-annotation-syntax-error`
+
+Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `"..."` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function ("`await` statement outside of a function": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it. Divergence: a string after the first element of a subscript whose generic resolves to a jaxtyping import (`Float[Array, "b n"]`, `jaxtyping.Float[...]`, `jt.Shaped[...]`) is a jaxtyping shape, which jaxtyping parses with its own grammar, not a forward annotation, so it is not reported. Ruff 0.16.9 reports it. A shape inside a string annotation (`"Float[Array, 'b n']"`) is still reported.
+
+Back to candidates in the stable-rules port (NER-1854): on the probe `rerail/probes/UP037-typeddict-keyword-fields.py` (lines 8 and 9) Ruff 0.16.9 reports the string values of `TypedDict("E", foo="a b")` keyword fields, which the port misses.
 
 ### `ruff-f811-redefined-while-unused`
 
@@ -222,6 +240,12 @@ Port of Ruff's SIM401 (if-else-block-instead-of-dict-get): `if K in D: V = D[K] 
 ### `ruff-sim911-zip-dict-keys-and-values`
 
 Port of Ruff's SIM911 (zip-dict-keys-and-values): `zip(d.keys(), d.values())`, the same plain name on both calls, no arguments to either, no keyword but `strict`, and `zip` the builtin (or `builtins.zip`). Reported on the `zip` call, where `d`'s binding is a dict (Ruff's `is_dict` through `resolves.binding`: a `def`'s `**kwargs`, a dict-typed value or `dict(...)`, a `dict`/`Dict` annotation or return annotation; unpacking carries no value).
+
+### `ruff-w605-invalid-escape-sequence`
+
+Port of Ruff's W605 (invalid-escape-sequence): a backslash in a non-raw string, bytes, f-string or t-string literal part that does not start a valid escape (newline, backslash, quotes, `a b f n r t v`, octal digits `0`-`7`, `x`, `N`, `u`, `U`), one finding per backslash. tree-sitter-python leaves such a backslash as a bare `\` token inside `string_content` (valid escapes are `escape_sequence` nodes); f-string format specifiers keep their text unsplit, so a regex over the specifier walks its escapes and `each` reports every invalid backslash (a specifier with none binds no group and reports nothing).
+
+Back to candidates in the stable-rules port (NER-1854): in the probe `rerail/probes/PYI054-escaped-or-concatenated-string-annotation.pyi` (line 4) the port reports a `\q` inside a string annotation, which Ruff 0.16.9 does not.
 
 ### `ruff-a005-stdlib-module-shadowing`
 

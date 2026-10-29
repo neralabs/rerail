@@ -1121,7 +1121,7 @@
         "tool": "ruff",
         "rule": "F722"
       },
-      "policy": "rules/ruff-f722-forward-annotation-syntax-error.json",
+      "policy": "candidates/rules/ruff-f722-forward-annotation-syntax-error.json",
       "capabilities": [
         "annotation",
         "scope",
@@ -2248,7 +2248,7 @@
         "tool": "ruff",
         "rule": "B018"
       },
-      "policy": "rules/ruff-b018-useless-expression.json",
+      "policy": "candidates/rules/ruff-b018-useless-expression.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -2313,7 +2313,7 @@
         "tool": "ruff",
         "rule": "B035"
       },
-      "policy": "rules/ruff-b035-static-key-dict-comprehension.json",
+      "policy": "candidates/rules/ruff-b035-static-key-dict-comprehension.json",
       "capabilities": [
         "suppression",
         "syntax"
@@ -2686,7 +2686,7 @@
         "tool": "ruff",
         "rule": "W605"
       },
-      "policy": "rules/ruff-w605-invalid-escape-sequence.json",
+      "policy": "candidates/rules/ruff-w605-invalid-escape-sequence.json",
       "capabilities": [
         "suppression",
         "syntax"
