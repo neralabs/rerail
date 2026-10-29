@@ -4,7 +4,8 @@ Thank you for helping. This guide covers trusted contributors, how work starts, 
 request needs, and the rules that keep the project open source and its licensing clean.
 
 Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report a security vulnerability privately, as
-[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request.
+[SECURITY.md](SECURITY.md) describes, never in a public issue or pull request. Who the maintainers are, how decisions
+are made and how someone becomes a maintainer is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 
 ## Trusted contributors
 
