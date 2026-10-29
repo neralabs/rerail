@@ -519,5 +519,9 @@ impl Source for Relation {
 /// S's `query/plan/relation.rs` as copied (0689eb25); merged into this module (decision 0008).
 #[allow(dead_code)]
 mod s_relation;
+/// P's `relational/table.rs` as copied (2c92eb35), over P's test-only relational stage (O18).
+#[cfg(test)]
+#[allow(dead_code)]
+mod p_table;
 #[cfg(test)]
 mod tests;

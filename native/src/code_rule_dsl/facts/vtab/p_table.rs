@@ -1,5 +1,5 @@
 //! Dynamic read-only virtual tables over immutable sources. SQLite applies filters.
-use super::syntax::{Counters, Source};
+use crate::code_rule_dsl::residency::admission::relational::syntax::{Counters, Source};
 fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::UserFunctionError(message.to_owned().into())
 }
@@ -100,7 +100,7 @@ unsafe impl<'a> VTab<'a> for Table {
         ))
     }
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
-        let _reader = super::producer::ReadOnly::enter();
+        let _reader = crate::code_rule_dsl::residency::admission::relational::producer::ReadOnly::enter();
         let selected = info
             .constraints()
             .enumerate()
@@ -260,7 +260,7 @@ unsafe impl VTabCursor for Cursor {
             },
             1,
         );
-        let _read_only = super::producer::ReadOnly::enter();
+        let _read_only = crate::code_rule_dsl::residency::admission::relational::producer::ReadOnly::enter();
         self.shared.stats.scans.fetch_add(1, Ordering::Relaxed);
         self.position = 0;
         self.selected = None;
@@ -315,7 +315,7 @@ unsafe impl VTabCursor for Cursor {
             crate::code_rule_dsl::profile::sql::FrameEvent::Next,
             1,
         );
-        let _read_only = super::producer::ReadOnly::enter();
+        let _read_only = crate::code_rule_dsl::residency::admission::relational::producer::ReadOnly::enter();
         self.shared.source.charge(1)?;
         if self.selected.is_some() {
             self.position += 1;
@@ -335,7 +335,7 @@ unsafe impl VTabCursor for Cursor {
             crate::code_rule_dsl::profile::sql::FrameEvent::Column,
             1,
         );
-        let _read_only = super::producer::ReadOnly::enter();
+        let _read_only = crate::code_rule_dsl::residency::admission::relational::producer::ReadOnly::enter();
         self.shared.stats.columns.fetch_add(1, Ordering::Relaxed);
         self.shared.source.column(self.row(), col as usize, ctx)
     }

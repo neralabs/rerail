@@ -22,7 +22,7 @@ pub(in crate::code_rule_dsl) mod deferred;
 mod forest;
 mod inputs;
 mod insert;
-mod producer;
+pub(in crate::code_rule_dsl) mod producer;
 mod reachability;
 pub(in crate::code_rule_dsl) mod schema;
 mod source;
