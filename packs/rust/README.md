@@ -1,6 +1,6 @@
 # Rerail rule pack: Rust
 
-18 Clippy 0.1.99 lints ported to Rerail, each passing the [conformance check](../../conformance/README.md#the-gate), in `rules/` and `pack.json`: `clippy-builtin-type-shadow`, `clippy-inconsistent-digit-grouping`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names` and `needless_raw_string_hashes` (pedantic) and `partial_pub_fields` and `precedence_bits` (restriction) off, so they ship off (`"on": false`). 16 more ports are candidates in `candidates/rules/`, judged by the same checks without blocking ([candidates/README.md](candidates/README.md)). Each port is scored against Clippy's own findings on its UI tests, and against the labelled lines of Clippy's real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path. The shipped rules agree with Clippy on every fixture finding, with no declared divergence; `divergences.json` holds the candidates' disagreements, each with its evidence.
+33 Clippy 0.1.99 lints ported to Rerail, each passing the [conformance check](../../conformance/README.md#the-gate), in `rules/` and `pack.json`: `clippy-allow-attributes`, `clippy-allow-attributes-without-reason`, `clippy-builtin-type-shadow`, `clippy-decimal-literal-representation`, `clippy-decimal-literal-representation-threshold`, `clippy-double-parens`, `clippy-else-if-without-else`, `clippy-inconsistent-digit-grouping`, `clippy-inconsistent-digit-grouping-no-fractions`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-needless-raw-string-hashes-one-allowed`, `clippy-needless-raw-strings`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-redundant-field-names`, `clippy-redundant-static-lifetimes`, `clippy-single-char-lifetime-names`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unnested-or-patterns`, `clippy-unreadable-literal`, `clippy-unreadable-literal-no-fractions`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names`, `needless_raw_string_hashes`, `unnested_or_patterns` and `unreadable_literal` (pedantic) and `allow_attributes`, `allow_attributes_without_reason`, `decimal_literal_representation`, `else_if_without_else`, `needless_raw_strings`, `partial_pub_fields`, `precedence_bits` and `single_char_lifetime_names` (restriction) off, so their ports ship off (`"on": false`). 1 more port is a candidate in `candidates/rules/`, judged by the same checks without blocking ([candidates/README.md](candidates/README.md)). Each port is scored against Clippy's own findings on its UI tests, and against the labelled lines of Clippy's real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path. The shipped rules agree with Clippy on every fixture finding but the 7 that `divergences.json` declares, and it holds the candidate's disagreements too, each with its evidence.
 
 This pack follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
@@ -18,17 +18,20 @@ This pack follows the [pack structure and validation contract](../../docs/pack-f
 ## Scores
 
 Every port is scored against Clippy's findings on the fixtures, and against the labelled lines of Clippy's real-code
-samples ([docs/upstream.md](../../docs/upstream.md#samples)). The 18 shipped rules' fixture scores below come from
+samples ([docs/upstream.md](../../docs/upstream.md#samples)). The 33 shipped rules' fixture scores below come from
 `node --import tsx conformance/languages/cli.ts --pack rust --fixtures` (Clippy 0.1.99, Rust 1.99.0); the totals sum
 the per-rule rows. FP and FN count unexplained points only; an explained point is one a divergence names, and recall
-counts an explained FN against the pack. No shipped rule has a declared divergence. The candidates' scores, and the
+counts an explained FN against the pack. The 7 explained FN are `rerail-unknown` divergences (`divergences.json`): code
+tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns
+tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a
+rule's JSON-number bounds cannot name. The candidate's scores, and the
 totals over every port, are in [candidates/README.md](candidates/README.md). Rust has no rename variants
 (`holds-under-rename` covers the ECMAScript packs), so the real-code samples are the pack's only evidence that a port is
 not fitted to Clippy's UI tests.
 
 | Source | Rules | TP | FP | FN | Explained FP | Explained FN |
 |---|---|---|---|---|---|---|
-| fixtures (Clippy's UI tests and Rerail's probes) | 18 | 167 | 0 | 0 | 0 | 0 |
+| fixtures (Clippy's UI tests and Rerail's probes) | 33 | 392 | 0 | 0 | 0 | 7 |
 
 Per rule on the fixtures (TP / FP / FN, explained points in parentheses):
 
@@ -52,6 +55,21 @@ Per rule on the fixtures (TP / FP / FN, explained points in parentheses):
 | `clippy-builtin-type-shadow` | 1 / 0 / 0 |
 | `clippy-single-component-path-imports` | 5 / 0 / 0 |
 | `clippy-many-single-char-names` | 3 / 0 / 0 |
+| `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) |
+| `clippy-allow-attributes` | 25 / 0 / 0 (1) |
+| `clippy-decimal-literal-representation-threshold` | 1 / 0 / 0 |
+| `clippy-decimal-literal-representation` | 8 / 0 / 0 |
+| `clippy-double-parens` | 24 / 0 / 0 (1) |
+| `clippy-else-if-without-else` | 4 / 0 / 0 |
+| `clippy-inconsistent-digit-grouping-no-fractions` | 1 / 0 / 0 |
+| `clippy-needless-raw-string-hashes-one-allowed` | 3 / 0 / 0 |
+| `clippy-needless-raw-strings` | 15 / 0 / 0 |
+| `clippy-redundant-field-names` | 8 / 0 / 0 (1) |
+| `clippy-redundant-static-lifetimes` | 31 / 0 / 0 |
+| `clippy-single-char-lifetime-names` | 9 / 0 / 0 |
+| `clippy-unnested-or-patterns` | 32 / 0 / 0 (3) |
+| `clippy-unreadable-literal-no-fractions` | 1 / 0 / 0 |
+| `clippy-unreadable-literal` | 16 / 0 / 0 |
 
 ## Deriving and scoring
 
@@ -76,13 +94,41 @@ node --import tsx conformance/languages/cli.ts --pack rust --rule clippy-precede
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
 
+### `clippy-allow-attributes`
+
+Port of Clippy 0.1.99's allow_attributes: reports the path of every outer #[allow(..)] attribute, one a #[cfg_attr(..)] expands to included. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). Inner #![allow] is not reported. What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] predicate holds in a build, are not read. A #[cfg_attr] is read as active unless its first argument is exactly `test`, `any()` or `not(clippy)`, the predicates the suppression engine reads as off whatever the build; every other predicate is read as active.
+
+### `clippy-allow-attributes-without-reason`
+
+Port of Clippy 0.1.99's allow_attributes_without_reason: reports every #[allow(..)] and #[expect(..)] attribute, inner or outer, one a #[cfg_attr(..)] expands to included (at the expanded attribute), whose last item is not `reason = ".."`. The lint needs Rust 1.81 (lint reasons, `suppress.clippy.msrv`). What a macro invocation's or macro_rules! body's token tree holds, and whether a #[cfg] predicate holds in a build, are not read. A #[cfg_attr] is read as active unless its first argument is exactly `test`, `any()` or `not(clippy)`, the predicates the suppression engine reads as off whatever the build; every other predicate is read as active. Each allow or expect a #[cfg_attr] expands to is checked on its own for a last `reason = ".."` item and reported at its own span (`allow(..)`, as Clippy reports the expanded attribute); a list nested deeper than two parentheses inside it is not read.
+
 ### `clippy-builtin-type-shadow`
 
 Port of Clippy 0.1.99's builtin_type_shadow: reports generic type parameters named like a primitive type (rustc's PrimTy names: the integer types, the float types f16 to f128, bool, char and str); semantic name resolution is not modelled.
 
+### `clippy-decimal-literal-representation`
+
+Port of Clippy 0.1.99's decimal_literal_representation (literal-representation-threshold 16384, the default): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits (four or more above this threshold) are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free: a value at most 16 below or 15 above a power of two) or only 0s and Fs after a leading 7 or F (every hexadecimal digit 0 or F, the leading one possibly 7). Values of 2^53 and above are not read: the rule language has no hexadecimal reading of a value, so the digits are read as value ranges and bit masks, and a rule's numbers reach the engine as JavaScript numbers, exact only up to 2^53. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+
+### `clippy-decimal-literal-representation-threshold`
+
+Port of Clippy 0.1.99's decimal_literal_representation under literal-representation-threshold = 0xFFFFFF (its ui-toml test): reports a decimal integer literal whose value is at least the threshold and whose hexadecimal digits (four or more above this threshold) are a power of two with a margin (1, 2, 4 or 8 then zeros, or 1, 3, 7 or F then Fs, the last digit free: a value at most 16 below or 15 above a power of two) or only 0s and Fs after a leading 7 or F (every hexadecimal digit 0 or F, the leading one possibly 7). Values of 2^53 and above are not read: the rule language has no hexadecimal reading of a value, so the digits are read as value ranges and bit masks, and a rule's numbers reach the engine as JavaScript numbers, exact only up to 2^53. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+
+### `clippy-double-parens`
+
+Port of Clippy 0.1.99's double_parens lint: reports redundant nested parentheses around an expression (only whitespace between the two opening or closing parentheses, as Clippy's source check requires; a call's sole argument in parentheses, reported once where the nested-parentheses clauses already report the same span), and the same two shapes in a macro_rules! transcriber's tokens (a parenthesized group whose only content is another parenthesized group, in expression position after `=`, `=>`, `return`, a delimiter, `;` or `,`, or as the sole parenthesized argument after a call's name; a `$(` repetition is not a parenthesized expression); expansion of macro invocations' arguments and tuple/unit argument semantics are not modelled.
+
+### `clippy-else-if-without-else`
+
+Port of Clippy 0.1.99's else_if_without_else lint: reports the if expression of an else-if branch whose final if has no else, spanning the whole else-if expression; macro expansion and cfg evaluation are not modelled.
+
 ### `clippy-inconsistent-digit-grouping`
 
 Port of Clippy 0.1.99's inconsistent_digit_grouping: reports a decimal literal whose integer part or fraction has groups of different sizes after the first (or a first group longer than the rest), or whose integer and fraction are grouped differently. Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.
+
+### `clippy-inconsistent-digit-grouping-no-fractions`
+
+Port of Clippy 0.1.99's inconsistent_digit_grouping under unreadable-literal-lint-fractions = false (its ui-toml test): reports a decimal literal whose integer part or fraction has groups of different sizes after the first (or a first group longer than the rest), or whose integer and fraction are grouped differently (unreadable-literal-lint-fractions = false: a fraction is never unreadable). Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.
 
 ### `clippy-int-plus-one`
 
@@ -108,6 +154,14 @@ Port of Clippy 0.1.99's needless_else lint: reports an empty else block after an
 
 Port of Clippy 0.1.99's needless_raw_string_hashes: reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
 
+### `clippy-needless-raw-string-hashes-one-allowed`
+
+Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
+
+### `clippy-needless-raw-strings`
+
+Port of Clippy 0.1.99's needless_raw_strings: reports raw literals whose contents do not require raw-string syntax or hashes; macro expansion and format-string preprocessing are not modelled.
+
 ### `clippy-octal-escapes`
 
 Port of Clippy 0.1.99's octal_escapes: reports each \0 followed by one or two octal digits in string, byte-string, or C-string literals; format-string preprocessing and external macros are not modelled.
@@ -124,6 +178,18 @@ Port of Clippy 0.1.99's precedence lint: reports a shift or bitwise operation wh
 
 Port of Clippy 0.1.99's precedence_bits lint: reports, at any nesting depth, every bitwise (& | ^) operation with an unparenthesized shift operand and no unparenthesized arithmetic operand (that mix is the precedence lint's), each at its own span, so every operation of a left-nested chain like `a ^ b ^ c >> 1 ^ d >> 2` that has a shift operand is reported; macro expansion and semantic type checks are not modelled.
 
+### `clippy-redundant-field-names`
+
+Port of Clippy 0.1.99's redundant_field_names: reports a struct expression's field initializer whose value is a path of one segment, without generic arguments, naming the field (`S { a: a }`). The lint needs Rust 1.17 (field init shorthand, `suppress.clippy.msrv`). Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+
+### `clippy-redundant-static-lifetimes`
+
+Port of Clippy 0.1.99's redundant_static_lifetimes: reports redundant 'static lifetimes in free const and static declarations, where Clippy's visit_type reaches them (through references, arrays, slices and tuples, not into fn-pointer, generic-argument or trait-object types); associated items are not modelled. The lint needs Rust 1.17 (`suppress.clippy.msrv`).
+
+### `clippy-single-char-lifetime-names`
+
+Port of Clippy 0.1.99's single_char_lifetime_names: reports each single-character lifetime parameter where it is declared, a generic parameter list's or a `for<..>` binder's, not where a bound or a type names it. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
+
 ### `clippy-single-component-path-imports`
 
 Port of Clippy 0.1.99's single_component_path_imports (Rust 2018 and later): reports a module's (the file's or a `mod`'s) non-`pub` `use name;` without a rename, and each `name` of a `use {a, b};` without a prefix, unless a `macro_rules!` of that name comes before it in the module, a non-`pub` `use self::name..` of the module (or `use self::{name..}`) names it, or a path `self::name::..` outside `use` declarations does anywhere in the module. Clippy reads the module after macro expansion; macro arguments and macro_rules! bodies are token trees no syntax-level reader expands.
@@ -131,6 +197,18 @@ Port of Clippy 0.1.99's single_component_path_imports (Rust 2018 and later): rep
 ### `clippy-unneeded-wildcard-pattern`
 
 Port of Clippy 0.1.99's unneeded_wildcard_pattern: reports the run of wildcard elements of a tuple or tuple-struct pattern adjacent to its rest pattern, and the trailing wildcard fields of a struct pattern before its rest, spanning them with their separators up to (or from) the rest pattern as Clippy does; elements nested more than two brackets deep and macro-expanded code are not modelled.
+
+### `clippy-unnested-or-patterns`
+
+Port of Clippy 0.1.99's unnested_or_patterns: reports a match arm's, let's, if/while let's or parameter's pattern that holds an or-pattern Clippy nests: one with a parenthesised or-pattern among its alternatives, or with two alternatives (adjacent or not) built alike that differ in one sub-pattern at most: `&mut`, the same `x @`, `ref x @` or `mut x @` binding, a tuple, slice or tuple struct (same path) pattern whose differing element is not `..` on either side, among the first six, or a struct pattern (same path, both with or both without `..`, up to six fields in any order) whose other fields are the same, unless the two are the same shorthands only. The lint needs Rust 1.53 (`suppress.clippy.msrv`). Sub-patterns compare by their tokens, parentheses included. Macro arguments and macro_rules! bodies are token trees no syntax-level reader expands; `box` patterns (an unstable feature) do not parse.
+
+### `clippy-unreadable-literal`
+
+Port of Clippy 0.1.99's unreadable_literal: reports an integer or float literal whose digits, as Clippy's NumericLiteral splits them (radix prefix, suffix and the `_` before it, integer, fraction and exponent), hold an ungrouped part longer than five digits (a decimal integer part, a fraction, or a binary, octal or hexadecimal literal whose first group is). Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.
+
+### `clippy-unreadable-literal-no-fractions`
+
+Port of Clippy 0.1.99's unreadable_literal under unreadable-literal-lint-fractions = false (its ui-toml test): reports an integer or float literal whose digits, as Clippy's NumericLiteral splits them (radix prefix, suffix and the `_` before it, integer, fraction and exponent), hold an ungrouped part longer than five digits (a decimal integer part, a fraction (never, under unreadable-literal-lint-fractions = false), or a binary, octal or hexadecimal literal whose first group is). Literals Clippy reads as a mistyped suffix (an unsuffixed literal ending in `_8`, `_16`, `_32` or `_64`, the exponent's `_32` or `_64`) and hexadecimal UUIDs (8-4-4-4-12) are not reported, nor (as Clippy skips code from expansion) literals in a macro_rules! body; a macro invocation's arguments keep their own spans and are read.
 
 ### `clippy-unusual-byte-groupings`
 
