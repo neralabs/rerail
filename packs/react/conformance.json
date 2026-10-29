@@ -228,20 +228,6 @@
       "match": "line+column"
     },
     {
-      "id": "react-react-in-jsx-scope",
-      "upstream": {
-        "tool": "eslint-plugin-react",
-        "rule": "react/react-in-jsx-scope"
-      },
-      "policy": "candidates/rules/react-react-in-jsx-scope.json",
-      "capabilities": [
-        "syntax",
-        "scope",
-        "suppression"
-      ],
-      "match": "line+column"
-    },
-    {
       "id": "react-no-unescaped-entities",
       "upstream": {
         "tool": "eslint-plugin-react",
@@ -252,7 +238,7 @@
         "syntax",
         "suppression"
       ],
-      "match": "line"
+      "match": "line+column"
     },
     {
       "id": "react-jsx-no-target-blank",
@@ -288,7 +274,7 @@
         "tool": "eslint-plugin-react-hooks",
         "rule": "react-hooks/exhaustive-deps"
       },
-      "policy": "candidates/rules/react-hooks-exhaustive-deps.json",
+      "policy": "rules/react-hooks-exhaustive-deps.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -303,9 +289,297 @@
         "tool": "eslint-plugin-react",
         "rule": "react/no-array-index-key"
       },
-      "policy": "candidates/rules/react-no-array-index-key.json",
+      "policy": "rules/react-no-array-index-key.json",
       "capabilities": [
         "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-iframe-missing-sandbox",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/iframe-missing-sandbox"
+      },
+      "policy": "rules/react-iframe-missing-sandbox.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-jsx-no-constructed-context-values",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/jsx-no-constructed-context-values"
+      },
+      "policy": "rules/react-jsx-no-constructed-context-values.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-jsx-no-leaked-render",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/jsx-no-leaked-render"
+      },
+      "policy": "rules/react-jsx-no-leaked-render.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-jsx-no-script-url",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/jsx-no-script-url"
+      },
+      "policy": "rules/react-jsx-no-script-url.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-access-state-in-setstate",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-access-state-in-setstate"
+      },
+      "policy": "rules/react-no-access-state-in-setstate.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-deprecated",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-deprecated"
+      },
+      "policy": "rules/react-no-deprecated.json",
+      "capabilities": [
+        "syntax",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-did-mount-set-state",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-did-mount-set-state"
+      },
+      "policy": "rules/react-no-did-mount-set-state.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-did-update-set-state",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-did-update-set-state"
+      },
+      "policy": "rules/react-no-did-update-set-state.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-object-type-as-default-prop",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-object-type-as-default-prop"
+      },
+      "policy": "rules/react-no-object-type-as-default-prop.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-unknown-property",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-unknown-property"
+      },
+      "policy": "rules/react-no-unknown-property.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-unsafe",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-unsafe"
+      },
+      "policy": "rules/react-no-unsafe.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-no-unstable-nested-components",
+      "upstream": {
+        "tool": "eslint-plugin-react",
+        "rule": "react/no-unstable-nested-components"
+      },
+      "policy": "rules/react-no-unstable-nested-components.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-error-boundaries",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/error-boundaries"
+      },
+      "policy": "rules/react-hooks-error-boundaries.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-globals",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/globals"
+      },
+      "policy": "rules/react-hooks-globals.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-immutability",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/immutability"
+      },
+      "policy": "rules/react-hooks-immutability.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-purity",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/purity"
+      },
+      "policy": "rules/react-hooks-purity.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-refs",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/refs"
+      },
+      "policy": "rules/react-hooks-refs.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-set-state-in-effect",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/set-state-in-effect"
+      },
+      "policy": "rules/react-hooks-set-state-in-effect.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-set-state-in-render",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/set-state-in-render"
+      },
+      "policy": "rules/react-hooks-set-state-in-render.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "compare",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "react-hooks-static-components",
+      "upstream": {
+        "tool": "eslint-plugin-react-hooks",
+        "rule": "react-hooks/static-components"
+      },
+      "policy": "rules/react-hooks-static-components.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "compare",
         "suppression"
       ],
       "match": "line+column"

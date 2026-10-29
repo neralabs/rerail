@@ -2,12 +2,17 @@
 // packs/react/candidates/rules/<id>.json (`candidate: true`), and packs/react/conformance.json, the manifest that lists
 // every port: the specs and the hand-written HAND_WRITTEN ports. The conformance runner gates the ports under rules/
 // and scores and reports the candidates without gating them.
+// Each violation carries the suppression comments its rule honours: `eslint-disable` for the upstream rule, Oxlint
+// 1.88.0's for a rule its `react` plugin implements (OXLINT_REACT), and Biome's for the rules Biome marks the same
+// (conformance/biome-same-sources.generated.ts, which scripts/generate/packs/biome-suppression.mjs writes). A document
+// keeps its committed revision when nothing else changes; a shipped one (rules/) that changes gets the next revision.
 // Score: node --import tsx conformance/languages/cli.ts --pack react [--fixtures]
 // Usage: node packs/react/candidates/build.mjs
 // Run offline by a maintainer, never in CI.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BIOME_SAME_SOURCES } from "../../../conformance/biome-same-sources.generated.ts";
 import { PINS } from "../upstream/common.mjs";
 import { HAND_WRITTEN, SPECS } from "./specs.mjs";
 
@@ -20,6 +25,38 @@ const EXTENSIONS = ["ts", "mts", "cts", "tsx", "js", "jsx", "mjs", "cjs"];
  * depending on Vue and not React) is not React code, so no React rule reads it.
  */
 const JSX_RUNTIMES = ["react", "unknown"];
+
+/** The rules Oxlint 1.88.0's `react` plugin implements (`oxlint --rules`), by their name without a plugin prefix. */
+const OXLINT_REACT = new Set([
+  "button-has-type", "capitalized-calls", "checked-requires-onchange-or-readonly", "display-name", "error-boundaries",
+  "exhaustive-deps", "exhaustive-effect-dependencies", "forbid-component-props", "forbid-dom-props", "forbid-elements",
+  "forward-ref-uses-ref", "function-component-definition", "globals", "hook-use-state", "hooks", "iframe-missing-sandbox",
+  "immutability", "incompatible-library", "invariant", "jsx-boolean-value", "jsx-curly-brace-presence",
+  "jsx-filename-extension", "jsx-fragments", "jsx-handler-names", "jsx-key", "jsx-max-depth", "jsx-no-comment-textnodes",
+  "jsx-no-constructed-context-values", "jsx-no-duplicate-props", "jsx-no-literals", "jsx-no-script-url",
+  "jsx-no-target-blank", "jsx-no-undef", "jsx-no-useless-fragment", "jsx-pascal-case", "jsx-props-no-spread-multi",
+  "jsx-props-no-spreading", "memo-dependencies", "no-array-index-key", "no-children-prop", "no-clone-element", "no-danger",
+  "no-danger-with-children", "no-deriving-state-in-effects", "no-did-mount-set-state", "no-did-update-set-state",
+  "no-direct-mutation-state", "no-find-dom-node", "no-is-mounted", "no-multi-comp", "no-namespace",
+  "no-object-type-as-default-prop", "no-react-children", "no-redundant-should-component-update", "no-render-return-value",
+  "no-set-state", "no-string-refs", "no-this-in-sfc", "no-unescaped-entities", "no-unknown-property", "no-unsafe",
+  "no-unstable-nested-components", "no-will-update-set-state", "only-export-components", "prefer-es6-class",
+  "prefer-function-component", "preserve-manual-memoization", "purity", "react-in-jsx-scope", "refs",
+  "require-render-return", "rule-suppression", "rules-of-hooks", "self-closing-comp", "set-state-in-effect",
+  "set-state-in-render", "state-in-constructor", "static-components", "style-prop-object", "syntax", "todo",
+  "unsupported-syntax", "use-memo", "void-dom-elements-no-children", "void-use-memo",
+]);
+
+/** The suppression comments a violation of the upstream rule `upstream` honours, as the tools that implement it read them. */
+function suppress(upstream) {
+  const name = upstream.slice(upstream.indexOf("/") + 1);
+  const biome = BIOME_SAME_SOURCES[upstream];
+  return {
+    eslint: { rules: [upstream] },
+    ...(OXLINT_REACT.has(name) ? { oxlint: { rules: [name] } } : {}),
+    ...(biome === undefined ? {} : { biome: { rules: [...biome] } }),
+  };
+}
 
 /** A check's own utilities: those the document's shared define does not already hold. */
 function local(spec, check) {
@@ -55,17 +92,29 @@ function document(spec) {
           code: spec.upstream,
           message: check.message,
           ...(check.each ? { each: check.each } : {}),
-          suppress: { eslint: { rules: [spec.upstream] } },
+          suppress: suppress(spec.upstream),
         },
       })),
     ],
   };
 }
 
+/** `next` with the revision `committed` holds when the rest is unchanged, else one past it for a shipped document. */
+function revised(next, committed, shipped) {
+  if (committed === undefined) return next;
+  const same = JSON.stringify({ ...committed, revision: 0 }) === JSON.stringify({ ...next, revision: 0 });
+  return { ...next, revision: same || !shipped ? committed.revision : committed.revision + 1 };
+}
+
 for (const spec of SPECS) {
   const directory = join(spec.candidate ? CANDIDATES : PACK_DIRECTORY, "rules");
+  const other = join(spec.candidate ? PACK_DIRECTORY : CANDIDATES, "rules", `${spec.id}.json`);
+  const path = join(directory, `${spec.id}.json`);
+  const committed = [path, other].filter(existsSync).map(file => JSON.parse(readFileSync(file, "utf8")))[0];
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, `${spec.id}.json`), `${JSON.stringify(document(spec), null, 2)}\n`);
+  writeFileSync(path, `${JSON.stringify(revised(document(spec), committed, !spec.candidate), null, 2)}\n`);
+  // A spec that moves between candidates/rules/ and rules/ leaves no copy behind.
+  rmSync(other, { force: true });
 }
 
 /** Every capability the pack's ports exercise, in the manifest's order. */

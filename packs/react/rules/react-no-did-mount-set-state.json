@@ -1,0 +1,215 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-did-mount-set-state",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid calling setState directly in componentDidMount; it triggers a second render before the browser paints.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "utils": {
+            "function": {
+              "any": [
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                },
+                {
+                  "kind": "method_definition"
+                }
+              ]
+            },
+            "did-mount-key": {
+              "regex": "^(?:#?componentDidMount|\\[\\s*componentDidMount\\s*\\])$"
+            },
+            "did-mount-member": {
+              "any": [
+                {
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "matches": "did-mount-key"
+                  }
+                },
+                {
+                  "kind": "pair_pattern",
+                  "has": {
+                    "field": "key",
+                    "matches": "did-mount-key"
+                  }
+                },
+                {
+                  "kind": "object_assignment_pattern",
+                  "has": {
+                    "field": "left",
+                    "regex": "^componentDidMount$"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "class_body"
+                  },
+                  "not": {
+                    "kind": "method_definition"
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "matches": "did-mount-key"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "matches": "did-mount-key"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "pattern": "$CALLEE",
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "this"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^#?setState$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "subscript_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "this"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "index",
+                        "kind": "identifier",
+                        "regex": "^setState$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": {
+                "matches": "function"
+              },
+              "any": [
+                {
+                  "matches": "did-mount-member"
+                },
+                {
+                  "kind": "method_definition",
+                  "has": {
+                    "field": "name",
+                    "matches": "did-mount-key"
+                  }
+                },
+                {
+                  "matches": "function",
+                  "not": {
+                    "kind": "method_definition"
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "matches": "function"
+                    },
+                    "matches": "did-mount-member"
+                  }
+                }
+              ]
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALLEE",
+        "code": "react/no-did-mount-set-state",
+        "message": "Initialize this state in the constructor or set it from a later callback; keep it here only when it depends on measuring the rendered DOM, such as a tooltip's position.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-did-mount-set-state"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-did-mount-set-state"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
