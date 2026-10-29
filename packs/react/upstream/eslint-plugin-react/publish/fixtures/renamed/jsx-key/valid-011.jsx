@@ -1,0 +1,1 @@
+Array.from([9, 2, 8], (e => {return <Fwm key={e} />}));

@@ -1,0 +1,1 @@
+var jao = React.render(<div />, aqrm);

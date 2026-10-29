@@ -1,0 +1,39 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "excalidraw-app/components/EncryptedIcon.tsx",
+    "license": "MIT",
+    "sha256": "dc6e7d240f4c9426482e59ddcf2d34eb91766c8f3684f09d4556b74bd60beab6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "port-readiness recording"
+  },
+  "expected": {
+    "react-button-has-type": [],
+    "react-jsx-key": [],
+    "react-jsx-no-comment-textnodes": [],
+    "react-jsx-no-duplicate-props": [],
+    "react-jsx-no-target-blank": [
+      {
+        "line": 9,
+        "column": 5
+      }
+    ],
+    "react-jsx-no-undef": [],
+    "react-no-array-index-key": [],
+    "react-no-children-prop": [],
+    "react-no-danger": [],
+    "react-no-danger-with-children": [],
+    "react-no-direct-mutation-state": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-no-string-refs": [],
+    "react-no-unescaped-entities": [],
+    "react-self-closing-comp": [],
+    "react-void-dom-elements-no-children": []
+  }
+}

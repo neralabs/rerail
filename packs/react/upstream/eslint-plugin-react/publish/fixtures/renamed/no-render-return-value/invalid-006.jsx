@@ -1,0 +1,1 @@
+var goze = React.render(<div />, document.wbcv);

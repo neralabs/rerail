@@ -1,0 +1,327 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/icons.tsx",
+    "license": "MIT",
+    "sha256": "1d263db1690b510571bf737b2f1733ad4579ffcc54f9a519c4db3ec9ff109cfd"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "port-readiness recording"
+  },
+  "expected": {
+    "react-button-has-type": [],
+    "react-jsx-key": [],
+    "react-jsx-no-comment-textnodes": [],
+    "react-jsx-no-duplicate-props": [],
+    "react-jsx-no-target-blank": [],
+    "react-jsx-no-undef": [],
+    "react-no-array-index-key": [],
+    "react-no-children-prop": [],
+    "react-no-danger": [],
+    "react-no-danger-with-children": [],
+    "react-no-direct-mutation-state": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-no-string-refs": [],
+    "react-no-unescaped-entities": [],
+    "react-self-closing-comp": [
+      {
+        "line": 117,
+        "column": 5
+      },
+      {
+        "line": 118,
+        "column": 5
+      },
+      {
+        "line": 119,
+        "column": 5
+      },
+      {
+        "line": 120,
+        "column": 5
+      },
+      {
+        "line": 139,
+        "column": 5
+      },
+      {
+        "line": 140,
+        "column": 5
+      },
+      {
+        "line": 141,
+        "column": 5
+      },
+      {
+        "line": 142,
+        "column": 5
+      },
+      {
+        "line": 336,
+        "column": 5
+      },
+      {
+        "line": 355,
+        "column": 5
+      },
+      {
+        "line": 380,
+        "column": 5
+      },
+      {
+        "line": 381,
+        "column": 5
+      },
+      {
+        "line": 382,
+        "column": 5
+      },
+      {
+        "line": 383,
+        "column": 5
+      },
+      {
+        "line": 409,
+        "column": 5
+      },
+      {
+        "line": 513,
+        "column": 5
+      },
+      {
+        "line": 514,
+        "column": 5
+      },
+      {
+        "line": 515,
+        "column": 5
+      },
+      {
+        "line": 516,
+        "column": 5
+      },
+      {
+        "line": 531,
+        "column": 5
+      },
+      {
+        "line": 532,
+        "column": 5
+      },
+      {
+        "line": 533,
+        "column": 5
+      },
+      {
+        "line": 534,
+        "column": 5
+      },
+      {
+        "line": 541,
+        "column": 5
+      },
+      {
+        "line": 542,
+        "column": 5
+      },
+      {
+        "line": 543,
+        "column": 5
+      },
+      {
+        "line": 544,
+        "column": 5
+      },
+      {
+        "line": 652,
+        "column": 5
+      },
+      {
+        "line": 653,
+        "column": 5
+      },
+      {
+        "line": 654,
+        "column": 5
+      },
+      {
+        "line": 655,
+        "column": 5
+      },
+      {
+        "line": 656,
+        "column": 5
+      },
+      {
+        "line": 657,
+        "column": 5
+      },
+      {
+        "line": 658,
+        "column": 5
+      },
+      {
+        "line": 940,
+        "column": 5
+      },
+      {
+        "line": 941,
+        "column": 5
+      },
+      {
+        "line": 942,
+        "column": 5
+      },
+      {
+        "line": 943,
+        "column": 5
+      },
+      {
+        "line": 944,
+        "column": 5
+      },
+      {
+        "line": 1826,
+        "column": 7
+      },
+      {
+        "line": 1877,
+        "column": 5
+      },
+      {
+        "line": 1878,
+        "column": 5
+      },
+      {
+        "line": 1879,
+        "column": 5
+      },
+      {
+        "line": 1880,
+        "column": 5
+      },
+      {
+        "line": 1881,
+        "column": 5
+      },
+      {
+        "line": 1888,
+        "column": 5
+      },
+      {
+        "line": 1889,
+        "column": 5
+      },
+      {
+        "line": 1890,
+        "column": 5
+      },
+      {
+        "line": 1891,
+        "column": 5
+      },
+      {
+        "line": 1898,
+        "column": 5
+      },
+      {
+        "line": 1899,
+        "column": 5
+      },
+      {
+        "line": 1900,
+        "column": 5
+      },
+      {
+        "line": 1918,
+        "column": 5
+      },
+      {
+        "line": 1919,
+        "column": 5
+      },
+      {
+        "line": 1920,
+        "column": 5
+      },
+      {
+        "line": 1921,
+        "column": 5
+      },
+      {
+        "line": 1928,
+        "column": 5
+      },
+      {
+        "line": 1929,
+        "column": 5
+      },
+      {
+        "line": 1936,
+        "column": 5
+      },
+      {
+        "line": 1937,
+        "column": 5
+      },
+      {
+        "line": 1948,
+        "column": 5
+      },
+      {
+        "line": 1949,
+        "column": 5
+      },
+      {
+        "line": 1971,
+        "column": 5
+      },
+      {
+        "line": 1981,
+        "column": 5
+      },
+      {
+        "line": 1982,
+        "column": 5
+      },
+      {
+        "line": 1983,
+        "column": 5
+      },
+      {
+        "line": 1984,
+        "column": 5
+      },
+      {
+        "line": 1985,
+        "column": 5
+      },
+      {
+        "line": 1992,
+        "column": 5
+      },
+      {
+        "line": 1993,
+        "column": 5
+      },
+      {
+        "line": 1994,
+        "column": 5
+      },
+      {
+        "line": 1995,
+        "column": 5
+      },
+      {
+        "line": 1996,
+        "column": 5
+      }
+    ],
+    "react-void-dom-elements-no-children": []
+  }
+}

@@ -927,12 +927,67 @@ SPDX-FileCopyrightText = "mdx-editor/editor contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-excalidraw-app-app.tsx-721103a71d9f/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-excalidraw-app-app.tsx-7cc5a3ae8b9f/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-excalidraw-app-bug-issue-template.js-941376c91f19/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-excalidraw-app-collab-collab.tsx-53b8239480f6/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-appfooter.tsx-8af9c68c75de/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-appmainmenu.tsx-300686fdcbfa/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-appwelcomescreen.tsx-c3019f266bd3/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-encryptedicon.tsx-dc6e7d240f4c/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-excalidrawpluspromobanner.tsx-53b5dff4dce3/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-exporttoexcalidrawplus.tsx-32c58483aae2/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-components-toperrorboundary.tsx-6e8696189449/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-share-qrcode.chunk.ts-e158f8598500/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-share-qrcode.tsx-7f5f9a4bd271/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
@@ -1012,7 +1067,97 @@ SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-actions-actiongroup.tsx-ec6348546442/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-actions-register.ts-d75b47c9d5f3/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-button.tsx-9a3941579cdc/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-buttonseparator.tsx-a73d0efd4cf1/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-canvases-index.tsx-79b37d155ac1/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-colorpicker-customcolorlist.tsx-b8db3cb082f4/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-colorpicker-hotkeylabel.tsx-6cdac82730ea/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-colorpicker-pickerheading.tsx-1ef55ff853c4/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-colorpicker-shadelist.tsx-04981566c63a/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-contextmenu.tsx-6ae9e734ac67/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-darkmodetoggle.tsx-df256a6a8ec3/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-dialogactionbutton.tsx-358db12b0cf0/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-dropdownmenu-dropdownmenugroup.tsx-63bc148b5413/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-dropdownmenu-dropdownmenuitem.tsx-d0f9be9a2786/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-dropdownmenu-dropdownmenuitemcustom.tsx-973715699bf6/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-dropdownmenu-dropdownmenuitemlink.tsx-1ed58227e93c/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-components-dropdownmenu-dropdownmenuitemlink.tsx-e2a2116abbfa/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-dropdownmenu-dropdownmenuseparator.tsx-e04b15777e62/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ellipsify.tsx-734abdacbc30/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
@@ -1022,7 +1167,32 @@ SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-components-fixedsidecontainer.tsx-80a3220a173a/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-components-followmode-followmode.tsx-f5a6b18be2fd/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-helpdialog.tsx-9af1dfd98f99/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-hintviewer.tsx-3b26a09eaa73/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-hoc-withinternalfallback.test.tsx-fa28e869d693/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-iconbutton.tsx-81552c381884/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
@@ -1032,7 +1202,67 @@ SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-components-iconpicker.tsx-49b29e1db12b/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-icons.tsx-1d263db1690b/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-librarymenusection.tsx-07702745a565/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-linkbutton.tsx-acae5d0a5c2b/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-overwriteconfirm-overwriteconfirm.tsx-6ab61746f5a7/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-paragraph.tsx-7b9f6ccc1327/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-publishlibrary.tsx-e0d596cf20c4/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-searchmenu.tsx-5757e62ee3a6/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-sidebar-sidebartabtriggers.tsx-97095ae86e36/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-chat-index.ts-f5c1b5e95f72/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-chat-ttdchatpanel.tsx-980b48b756b9/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-components-ttddialog-chat-ttdchatpanel.tsx-ed822f81565d/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-ttddialogoutput.tsx-2f8248c4edba/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
@@ -1042,12 +1272,77 @@ SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-ttddialogpanels.tsx-ec80b1221650/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-ttddialogtab.tsx-d87cae5169ec/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-ttddialogtabtriggers.tsx-f9a252f5adfa/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-ttdwelcomemessage.tsx-69edd01710eb/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-userlist.test.tsx-a1e6b3d0c7f6/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-welcome-screen-welcomescreen.center.tsx-9fa1264bdd8e/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-context-ui-appstate.ts-90e846534e2a/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-element-flowchart.test.tsx-9de5b237ca72/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-hooks-usecallbackrefstate.ts-e792287b2eba/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-hooks-usestable.ts-618d97ba6196/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-tests-cropelement.test.tsx-b730f0df3fe7/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-tests-excalidraw.test.tsx-431c00a02e0e/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-tests-helpers-colorize.ts-ff08f4355d67/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-tests-helpers-constants.ts-a3f85d7239ef/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-tests-tooltip.test.tsx-eaf4558cc94d/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 

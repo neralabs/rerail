@@ -1,0 +1,1 @@
+this.w = ReactDOM.render(<div />, document.wbcv);

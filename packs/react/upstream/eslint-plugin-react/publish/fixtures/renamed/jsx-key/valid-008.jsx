@@ -1,0 +1,1 @@
+[8, 6, 4].map(e => { return <Fwm key={e} /> });

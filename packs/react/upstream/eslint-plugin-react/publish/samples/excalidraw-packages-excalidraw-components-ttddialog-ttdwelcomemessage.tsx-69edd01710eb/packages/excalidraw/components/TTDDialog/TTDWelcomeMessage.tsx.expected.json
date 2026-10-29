@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/TTDDialog/TTDWelcomeMessage.tsx",
+    "license": "MIT",
+    "sha256": "69edd01710eb1fd23d0803a5b59c26c9f9201238f1b415578c2fb0f5d0a8a7d6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "port-readiness recording"
+  },
+  "expected": {
+    "react-button-has-type": [],
+    "react-jsx-key": [],
+    "react-jsx-no-comment-textnodes": [],
+    "react-jsx-no-duplicate-props": [],
+    "react-jsx-no-target-blank": [],
+    "react-jsx-no-undef": [],
+    "react-no-array-index-key": [],
+    "react-no-children-prop": [],
+    "react-no-danger": [],
+    "react-no-danger-with-children": [],
+    "react-no-direct-mutation-state": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-no-string-refs": [],
+    "react-no-unescaped-entities": [],
+    "react-self-closing-comp": [],
+    "react-void-dom-elements-no-children": []
+  }
+}

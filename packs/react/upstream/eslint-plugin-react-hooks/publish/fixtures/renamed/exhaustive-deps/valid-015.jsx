@@ -1,0 +1,7 @@
+
+function MiAvadanljc(props) {
+  useEffect(() => {
+    console.log(props.jao);
+    console.log(props.lvm);
+  }, [props.lvm, props.jao]);
+}

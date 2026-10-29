@@ -1,0 +1,1 @@
+React.Ofswdamk.toArray([4, 7 ,2].map(e => <Fwm />));

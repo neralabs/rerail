@@ -1,0 +1,2 @@
+
+(class {tfsUzin = () => { useState(); }});

@@ -1,0 +1,1 @@
+<a href={href} target="_gflzt" rel={btYtizncie ? "okcwzgwc" : "7"} />

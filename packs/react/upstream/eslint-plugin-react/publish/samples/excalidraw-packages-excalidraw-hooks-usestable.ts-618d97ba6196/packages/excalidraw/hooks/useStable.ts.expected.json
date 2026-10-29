@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/hooks/useStable.ts",
+    "license": "MIT",
+    "sha256": "618d97ba6196d8cb0ca0ce43ba959f0dfbc8afb632875793269ffb8f4e7ac518"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-button-has-type": [],
+    "react-no-children-prop": [],
+    "react-no-danger-with-children": [],
+    "react-no-direct-mutation-state": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-void-dom-elements-no-children": []
+  }
+}

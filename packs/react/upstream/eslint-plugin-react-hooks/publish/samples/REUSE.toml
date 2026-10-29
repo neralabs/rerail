@@ -337,6 +337,16 @@ SPDX-FileCopyrightText = "facebook/docusaurus contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-excalidraw-app-bug-issue-template.js-941376c91f19/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-excalidraw-app-share-qrcode.chunk.ts-e158f8598500/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-fixed-packages-excalidraw-components-colorpicker-toppicksdnd.tsx-1f4d24f2b7a2/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
@@ -367,6 +377,11 @@ SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-components-canvases-index.tsx-79b37d155ac1/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-components-colorpicker-toppicksdnd.tsx-0bd0bcca25ac/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
@@ -377,7 +392,42 @@ SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-chat-index.ts-f5c1b5e95f72/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
 path = "excalidraw-packages-excalidraw-components-ttddialog-hooks-usetextgeneration.ts-08819d468d6c/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-fonts-cascadia-index.ts-ac256ed45478/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-fonts-emoji-index.ts-35b3c50bbf21/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-fonts-helvetica-index.ts-a5f75f60b763/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-fonts-liberation-index.ts-fa397d9bf336/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-fonts-virgil-index.ts-925aa0c0f56b/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-tests-helpers-colorize.ts-ff08f4355d67/**"
 SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
 SPDX-License-Identifier = "MIT"
 
@@ -1750,3 +1800,23 @@ SPDX-License-Identifier = "Apache-2.0"
 path = "tinacms-packages-v4-tinacms-tinacms-src-editor-provider.tsx-8f846fcae5a4/**"
 SPDX-FileCopyrightText = "tinacms/tinacms contributors"
 SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "ui-packages-react-src-message-scroller-use-message-scroller-commands.ts-6ee8c7afee27/**"
+SPDX-FileCopyrightText = "shadcn-ui/ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ui-packages-react-src-message-scroller-use-message-scroller-controller.ts-af5d68bb4b0d/**"
+SPDX-FileCopyrightText = "shadcn-ui/ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ui-packages-react-src-questionnaire-use-questionnaire-item.ts-8c0070e384e1/**"
+SPDX-FileCopyrightText = "shadcn-ui/ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ui-packages-react-src-questionnaire-use-questionnaire-root.ts-17e520e71d23/**"
+SPDX-FileCopyrightText = "shadcn-ui/ui contributors"
+SPDX-License-Identifier = "MIT"

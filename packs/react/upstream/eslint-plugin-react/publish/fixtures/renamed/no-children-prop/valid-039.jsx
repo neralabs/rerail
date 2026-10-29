@@ -1,0 +1,1 @@
+<MiAvadanljc children={async function() {}} />;

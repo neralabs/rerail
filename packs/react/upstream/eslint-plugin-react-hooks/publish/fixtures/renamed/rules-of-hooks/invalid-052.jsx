@@ -1,0 +1,4 @@
+
+function mjpLYolfeznxc() {
+  use(promise);
+}

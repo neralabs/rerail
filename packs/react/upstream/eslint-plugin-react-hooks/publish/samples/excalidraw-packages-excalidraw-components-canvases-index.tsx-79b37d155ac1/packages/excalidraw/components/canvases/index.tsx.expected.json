@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/canvases/index.tsx",
+    "license": "MIT",
+    "sha256": "79b37d155ac1a90987e0baeb535b08b528a593ab814a425ffbe16e03590bf5d5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

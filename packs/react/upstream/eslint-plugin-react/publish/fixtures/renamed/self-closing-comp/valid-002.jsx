@@ -1,0 +1,1 @@
+var Baegibt = <Yihdo name="Evia"><img src="ioazyyl.pwr" /></Yihdo>;

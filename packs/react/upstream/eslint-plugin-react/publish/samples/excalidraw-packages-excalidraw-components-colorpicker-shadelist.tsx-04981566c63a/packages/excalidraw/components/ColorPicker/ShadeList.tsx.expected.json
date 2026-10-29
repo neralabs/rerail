@@ -1,0 +1,39 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/ColorPicker/ShadeList.tsx",
+    "license": "MIT",
+    "sha256": "04981566c63a3f6dc9308da2bec8b557508e6ccb7dce0e7c12052dacd6d8711d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "port-readiness recording"
+  },
+  "expected": {
+    "react-button-has-type": [],
+    "react-jsx-key": [],
+    "react-jsx-no-comment-textnodes": [],
+    "react-jsx-no-duplicate-props": [],
+    "react-jsx-no-target-blank": [],
+    "react-jsx-no-undef": [],
+    "react-no-array-index-key": [
+      {
+        "line": 76,
+        "column": 22
+      }
+    ],
+    "react-no-children-prop": [],
+    "react-no-danger": [],
+    "react-no-danger-with-children": [],
+    "react-no-direct-mutation-state": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-no-string-refs": [],
+    "react-no-unescaped-entities": [],
+    "react-self-closing-comp": [],
+    "react-void-dom-elements-no-children": []
+  }
+}

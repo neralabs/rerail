@@ -1,0 +1,1 @@
+/*eslint no-undef:1*/ var React, gad; React.render(<gad.jao.Irl />);

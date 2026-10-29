@@ -1,0 +1,4 @@
+
+function MiAvadanljc() {
+  useCallback(() => {}, [window]);
+}

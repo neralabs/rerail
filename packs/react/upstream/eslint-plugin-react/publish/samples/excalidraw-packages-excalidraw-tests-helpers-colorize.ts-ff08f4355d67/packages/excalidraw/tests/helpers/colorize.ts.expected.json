@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/tests/helpers/colorize.ts",
+    "license": "MIT",
+    "sha256": "ff08f4355d67f47e766bb115ce94461ba162c123f9cff3feb10461bed86d27fb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-jsx-no-undef": []
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "excalidraw-app/components/TopErrorBoundary.tsx",
+    "license": "MIT",
+    "sha256": "6e8696189449799e34388aebe206417774d107523dc3bf45a211ecf767ce6a36"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "port-readiness recording"
+  },
+  "expected": {
+    "react-button-has-type": [
+      {
+        "line": 83,
+        "column": 17
+      },
+      {
+        "line": 91,
+        "column": 17
+      },
+      {
+        "line": 126,
+        "column": 19
+      }
+    ],
+    "react-jsx-key": [],
+    "react-jsx-no-comment-textnodes": [],
+    "react-jsx-no-duplicate-props": [],
+    "react-jsx-no-target-blank": [],
+    "react-jsx-no-undef": [],
+    "react-no-array-index-key": [],
+    "react-no-children-prop": [],
+    "react-no-danger": [],
+    "react-no-danger-with-children": [],
+    "react-no-direct-mutation-state": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-no-string-refs": [],
+    "react-no-unescaped-entities": [],
+    "react-self-closing-comp": [],
+    "react-void-dom-elements-no-children": []
+  }
+}

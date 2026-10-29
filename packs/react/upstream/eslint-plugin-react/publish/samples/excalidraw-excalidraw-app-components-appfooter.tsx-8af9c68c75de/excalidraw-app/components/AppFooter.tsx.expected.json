@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "excalidraw-app/components/AppFooter.tsx",
+    "license": "MIT",
+    "sha256": "8af9c68c75de399dd3129a3331e61f7f65856e1eb5e3afc97126d5526cfc637e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

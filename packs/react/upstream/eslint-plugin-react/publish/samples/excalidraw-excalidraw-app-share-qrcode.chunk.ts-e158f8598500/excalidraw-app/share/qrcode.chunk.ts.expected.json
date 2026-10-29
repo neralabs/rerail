@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "excalidraw-app/share/qrcode.chunk.ts",
+    "license": "MIT",
+    "sha256": "e158f85985006c229f9491a47ecfbfeb4cf2501e4cf85ff66e0b5c00c6dcd4b7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-button-has-type": [],
+    "react-jsx-no-undef": [],
+    "react-no-children-prop": [],
+    "react-no-danger-with-children": [],
+    "react-no-find-dom-node": [],
+    "react-no-is-mounted": [],
+    "react-no-render-return-value": [],
+    "react-void-dom-elements-no-children": []
+  }
+}

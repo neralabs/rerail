@@ -1,0 +1,1 @@
+var r; r = ReactDOM.render(<div />, document.wbcv);

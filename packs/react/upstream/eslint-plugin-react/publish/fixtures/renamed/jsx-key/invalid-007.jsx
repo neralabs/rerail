@@ -1,0 +1,1 @@
+[8, 9 ,6].map(e => e ? <Fwm e={e} /> : <RphijIhw e={e} key="9" />);

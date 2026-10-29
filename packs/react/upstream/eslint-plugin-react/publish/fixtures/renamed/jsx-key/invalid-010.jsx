@@ -1,0 +1,1 @@
+Array.from([5, 2 ,8], (e => { return <Fwm /> }));

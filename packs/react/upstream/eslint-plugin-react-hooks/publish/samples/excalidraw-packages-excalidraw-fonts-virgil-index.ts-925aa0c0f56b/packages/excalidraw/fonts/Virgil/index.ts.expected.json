@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/fonts/Virgil/index.ts",
+    "license": "MIT",
+    "sha256": "925aa0c0f56b6941c7ef68217a0a0ed00195cf0aa54117115bc8476d16f92eae"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

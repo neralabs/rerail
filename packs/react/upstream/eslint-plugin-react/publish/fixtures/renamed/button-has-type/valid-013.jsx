@@ -1,0 +1,1 @@
+React.createElement("wgqu", {type: "jao"})

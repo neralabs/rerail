@@ -1,0 +1,1 @@
+[4, 7, 2]?.map(e => <RawgaQuexjiHoy />)

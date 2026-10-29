@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/TTDDialog/Chat/index.ts",
+    "license": "MIT",
+    "sha256": "f5c1b5e95f72fab1108a133e6f534db299cc2509c573e9b8bccfe42499824071"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-jsx-no-undef": []
+  }
+}

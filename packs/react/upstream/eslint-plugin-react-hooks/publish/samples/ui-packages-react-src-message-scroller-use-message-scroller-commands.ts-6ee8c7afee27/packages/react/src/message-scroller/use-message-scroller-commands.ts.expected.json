@@ -1,0 +1,54 @@
+{
+  "source": {
+    "repo": "shadcn-ui/ui",
+    "commit": "0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13",
+    "path": "packages/react/src/message-scroller/use-message-scroller-commands.ts",
+    "license": "MIT",
+    "sha256": "6ee8c7afee27689114a37e41ca134f365d3aeaeb5958e751bb507b7bf3a1f315"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "hand-labelled"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 69,
+        "column": 5
+      },
+      {
+        "line": 89,
+        "column": 6
+      },
+      {
+        "line": 128,
+        "column": 5
+      },
+      {
+        "line": 145,
+        "column": 5
+      },
+      {
+        "line": 169,
+        "column": 5
+      },
+      {
+        "line": 230,
+        "column": 5
+      },
+      {
+        "line": 251,
+        "column": 6
+      },
+      {
+        "line": 290,
+        "column": 5
+      },
+      {
+        "line": 316,
+        "column": 6
+      }
+    ]
+  }
+}

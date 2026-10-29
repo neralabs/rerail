@@ -1,0 +1,102 @@
+{
+  "source": {
+    "repo": "shadcn-ui/ui",
+    "commit": "0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13",
+    "path": "packages/react/src/message-scroller/use-message-scroller-controller.ts",
+    "license": "MIT",
+    "sha256": "af5d68bb4b0d87336cab78947cc0f0638e72f5acf4ba4d6b3a7f947d76a883f8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "hand-labelled"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 138,
+        "column": 5
+      },
+      {
+        "line": 176,
+        "column": 5
+      },
+      {
+        "line": 201,
+        "column": 6
+      },
+      {
+        "line": 212,
+        "column": 6
+      },
+      {
+        "line": 244,
+        "column": 6
+      },
+      {
+        "line": 286,
+        "column": 6
+      },
+      {
+        "line": 309,
+        "column": 6
+      },
+      {
+        "line": 323,
+        "column": 6
+      },
+      {
+        "line": 381,
+        "column": 6
+      },
+      {
+        "line": 493,
+        "column": 6
+      },
+      {
+        "line": 535,
+        "column": 6
+      },
+      {
+        "line": 591,
+        "column": 6
+      },
+      {
+        "line": 603,
+        "column": 6
+      },
+      {
+        "line": 629,
+        "column": 5
+      },
+      {
+        "line": 643,
+        "column": 6
+      },
+      {
+        "line": 657,
+        "column": 5
+      },
+      {
+        "line": 665,
+        "column": 5
+      },
+      {
+        "line": 695,
+        "column": 5
+      },
+      {
+        "line": 723,
+        "column": 6
+      },
+      {
+        "line": 753,
+        "column": 6
+      },
+      {
+        "line": 766,
+        "column": 6
+      }
+    ]
+  }
+}

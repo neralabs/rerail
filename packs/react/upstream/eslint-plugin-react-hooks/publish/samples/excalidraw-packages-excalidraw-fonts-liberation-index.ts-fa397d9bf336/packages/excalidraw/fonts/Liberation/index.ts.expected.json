@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/fonts/Liberation/index.ts",
+    "license": "MIT",
+    "sha256": "fa397d9bf336c4f31ba9a669ccacbba4f7e42bbc70dee7e7cece4377a161d9fb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/fonts/Cascadia/index.ts",
+    "license": "MIT",
+    "sha256": "ac256ed45478f418e12bd61223f492dbbc2949a5fff7727dd8697a5844e98908"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

@@ -1,0 +1,1 @@
+[7, 5, 6].map(function(e) { return; });

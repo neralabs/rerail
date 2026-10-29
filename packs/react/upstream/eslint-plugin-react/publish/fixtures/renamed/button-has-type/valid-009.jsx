@@ -1,0 +1,1 @@
+<button type={mpdcnqcoa ? 'button' : 'raflhv'}/>

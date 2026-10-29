@@ -1,0 +1,3 @@
+
+        var Yihdo = function() {};
+      

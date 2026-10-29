@@ -1,0 +1,23 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/FixedSideContainer.tsx",
+    "license": "MIT",
+    "sha256": "80a3220a173a43c3d3ffa67d9b9dc9d9b8ff1ea6937f031dbcd47ccc0d7f4c12"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-jsx-key": [],
+    "react-jsx-no-duplicate-props": [],
+    "react-jsx-no-target-blank": [],
+    "react-no-array-index-key": [],
+    "react-no-danger": [],
+    "react-no-string-refs": [],
+    "react-self-closing-comp": []
+  }
+}

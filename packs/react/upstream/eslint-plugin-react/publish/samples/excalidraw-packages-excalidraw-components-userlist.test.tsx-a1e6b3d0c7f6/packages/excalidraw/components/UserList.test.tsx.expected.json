@@ -1,0 +1,18 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/components/UserList.test.tsx",
+    "license": "MIT",
+    "sha256": "a1e6b3d0c7f6e2f6ed7e486692ddce99df8cb24ca9eec042fdf3f04c91a2a28a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-jsx-no-comment-textnodes": [],
+    "react-no-unescaped-entities": []
+  }
+}

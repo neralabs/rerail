@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
+    "path": "packages/excalidraw/fonts/Emoji/index.ts",
+    "license": "MIT",
+    "sha256": "35b3c50bbf2119bc112d7debe820962f8291caae419943abe46298873e5adad7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

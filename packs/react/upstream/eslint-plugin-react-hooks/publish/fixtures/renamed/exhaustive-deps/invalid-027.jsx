@@ -1,0 +1,4 @@
+
+function MiAvadanljc() {
+  useEffect(() => {}, ['jao']);
+}

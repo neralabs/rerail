@@ -1,0 +1,1 @@
+<form method="POST" action="https://example.com" rel="" target="_blank"></form>
