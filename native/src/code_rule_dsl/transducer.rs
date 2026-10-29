@@ -1111,7 +1111,7 @@ mod tests {
             digest.update((range.start as u64).to_le_bytes());
             digest.update((range.end as u64).to_le_bytes());
         }
-        format!("{:x}", digest.finalize())
+        crate::lower_hex(&digest.finalize())
     }
 
     fn median(mut values: Vec<Duration>) -> Duration {

@@ -34,6 +34,10 @@ updates:
     exclude-paths:
       - "fixtures/**"
     groups:
+      # ast-grep-language implements ast-grep-core's traits, so a version of one does not build against another
+      # version of the other: they must move together.
+      ast-grep:
+        patterns: ["ast-grep-*"]
       cargo-minor-patch:
         update-types: [minor, patch]
   - package-ecosystem: github-actions

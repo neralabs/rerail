@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Dependency updates, with no change in behavior: the native engine moves to ast-grep 0.51, gix 0.90, rusqlite 0.41, sha2 0.11 and jemalloc 0.7, and the package to diff 9 and hono 4.13.14.
 - `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
 
 ## 0.1.0 (2026-10-27)
