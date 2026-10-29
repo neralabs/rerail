@@ -6,6 +6,7 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 | Item | State | Owner | Branch | Notes |
 |---|---|---|---|---|
+| Lattice facts (exploration) | **E0 census and E1 regular CPU fixpoint launched 2026-10-29** | decider | `Moti-Velz/facts-engine-lattice-census`, `Moti-Velz/facts-engine-lattice-cpu` | `docs/facts/LATTICE.md` (L1–L10, H1–H7); E2 (Metal) waits on E0's frontier widths |
 | Phase 1 plan | written | decider | `Moti-Velz/facts-plan` | `docs/facts/{PLAN,PHASE-1,SCRATCHPAD}.md` |
 | Spike A: facts once + in-memory evaluation | **done, verified (A, A2, A3 runs)** | — | `Moti-Velz/facts-spike-a` @ `49027eb04` (A3 gate binary `f5feb80d6`) | A4 pass; A1 9 of 10 rules exact; A2 38.8% of native after substitution (kill band > 25%); per-file phase O(file); peak from the repository clause |
 | Spike B: base + delta dataflow | **done, verified** | SpikeB (Opus 5.5) | `Moti-Velz/facts-spike-b` @ `23d89d3e6` (gate binary `3019c8adf`) | B1, B2, B4, B5 pass; B3 255 MB under the strict-majority base, 195–198 MB with per-path or cluster bases |
@@ -97,6 +98,7 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 
 - **S10's decisions:** (1) memo key keeps the path for now (policies read `file.path` and path scopes); Phase 3 splits content-pure work (keyed by content) from path-dependent work (keyed by content + path). (2) Stale memo after an operator change that leaves plan text unchanged: T1 runs `--no-memo` automatically when operator files (`sql/engine.rs`, `lowered.rs`, `ast.rs`, `rel.rs`, `eval.rs`, facts-b `gen/*`) changed since the merge-base; `memo::ENGINE_VERSION` is bumped by the integrator at merge; the gate is always `--no-memo`. (3) Matcher work counted per input (shared predicate memo), accepted. (4) Repository archetype through `greplay`, accepted. (5) Count mismatches fold into `a-vs-reference`'s failure total. (6) Integrator refreshes the counts baseline at each merge. Owed: an ABBA check that the compiled-in mutant hooks and the counters cost nothing measurable.
 - **Phase 2 exit (2026-10-23).** Proven: one algebra with SQLite 3.53.2 semantics from two front ends; dependency-typed classification with live leak mutants; 36 registered rewrites each with test and mutant; per-file engine exact on batch 6 and on 48 of 50 batch 1–5 checks, 90 s on the batch-6 corpus (native 393 s), 3.1 GB peak (native 28.6 GB), no shape recognition left; cross-file generator exact and incremental on 5 of 8 repository clauses with the reference graph (145,431 edges) at 62 ms p95 per edit over 40 worktrees; a gate of 29 checks and 41 mutants; a loop of seconds. Not achieved: cross-file memory (30–70 GB against 250 MB); 3 repository clauses (one refused by name, two without an oracle); the two call-graph batch-5 checks that depend on them. Phase 3's order of questions: (a) cross-file memory model, full maintenance with compact records vs the hybrid (maintain facts, `module_of`, the reference graph; recompute rule logic per edit), on the same replay; (b) scaling laws as the budget model (operator cost bounds composed per plan, declared or inferred complexity class, exponent check in the gate, native's allowances retired); (c) store and daemon (content-keyed memo already shaped by S10; membership; hash-first edit path; findings as deltas). Not launched: waiting for the user's choice.
+- **Lattice facts (user direction, 2026-10-29, after Jeremy's "arbitrary lattices" claim).** Recursion becomes a declared fact `{seeds, edges, lattice}` from a closed catalogue (`set`, `min_level`, `best_witness`), evaluated as regular semiring rounds over CSR on columns every worker reads in place (Apple unified memory: no copies, GPU optional and bit-identical), parallel across contents, independent facts and frontier ranges, maintained per lattice. Written as `LATTICE.md`, a proposal: not binding over I1–I10. Counter-evidence held against it: 8 of the 60 rules carry all 68 `WITH RECURSIVE` (`sql-dl60` @ `e6d2ac73c`); the Y3 wave is serial today (`par_iter` only in input loading); parallel speedup is bounded by rounds and frontier width, which nobody has measured. E0 (census, counts) and E1 (CPU operator) answer H1–H5 before any build-out.
 
 ## Open questions
 
@@ -104,6 +106,8 @@ Decider-maintained. Newest entries first within each section. Numbers here are e
 - Divergence of the 47 worktrees from a common base (B reports it; it sets per-worktree state).
 
 ## Log
+
+- Lattice exploration opened: `LATTICE.md` written; E0 census and E1 regular CPU fixpoint launched in sub-worktrees under `.worktrees/`.
 
 - S10Loop done (1 h 25 min); merged `c7f41a328`, gate 29/29, 41/41; warm T0 3.4 s on the merged tree. Worktrees `s10-loop`, `s5-gate`, `s3-crossfile` removed. Phase 2 closed.
 
