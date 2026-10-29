@@ -1,7 +1,7 @@
 # Rerail rule pack: JavaScript and TypeScript (ESLint core)
 
-72 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
-22 start on; 50 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
+80 code rules for JavaScript and TypeScript source, ported from ESLint 10.11.0's core rules with their default options.
+23 start on; 57 start off (`"on": false`) because `eslint:recommended` does not turn them on, so they are experimental.
 Each shipped rule is scored against ESLint's own findings on ESLint's test cases and on their rename variants (each
 case with its identifiers and literal contents renamed, labelled by ESLint again: `holds-under-rename`), and against the
 labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
@@ -69,6 +69,10 @@ Port of ESLint capitalized-comments, default "always". Tests the first non-white
 
 Port of ESLint default-case. Only non-empty switches; exempt when the last comment after the last case matches "no default" (case-insensitive, configurable via commentPattern).
 
+### `eslint-default-param-last`
+
+Port of ESLint default-param-last on JS files. A rest parameter neither counts as required nor is reported (ESLint isRequiredParameter). TypeScript optional params are handled by typescript-eslint-default-param-last.
+
 ### `eslint-dot-notation`
 
 Port of ESLint dot-notation, default options (allowKeywords true). Keys: string, static template, boolean/null literal that is a valid identifier. Reported at the key; no fix when comments sit inside the brackets.
@@ -84,6 +88,26 @@ Port of ESLint func-style (default "expression"). Default exports and TypeScript
 ### `eslint-guard-for-in`
 
 Port of ESLint guard-for-in. Accepted bodies: empty, an if statement, or a block whose first statement is an if that is either the only statement or whose consequent is continue / { continue; }.
+
+### `eslint-max-depth`
+
+Port of ESLint max-depth, default 4. Depth counted per function, static block or program.
+
+### `eslint-max-nested-callbacks`
+
+Port of ESLint max-nested-callbacks with max 10. A callback is a function/arrow passed as a call argument; a callback nested inside more than max callbacks (itself included) is reported at its function head. Nesting depth is not interpolated into the message.
+
+### `eslint-max-params`
+
+Port of ESLint max-params (default 3) on JS files. Every param counts: plain, defaulted, destructured, rest. Reported at getFunctionHeadLoc's start; message names the function via getFunctionNameWithKind. countThis only affects TS this params; TS declared functions/function types are typescript-eslint-max-params's.
+
+### `eslint-max-statements`
+
+Port of ESLint max-statements (default 10, ignoreTopLevelFunctions false). Counts statements directly in blocks up to the nearest nested function or class static block; the message's count is only produced where the body holds no nested block.
+
+### `eslint-no-array-constructor`
+
+Port of ESLint no-array-constructor. Only the global Array; exempt with exactly one non-spread argument or type arguments. Fix to an array literal adds a leading ; when the previous statement would otherwise continue (approximated from its last token).
 
 ### `eslint-no-caller`
 
@@ -128,6 +152,10 @@ Port of ESLint no-duplicate-imports. With includeExports, re-exports are also ch
 ### `eslint-no-empty`
 
 Port of ESLint no-empty. Function bodies, class static blocks and TS module bodies are not checked; a block or switch with a comment is not empty. Option allowEmptyCatch in the `options` define.
+
+### `eslint-no-empty-function`
+
+Port of ESLint no-empty-function, default options (allow: []). A body holding a comment is not empty; constructors with parameter properties are exempt.
 
 ### `eslint-no-empty-pattern`
 
@@ -212,6 +240,10 @@ Covers class/object `set` accessors and the `set` function of a descriptor passe
 ### `eslint-no-template-curly-in-string`
 
 Value checked cooked, or for JSX attribute strings raw with HTML character references decoded.
+
+### `eslint-no-unexpected-multiline`
+
+Flags a line break before the `(` (or `<` of type arguments) of a call with arguments, the `[` of a computed member access, the template of a tagged template, or the first `/` of a division whose second `/` is directly followed by regex flags. Optional calls and members are skipped.
 
 ### `eslint-no-unneeded-ternary`
 

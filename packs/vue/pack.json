@@ -3,7 +3,7 @@
   "id": "vue",
   "name": "Vue",
   "category": "framework",
-  "covers": "19 eslint-plugin-vue 10.11.1 rules ported to Rerail, 18 of them on and 1 off until turned on, each scored against eslint-plugin-vue's own findings on its rule tests; 5 more ports are candidates until they pass the conformance check.",
+  "covers": "23 eslint-plugin-vue 10.11.1 rules ported to Rerail, 21 of them on and 2 off until turned on, each scored against eslint-plugin-vue's own findings on its rule tests; 1 more port is a candidate until it passes the conformance check.",
   "reason": "matches Vue single-file components",
   "match": {
     "any": [
@@ -44,6 +44,12 @@
       "title": "eslint-plugin-vue no-deprecated-v-on-native-modifier: Disallow using deprecated `.native` modifiers (in Vue.js 3.0.0+)",
       "group": "eslint-plugin-vue",
       "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-no-dupe-keys",
+      "document": "rules/eslint-plugin-vue-no-dupe-keys.json",
+      "title": "eslint-plugin-vue no-dupe-keys: Disallow duplication of field names",
+      "group": "eslint-plugin-vue"
     },
     {
       "id": "eslint-plugin-vue-no-duplicate-attributes",
@@ -95,6 +101,13 @@
       "on": true
     },
     {
+      "id": "eslint-plugin-vue-no-unused-refs",
+      "document": "rules/eslint-plugin-vue-no-unused-refs.json",
+      "title": "eslint-plugin-vue no-unused-refs: Disallow unused refs",
+      "group": "eslint-plugin-vue",
+      "on": false
+    },
+    {
       "id": "eslint-plugin-vue-no-unused-vars",
       "document": "rules/eslint-plugin-vue-no-unused-vars.json",
       "title": "eslint-plugin-vue no-unused-vars: Disallow unused variable definitions of v-for directives or scope attributes",
@@ -135,6 +148,18 @@
       "title": "eslint-plugin-vue require-v-for-key: Require `v-bind:key` with `v-for` directives",
       "group": "eslint-plugin-vue",
       "on": true
+    },
+    {
+      "id": "eslint-plugin-vue-require-valid-default-prop",
+      "document": "rules/eslint-plugin-vue-require-valid-default-prop.json",
+      "title": "eslint-plugin-vue require-valid-default-prop: Enforce props default values to be valid",
+      "group": "eslint-plugin-vue"
+    },
+    {
+      "id": "eslint-plugin-vue-return-in-computed-property",
+      "document": "rules/eslint-plugin-vue-return-in-computed-property.json",
+      "title": "eslint-plugin-vue return-in-computed-property: Enforce that a return statement is present in computed property",
+      "group": "eslint-plugin-vue"
     },
     {
       "id": "eslint-plugin-vue-v-on-event-hyphenation",

@@ -1,9 +1,10 @@
 # Rerail rule pack: Blade
 
-7 rules for Laravel Blade templates, ported to Rerail: tlint 9.7.0's `NoDumpDirectives` and `NoRayDirective`,
-stillat/blade-parser 2.1.0's `DebugDirectiveValidator`, `ForElseStructureValidator` and
-`ComponentShorthandVariableParameterValidator`, and Bladestan 0.11.7's `if.alwaysTrue` and `identical.alwaysTrue`
-(PHPStan 2.2.16 rules over the compiled template). 10 more ports are candidates
+10 rules for Laravel Blade templates, ported to Rerail: tlint 9.7.0's `NoDumpDirectives`, `NoRayDirective`,
+`SpaceAfterBladeDirectives` and `SpacesAroundBladeRenderContent`, stillat/blade-parser 2.1.0's
+`DebugDirectiveValidator`, `ForElseStructureValidator`, `ComponentShorthandVariableParameterValidator` and
+`DuplicateConditionExpressionsValidator`, and Bladestan 0.11.7's `if.alwaysTrue` and `identical.alwaysTrue`
+(PHPStan 2.2.16 rules over the compiled template). 7 more ports are candidates
 ([candidates/README.md](candidates/README.md)). The two Bladestan rules start off (`"on": false`): PHPStan
 registers them at level 4 and Bladestan's recommended level is 0, so they are experimental. A port starts in
 `candidates/rules/` and moves to `rules/` and `pack.json` once it passes the conformance check
@@ -52,6 +53,10 @@ node --import tsx conformance/languages/cli.ts --pack blade --rule tlint-no-dump
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
 
+### `blade-parser-duplicate-condition-expressions`
+
+Port of stillat/blade-parser 2.1.0 DuplicateConditionExpressionsValidator. Reports only the first @elseif of an @if chain whose condition, as written (source text), equals an earlier branch's; read from the compiled view, where the chain is one if statement. A later duplicate in the same chain is not reported, because blade-parser stops at the first. The chain is the witness and the @elseif a capture of it, so the rule asks nothing negative and reads a view with syntax errors elsewhere, as blade-parser does.
+
 ### `bladestan-identical-always-true`
 
 Port of Bladestan 0.11.7 identical.alwaysTrue (PHPStan 2.2.16 StrictComparisonOfDifferentTypesRule over the compiled template). Constant evaluation follows variables through their one reaching binding. The condition of the last @elseif of a chain with no @else is not reported, matching PHPStan's reportAlwaysTrueInLastCondition: false.
@@ -63,3 +68,11 @@ Port of Bladestan 0.11.7 if.alwaysTrue (PHPStan 2.2.16 IfConstantConditionRule o
 ### `tlint-no-ray-directive`
 
 Port of tlint 9.7.0 NoRayDirective. @ray is spatie/laravel-ray's directive, which core Blade does not compile, so it is read from the template's tree (where every @name is a directive) rather than the compiled view.
+
+### `tlint-space-after-blade-directives`
+
+Port of tlint 9.7.0 SpaceAfterBladeDirectives. Flags a control directive whose name is not followed by a space or tab, where Blade compiles it to control flow. Read from the compiled view's if/elseif/for/foreach/while statement whose host is the directive (not the if a @forelse's @empty compiles to). In an attribute value, where Forte does not pair directives into a block and the statement's host is the whole value, it is read from the directive itself where the view reads it as control flow.
+
+### `tlint-spaces-around-blade-render-content`
+
+Port of tlint 9.7.0 SpacesAroundBladeRenderContent. Only single-line echoes; covers {{ }} and {!! !!}, but not {{-- --}} comments or escaped @{{ }} echoes.
