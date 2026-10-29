@@ -1,10 +1,10 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.0-next.4",
+  "version": "0.1.0",
   "description": "Local semantic monitor and rule runtime for AI coding harnesses",
   "license": "Apache-2.0",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -118,6 +118,7 @@
     "fixtures:derive": "node --import tsx scripts/pack-data/derive.ts",
     "upstream:releases": "node --import tsx scripts/upstream/releases.ts",
     "upstream:bump": "node --import tsx scripts/upstream/bump.ts",
+    "upstream:watch": "node --import tsx scripts/upstream/watch.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",

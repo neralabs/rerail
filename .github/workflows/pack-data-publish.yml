@@ -83,10 +83,24 @@ jobs:
             echo "::error::pull request #$PR's head is no commit on a valid branch"
             exit 1
           fi
+          same_repo="$([ "$head_repo" = "$GITHUB_REPOSITORY" ] && echo true || echo false)"
+          # finish pushes to the head branch: never to the default branch or a protected one. The one exception is the
+          # neralabs-ci app's own bump pull request, from this repository, on auto/bump-upstream or
+          # auto/resnapshot-upstream (upstream-bump-publish.yml names them): finish pushes with that app's token, which
+          # the ruleset protecting auto/bump-* lets through.
+          if [ "$same_repo" = "true" ]; then
+            default_branch="$(jq -r .base.repo.default_branch <<< "$pull")"
+            protected="$(gh api "repos/$GITHUB_REPOSITORY/branches/$(jq -rn --arg ref "$head_ref" '$ref | @uri')" --jq .protected)"
+            app_bump="$(jq -r '.user.login == "neralabs-ci[bot]" and .user.type == "Bot" and (.head.ref == "auto/bump-upstream" or .head.ref == "auto/resnapshot-upstream")' <<< "$pull")"
+            if [ "$head_ref" = "$default_branch" ] || { [ "$protected" != "false" ] && [ "$app_bump" != "true" ]; }; then
+              echo "::error::pull request #$PR's head is $head_ref, the default or a protected branch: publish from a feature branch"
+              exit 1
+            fi
+          fi
           {
             echo "head_sha=$head_sha"
             echo "head_ref=$head_ref"
-            echo "same_repo=$([ "$head_repo" = "$GITHUB_REPOSITORY" ] && echo true || echo false)"
+            echo "same_repo=$same_repo"
           } >> "$GITHUB_OUTPUT"
 
       # Objects only: refs/pull/<n>/head exists for forks too. It must be the head the API named.
@@ -188,19 +202,22 @@ jobs:
           name: publish-${{ github.run_id }}
           path: ${{ runner.temp }}/publish
 
-      # rerail:uploader is the code owner who approved this deployment, or the dispatcher when the API names none.
+      # rerail:uploader is the code owner who approved this deployment. No approval on record means the environment
+      # gated nothing (no required reviewers): nothing is put.
       - id: inputs
         name: Name the objects and the uploader
         env:
           GH_TOKEN: ${{ github.token }}
           OBJECTS: ${{ needs.prep.outputs.objects }}
-          DISPATCHER: ${{ github.triggering_actor }}
         run: |
           set -euo pipefail
           printf '%s' "$OBJECTS" > "$RUNNER_TEMP/objects.json"
           uploader="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
             --jq '[.[] | select(.state == "approved") | .user.login] | last // empty')"
-          uploader="${uploader:-$DISPATCHER}"
+          if [ -z "$uploader" ]; then
+            echo "::error::no approval of the test-data-upload deployment is on record: the environment must require a code owner's review"
+            exit 1
+          fi
           if ! [[ "$uploader" =~ ^[A-Za-z0-9-]+$ ]]; then
             echo "::error::'$uploader' is not a GitHub login a tag can carry"
             exit 1
@@ -395,21 +412,30 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT: ${{ steps.push.outputs.pushed }}
           SAME_REPO: ${{ needs.prep.outputs.same_repo }}
+          COMMIT_OUTCOME: ${{ steps.commit.outcome }}
+          MADE: ${{ steps.commit.outputs.made }}
+          PUSH_OUTCOME: ${{ steps.push.outcome }}
         run: |
           set -euo pipefail
           if [ -n "$COMMIT" ]; then
             state=published
           else
             state=action-needed
-            if [ "$SAME_REPO" = "true" ]; then
-              export REASON="the push to the pull request's branch was rejected or not made (someone pushed to it since prep)"
-            else
+            if [ "$SAME_REPO" != "true" ]; then
               export REASON="the pull request's branch is on a fork, which this workflow cannot push to"
+            elif [ "$COMMIT_OUTCOME" != "success" ]; then
+              export REASON="building the commit of the locks failed (see the commit step's log)"
+            elif [ "$MADE" != "true" ]; then
+              export REASON="the pull request's head moved since prep (someone pushed to it)"
+            elif [ "$PUSH_OUTCOME" != "success" ]; then
+              export REASON="the push step did not run to completion (see the token and push steps' logs)"
+            else
+              export REASON="GitHub rejected the push to the pull request's branch (someone pushed to it since prep)"
             fi
           fi
           body="$(node scripts/s3/pack-data-publish.mjs comment "$state")"
           id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | .id' | head -n 1)"
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | .id] | first // empty' | sed -n '1p')"
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
           else
@@ -456,7 +482,7 @@ jobs:
           set -euo pipefail
           body="$(node scripts/s3/pack-data-publish.mjs comment failed)"
           id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | .id' | head -n 1)"
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | .id] | first // empty' | sed -n '1p')"
           if [ -n "$id" ]; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
           else

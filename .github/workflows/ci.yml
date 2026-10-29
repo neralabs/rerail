@@ -27,8 +27,9 @@ concurrency:
 # CI does not derive pack test data again, on purpose: the data is a point-in-time artifact. What a pull request
 # publishes is checked by the code owner who approves its upload, reading the publish workflow's prep summary (what each
 # archive adds, changes and drops) against the pull request's pin, generator and recipe changes, and by the conformance
-# check on the new data. A reviewer re-derives it locally with `npm run fixtures:derive` and compares the result with
-# the pull request's publish/ (CONTRIBUTING.md, "Merging (maintainers)").
+# check on the new data (REVIEW.md, "Approving a pack data upload"). A reviewer re-derives it locally with
+# `npm run fixtures:derive` and compares the result with the pull request's publish/ (CONTRIBUTING.md, "Merging
+# (maintainers)").
 #
 # GitHub reports a job skipped because a job it needs failed as skipped, and a skipped required check passes. So the
 # one required check is ci-result ("CI result"), which needs every job and fails when any failed or was cancelled; a
@@ -642,7 +643,7 @@ jobs:
     needs: tools
     if: >-
       ${{
-        always() && needs.tools.result != 'skipped' && github.event_name == 'pull_request' &&
+        always() && needs.tools.result != 'skipped' && needs.tools.result != 'cancelled' && github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
       }}
     runs-on: ubuntu-24.04

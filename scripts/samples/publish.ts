@@ -5,7 +5,7 @@
  * (`packFrom`, scripts/s3/pack-fixtures.mjs) packs them through `publishedSamples`.
  */
 import { LABELS_SUFFIX, LICENSES_FILE, SAMPLE_ID, sampleLabelsSchema, type SampleLabels } from "./format.js";
-import { copyleftReason } from "./licences.js";
+import { copyleftReason, recordedLicence } from "./licences.js";
 import { sha256 } from "./samples.js";
 
 /** The staged copy's licensing file, beside the samples in `publish/samples/`; prep drops it from the archive. */
@@ -21,7 +21,9 @@ interface Entry {
  * it): every file but `REUSE.toml`, once each is checked. A path is `LICENSES.md` or `<sample-id>/<path>` with a
  * SAMPLE_ID; each staged sample is staged whole, its labels (`<source.path>.expected.json`, sampleLabelsSchema) beside
  * its file, whose sha256 is the labels' `source.sha256`; and no sample is taken from a copyleft source
- * (COPYLEFT_SOURCES). Throws one error naming every problem. The allowlist check on `source.license` is packFrom's.
+ * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (RECORDED_LICENCES) and its declared
+ * `source.license` must equal it, so packFrom's allowlist check on `source.license` judges the recorded value, never a
+ * label's own claim. Throws one error naming every problem.
  */
 export function publishedSamples(files: readonly Entry[]): Entry[] {
   const problems: string[] = [];
@@ -53,7 +55,13 @@ export function publishedSamples(files: readonly Entry[]): Entry[] {
     if (file === undefined) problems.push(`${path}: its file ${filePath} is not staged; stage the sample whole`);
     else if (sha256(file.bytes) !== parsed.source.sha256) problems.push(`${filePath}: its sha256 ${sha256(file.bytes)} is not the labels' source.sha256 ${parsed.source.sha256}`);
     const copyleft = copyleftReason(parsed.source.repo);
-    if (copyleft !== undefined) problems.push(`${path}: ${parsed.source.repo} is a copyleft source (${copyleft}); no file of it becomes a sample`);
+    if (copyleft !== undefined) {
+      problems.push(`${path}: ${parsed.source.repo} is a copyleft source (${copyleft}); no file of it becomes a sample`);
+      continue;
+    }
+    const recorded = recordedLicence(parsed.source.repo);
+    if (recorded === undefined) problems.push(`${path}: ${parsed.source.repo} has no recorded licence; read its licence and add it to scripts/samples/licences.ts`);
+    else if (parsed.source.license !== recorded) problems.push(`${path}: its source.license ${JSON.stringify(parsed.source.license)} is not ${parsed.source.repo}'s recorded licence ${JSON.stringify(recorded)}`);
   }
   const unlabelled = [...new Set(entries.flatMap(({ path }) => (path === LICENSES_FILE || !path.includes("/") ? [] : [path.slice(0, path.indexOf("/"))])))]
     .filter(id => SAMPLE_ID.test(id) && !labelled.has(id));

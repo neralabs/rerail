@@ -1,0 +1,28 @@
+{
+  "rules": {
+    "variable.undefined": [
+      "tests/PHPStan/Rules/Variables/DefinedVariableRuleTest.php"
+    ],
+    "argument.sprintf": [
+      "tests/PHPStan/Rules/Functions/PrintfParametersRuleTest.php"
+    ],
+    "argument.sscanf": [
+      "tests/PHPStan/Rules/Functions/PrintfParametersRuleTest.php"
+    ],
+    "array.duplicateKey": [
+      "tests/PHPStan/Rules/Arrays/DuplicateKeysInLiteralArraysRuleTest.php"
+    ],
+    "argument.type": [
+      "tests/PHPStan/Rules/Functions/RandomIntParametersRuleTest.php"
+    ],
+    "missingType.return": [
+      "tests/PHPStan/Rules/Functions/MissingFunctionReturnTypehintRuleTest.php"
+    ],
+    "if.alwaysTrue": [
+      "tests/PHPStan/Rules/Comparison/IfConstantConditionRuleTest.php"
+    ],
+    "if.alwaysFalse": [
+      "tests/PHPStan/Rules/Comparison/IfConstantConditionRuleTest.php"
+    ]
+  }
+}

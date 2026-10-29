@@ -7,7 +7,7 @@ PHP 8.5.11:
 `fixtures` reads every case of the issues' own tests (tests/UnusedVariableTest.php, tests/ForbiddenCodeTest.php):
 providerValidCodeParse() and providerInvalidCodeParse(), read statically by read_tests.php. Every case of both
 providers is read (all are constant expressions, none asks for a PHP version above 8.5), so none is left out. Each
-case is copied to fixtures/<Test>/<provider>/<case>.php (the pack's licenses/psalm/UPSTREAM.md lists them) and analysed alone, as
+case is copied to fixtures/<Test>/<provider>/<case>.php (provenance.json records each one's test and case) and analysed alone, as
 the upstream test analyses it: as src/somefile.php of its own project, at error level 1 with unused variables found
 (UnusedVariableTest's reportUnusedVariables(); not unused code), the case's ignored_issues suppressed, for its
 php_version (the tests' default 7.4; 8.0 for a `PHP80-` case, 8.1 for a valid `PHP81-` one). The expected findings are
@@ -37,10 +37,21 @@ ISSUES = ["ForbiddenCode", "UnusedVariable"]
 # Each issue's own test.
 TESTS = {"UnusedVariableTest": "UnusedVariable", "ForbiddenCodeTest": "ForbiddenCode"}
 ORIGIN = "https://github.com/vimeo/psalm@e2ca44251c1f1aa2e35452d426895746b47de64e"
+PROJECT = "psalm"  # its directory under the pack's licenses/
+# A case's provider -> the test method providing it.
+PROVIDERS = {"valid": "providerValidCodeParse()", "invalid": "providerInvalidCodeParse()"}
 SCRATCH = HERE.parents[3] / ".rerail" / "scratch" / "psalm"
 # Psalm reads these; an agent's environment changes its output.
 ENV = {key: value for key, value in os.environ.items()
        if key not in ("AGENT", "CLAUDECODE", "OMPCODE", "ORCA_OPENCODE_AGENT")}
+
+
+def provenance(cases: list[dict]) -> dict[str, dict]:
+    """The provenance entries of the cases (each its `path` under fixtures/, `test`, `provider` and `name`): each the
+    `code` of one case of its test's provider, extracted."""
+    return {f"fixtures/{case['path']}": {"source": PROJECT, "from": f"tests/{case['test']}.php", "how": "extracted",
+                                         "detail": f"the `code` of {PROVIDERS[case['provider']]} case `{case['name']}`"}
+            for case in cases}
 
 
 def config(directory: pathlib.Path, files: list[str], ignored: list[str]) -> None:
@@ -144,6 +155,7 @@ def fixtures(checkout: pathlib.Path, project: pathlib.Path) -> None:
                   "units": {case["path"]: {"rules": [TESTS[case["test"]]]}
                             for case in sorted(cases, key=lambda c: c["path"])}},
                  findings)
+    common.write_provenance("psalm", PROJECT, ORIGIN, provenance(cases))
 
 
 def main() -> None:

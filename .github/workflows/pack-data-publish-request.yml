@@ -1,14 +1,17 @@
 name: Pack data publish request
 
-# Keeps one sticky comment on a pull request that tracks a packs/<pack>/upstream/<tool>/publish/ directory: the
-# "waiting" state, with how to run the publish workflow (pack-data-publish.yml) by hand and with the gh CLI. The
-# publish workflow writes the comment's other states (published, action needed, failed) over the same marker; this
-# workflow deletes only a comment still in the waiting state, once the pull request tracks no publish/.
+# Keeps one sticky comment on a pull request that has pack data to publish: it tracks a
+# packs/<pack>/upstream/<tool>/publish/ directory, or it removes authored rows (rows naming files under
+# upstream/<tool>/, the rows pack-fixtures.mjs's listedAuthored reads) from a tool's UPSTREAM.md, which an overlay
+# publish of that tool-pack turns into the file's removal from the archive. The comment is the "waiting" state, with
+# how to run the publish workflow (pack-data-publish.yml) by hand and with the gh CLI. The publish workflow writes the
+# comment's other states (published, action needed, failed) over the same marker; this workflow deletes only a comment
+# still in the waiting state, once the pull request has nothing left to publish.
 #
 # pull_request_target, so it also runs for forks, with the base branch's workflow: it checks out nothing, runs nothing
-# of the pull request, and holds only a GITHUB_TOKEN that can write pull request comments. File names are untrusted:
-# only the validated pack/tool directories and their counts are rendered, never a name, and nothing reaches a shell
-# but through env. Structure metric #3, not this comment, is what blocks the merge.
+# of the pull request, and holds only a GITHUB_TOKEN that can write pull request comments. File names and patches are
+# untrusted: only the validated pack/tool directories and their counts are rendered, never a name, and nothing reaches
+# a shell but through env. Structure metric #3, not this comment, is what blocks the merge.
 
 on:
   pull_request_target:
@@ -26,6 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      actions: read # GET environments/test-data-upload needs Actions read
       pull-requests: write
     steps:
       - name: Update the sticky comment
@@ -33,31 +37,60 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           CHANGED: ${{ github.event.pull_request.changed_files }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
-          # The pull request files endpoint lists at most 3,000 files; past that, absence cannot be proved.
+          # The pull request files endpoint lists at most 3,000 files; past that, absence cannot be proved. It omits
+          # the patch of a very large diff, whose removed rows then go unseen.
           files_cap=3000
-          counts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
-            --jq '.[] | select(.status != "removed") | .filename' \
-            | sed -nE 's#^packs/([a-z0-9-]+)/upstream/([a-z0-9._-]+)/publish/.*#\1/\2#p' | sort | uniq -c)"
+          # An upstream bump or re-snapshot pull request (upstream-bump-publish.yml, from this repository's
+          # auto/bump-upstream or auto/resnapshot-upstream) stages each tool-pack's whole derived set: it publishes with
+          # replace.
+          replace_step="Leave **replace** off to lay these files over the current data (overlay). Turn it on to make each tool-pack's data exactly what \`publish/\` holds (for deletions or a full regeneration)."
+          replace_flag=""
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ] && { [ "$HEAD_REF" = "auto/bump-upstream" ] || [ "$HEAD_REF" = "auto/resnapshot-upstream" ]; }; then
+            replace_step="Turn **replace** on: this upstream bump's \`publish/\` holds each tool-pack's whole derived set, and replace makes each tool-pack's data exactly that."
+            replace_flag=" -f replace=true"
+          fi
+          # TOOL_ID in scripts/s3/pack-fixtures.mjs: a pack or tool directory name.
+          id_class='[a-z0-9][a-z0-9._-]*'
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" \
+            --jq '.[] | {filename, status, patch} | @json' > "$RUNNER_TEMP/files.jsonl"
+          # One "<pack>/<tool> <files in publish/> <authored rows removed>" line per tool-pack with anything to publish.
+          # shellcheck disable=SC2016 # literal backticks: a jq regex, not a shell expansion
+          toolpacks="$(jq -rs --arg id "$id_class" '
+            def authored($sign; $tool):
+              [(.patch // "") | split("\n")[] | select(startswith($sign)) | .[1:]
+                | capture("^\\|\\s*`(?<file>[^`]+)`").file | select(startswith("upstream/\($tool)/"))] | unique;
+            ([.[] | select(.status != "removed")
+                | .filename | capture("^packs/(?<pack>" + $id + ")/upstream/(?<tool>" + $id + ")/publish/.")
+                | {key: "\(.pack)/\(.tool)", files: 1, lost: 0}]) as $publish
+            | ([.[] | . as $file
+                | .filename | capture("^packs/(?<pack>" + $id + ")/upstream/(?<tool>" + $id + ")/UPSTREAM\\.md$")
+                | . as $record
+                | ($file | (authored("-"; $record.tool) - authored("+"; $record.tool)) | length) as $lost
+                | select($lost > 0) | {key: "\($record.pack)/\($record.tool)", files: 0, lost: $lost}]) as $removed
+            | $publish + $removed | group_by(.key)[] | "\(.[0].key) \(map(.files) | add) \(map(.lost) | add)"
+          ' "$RUNNER_TEMP/files.jsonl")"
           marker="<!-- rerail-pack-data-publish"
           comment="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
-            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | {id, waiting: (.body | startswith("<!-- rerail-pack-data-publish state=waiting"))} | @json' | head -n 1)"
+            --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rerail-pack-data-publish"))) | {id, waiting: (.body | startswith("<!-- rerail-pack-data-publish state=waiting"))} | @json] | first // empty' | sed -n '1p')"
           id="$(jq -r '.id // empty' <<< "${comment:-null}")"
           waiting="$(jq -r '.waiting // false' <<< "${comment:-null}")"
 
-          if [ -z "$counts" ] && [ "$CHANGED" -le "$files_cap" ]; then
+          if [ -z "$toolpacks" ] && [ "$CHANGED" -le "$files_cap" ]; then
             if [ -n "$id" ] && [ "$waiting" = "true" ]; then
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/comments/$id" > /dev/null
             fi
             exit 0
           fi
 
-          if [ -z "$counts" ]; then
-            rows="| (this pull request changes more than $files_cap files, so its publish/ directories cannot be listed) | |"
+          if [ -z "$toolpacks" ]; then
+            rows="| (this pull request changes more than $files_cap files, so its pack data cannot be listed) | | |"
           else
             # shellcheck disable=SC2016 # literal backticks: markdown code spans
-            rows="$(while read -r count toolpack; do printf '| `%s` | %s |\n' "$toolpack" "$count"; done <<< "$counts")"
+            rows="$(while read -r toolpack files lost; do printf '| `%s` | %s | %s |\n' "$toolpack" "$files" "$lost"; done <<< "$toolpacks")"
           fi
           environment="$(gh api "repos/$GITHUB_REPOSITORY/environments/test-data-upload" --jq .id)"
           body="$(cat <<EOF
@@ -66,23 +99,23 @@ jobs:
 
           This pull request has pack data to publish. It can't merge until the data is in S3 and the locks name it.
 
-          | Tool-pack | Files in \`publish/\` |
-          |---|---|
+          | Tool-pack | Files in \`publish/\` | Authored rows removed from \`UPSTREAM.md\` |
+          |---|---|---|
           ${rows}
 
           **By hand**
 
           1. Open the [publish workflow](https://github.com/$GITHUB_REPOSITORY/actions/workflows/pack-data-publish.yml) and click **Run workflow** (branch \`main\`).
           2. Type **\`$PR\`** as the pull request number. GitHub can't pre-fill workflow inputs from a link, so type it yourself.
-          3. Leave **replace** off to lay these files over the current data (overlay). Turn it on to make each tool-pack's data exactly what \`publish/\` holds (for deletions or a full regeneration).
+          3. ${replace_step}
           4. Wait for a code owner (@Moti-Velz or @jeffreysnell) to approve the \`test-data-upload\` deployment. They read the run's **prep** summary first.
           5. When the run is green, pull this branch: the workflow has committed the new locks and removed \`publish/\`. If someone pushed to the branch meanwhile, or the branch is on a fork, this comment shows the locks to commit instead.
 
           **With the gh CLI (for agents)**
 
           \`\`\`sh
-          # 1. Start the publish (add -f replace=true for replace mode).
-          gh workflow run pack-data-publish.yml -R $GITHUB_REPOSITORY -f pr=$PR
+          # 1. Start the publish (-f replace=true for replace mode).
+          gh workflow run pack-data-publish.yml -R $GITHUB_REPOSITORY -f pr=$PR${replace_flag}
 
           # 2. Find the run. Its title is "Publish pack data for #$PR"; wait a few seconds after step 1.
           gh run list -R $GITHUB_REPOSITORY --workflow pack-data-publish.yml --event workflow_dispatch --limit 5 \\

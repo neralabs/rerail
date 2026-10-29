@@ -14,7 +14,7 @@ Small packs in the [pack format](../../docs/pack-format.md) that tests read, not
 - `config-regex/` ships one rule whose `pattern` option is written into a regex: the rule settings API refuses a
   value the option allows but the engine cannot compile (`test/api/api-rule-settings.test.ts`).
 - `sample-php/` is the conformance runner's sample (`conformance/languages/runner.ts`, run by
-  `test/engine/code-rule/language-conformance.test.ts`): two ports scored against PHP_CodeSniffer's recordings on
+  `test/engine/code-rule/language-conformance.test.ts`): two ports scored against PHP_CodeSniffer's expected findings on
   authored fixtures, and on real-code samples the test writes beside it.
 
 The rules here exist only to exercise the validator and the runner. No package's `files` includes this directory, and

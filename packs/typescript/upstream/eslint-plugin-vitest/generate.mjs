@@ -20,6 +20,9 @@
 // case's origin, the rule whose test file it came from (Rerail's cases have none); each such case also gets a rename
 // variant under fixtures/renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted in the
 // original's language and marked `renamedFrom` it.
+// provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`, run after UPSTREAM.md is
+// written, which it reads) record each kept upstream case as extracted from its rule's tests/<rule>.test.ts, each
+// rename variant as renamed from its original, and Rerail's cases and fixtures.expected.json as Rerail's.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -33,8 +36,8 @@ import {
   withOrigins,
   writeExpectedFindings,
   writeRenameVariants,
-  writeVariantRows,
 } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { variantEntries, writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -801,10 +804,14 @@ async function recordFixtures() {
   if (mismatches.length > 0) throw new Error(`AUTHORED cases the plugin reports otherwise:\n  ${mismatches.join("\n  ")}`);
   const unparsed = new Set(linted.skipped.map(({ path }) => path));
   const kept = files.filter(file => !unparsed.has(file)).sort();
-  const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
-  writeVariantRows(join(HERE, "..", "..", "licenses", TOOL, "UPSTREAM.md"), TOOL, units);
+  const recorded = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
+  const { files: units, units: origin, findings } = recorded;
   writeAuthoredRecord([...authored].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)));
   writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
+  // Each kept upstream case is extracted from its rule's test file (`<rule>/<n>.test.<ext>`); its variant is renamed
+  // from it. Rerail's cases are listed in UPSTREAM.md, which the writer reads.
+  const extracted = new Map(kept.filter(file => !authoredFiles.has(file)).map(file => [`fixtures/${file}`, { source: TOOL, from: `tests/${file.split("/")[0]}.test.ts`, how: "extracted" }]));
+  writeProvenance({ pack: PACK.pack, tool: TOOL, entries: new Map([...extracted, ...variantEntries(extracted, recorded)]), commits: { [TOOL]: CHECKOUT.commit } });
   console.log(`${TOOL} fixtures: ${kept.length} files (${authored.length} Rerail's), ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
   for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);
 }

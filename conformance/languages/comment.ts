@@ -110,6 +110,16 @@ function render(summary: Summary, context: CommentContext, rowLimit: number, blo
           `${summary.onOff.length} shipped rule(s) whose pack.json \`on\` differs from upstream-status`,
           [...table(["Tool-pack", "Rule", "pack.json", "upstream-status", "Reason"], summary.onOff.slice(0, blockerLimit).map(onOffRow)), ...(summary.onOff.length > blockerLimit ? ["", `${summary.onOff.length - blockerLimit} more: see the job summary.`] : [])],
         )),
+    ...(summary.vacuous.length === 0
+      ? []
+      : [
+          "### Passing without evidence",
+          "",
+          ...details(
+            `${summary.vacuous.length} shipped rule check(s) pass with no evidence behind them (reported, not blocking)`,
+            [...table(["Tool-pack", "Rule", "Check", "Why"], summary.vacuous.slice(0, blockerLimit).map((entry) => [entry.toolPack, `\`${entry.rule}\``, entry.check, trim(entry.why)])), ...(summary.vacuous.length > blockerLimit ? ["", `${summary.vacuous.length - blockerLimit} more: see the job summary.`] : [])],
+          ),
+        ]),
     "### Candidates",
     "",
     ...table(

@@ -13,4 +13,4 @@
 "@neralabs/rerail-pack-vue": patch
 ---
 
-README and licence notes: the pack's test data now lives outside the package; no rule changes.
+README: the note that deriving pack test data is paused is gone, since derive runs again; no rule changes.

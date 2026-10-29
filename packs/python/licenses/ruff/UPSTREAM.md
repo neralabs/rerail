@@ -18,7 +18,7 @@ The files taken from it contain material copied from Ruff and remain under its l
 
 Ruff's `LICENSE` also carries the notices of the projects Ruff derives from, Pyflakes among them. Ruff's pyflakes fixtures come with that notice.
 
-Paths are relative to the pack directory, `packs/python/`. The test files are in no package and not in git: the tool-pack's S3 archive (`upstream/ruff/test-data.lock`) holds them, with `provenance.json` (every file, its upstream path and how it was made, a snapshot of the per-file record this file kept until commit `cbf682862a47`) and `LICENSES.md` (this licence text). The files Rerail wrote among them are listed in `upstream/ruff/UPSTREAM.md` and are Rerail's, as are the expected findings recorded by running the tool.
+Paths are relative to the pack directory, `packs/python/`. The test files are in no package and not in git: the tool-pack's S3 archive (`upstream/ruff/test-data.lock`) holds them, with `provenance.json` (every file, its upstream path and how it was made, a snapshot of the per-file record this file kept before the archive took the files out of git) and `LICENSES.md` (this licence text). The files Rerail wrote among them are listed in `upstream/ruff/UPSTREAM.md` and are Rerail's, as are the expected findings recorded by running the tool.
 
 ## Not copied
 

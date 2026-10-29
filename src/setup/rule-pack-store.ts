@@ -12,9 +12,9 @@ import semver from "semver";
 import { RULE_PACK_LIST } from "../engine/catalog/pack-list.generated.js";
 import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
-import { recommendRulePacks, rulePackPackageName, type RulePack } from "../engine/catalog/rule-packs.js";
+import { rulePackPackageName, rulePacksThatFit, type RulePack } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { runNpm, type NpmRunner } from "../runtime/npm.js";
+import { runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
 
 /** The dist-tag a pack is fetched under when core's update channel has no version of it: where a held pack publishes. */
@@ -90,17 +90,17 @@ export const packSpec = (pack: PackVersion): string => `${rulePackPackageName(pa
 
 const NO_VERSION_UNDER_TAG = /\bETARGET\b|No matching version found|\bnotarget\b/u;
 const NO_ACCESS = /\bE40[34]\b/u;
-const OFFLINE = /\b(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ENETUNREACH)\b/u;
 
 /**
- * Why npm would not give a pack, in one line. npm answers a restricted package the person may not read with the same
- * 404 as one never published, so the two read alike. `runNpm` already words a missing or expired login.
+ * Why npm would not give a pack, in one line. The packs are public, so a 404 means npm found no such package where it
+ * looked: never published, or a registry or token in the npm configuration that refuses it. `runNpm` already words a
+ * missing or expired login.
  */
 export function fetchProblemReason(packageName: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (NO_ACCESS.test(message)) return `no read access to ${packageName}, or it is not published; ask Nera for access`;
-  const offline = OFFLINE.exec(message);
-  if (offline !== null) return `npm could not reach the registry (${offline[1]})`;
+  if (NO_ACCESS.test(message)) return `npm cannot read ${packageName}: it is not published, or the registry or token in ~/.npmrc refuses it`;
+  const unreachable = unreachableRegistryReason(message);
+  if (unreachable !== undefined) return unreachable;
   const lines = message.split("\n").map(line => line.trim()).filter(line => line !== "");
   const npmLine = lines.find(line => line.startsWith("npm error ") && !line.startsWith("npm error code"));
   return npmLine?.slice("npm error ".length) ?? lines[0] ?? "npm failed";
@@ -214,8 +214,16 @@ export interface PackDiscovery {
   readonly recommended: readonly DiscoveredPack[];
   /** Every fetched pack that passed its checks and has a rule that starts on, recommended ones first. */
   readonly available: readonly DiscoveredPack[];
+  /**
+   * Fetched packs that passed their checks but have no rule that starts on (published before their rules pass the port
+   * readiness gates), those that fit first: never offered, since adding one would run nothing, but named so a person
+   * who expects one knows why it is missing.
+   */
+  readonly withoutRules: readonly DiscoveredPack[];
   /** Packs that could not be fetched or failed a check, and why. */
   readonly problems: readonly string[];
+  /** When npm gave no pack at all, each distinct reason why: set-up cannot tell then which packs fit. */
+  readonly downloadFailures?: readonly string[];
   /** The catalog of the fetched packs: what their rules would be, before any is installed. */
   readonly catalog: RuleCatalog;
 }
@@ -266,24 +274,27 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
     const standIns = installedPackDirectories(home).filter(directory => !fetchedIds.has(packIdOf(directory)));
     const catalog = readRuleCatalog([...fromNpm.map(pack => pack.directory), ...standIns], { coreVersion: activeCoreVersion(home), compile: true });
     const packs = [...catalog.packs.values()];
-    const matched = new Map((repositoryRoot === undefined ? [] : recommendRulePacks(repositoryRoot, packs)).map(found => [found.pack.id, found]));
+    const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
-      const ruleCount = pack.rules.filter(rule => rule.on).length;
-      if (ruleCount === 0 || pack.version === null) return [];
+      if (pack.version === null) return [];
       const found = matched.get(pack.id);
       return [{
         pack,
         version: pack.version,
-        ruleCount,
+        ruleCount: pack.rules.filter(rule => rule.on).length,
         ...(found === undefined ? {} : { match: { reason: found.reason, folder: found.folder } }),
         installed: installedPackVersion(pack.id, home),
       }];
     });
-    const recommended = discovered.filter(pack => pack.match !== undefined);
+    // Those that fit first, in catalog order within each.
+    const ordered = [...discovered.filter(pack => pack.match !== undefined), ...discovered.filter(pack => pack.match === undefined)];
+    const available = ordered.filter(pack => pack.ruleCount > 0);
     return {
-      recommended,
-      available: [...recommended, ...discovered.filter(pack => pack.match === undefined)],
+      recommended: available.filter(pack => pack.match !== undefined),
+      available,
+      withoutRules: ordered.filter(pack => pack.ruleCount === 0),
       problems: [...fetch.problems.map(problem => `${problem.packageName}: ${problem.reason}`), ...catalog.skipped.map(skippedProblem)],
+      ...(fetch.fetched.length === 0 && fetch.problems.length > 0 ? { downloadFailures: [...new Set(fetch.problems.map(problem => problem.reason))] } : {}),
       catalog,
     };
   } finally {

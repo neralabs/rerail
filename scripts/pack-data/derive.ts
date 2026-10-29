@@ -7,10 +7,12 @@
  * `npm run fixtures:pull` fetches and this only reads. For each tool-pack it
  *
  *   1. removes the tool directory's derived files, so nothing stale survives and nothing is read before it is made;
- *   2. runs the tool-pack's recipe (scripts/pack-data/recipes/): the pinned inputs, then the pack's generator;
- *   3. fails when a tracked file changed (a licence table, UPSTREAM.md), an authored file changed, or an untracked file
- *      appeared beside them: a derivation of a commit makes the derived data and nothing else. `--update` (a pin bump)
- *      keeps those changes for the commit instead, and reports them.
+ *   2. runs the tool-pack's recipe (scripts/pack-data/recipes/): the pinned inputs, then the pack's generator, which
+ *      writes the data's per-file provenance (provenance.json and LICENSES.md, scripts/pack-data/provenance.mjs) last;
+ *      a generator that wrote neither fails the derivation;
+ *   3. fails when a tracked file changed (a licence record's UPSTREAM.md), an authored file changed, or an untracked
+ *      file appeared beside them: a derivation of a commit makes the derived data and nothing else. `--update` (a pin
+ *      bump) keeps those changes for the commit instead, and reports them.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
@@ -24,6 +26,7 @@ import { authoredListing, isPackFixture, packFixtureKind } from "../s3/pack-fixt
 import { ProcessCommandRunner } from "../../conformance/process.js";
 import { createContext, type DeriveRecipe } from "./context.js";
 import { RECIPES } from "./recipes/index.js";
+import { assertProvenanceWritten } from "./provenance.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_CACHE = join(ROOT, ".rerail", "pack-data");
@@ -119,6 +122,7 @@ export async function deriveToolPack(recipe: DeriveRecipe, options: DeriveOption
   const context = createContext({ root: ROOT, pack: recipe.pack, tool: recipe.tool, cacheRoot: options.cacheRoot, runtimeCache: options.runtimeCache, runner, log: (message) => options.log(`${label}: ${message}`) });
   await mkdir(options.cacheRoot, { recursive: true });
   await recipe.derive(context);
+  assertProvenanceWritten(label, ROOT);
 
   const authoredChanged = changedBetween(authoredBefore, digests(authored));
   const trackedChanged = changedBetween(trackedBefore, digests(tracked(packDirectory)));
@@ -181,7 +185,8 @@ async function main(): Promise<number> {
     try {
       results.push(await deriveToolPack(recipe, options));
     } catch (error) {
-      results.push({ label: toolPath(recipe), derived: 0, authored: 0, problems: [error instanceof Error ? error.stack ?? error.message : String(error)], changed: [], notes: [] });
+      const report = error instanceof Error ? error.stack ?? error.message : String(error);
+      results.push({ label: toolPath(recipe), derived: 0, authored: 0, problems: [report], changed: [], notes: [] });
     }
   }
   let failed = 0;

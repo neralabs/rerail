@@ -14,7 +14,7 @@ compiled template at its template file and line.
 
 `fixtures` runs every fixture of BladeRuleTest::provideData() and requires its errors to be the test's expectation
 (message and caller line, every one), so the expected findings are the upstream test's. It copies the test's templates
-(tests/skeleton/resources) to fixtures/skeleton/resources (the pack's licenses/bladestan/UPSTREAM.md lists them), one analysis
+(tests/skeleton/resources) to fixtures/skeleton/resources (provenance.json records each copy's upstream path), one analysis
 unit each.
 A finding is the identifier, the template and the template line. Where a template is analysed more than once (each
 fixture renders foo.blade.php, some several times; an included template is inlined into its includer), each
@@ -45,6 +45,7 @@ import common  # noqa: E402
 
 VERSION = "0.11.7"
 ORIGIN = "https://github.com/TomasVotruba/bladestan@ceb0823cd4b4f400b64a008cace0d91e786a2859"
+PROJECT = "bladestan"  # its directory under the pack's licenses/
 # Ported identifier -> the message pattern of the ported rule (PHPStan 2.2.16).
 IDENTIFIERS = {
     # DefinedVariableRule: "Undefined variable: $x"; not "Variable $x might not be defined." (some paths).
@@ -68,6 +69,11 @@ IDENTIFIERS = {
 def ported(error: dict) -> bool:
     pattern = IDENTIFIERS.get(error["identifier"])
     return pattern is not None and re.match(pattern, error["message"]) is not None
+
+
+def provenance(files: list[str]) -> dict[str, dict]:
+    """The provenance entries of the copies `files` names (each its path under tests/): verbatim copies."""
+    return {f"fixtures/{copy}": {"source": PROJECT, "from": f"tests/{copy}", "how": "verbatim"} for copy in files}
 
 
 def environment() -> dict[str, str]:
@@ -132,6 +138,7 @@ def fixtures(checkout: pathlib.Path) -> None:
                  {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(IDENTIFIERS), "files": files,
                   "units": {path: {"rules": rules} for path, rules in sorted(expected.items()) if rules}},
                  findings)
+    common.write_provenance("bladestan", PROJECT, ORIGIN, provenance(files))
 
 
 def main() -> None:

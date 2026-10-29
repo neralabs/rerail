@@ -50,3 +50,18 @@ rules:
   "SpacesAroundBladeRenderContent":
     deprecated: null
     recommended: { config: "tighten", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator also reads NoSpaceAfterBladeDirectivesTest.php, which conformance.json does not map.
+watch:
+  extra-rules: ["NoSpaceAfterBladeDirectives"]
+  tests:
+    - "tests/Linting/Linters/{rule}Test.php"
+  code:
+    - "src/Linters/{rule}.php"
+  shared:
+    - "src/BaseLinter.php"
+    - "src/Commands/LintCommand.php"
+    - "src/Linters/Concerns/LintsBladeTemplates.php"
+    - "src/Presets/LaravelPreset.php"
+    - "src/Presets/TightenPreset.php"
+    - "src/TLint.php"

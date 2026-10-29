@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { readGitBlobs } from "../../src/engine/git.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { gitCandidates, gitInstalled, readGitBlobs } from "../../src/engine/git.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -42,5 +42,50 @@ describe("readGitBlobs", () => {
     expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
     // Still missing: asking for it fetched nothing from the remote.
     expect(() => execFileSync("git", ["cat-file", "-e", oid], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" })).toThrow();
+  });
+});
+
+describe("gitCandidates", () => {
+  it("looks in the per-user installs too, never on PATH or anywhere the environment points", () => {
+    // A repository's environment (direnv, a devcontainer) can set these as easily as PATH.
+    vi.stubEnv("LOCALAPPDATA", String.raw`C:\repo\evil`);
+    vi.stubEnv("PATH", "/home/me/repo/bin");
+    try {
+      expect(gitCandidates("win32", String.raw`C:\Users\me`)).toEqual([
+        String.raw`C:\Program Files\Git\cmd\git.exe`,
+        String.raw`C:\Program Files (x86)\Git\cmd\git.exe`,
+        String.raw`C:\Users\me\AppData\Local\Programs\Git\cmd\git.exe`,
+        String.raw`C:\Users\me\scoop\apps\git\current\cmd\git.exe`,
+      ]);
+      expect(gitCandidates("linux", "/home/me")).toEqual([
+        "/usr/bin/git",
+        "/usr/local/bin/git",
+        "/opt/homebrew/bin/git",
+        "/home/linuxbrew/.linuxbrew/bin/git",
+        "/run/current-system/sw/bin/git",
+        "/home/me/.nix-profile/bin/git",
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("gitInstalled", () => {
+  const probe = (files: readonly string[], developerDir?: string) => ({ exists: (path: string) => files.includes(path), developerDir: () => developerDir });
+
+  it("takes macOS's /usr/bin/git, always present as a stub, only with Apple's developer tools that carry Git", () => {
+    // No Command Line Tools and no Xcode: the stub would open the installer, so Rerail says Git is missing.
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git"]))).toBe(false);
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git", "/Library/Developer/CommandLineTools/usr/bin/git"]))).toBe(true);
+    const xcode = "/Applications/Xcode.app/Contents/Developer";
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git", `${xcode}/usr/bin/git`], xcode))).toBe(true);
+    expect(gitInstalled("/usr/bin/git", "darwin", probe(["/usr/bin/git"], xcode))).toBe(false);
+  });
+
+  it("takes any other Git that is there, Homebrew's on a Mac included", () => {
+    expect(gitInstalled("/opt/homebrew/bin/git", "darwin", probe(["/opt/homebrew/bin/git"]))).toBe(true);
+    expect(gitInstalled("/usr/bin/git", "linux", probe(["/usr/bin/git"]))).toBe(true);
+    expect(gitInstalled("/usr/local/bin/git", "linux", probe([]))).toBe(false);
   });
 });

@@ -13,7 +13,7 @@ import { loadEngine } from "../../conformance/languages/checks/engine.js";
 import { judgeToolPack } from "../../conformance/languages/gates.js";
 import { loadPack } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
-import { summarize } from "../../conformance/languages/summary.js";
+import { summarize, ungatedRow } from "../../conformance/languages/summary.js";
 import { fixturesPath } from "../support/oracles.js";
 
 const GATES = (recommended: string) => `adapter: bandit
@@ -120,5 +120,54 @@ describe("a gated tool-pack's rules", () => {
     const comment = renderComment(passing.summary, { commit: "0123456789abcdef" });
     expect(comment.startsWith(`${COMMENT_MARKER}\n## Conformance: `)).toBe(true);
     expect(comment).toContain("🟢 1 candidate ready to promote");
+  });
+});
+
+describe("the conformance report's errors", () => {
+  it("fail only the tool-pack whose fixtures or samples they name; an error naming no tool fails every tool-pack", async () => {
+    setUnits({ "clean.py": { rules: ["EX101"] } });
+    const path = join(pack, "conformance.json");
+    const conformance = JSON.parse(readFileSync(path, "utf8")) as { tools: unknown[] };
+    writeFileSync(path, JSON.stringify({ ...conformance, tools: [...conformance.tools, { name: "otherlint", version: "1.0.0" }] }));
+    const loaded = loadPack(pack);
+    const report = await runPack(loaded, { fixtures: true, samples: false, date: "2026-01-01" });
+    const runs = (errors: string[]) => judgeToolPack(root, loadEngine(), loaded, { ...report, errors }, "examplelint").checks.find(check => check.id === "conformance-runs");
+    expect(runs(["samples otherlint: x-app-py-000000000000/app.py.labels.json: not JSON"])).toMatchObject({ ok: true });
+    expect(runs(["fixtures otherlint: notes.txt is not a python source by the host's routing"])).toMatchObject({ ok: true });
+    expect(runs(["samples examplelint: x-app-py-000000000000/app.py.labels.json: not JSON"])).toMatchObject({ ok: false });
+    expect(runs(["stale exemption: capability syntax is covered by rule(s) assert-used"])).toMatchObject({ ok: false });
+  });
+});
+
+describe("the summary", () => {
+  it("keeps a report failure line of a shipped rule the gate passed, so a red job never reads green", async () => {
+    setUnits({ "clean.py": { rules: ["EX101"] } });
+    const { verdict } = await judge();
+    expect(verdict.rules[0]).toMatchObject({ id: "assert-used", pass: true });
+    const line = `assert-used (fixtures): 1 unexplained FP on rename variants, first {"path":"renamed/asserts.py","line":5,"column":5}`;
+    const summary = summarize([{ pack: "valid", failures: [line] }], [verdict], UNGATED);
+    expect(summary.blocking).toContainEqual({ pack: "valid", rule: "-", stoppedAt: "Conformance", check: "report", why: line });
+    expect(summary.pass).toBe(false);
+    expect(renderComment(summary)).not.toContain("Nothing blocks.");
+  });
+
+  it("lists a shipped rule passing a check vacuously, without blocking, and the comment shows it", async () => {
+    setUnits({ "clean.py": { rules: ["EX101"] } });
+    const { verdict } = await judge();
+    const vacuous = { id: "holds-under-rename", ok: true, vacuous: true as const, detail: "vacuous: no finding of the rule survives on its 2 rename variant unit(s)" };
+    const rule = verdict.rules[0]!;
+    const withVacuous = { ...verdict, rules: [{ ...rule, gates: { ...rule.gates, conformance: [...rule.gates.conformance.filter(check => check.id !== vacuous.id), vacuous] } }] };
+    const summary = summarize([], [withVacuous], UNGATED);
+    expect(summary.vacuous).toEqual([{ toolPack: "valid/examplelint", rule: "assert-used", check: "holds-under-rename", why: vacuous.detail }]);
+    expect(summary.blocking.filter(row => row.rule === "assert-used")).toEqual([]);
+    expect(renderComment(summary)).toContain("### Passing without evidence");
+  });
+
+  it("puts a shrinks check's list path in the why, not the Pack column", () => {
+    const detail = "1 entr(ies) the base lacks (plain/b): the list may only shrink";
+    expect(ungatedRow({ id: "shrinks:conformance/languages/ungated-rules.json", ok: false, detail })).toEqual({
+      pack: "-", rule: "-", stoppedAt: "Not gated / pending", check: "shrinks", why: `conformance/languages/ungated-rules.json: ${detail}`,
+    });
+    expect(ungatedRow({ id: "pending:plain/lintx", ok: false, detail: "x" })).toMatchObject({ pack: "plain/lintx", check: "pending" });
   });
 });

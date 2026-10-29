@@ -6,9 +6,9 @@ rerail:
 upstream:
   name: vitest-dev/eslint-plugin-vitest plugin rules
   repository: https://github.com/vitest-dev/eslint-plugin-vitest
-  # Rerail's typescript pack names no release of this plugin (it keeps no licenses/eslint-plugin-vitest/). The
-  # repository published as eslint-plugin-vitest before it moved to vitest-dev and became @vitest/eslint-plugin. This is
-  # the V1 pack's pin (@vitest/eslint-plugin 1.6.27 @ aad57d12), the commit tag v1.6.27 points to.
+  # Its licence record is licenses/eslint-plugin-vitest/, whose Source row names this release. The repository
+  # published as eslint-plugin-vitest before it moved to vitest-dev and became @vitest/eslint-plugin. This is the V1
+  # pack's pin (@vitest/eslint-plugin 1.6.27 @ aad57d12), the commit tag v1.6.27 points to.
   commit: aad57d121647efe764463c37414a8cd67ec9cf92
   version: 1.6.27
   license: MIT
@@ -45,6 +45,17 @@ rules:
 #   its rules into a configuration of their own with `files`; no such overlay is approved.
 # - Message text: no port copies upstream's documentation or rule messages; every
 #   message and description is the port's own words.
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads tests/<rule>.test.ts for each ported rule (generate.mjs).
+watch:
+  rule-prefix: "vitest/"
+  tests:
+    - "tests/{rule}.test.ts"
+  code:
+    - "src/rules/{rule}.ts"
+  shared:
+    - "package.json"
+    - "src/utils/**"
 eslint:
   release:
     tag: v1.6.27

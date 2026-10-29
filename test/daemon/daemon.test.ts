@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -715,6 +715,53 @@ describe("Rerail daemon", () => {
     } finally {
       await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
     }
+  });
+
+  it("comes back on the port it last listened on, and moves only when another process holds it", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const portFile = join(root, "daemon-port.json");
+    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile };
+    const probe = createServer();
+    await new Promise<void>((resolveListening) => probe.listen(0, "127.0.0.1", () => resolveListening()));
+    const { port } = probe.address() as { port: number };
+    await new Promise<void>((resolveClosed) => probe.close(() => resolveClosed()));
+
+    // An explicit port is remembered, and a later start without one comes back on it, so dashboard links still work.
+    const first = await RerailDaemon.start({ ...options, port });
+    daemons.push(first);
+    await first.close();
+    const second = await RerailDaemon.start(options);
+    daemons.push(second);
+    expect(second.port).toBe(port);
+    await second.close();
+
+    const blocker = createServer();
+    await new Promise<void>((resolveListening) => blocker.listen(port, "127.0.0.1", () => resolveListening()));
+    try {
+      const third = await RerailDaemon.start(options);
+      daemons.push(third);
+      expect(third.port).not.toBe(port);
+      expect(JSON.parse(await readFile(portFile, "utf8"))).toEqual({ port: third.port });
+    } finally {
+      await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
+    }
+  });
+
+  // A port below 1024 is refused (EACCES) to an unprivileged process on most systems, as a port Windows reserved is.
+  it("moves on from a remembered port it is refused", async (context) => {
+    const probe = createServer();
+    const { promise: probed, resolve: refused } = Promise.withResolvers<boolean>();
+    probe.once("error", (error: NodeJS.ErrnoException) => refused(error.code === "EACCES"));
+    probe.listen(1, "127.0.0.1", () => probe.close(() => refused(false)));
+    if (!(await probed)) context.skip();
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const portFile = join(root, "daemon-port.json");
+    await writeFile(portFile, `${JSON.stringify({ port: 1 })}\n`);
+    const daemon = await RerailDaemon.start({ version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile });
+    daemons.push(daemon);
+    expect(daemon.port).not.toBe(1);
   });
 
   it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {

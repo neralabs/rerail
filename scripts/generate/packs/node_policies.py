@@ -16,7 +16,7 @@ Data read from the pinned tools (through `node`):
 
 Writes (every other policy of the pack is hand-written: packs/node/candidates/rules/n-no-process-exit.json):
 - packs/node/candidates/rules/<id>.json: every ported rule but n-no-process-exit. They are candidates until
-  eslint-plugin-n is gated; a port that passes the conformance gates joins SHIPPED and is written to
+  promoted: a port that passes the conformance gates joins SHIPPED and is written to
   packs/node/rules/<id>.json instead, shipped, its candidates/rules copy removed;
 - packs/node/candidates/probes/rules/<id>.json: the seven probes.
 The pack manifests, expected findings and the probes' hand-labelled expectations are not written here.

@@ -70,6 +70,18 @@ export interface RuleCatalogOptions {
   readonly compile?: boolean;
 }
 
+/**
+ * Why a core `version` outside `range` cannot load a pack, in words for the person: which Rerail the pack is for, and
+ * what to do when theirs is the older one.
+ */
+function coreRangeProblem(range: string | undefined, version: string): string {
+  if (range === undefined) return `its package.json does not say which versions of Rerail it is for`;
+  if (semver.validRange(range) !== null && semver.ltr(version, range, { includePrerelease: true })) {
+    return `it needs a newer Rerail (${range}) than this one (${version}); \`rerail update\` installs the newest`;
+  }
+  return `it is for Rerail ${range}, and this Rerail is ${version}`;
+}
+
 /** Why `loaded` cannot join a catalog that already holds the packs `loadedIds` and their rules `owner`, or undefined. */
 function packProblem(loaded: LoadedRulePack, loadedIds: ReadonlySet<string>, owner: ReadonlyMap<string, string>, options: RuleCatalogOptions): string | undefined {
   const { pack, packageJson } = loaded;
@@ -77,24 +89,27 @@ function packProblem(loaded: LoadedRulePack, loadedIds: ReadonlySet<string>, own
   if (options.coreVersion !== undefined) {
     if (packageJson === undefined) return `pack ${pack.id} has no package.json naming the core versions it fits`;
     const range = packageJson.peerDependencies[RERAIL_PACKAGE_NAME];
-    if (range === undefined || !semver.satisfies(options.coreVersion, range, { includePrerelease: true })) {
-      return `${packageJson.name}@${packageJson.version} needs ${RERAIL_PACKAGE_NAME} ${String(range)}; this is ${options.coreVersion}`;
-    }
+    if (range === undefined || !semver.satisfies(options.coreVersion, range, { includePrerelease: true })) return coreRangeProblem(range, options.coreVersion);
   }
   const taken = pack.rules.find(rule => owner.has(rule.id));
   if (taken !== undefined) return `rule ${taken.id} is already in pack ${owner.get(taken.id)}`;
   return undefined;
 }
 
-/** The first code rule of `loaded` the engine rejects, or undefined; throws `EngineUnavailableError` without the engine. */
-function compileProblem(loaded: LoadedRulePack): string | undefined {
+/**
+ * The first code rule of `loaded` the engine rejects, or undefined; throws `EngineUnavailableError` without the engine.
+ * A published pack passed the engine of the core it was released with, so on a person's machine a rule that does not
+ * compile almost always means their Rerail is older than the pack: the reason says so before the engine's own words.
+ */
+function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined): string | undefined {
   for (const document of loaded.documents) {
     if (document.kind !== "code") continue;
     try {
       storableCodeRule(document.rule);
     } catch (error) {
-      if (error instanceof CodeRuleCompileError) return `rule ${document.rule.id} does not compile: ${error.reason}`;
-      throw error;
+      if (!(error instanceof CodeRuleCompileError)) throw error;
+      const rerail = coreVersion === undefined ? "this Rerail" : `this Rerail (${coreVersion})`;
+      return `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${error.reason}`;
     }
   }
   return undefined;
@@ -149,7 +164,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
     let problem = packProblem(pack, new Set(loaded.map(entry => entry.pack.id)), owner, options);
     if (problem === undefined && compile) {
       try {
-        problem = compileProblem(pack);
+        problem = compileProblem(pack, options.coreVersion);
       } catch (error) {
         if (!(error instanceof EngineUnavailableError)) throw error;
         compile = false;

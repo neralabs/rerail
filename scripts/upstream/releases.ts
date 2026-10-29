@@ -1,7 +1,7 @@
 /**
  * `npm run upstream:releases`: whether every upstream a tool-pack ports is still pinned at its latest stable release.
- * The nightly (upstream-releases.yml) runs it on main, so a release upstream publishes after the pin shows up in its
- * summary and in the night's bump pull request, rather than as rules quietly ported from an old version.
+ * The manual bump start (upstream-bump-start.yml) runs it on main to learn each tool-pack's pin and latest release; the
+ * nightly report (upstream-releases.yml, `npm run upstream:watch`) reads the same registries through it.
  *
  * Each gated tool-pack (`packs/<pack>/upstream/<tool>/gates.yaml`) pins its upstream twice: `upstream.version` in
  * gates.yaml, and the package its runtime installs (`scripts/pack-data/runtimes/<upstream.runtime>/`:
@@ -14,8 +14,8 @@
  * version); `major` and `breaking-minor` are breaking. It reports and never fails on what upstream published: a gap of
  * any kind, pins that disagree, and a registry that could not be read are each a row of the table and, under GitHub
  * Actions, a `::warning::` annotation. Exit 0 whatever it found, 2 on an exception. With GITHUB_STEP_SUMMARY set, the
- * table is appended to it too. `--behind <file>` writes every tool-pack behind upstream, breaking or not, there as JSON,
- * for the nightly to bump in its one bump pull request (scripts/upstream/bump.ts).
+ * table is appended to it too. `--json <file>` writes every tool-pack's pinned and latest release there as JSON
+ * (releaseVersions), for the bump start to resolve the versions it bumps to, or re-snapshots at.
  */
 import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -133,7 +133,7 @@ export function gatedPin(root: string, pack: string, tool: string): UpstreamPin 
     package: name,
     version,
     disagreements,
-    bump: `npm run upstream:bump -- --pack ${pack} --tool ${tool}, then derive it again (the nightly opens this as a pull request)`,
+    bump: `npm run upstream:bump -- --pack ${pack} --tool ${tool}, then derive it again (or start it as a pull request with upstream-bump-start.yml)`,
   };
 }
 
@@ -176,7 +176,7 @@ export function clippyPin(root: string, pack = "rust", tool = "clippy"): Upstrea
     package: "rust",
     version,
     disagreements,
-    bump: "npm run upstream:bump -- --pack rust --tool clippy, then derive it again (the nightly opens this as a pull request)",
+    bump: "npm run upstream:bump -- --pack rust --tool clippy, then derive it again (or start it as a pull request with upstream-bump-start.yml)",
   };
 }
 
@@ -291,7 +291,8 @@ export const BREAKING_GAPS: Record<ReleaseGap, boolean> = { current: false, patc
 
 /**
  * Whether an ecosystem's pins follow upstream's major.minor only. Clippy's version is 0.1.<minor> for every Rust
- * 1.<minor>.<patch>, so a Rust patch release ships no Clippy to port: it is not behind, and the nightly does not bump it.
+ * 1.<minor>.<patch>, so a Rust patch release ships no Clippy to port: it is not behind, and the bump start's `all`
+ * leaves it.
  */
 const FOLLOWS_MINOR: Record<Ecosystem, boolean> = { npm: false, pypi: false, packagist: false, rust: true };
 
@@ -395,45 +396,46 @@ export function renderMarkdown(checks: ReleaseCheck[]): string {
   }
   if (behind.length > 0) {
     if (attention.length > 0) lines.push("");
-    lines.push(`${behind.length} of ${checks.length} upstreams are behind their latest stable release; the nightly's bump pull request moves them:`);
+    lines.push(`${behind.length} of ${checks.length} upstreams are behind their latest stable release; a maintainer starts their bump (upstream-bump-start.yml):`);
     lines.push(...behind.flatMap((check) => check.problems.map((problem) => `- \`${check.toolPack}\`: ${problem}`)));
   }
   return `${lines.join("\n")}\n`;
 }
 
-/** A tool-pack behind its upstream, as the nightly's bump-dispatch job reads it: one commit each in the nightly's bump pull request. */
-export interface Behind {
+/** A tool-pack's pin and upstream's latest stable release, as the bump start reads them. */
+export interface ReleaseVersion {
   pack: string;
   tool: string;
   toolPack: string;
   pinned: string;
-  latest: string;
-  gap: Exclude<ReleaseGap, "current">;
+  /** Null when the registry could not be read. */
+  latest: string | null;
+  /** Null when the pin or the latest release is unknown or not a release; `current` when nothing is newer. */
+  gap: ReleaseGap | null;
   breaking: boolean;
 }
 
-/** Every tool-pack whose pin is behind upstream's latest stable release, breaking or not, sorted by tool-pack. */
-export function behindToolPacks(checks: ReleaseCheck[]): Behind[] {
-  const behind: Behind[] = [];
-  for (const check of checks) {
-    if (check.latest === null || check.gap === null || check.gap === "current") continue;
-    const [pack, tool] = check.toolPack.split("/");
-    behind.push({ pack: pack!, tool: tool!, toolPack: check.toolPack, pinned: check.version, latest: check.latest, gap: check.gap, breaking: check.breaking });
-  }
-  return behind.sort((a, b) => (a.toolPack < b.toolPack ? -1 : a.toolPack > b.toolPack ? 1 : 0));
+/** Every tool-pack's pinned and latest release, sorted by tool-pack. */
+export function releaseVersions(checks: ReleaseCheck[]): ReleaseVersion[] {
+  return checks
+    .map((check): ReleaseVersion => {
+      const [pack, tool] = check.toolPack.split("/");
+      return { pack: pack!, tool: tool!, toolPack: check.toolPack, pinned: check.version, latest: check.latest, gap: check.gap, breaking: check.breaking };
+    })
+    .sort((a, b) => (a.toolPack < b.toolPack ? -1 : a.toolPack > b.toolPack ? 1 : 0));
 }
 
 /**
  * Run the check over this checkout and report it; the exit code, 0 whatever it found (the report is the result). With
- * `behind`, every tool-pack behind upstream is written there as JSON (behindToolPacks), so the nightly can bump them.
+ * `json`, every tool-pack's pinned and latest release is written there as JSON (releaseVersions).
  */
-export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env, options: { behind?: string } = {}): Promise<number> {
+export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = process.env, options: { json?: string } = {}): Promise<number> {
   const checks = await checkUpstreamReleases(upstreamPins(root), fetch);
   const markdown = renderMarkdown(checks);
   process.stdout.write(markdown);
   const step = env.GITHUB_STEP_SUMMARY;
   if (step !== undefined && step !== "") appendFileSync(step, markdown);
-  if (options.behind !== undefined) writeFileSync(options.behind, `${JSON.stringify(behindToolPacks(checks))}\n`);
+  if (options.json !== undefined) writeFileSync(options.json, `${JSON.stringify(releaseVersions(checks))}\n`);
   if (env.GITHUB_ACTIONS === "true") {
     // One warning per tool-pack with anything to report. A workflow command's data escapes `%`, CR and LF.
     for (const check of checks.filter((entry) => entry.problems.length > 0)) {
@@ -444,7 +446,7 @@ export async function main(root: string, fetch: Fetch, env: NodeJS.ProcessEnv = 
   return 0;
 }
 
-// Imported by its tests, run as a script by the nightly: only the second checks.
+// Imported by its tests, run as a script by the bump start and by hand: only the second checks.
 const invoked = (() => {
   try {
     return process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
@@ -453,15 +455,15 @@ const invoked = (() => {
   }
 })();
 if (invoked) {
-  let behind: string | undefined;
+  let json: string | undefined;
   try {
-    behind = parseArgs({ options: { behind: { type: "string" } }, strict: true }).values.behind;
+    json = parseArgs({ options: { json: { type: "string" } }, strict: true }).values.json;
   } catch {
-    process.stderr.write("usage: npm run upstream:releases [-- --behind <file>]\n");
+    process.stderr.write("usage: npm run upstream:releases [-- --json <file>]\n");
     process.exitCode = 2;
   }
   if (process.exitCode !== 2) {
-    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), globalThis.fetch, process.env, behind === undefined ? {} : { behind: resolve(behind) }).then((code) => {
+    main(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), globalThis.fetch, process.env, json === undefined ? {} : { json: resolve(json) }).then((code) => {
       process.exitCode = code;
     }, (error: unknown) => {
       process.stderr.write(`scripts/upstream/releases.ts: ${error instanceof Error ? error.message : String(error)}\n`);

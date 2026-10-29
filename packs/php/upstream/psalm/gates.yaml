@@ -53,3 +53,32 @@ rules:
   "UnusedVariable":
     deprecated: null
     recommended: { config: "init", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads tests/<Issue>Test.php, with the defaults of the test traits and TestConfig. Each issue's
+# code is its class and the analyzers that raise it; the rest of the analyzers and the data flow are shared code.
+watch:
+  tests:
+    - "tests/{rule}Test.php"
+    - "tests/TestConfig.php"
+    - "tests/Traits/InvalidCodeAnalysisTestTrait.php"
+    - "tests/Traits/ValidCodeAnalysisTestTrait.php"
+  code: []
+  shared:
+    - "dictionaries/CallMap*.php"
+    - "src/Psalm/Config.php"
+    - "src/Psalm/Config/Creator.php"
+    - "src/Psalm/Internal/Analyzer/**"
+    - "src/Psalm/Internal/Codebase/VariableUseGraph.php"
+    - "src/Psalm/Internal/DataFlow/**"
+    - "stubs/**"
+  rules:
+    "ForbiddenCode":
+      code:
+        - "src/Psalm/Internal/Analyzer/Statements/EchoAnalyzer.php"
+        - "src/Psalm/Internal/Analyzer/Statements/Expression/Call/NamedFunctionCallHandler.php"
+        - "src/Psalm/Internal/Analyzer/Statements/Expression/EvalAnalyzer.php"
+        - "src/Psalm/Issue/ForbiddenCode.php"
+    "UnusedVariable":
+      code:
+        - "src/Psalm/Internal/Analyzer/StatementsAnalyzer.php"
+        - "src/Psalm/Issue/UnusedVariable.php"

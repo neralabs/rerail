@@ -10,17 +10,18 @@
 // 2. Executes each with the stubs below (ours, not upstream's): `eslint-v7`/`eslint-v9` RuleTesters that capture every
 //    `run(name, rule, tests)`, jest's `describe` that calls its body. The tests run the same case objects under several
 //    parsers; each case is written once, verbatim, to fixtures/<rule>/<valid|invalid>-NNN.<jsx|tsx> (NNN numbers the
-//    distinct cases in the order first captured; the license table names the run and index). A case some Babel run
+//    distinct cases in the order first captured; provenance.json names the run and index). A case some Babel run
 //    reads is JSX, one only the @typescript-eslint runs read is TSX, and one only hermes-eslint reads (Flow component
 //    and hook syntax) is dropped.
 // 3. Writes Rerail's own cases (common.mjs `AUTHORED`) beside them and lists them in UPSTREAM.md. Runs the pinned
 //    plugins (common.mjs `config`) over every fixture file.
-// 4. Writes ../../licenses/react/UPSTREAM.md and LICENSE.
+// 4. Copies ../../licenses/react/LICENSE and writes provenance.json and LICENSES.md: every copied test file and every
+//    extracted case with its upstream path and locator.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertCommit } from "../../../../scripts/pack-data/eslint-expected.mjs";
-import { execute, finishFixtures, options, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
+import { execute, finishFixtures, options, toolsRequire, UPSTREAM, writeLicenseAndProvenance } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react-hooks";
 const DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -71,7 +72,7 @@ for (const { rule, file } of TESTS) {
       tests[kind].forEach((test, index) => {
         let entry = seen.get(test);
         if (entry === undefined) {
-          entry = { kind, test, runs: [], origin: `${relativeTest} run "${name}" ${kind}[${index}]` };
+          entry = { kind, test, runs: [], origin: `${relativeTest} run "${name}" ${kind}[${index}]`, detail: `run "${name}" ${kind}[${index}]` };
           seen.set(test, entry);
         }
         entry.runs.push(name);
@@ -93,6 +94,8 @@ for (const { rule, file } of TESTS) {
       code: entry.test.code,
       errors,
       origin: entry.origin,
+      from: `${TEST_DIRECTORY}/${file}`,
+      detail: entry.detail,
       filename: entry.test.filename,
       ...(babel ? { extension: "jsx" } : typescript ? { extension: "tsx" } : { drop: "Flow syntax (hermes-eslint runs only)" }),
     });
@@ -100,4 +103,4 @@ for (const { rule, file } of TESTS) {
 }
 
 const result = await finishFixtures(require, TOOL, DIRECTORY, cases, tools);
-writeLicense(TOOL, upstream, copied, result.kept);
+writeLicenseAndProvenance(TOOL, upstream, copied, result.kept, result.recorded);

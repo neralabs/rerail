@@ -1,3 +1,5 @@
+import { STEER_LINE_MESSAGE_TYPE } from "../engine/adapter-contract.js";
+
 /** The line a Rerail message carries into a Pi or OMP compaction, so the summarizer never takes it for the person. */
 export const RERAIL_COMPACTION_LABEL = "[Rerail: automated rule check sent to the agent, not a message from the user]";
 
@@ -43,17 +45,22 @@ function labelled<Message extends MessageLike>(message: Message): Message {
 }
 
 /**
- * What the host compacts once Rerail's messages are labelled, and a split turn a Rerail message leads is folded back
- * into the history. Both hosts count every custom message as a turn start, so a steer can open the turn prefix, whose
- * summary is anchored on an "Original Request"; summarized with the history instead, the turn keeps the person's own
- * request. The messages themselves are shared with the session and are copied, never changed.
+ * What the host compacts once Rerail's messages are labelled, the person's steer lines left out (the summarizer reads
+ * those steers in their tool results), and a split turn a Rerail message leads is folded back into the history. Both
+ * hosts count every custom message as a turn start, so a steer can open the turn prefix, whose summary is anchored on an
+ * "Original Request"; summarized with the history instead, the turn keeps the person's own request. OMP's
+ * `recentMessages` runs parallel to the entry ids it keeps, so a steer line stays there, labelled like Rerail's other
+ * messages. The messages themselves are shared with the session and are copied, never changed.
  */
 function guarded<Message extends MessageLike>(preparation: CompactionPreparationLike<Message>): CompactionPreparationLike<Message> {
   const { messagesToSummarize, turnPrefixMessages, isSplitTurn, recentMessages } = preparation;
   const unsplit = isSplitTurn && turnPrefixMessages[0] !== undefined && rerailMessage(turnPrefixMessages[0]);
+  const summarized = (messages: Message[]): Message[] => messages
+    .filter(message => !(message.role === "custom" && "customType" in message && message.customType === STEER_LINE_MESSAGE_TYPE))
+    .map(labelled);
   return {
-    messagesToSummarize: (unsplit ? [...messagesToSummarize, ...turnPrefixMessages] : messagesToSummarize).map(labelled),
-    turnPrefixMessages: unsplit ? [] : turnPrefixMessages.map(labelled),
+    messagesToSummarize: summarized(unsplit ? [...messagesToSummarize, ...turnPrefixMessages] : messagesToSummarize),
+    turnPrefixMessages: unsplit ? [] : summarized(turnPrefixMessages),
     isSplitTurn: isSplitTurn && !unsplit,
     ...(recentMessages === undefined ? {} : { recentMessages: recentMessages.map(labelled) }),
   };

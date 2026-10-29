@@ -23,6 +23,9 @@
 // `source.units` names each file's origin, the rule whose test file it came from; each such file also gets a rename
 // variant under renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted in the original's
 // language and marked `renamedFrom` it.
+// provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`) record each kept file as
+// extracted from its rule's test/<rule>.js, each rename variant as renamed from its original, and
+// fixtures.expected.json as Rerail's.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join, normalize, resolve } from "node:path";
@@ -37,8 +40,8 @@ import {
   withUpstreamTestCwd,
   writeExpectedFindings,
   writeRenameVariants,
-  writeVariantRows,
 } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { variantEntries, writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACK = JSON.parse(readFileSync(join(HERE, "..", "..", "conformance.json"), "utf8"));
@@ -217,8 +220,11 @@ for (const { path } of linted.skipped.filter(({ path }) => !isVariantPath(path))
 }
 const unparsed = new Set(linted.skipped.map(({ path }) => path));
 const kept = files.filter(file => !unparsed.has(file)).sort();
-const { files: units, units: origin, findings } = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
-writeVariantRows(join(HERE, "..", "..", "licenses", TOOL, "UPSTREAM.md"), TOOL, units);
+const recorded = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
+const { files: units, units: origin, findings } = recorded;
 writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
+// Each kept file is extracted from its rule's test file (`<rule>/…`); its variant is renamed from it.
+const extracted = new Map(kept.map(file => [`fixtures/${file}`, { source: TOOL, from: `test/${file.split("/")[0]}.js`, how: "extracted" }]));
+writeProvenance({ pack: PACK.pack, tool: TOOL, entries: new Map([...extracted, ...variantEntries(extracted, recorded)]), commits: { [TOOL]: CHECKOUT.commit } });
 console.log(`${TOOL} fixtures: ${kept.length} files, ${units.length - kept.length} rename variants (${unrenamed.length} units without one), ${findings.length} findings`);
 for (const [rule, count] of Object.entries(counts)) console.log(`  ${rule}: ${JSON.stringify(count)}`);

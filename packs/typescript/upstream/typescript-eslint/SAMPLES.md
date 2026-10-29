@@ -1,6 +1,6 @@
 # Real-code samples: typescript/typescript-eslint
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/typescript/typescript-eslint/994542c674532867111eb5589cd03eabedc4585a56087721d711cd535d3ce7ca.tar.zst`, 2009 files, 15372503 bytes) holds 873 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. Trimmed to each rule's 10 smallest positive samples when built; clean samples and the samples a divergence names kept.
+The sample set `samples.lock` pins (archive `rerail/archives/samples/typescript/typescript-eslint/994542c674532867111eb5589cd03eabedc4585a56087721d711cd535d3ce7ca.tar.zst`, 2009 files, 15372503 bytes) holds 873 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence. It holds the licence text of microsoft/vscode only; for every other repository it holds the licence id the ESLint test set recorded, which is the one `scripts/samples/licences.ts` records for the repository, and no licence text. None of it is published with the pack. Trimmed to each rule's 10 smallest positive samples when built; clean samples and the samples a divergence names kept.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|

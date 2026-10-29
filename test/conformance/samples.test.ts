@@ -265,6 +265,25 @@ describe("stays-silent", () => {
     expect(samplesRow(incomplete.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0, engineFailures: 0, partialFiles: 1 });
     expect(staysSilent(incomplete.report).ok).toBe(false);
   });
+
+  it("is not met by a clean sample the rule's `file` condition or scope rules out, where the rule never looks", async () => {
+    const restrict = (edit: (rule: Record<string, unknown>) => Record<string, unknown>): void => editJson(join(directory, "rules", "assert-used.json"), edit);
+    restrict(rule => ({
+      ...rule,
+      clauses: (rule.clauses as { forbid: { ast: object } }[]).map(clause => ({ ...clause, forbid: { ast: { ...clause.forbid.ast, file: { path: { regex: "(^|/)tests/" } } } } })),
+    }));
+    const outside = await score([clean], { fixtures: true });
+    expect(samplesRow(outside.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0 });
+    expect(staysSilent(outside.report).ok).toBe(false);
+    rmSync(tree, { recursive: true, force: true });
+    const inside = await score([{ ...clean, path: "tests/app.py" }], { fixtures: true });
+    expect(samplesRow(inside.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 1 });
+    expect(staysSilent(inside.report).ok).toBe(true);
+    rmSync(tree, { recursive: true, force: true });
+    restrict(rule => ({ ...rule, scope: { include: ["**/*"], exclude: ["**/tests/**"] } }));
+    const excluded = await score([{ ...clean, path: "tests/app.py" }], { fixtures: true });
+    expect(samplesRow(excluded.report)).toMatchObject({ cleanSamples: 1, silentCleanSamples: 0 });
+  });
 });
 
 describe("rename variants", () => {
@@ -317,7 +336,7 @@ describe("rename variants", () => {
     expect(failingChecks(report)).toEqual(["holds-under-rename"]);
   });
 
-  it("count a variant the renaming took every finding of the rule from, without failing", async () => {
+  it("count a variant the renaming took every finding of the rule from, without failing: vacuous, reported", async () => {
     // renamed/asserts.py is asserts.py with its asserts gone: examplelint reports the original, not the variant.
     const fixtures = join(directory, "upstream", "examplelint", "fixtures");
     mkdirSync(join(fixtures, "renamed"), { recursive: true });
@@ -327,7 +346,7 @@ describe("rename variants", () => {
     expect(fixturesRow(report).renamed).toMatchObject({ units: 1, tp: 0, fp: 0, fn: 0, renamedAway: 1 });
     expect(reportFailures(report)).toEqual([]);
     const check = conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(entry => entry.id === "holds-under-rename");
-    expect(check).toEqual({ id: "holds-under-rename", ok: true, detail: "agrees with upstream on its 1 rename variant unit(s) (0 true positive(s)); 1 variant(s) lost every finding of the rule (renamed away)" });
+    expect(check).toEqual({ id: "holds-under-rename", ok: true, vacuous: true, detail: "vacuous: no finding of the rule survives on its 1 rename variant unit(s); 1 variant(s) lost every finding of the rule (renamed away)" });
   });
 });
 

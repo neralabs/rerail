@@ -8,7 +8,7 @@
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release; never pull request
 // CI). Usage (Node >= 23.6 for type stripping and module.registerHooks):
 //   node packs/next/upstream/eslint-plugin-next/generate.mjs [--tools <dir>] [--upstream <dir>]
-//                                                            [--only fixtures|tests|licenses]
+//                                                            [--only fixtures|tests]
 //
 // 1. tests: copies the chosen rules' upstream test files verbatim into tests/.
 // 2. fixtures: executes each copied test with a stub `RuleTester` (ours, below) that captures run(name, rule,
@@ -17,13 +17,15 @@
 //    `C:\` turned into `C/`, backslashes into `/`). Writes Rerail's own cases (AUTHORED, below) as
 //    fixtures/<rule>/rerail-<name>.tsx and lists them in UPSTREAM.md. Then runs the pinned plugin (PACK_CONFIG, default
 //    options, every chosen rule) over every fixture file: fixtures.expected.json.
-// 3. licenses: packs/next/licenses/next.js/{LICENSE,UPSTREAM.md}.
+// 3. Always: packs/next/licenses/next.js/LICENSE, and provenance.json and LICENSES.md for every copied test and every
+//    case in fixtures.cases.json.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { assertCommit, assertPortableCase, isVariantPath, lint, pinnedRequire, withOrigins, writeExpectedFindings, writeRenameVariants } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
 import { packFixturesWritten, requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -267,38 +269,37 @@ async function recordFixtures() {
   for (const mismatch of mismatches) console.log(`  mismatch ${mismatch.path}: test expects ${mismatch.expected}, plugin reports ${mismatch.recorded}`);
 }
 
-function writeLicenses() {
+/**
+ * packs/next/licenses/next.js/LICENSE (upstream's `license.md`, verbatim) and the tool's provenance.json and
+ * LICENSES.md: every copied test file and, from fixtures.cases.json, every kept case and rename variant with the
+ * upstream test file it came from.
+ */
+function writeLicenseAndProvenance() {
   assertCommit(upstream, UPSTREAM_COMMIT);
   const directory = join(PACK, "licenses", "next.js");
   mkdirSync(directory, { recursive: true });
   copyFileSync(join(upstream, "license.md"), join(directory, "LICENSE"));
   const { cases } = JSON.parse(readFileSync(requirePackFixture(join(HERE, "fixtures.cases.json")), "utf8"));
-  const rows = [
-    ...RULES.map(rule => `| \`upstream/${TOOL}/tests/${rule}.test.ts\` | \`${UPSTREAM_TESTS}/${rule}.test.ts\` | verbatim |`),
+  const source = "next.js";
+  const testOf = rule => `${UPSTREAM_TESTS}/${rule}.test.ts`;
+  const entries = new Map([
+    ...RULES.map(rule => [`tests/${rule}.test.ts`, { source, from: testOf(rule), how: "verbatim" }]),
     ...cases
       .filter(entry => !entry.dropped && entry.kind !== "authored" && entry.kind !== "renamed")
-      .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim) |`),
+      .map(entry => [`fixtures/${entry.path}`, { source, from: testOf(entry.rule), how: "extracted", detail: `extracted from ${entry.kind}[${entry.index}] (its \`code\`, verbatim)` }]),
     ...cases
       .filter(entry => entry.kind === "renamed")
-      .map(entry => `| \`upstream/${TOOL}/fixtures/${entry.path}\` | \`${UPSTREAM_TESTS}/${entry.rule}.test.ts\` | derived from ${entry.renamedKind}[${entry.index}] (\`fixtures/${entry.of}\` with its names and literals renamed) |`),
-  ];
-  const text = `# Next.js ${PLUGIN_VERSION} (@next/eslint-plugin-next)
-
-Upstream: [vercel/next.js](${UPSTREAM_REPOSITORY}/tree/${UPSTREAM_COMMIT}) at tag \`v${PLUGIN_VERSION}\` (commit \`${UPSTREAM_COMMIT}\`), the source of \`@next/eslint-plugin-next\` ${PLUGIN_VERSION}. License: MIT (Copyright (c) 2025 Vercel, Inc.); [\`LICENSE\`](LICENSE) is the upstream \`license.md\`, copied verbatim at that tag.
-
-The files listed below are the plugin's rule tests and the test cases extracted from them, and remain under Next.js's license. Every other file in this pack is Rerail's. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of @next/eslint-plugin-next's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. The rest is under the Apache License 2.0 (the pack's \`LICENSE\`): the generator \`upstream/${TOOL}/generate.mjs\` (with its stub \`RuleTester\` and stub plugin module), \`upstream/${TOOL}/fixtures.cases.json\`, and the \`*.expected.json\` expected findings written by running the pinned plugin.
-
-Paths are relative to the pack directory, \`packs/next/\`.
-
-| File | Upstream path | Copy |
-|---|---|---|
-${rows.join("\n")}
-`;
-  writeFileSync(join(directory, "UPSTREAM.md"), text);
-  console.log(`licenses: ${rows.length} rows`);
+      .map(entry => [
+        `fixtures/${entry.path}`,
+        { source, from: testOf(entry.rule), how: "renamed", renamedFrom: `fixtures/${entry.of}`, detail: `derived from ${entry.renamedKind}[${entry.index}] (\`fixtures/${entry.of}\` with its names and literals renamed)` },
+      ]),
+  ]);
+  writeProvenance({ pack: "next", tool: TOOL, entries, commits: { [source]: UPSTREAM_COMMIT } });
+  console.log(`provenance: ${entries.size} upstream entries`);
 }
 
 const only = options.only;
+if (only !== undefined && only !== "tests" && only !== "fixtures") throw new Error(`--only ${only}: expected tests or fixtures`);
 if (only === undefined || only === "tests") copyTests();
 if (only === undefined || only === "fixtures") await recordFixtures();
-if (only === undefined || only === "licenses") writeLicenses();
+writeLicenseAndProvenance();

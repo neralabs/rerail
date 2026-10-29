@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-extra-label",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Remove labels from break and continue when they target the nearest enclosing loop or switch anyway.",
   "scope": {
@@ -123,7 +123,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary.",
+        "message": "Write break without the label '$L': it already leaves the nearest enclosing loop or switch.",
         "fix": "break;",
         "suppress": {
           "eslint": {
@@ -182,7 +182,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary.",
+        "message": "Write break without the label '$L': it already leaves the nearest enclosing loop or switch.",
         "fix": "break",
         "suppress": {
           "eslint": {
@@ -239,7 +239,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary.",
+        "message": "Write continue without the label '$L': it already continues the nearest enclosing loop.",
         "fix": "continue;",
         "suppress": {
           "eslint": {
@@ -298,7 +298,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary.",
+        "message": "Write continue without the label '$L': it already continues the nearest enclosing loop.",
         "fix": "continue",
         "suppress": {
           "eslint": {
@@ -351,7 +351,7 @@
       "violation": {
         "anchor": "capture.L",
         "code": "no-extra-label",
-        "message": "This label '$L' is unnecessary.",
+        "message": "Remove the label '$L' from this break or continue: it already targets the nearest enclosing loop or switch.",
         "suppress": {
           "eslint": {
             "rules": [

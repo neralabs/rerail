@@ -376,7 +376,17 @@
       "id": "eslint-no-setter-return",
       "document": "rules/eslint-no-setter-return.json",
       "title": "ESLint no-setter-return: Disallow returning values from setters",
-      "group": "ESLint"
+      "group": "ESLint",
+      "examples": {
+        "caught": {
+          "path": "src/point.js",
+          "text": "Object.defineProperty(point, \"x\", {\n  set: value => /* keep in range */ clamp(value),\n});\n"
+        },
+        "passes": {
+          "path": "src/point.js",
+          "text": "class Point {\n  set x(value) {\n    if (value === undefined) return /* nothing to store */;\n    this._x = value;\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "eslint-no-sparse-arrays",

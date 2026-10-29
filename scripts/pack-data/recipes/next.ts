@@ -1,6 +1,6 @@
 /**
  * The next pack: @next/eslint-plugin-next's answers on the cases of its own rule tests, recorded by
- * packs/next/upstream/eslint-plugin-next/generate.mjs (every mode: tests, fixtures, licenses) with
+ * packs/next/upstream/eslint-plugin-next/generate.mjs (every mode: tests and fixtures, then the provenance) with
  * the npm packages its PINS name and vercel/next.js at its UPSTREAM_COMMIT, sparse: the rule tests it copies and the
  * licence file. Both are read from the generator, which refuses any other version or commit.
  */

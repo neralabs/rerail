@@ -22,7 +22,7 @@ export interface HandMadeSample {
 /** Writes `samples` as a samples tree under `directory`; returns each sample's evaluation path, in order. */
 export function writeSamplesTree(directory: string, samples: readonly HandMadeSample[]): string[] {
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, LICENSES_FILE), "# Licences\n\nexample/repo: MIT\n");
+  writeFileSync(join(directory, LICENSES_FILE), "# Licences\n\nfastify/fastify: MIT\n");
   return samples.map(sample => {
     const sha256 = createHash("sha256").update(sample.text).digest("hex");
     const id = `${sample.name}-${sample.path.replace(/[^a-z0-9]+/giu, "-").toLowerCase()}-${sha256.slice(0, 12)}`;
@@ -31,7 +31,7 @@ export function writeSamplesTree(directory: string, samples: readonly HandMadeSa
       writeFileSync(join(directory, id, path), text);
     };
     const labels: SampleLabels = {
-      source: { repo: "example/repo", commit: "0".repeat(40), path: sample.path, license: "MIT", sha256 },
+      source: { repo: "fastify/fastify", commit: "0".repeat(40), path: sample.path, license: "MIT", sha256 },
       labelledBy: { tool: "examplelint", version: "1.0.0", how: "hand-labelled" },
       expected: Object.fromEntries(Object.entries(sample.expected).map(([rule, lines]) => [rule, lines.map(line => ({ line }))])),
     };

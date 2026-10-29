@@ -59,13 +59,13 @@
 // samples.lock, test-data.lock, and, while a pull request publishes data, publish/.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import { licenceTerms } from "../check/check-structure/metrics/07-pack-licence-annotations.mjs";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, parseLock, readArchive, sha256, TEST_DATA_LOCK } from "./test-data-archive.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -113,6 +113,8 @@ export const PACK_FIXTURE_PATTERNS = Object.freeze([
   "packs/*/upstream/*/LICENSES.md",
   AUTHORED_CORPUS_PATTERN,
 ]);
+/** The `format` of every test-data archive's `upstream/<tool>/provenance.json`. */
+export const PROVENANCE_FORMAT = "rerail.pack-provenance/v1";
 
 /** What every consumer tells a contributor whose checkout lacks the data. */
 export const PULL_INSTRUCTION =
@@ -143,11 +145,32 @@ export function publishPath(path) {
 
 const escapeRegExp = (text) => text.replace(/[.+^${}()|[\]\\?]/gu, "\\$&");
 
+/** The most `**` one glob may hold, after runs of them are collapsed: more could make its matcher backtrack for long. */
+const MAX_GLOBSTARS = 2;
+
+/**
+ * A glob's matcher over `/`-separated paths: `*` stays within a segment, `**` crosses them, and a `**` segment matches
+ * zero or more whole segments (`a/**\/x` matches `a/x`). Runs of `**` collapse to one; a glob holding more than
+ * MAX_GLOBSTARS throws, naming it.
+ */
 function globToRegExp(glob) {
-  const source = glob
-    .split("**")
-    .map((part) => part.split("*").map(escapeRegExp).join("[^/]*"))
-    .join(".*");
+  const segments = glob
+    .replace(/\*{3,}/gu, "**")
+    .split("/")
+    .filter((segment, index, all) => !(segment === "**" && all[index - 1] === "**"));
+  const globstars = segments.join("/").match(/\*\*/gu)?.length ?? 0;
+  if (globstars > MAX_GLOBSTARS) throw new Error(`glob \`${glob}\` holds ${globstars} \`**\`; a glob may hold at most ${MAX_GLOBSTARS}`);
+  const source = segments
+    .map((segment, index) => {
+      const last = index === segments.length - 1;
+      if (segment === "**") return last ? ".*" : "(?:[^/]*/)*";
+      const pattern = segment
+        .split("**")
+        .map((part) => part.split("*").map(escapeRegExp).join("[^/]*"))
+        .join(".*");
+      return last ? pattern : `${pattern}/`;
+    })
+    .join("");
   return new RegExp(`^${source}$`, "u");
 }
 
@@ -182,12 +205,113 @@ export function listedAuthored(record, text) {
     .map((file) => `packs/${pack}/${file}`);
 }
 
-/** The licence an UPSTREAM.md records (pack check 6 reads it too). */
-const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
+/**
+ * The SPDX expression an UPSTREAM.md's `License:` line records (pack check 6 reads it too): its licence ids, `AND`,
+ * `OR` and `WITH` between them, and parentheses, up to the first thing that is none of them (the copyright note in
+ * parentheses after a space, or `;`). licenceAlternatives tells a malformed one.
+ */
+const UPSTREAM_LICENSE = /\bLicense: ((?:[()]|[A-Za-z0-9][A-Za-z0-9.+:-]*|[ \t]+(?:AND|OR|WITH)[ \t]+)+)/u;
+/** An SPDX licence or exception id, or a LicenseRef (a `+` suffix included). */
+const LICENCE_ID = /^[A-Za-z0-9][A-Za-z0-9.+:-]*$/u;
+const LICENCE_OPERATOR = /^(?:AND|OR|WITH)$/u;
+
+/**
+ * The ways an SPDX licence expression can be satisfied, or undefined when it is malformed: each a sorted list of the
+ * terms that choice takes together. `AND` binds tighter than `OR`; `X WITH Y` is one term, a licence with its exception;
+ * parentheses group. `(MIT OR Apache-2.0) AND BSD-3-Clause` is [[BSD-3-Clause, MIT], [Apache-2.0, BSD-3-Clause]].
+ */
+export function licenceAlternatives(expression) {
+  const tokens = String(expression)
+    .split(/([()])|\s+/u)
+    .filter((token) => token !== undefined && token !== "");
+  let at = 0;
+  const id = () => {
+    const token = tokens[at];
+    if (token === undefined || LICENCE_OPERATOR.test(token) || !LICENCE_ID.test(token)) return undefined;
+    at += 1;
+    return token;
+  };
+  const term = () => {
+    if (tokens[at] === "(") {
+      at += 1;
+      const inner = either();
+      if (inner === undefined || tokens[at] !== ")") return undefined;
+      at += 1;
+      return inner;
+    }
+    const licence = id();
+    if (licence === undefined) return undefined;
+    if (tokens[at] !== "WITH") return [[licence]];
+    at += 1;
+    const exception = id();
+    return exception === undefined ? undefined : [[`${licence} WITH ${exception}`]];
+  };
+  /** Operands joined by `operator`, each read by `operand`, combined by `combine`; undefined when one is malformed. */
+  const joined = (operator, operand, combine) => {
+    let result = operand();
+    while (result !== undefined && tokens[at] === operator) {
+      at += 1;
+      const next = operand();
+      result = next === undefined ? undefined : combine(result, next);
+    }
+    return result;
+  };
+  const both = () => joined("AND", term, (left, right) => left.flatMap((a) => right.map((b) => [...new Set([...a, ...b])].sort())));
+  const either = () => joined("OR", both, (left, right) => [...left, ...right]);
+  const alternatives = either();
+  if (alternatives === undefined || at !== tokens.length) return undefined;
+  return [...new Map(alternatives.map((terms) => [terms.join("\0"), terms])).values()];
+}
+
+/**
+ * Whether data under the SPDX expression `expression` may go to S3: some way to satisfy it (licenceAlternatives) takes
+ * only terms on `allowed`. A malformed expression, or a note standing in for a licence, never may.
+ */
+export function licenceAllowed(expression, allowed) {
+  return (licenceAlternatives(expression) ?? []).some((terms) => terms.every((term) => allowed.has(term)));
+}
+
+/**
+ * Whether a pack-relative path is in a subdirectory of `upstream/<tool>/` (fixtures/, tests/, authored/, …), where a
+ * file is copied from upstream unless it is authored. Files directly in `upstream/` or `upstream/<tool>/` (expected
+ * findings, cases.json, provenance.json, LICENSES.md, generators) are Rerail's. Pack check 6 and the publish licence
+ * check both classify by it.
+ */
+export function inToolSubdirectory(packPath) {
+  const segments = packPath.split("/");
+  return segments[0] === "upstream" && segments.length > 3;
+}
+
 /** A "Not copied" line of a licenses/<project>/UPSTREAM.md: the upstream prefix, then the pack-path glob it would land under. */
 const NOT_COPIED = /^- Not copied: `([^`]+)`(?: as `([^`]+)`)?/u;
+/** A list item that means to be a "Not copied" line, however it is spelled: one NOT_COPIED rejects is malformed. */
+const NOT_COPIED_ITEM = /^\s*[-*+]\s*not copied\b/iu;
 /** A "Taken from it" row: its first cell is a backticked pack-path glob under upstream/. */
 const TAKEN_GLOB = /^`(upstream\/[^`]+)`$/u;
+/** The copy kinds a "Taken from it" How cell may name, least modified first. */
+const COPY_KINDS = ["verbatim", "extracted", "renamed", "adapted"];
+
+/**
+ * A How cell's copy kind: the most modified of COPY_KINDS it names (`verbatim …; or adapted …` is `adapted`), or ""
+ * when it names none.
+ */
+export function copyKind(how) {
+  const named = how.match(/\b(?:verbatim|extracted|renamed|adapted)\b/gu) ?? [];
+  return named.reduce((kind, next) => (COPY_KINDS.indexOf(next) > COPY_KINDS.indexOf(kind) ? next : kind), "");
+}
+
+/**
+ * Of the "Taken from it" patterns covering one file (each with its `glob`, `licence` and copy kind `how`), the one that
+ * decides the file's licence: `{ pattern }`, the longest glob; `{ tie }`, the longest globs, when equal-length ones
+ * differ in licence or copy kind; `{}` when none covers it. Pack check 6 and the publish licence check both decide by it.
+ */
+export function decidingPattern(covering) {
+  if (covering.length === 0) return {};
+  const longest = Math.max(...covering.map(({ glob }) => glob.length));
+  const tie = covering.filter(({ glob }) => glob.length === longest);
+  const [pattern] = tie;
+  return tie.some(({ licence, how }) => licence !== pattern.licence || how !== pattern.how) ? { tie } : { pattern };
+}
 
 /** A markdown table row's cells, trimmed, with a wholly backticked cell's backticks removed when `unquote`. */
 function tableCells(line, unquote = false) {
@@ -196,25 +320,32 @@ function tableCells(line, unquote = false) {
 }
 
 /**
- * What a pack's licenses/<project>/UPSTREAM.md records (docs/pack-format.md): its `License:` SPDX id, its Source row
- * (repository, tag, commit, licence), the pack-path globs of its "Taken from it" table with each one's copy kind (the
- * first word of its How cell), and its "Not copied" lines (the upstream prefix and, when the line has one, the
- * pack-path glob). Pack check 6 and the publish licence check both read it; neither reads an archive's provenance.json.
+ * What a pack's licenses/<project>/UPSTREAM.md records (docs/pack-format.md): its `License:` SPDX expression, its Source
+ * row (repository, tag, commit, licence: the first repository-URL row of its `## Source` section), the pack-path globs
+ * of its "Taken from it" table with each one's copy kind (copyKind of its How cell), its "Not copied" lines (the
+ * upstream prefix and, when the line has one, the pack-path glob), and `malformed`: the list items that mean to be
+ * "Not copied" lines but are not spelled `- Not copied: …`. Pack check 6 and the publish licence check both read it;
+ * neither reads an archive's provenance.json for a licence (prep checks only its `files` key set, checkProvenance).
  */
 export function readUpstreamSources(text) {
   let source;
+  let section;
   const taken = [];
   const notCopied = [];
+  const malformed = [];
   for (const line of text.split("\n")) {
+    const heading = /^##\s+(.+?)\s*$/u.exec(line);
+    if (heading !== null) section = heading[1];
     const refused = NOT_COPIED.exec(line);
     if (refused !== null) notCopied.push({ prefix: refused[1], glob: refused[2] });
+    else if (NOT_COPIED_ITEM.test(line)) malformed.push(line.trim());
     if (!line.startsWith("|")) continue;
     const cells = tableCells(line, true);
-    if (source === undefined && /^https?:\/\//u.test(cells[0])) source = { repository: cells[0], tag: cells[1], commit: cells[2], licence: cells[3] };
+    if (source === undefined && section === "Source" && /^https?:\/\//u.test(cells[0])) source = { repository: cells[0], tag: cells[1], commit: cells[2], licence: cells[3] };
     const glob = TAKEN_GLOB.exec(tableCells(line)[0])?.[1];
-    if (glob !== undefined) taken.push({ glob, how: /^[a-z-]+/u.exec(cells.at(-1))?.[0] ?? "" });
+    if (glob !== undefined) taken.push({ glob, how: copyKind(cells.at(-1) ?? "") });
   }
-  return { licence: UPSTREAM_LICENSE.exec(text)?.[1], source, taken, notCopied };
+  return { licence: UPSTREAM_LICENSE.exec(text)?.[1], source, taken, notCopied, malformed };
 }
 
 /** A matcher for a glob over `/`-separated paths (`*` stays within a segment, `**` crosses them), as PACK_FIXTURE_PATTERNS are read. */
@@ -910,6 +1041,33 @@ function publishedTestData(root, toolPack) {
 }
 
 /**
+ * One line per archive a run used, `<pack> <tool> <kind> <sha256>` (kind `test-data` or `samples`, by the tar's
+ * sha256), sorted: what replaying the run fetches again (CONTRIBUTING.md, "Pack test data").
+ */
+export function archiveLines(archives) {
+  return archives.map(({ toolPack, kind, sha256: digest }) => `${toolPack.pack} ${toolPack.tool} ${kind} ${digest}`).sort(byBytes);
+}
+
+/**
+ * Reports `lines` (archiveLines's) to GitHub Actions through `env` (the process's environment, in a command): as the
+ * step's multiline `archives` output when `env.GITHUB_OUTPUT` is set, and, with `summary`, as a table appended to
+ * `env.GITHUB_STEP_SUMMARY` when it is set (none for no archive). Outside Actions it writes nothing.
+ */
+export function reportArchives(lines, { env = {}, summary = true } = {}) {
+  if (env.GITHUB_OUTPUT) {
+    const delimiter = `archives_${randomUUID()}`;
+    appendFileSync(env.GITHUB_OUTPUT, `archives<<${delimiter}\n${lines.map((line) => `${line}\n`).join("")}${delimiter}\n`);
+  }
+  if (summary && env.GITHUB_STEP_SUMMARY && lines.length > 0) {
+    const rows = lines.map((line) => {
+      const [pack, tool, kind, digest] = line.split(" ");
+      return `| ${pack} | ${tool} | ${kind} | \`${digest}\` |\n`;
+    });
+    appendFileSync(env.GITHUB_STEP_SUMMARY, `### Pack data archives used\n\n| Pack | Tool | Kind | sha256 |\n|---|---|---|---|\n${rows.join("")}\n`);
+  }
+}
+
+/**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
  * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory, then lays the
  * tool-pack's publish/ test data (a pull request's publish request) over it, so the checkout holds what publishing it
@@ -919,8 +1077,10 @@ function publishedTestData(root, toolPack) {
  * that neither the archive nor publish/ holds are deleted (a stale derivation); authored ones are kept and reported. The
  * samples archive each selected tool-pack's samples.lock names is put into ARCHIVE_CACHE and verified with the test
  * data archives, before anything is extracted, then extracted into its tree outside the tool directory (samples).
+ * Then each archive it used is reported to GitHub Actions through `env` (reportArchives; the command passes its own
+ * environment, a caller that passes none reports nothing).
  */
-export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log } = {}) {
+export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, log = console.log, env = {} } = {}) {
   const selected = selectToolPacks(root, pack, tool);
   const locked = selected.map((toolPack) => {
     const published = publishedTestData(root, toolPack);
@@ -989,6 +1149,10 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
     log(`${toolPack.directory}: ${entries.length} file(s) from ${from}${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
   }
   extractSamples(root, fetchedSamples, { dryRun, log });
+  reportArchives(archiveLines([
+    ...fetched.filter(({ lock }) => lock !== undefined).map(({ toolPack, lock }) => ({ toolPack, kind: "test-data", sha256: lock.sha256 })),
+    ...fetchedSamples.map(({ toolPack, lock }) => ({ toolPack, kind: "samples", sha256: lock.sha256 })),
+  ]), { env });
   return {
     toolPacks: fetched.map(({ toolPack, source, published }) => ({ ...toolPack, source, published: published.entries.length })),
     samples: fetchedSamples.map(({ toolPack, source }) => ({ ...toolPack, source })),
@@ -1224,27 +1388,16 @@ function publishRequests(tree, at) {
   return new Map([...requests].sort(([a], [b]) => byBytes(a, b)));
 }
 
-/** The licence of Rerail's own files: authored pack test data, and any file no licenses/<project>/UPSTREAM.md pattern covers. */
+/** The licence of Rerail's own files: authored pack test data, and the files directly in upstream/<tool>/ no pattern covers. */
 const RERAIL_LICENCE = "Apache-2.0";
 /** A pack's licenses/<project>/UPSTREAM.md, which records an upstream repository, its licence and what was taken from it. */
 const LICENSES_RECORD = /^packs\/([^/]+)\/licenses\/[^/]+\/UPSTREAM\.md$/u;
+/** A tool's own UPSTREAM.md, which lists the files Rerail wrote for it: its pack and tool. */
+const TOOL_RECORD = /^packs\/([^/]+)\/upstream\/([^/]+)\/UPSTREAM\.md$/u;
 /** The repository's licence allowlist: the SPDX ids anything put in S3 may be under. */
 const LICENCE_ALLOWLIST = "scripts/check/licence-allowlist.json";
 /** The one copy kind an Apache-2.0-only source's files may be under until counsel confirms otherwise: §4(b) asks a modified file to carry its change notices. */
 const APACHE_ONLY_COPY = "verbatim";
-
-/**
- * Whether data under the SPDX expression `expression` may go to S3: `A OR B` when either side may, `A AND B` (terms as
- * licenceTerms reads them) when every term is on `allowed`.
- */
-export function licenceAllowed(expression, allowed) {
-  return String(expression)
-    .split(/\s+OR\s+/u)
-    .some((alternative) => {
-      const terms = licenceTerms(alternative);
-      return terms.length > 0 && terms.every((term) => allowed.has(term));
-    });
-}
 
 /** The allowlist this checkout's code (main's, in the publish workflow) reads. */
 function licenceAllowlist() {
@@ -1254,66 +1407,84 @@ function licenceAllowlist() {
 /**
  * The upstream sources a commit's tree (`tree`, read through `blob`) records: the authored files its tools'
  * UPSTREAM.md list, and per pack, each licenses/<project>/UPSTREAM.md's licence, "Taken from it" patterns and "Not
- * copied" patterns. Returns a function from a tool directory and an archive path to that file's licence; a file under
- * a "Not copied" pattern, an Apache-2.0-only source's file that is not verbatim, or a project with no "License:" gets
- * a note in its place, which no allowlist takes.
+ * copied" patterns. Returns a function from a tool directory and an archive path to that file's licence, decided as
+ * pack check 6 decides it: a "Not copied" pattern first (refused even when authored), then authored, then the covering
+ * "Taken from it" pattern decidingPattern picks; a file in a subdirectory of the tool directory (inToolSubdirectory)
+ * that none of them takes is refused, and a file directly in it is Rerail's. A refused file, one whose equal-length
+ * covering globs disagree, an Apache-2.0-only source's file that is not verbatim, every file of a pack with a malformed
+ * "Not copied" line, or a project with no "License:" gets a note in its place, which no allowlist takes.
  */
 function sourcesAt(tree, blob) {
   const authored = new Set();
   const projects = new Map();
   for (const path of tree.keys()) {
-    if (/^packs\/[^/]+\/upstream\/[^/]+\/UPSTREAM\.md$/u.test(path)) for (const file of listedAuthored(path, blob(path).toString("utf8"))) authored.add(file);
+    if (TOOL_RECORD.test(path)) for (const file of listedAuthored(path, blob(path).toString("utf8"))) authored.add(file);
     const match = LICENSES_RECORD.exec(path);
     if (match === null) continue;
-    const { licence, taken, notCopied } = readUpstreamSources(blob(path).toString("utf8"));
+    const { licence, taken, notCopied, malformed } = readUpstreamSources(blob(path).toString("utf8"));
     const project = {
       record: path,
       licence: licence ?? `no licence (${path} records no "License:")`,
       taken: taken.map(({ glob, how }) => ({ glob, how, matcher: globToRegExp(glob) })),
       notCopied: notCopied.filter(({ glob }) => glob !== undefined).map(({ prefix, glob }) => ({ prefix, glob, matcher: globToRegExp(glob) })),
+      malformed: [...malformed, ...notCopied.filter(({ glob }) => glob === undefined).map(({ prefix }) => `- Not copied: \`${prefix}\` (no pack-path glob)`)],
     };
     projects.set(match[1], [...(projects.get(match[1]) ?? []), project]);
   }
   return (directory, path) => {
     const repositoryFile = `${directory}/${path}`;
-    if (authored.has(repositoryFile) || AUTHORED_CORPUS.test(repositoryFile)) return RERAIL_LICENCE;
     const [, pack] = directory.split("/");
     const packFile = repositoryFile.slice(`packs/${pack}/`.length);
-    for (const project of projects.get(pack) ?? []) {
+    const recorded = projects.get(pack) ?? [];
+    const broken = recorded.find(({ malformed }) => malformed.length > 0);
+    if (broken !== undefined) return `malformed record (${broken.record}: ${broken.malformed[0]} is not a \`- Not copied: \`<prefix>\` as \`<glob>\`\` line)`;
+    for (const project of recorded) {
       const refused = project.notCopied.find(({ matcher }) => matcher.test(packFile));
       if (refused !== undefined) return `not copied (${project.record} lists ${refused.prefix} as \`${refused.glob}\` as not copied)`;
     }
-    let covering;
-    for (const project of projects.get(pack) ?? []) {
-      for (const pattern of project.taken) {
-        if (pattern.matcher.test(packFile) && (covering === undefined || pattern.glob.length > covering.pattern.glob.length)) covering = { project, pattern };
-      }
-    }
-    if (covering === undefined) return RERAIL_LICENCE;
-    const { project, pattern } = covering;
-    if (project.licence === "Apache-2.0" && pattern.how !== APACHE_ONLY_COPY)
-      return `Apache-2.0, ${pattern.how || "no copy kind"} not ${APACHE_ONLY_COPY} (${project.record}: \`${pattern.glob}\`; a modified Apache-2.0 file must carry its change notices)`;
-    return project.licence;
+    if (authored.has(repositoryFile) || AUTHORED_CORPUS.test(repositoryFile)) return RERAIL_LICENCE;
+    const covering = recorded.flatMap((project) =>
+      project.taken.filter(({ matcher }) => matcher.test(packFile)).map((pattern) => ({ ...pattern, licence: project.licence, record: project.record })),
+    );
+    const { pattern, tie } = decidingPattern(covering);
+    if (tie !== undefined) return `ambiguous (equal-length globs disagree: ${tie.map(({ record, glob, licence, how }) => `${record}: \`${glob}\`, ${licence}, ${how || "no copy kind"}`).join("; ")})`;
+    if (pattern === undefined)
+      return inToolSubdirectory(packFile) ? `uncovered (no licenses/*/UPSTREAM.md "Taken from it" glob covers it and its tool's UPSTREAM.md does not list it)` : RERAIL_LICENCE;
+    if (pattern.licence === "Apache-2.0" && pattern.how !== APACHE_ONLY_COPY)
+      return `Apache-2.0, ${pattern.how || "no copy kind"} not ${APACHE_ONLY_COPY} (${pattern.record}: \`${pattern.glob}\`; a modified Apache-2.0 file must carry its change notices)`;
+    return pattern.licence;
   };
 }
 
 /**
- * Per sample id, the licence its labels file (`<sample-id>/<path>.expected.json`) records as `source.license`; the set's
- * LICENSES.md is Rerail's. A file of a sample with no readable labels gets a note, which no allowlist takes.
+ * What a samples archive's labels files (`<sample-id>/<path>.expected.json`) record: `licenceOf`, from an archive path
+ * to the licence its sample's labels record as `source.license` (the set's LICENSES.md is Rerail's; a file of a sample
+ * with no readable labels gets a note, which no allowlist takes), and `sources`, each `source.repo` the labels name
+ * with its `source.license`, which the approver's summary lists.
  */
 function sampleLicences(entries) {
   const bySample = new Map();
   for (const { path, bytes } of entries) {
     if (!path.endsWith(".expected.json")) continue;
-    let licence;
+    let source;
     try {
-      licence = JSON.parse(bytes.toString("utf8"))?.source?.license;
+      source = JSON.parse(bytes.toString("utf8"))?.source;
     } catch {
-      licence = undefined;
+      source = undefined;
     }
-    if (typeof licence === "string") bySample.set(path.slice(0, path.indexOf("/")), licence);
+    if (typeof source?.license === "string") bySample.set(path.slice(0, path.indexOf("/")), { licence: source.license, repository: typeof source.repo === "string" ? source.repo : undefined });
   }
-  return (path) => (path === SAMPLES_LICENSES ? RERAIL_LICENCE : bySample.get(path.slice(0, path.indexOf("/"))) ?? "no licence (the sample has no labels file naming source.license)");
+  const sources = {};
+  const ordered = [...bySample.values()].sort((a, b) => byBytes(a.repository ?? "", b.repository ?? "") || byBytes(a.licence, b.licence));
+  for (const { licence, repository } of ordered) {
+    if (repository === undefined) continue;
+    // Samples of one repository that disagree on its licence show every licence they name.
+    const named = sources[repository]?.split(" / ") ?? [];
+    if (!named.includes(licence)) sources[repository] = [...named, licence].join(" / ");
+  }
+  const licenceOf = (path) =>
+    path === SAMPLES_LICENSES ? RERAIL_LICENCE : bySample.get(path.slice(0, path.indexOf("/")))?.licence ?? "no licence (the sample has no labels file naming source.license)";
+  return { licenceOf, sources };
 }
 
 /** `{ added, changed, dropped }`: the archive paths `next` adds to, changes in and drops from `base` (both path → bytes), sorted. */
@@ -1326,13 +1497,59 @@ function archiveChanges(base, next) {
   };
 }
 
+/** A test data archive's record of where each of its files came from, and the licence texts it embeds (scripts/pack-data/provenance.mjs writes both). */
+const PROVENANCE_FILE = "provenance.json";
+const PROVENANCE_LICENSES = "LICENSES.md";
+/** How many of the extra and of the missing paths a provenance refusal names. */
+const PROVENANCE_PATHS_SHOWN = 5;
+
+/** `paths` as a refusal shows them: the first PROVENANCE_PATHS_SHOWN, then how many more. */
+const someOf = (paths) => `${paths.slice(0, PROVENANCE_PATHS_SHOWN).join(", ")}${paths.length > PROVENANCE_PATHS_SHOWN ? ` and ${paths.length - PROVENANCE_PATHS_SHOWN} more` : ""}`;
+
+/**
+ * Throws unless the test data archive `entries` (of `toolPack`, from the commit `at` describes) holds provenance.json
+ * and LICENSES.md, and provenance.json is a PROVENANCE_FORMAT record whose `files` keys are exactly the archive's other
+ * paths: an overlay that adds or drops files without its provenance restaged, or a replace without one, is refused.
+ * Only the key set is read; licences are decided by the tracked records alone (sourcesAt).
+ */
+function checkProvenance(toolPack, entries, at) {
+  const label = `${toolPack.directory}/${PROVENANCE_FILE} at ${at}`;
+  const remedy = `derive the tool-pack again so its ${PROVENANCE_FILE} and ${PROVENANCE_LICENSES} describe its files, then ${publishInstruction(toolPack)}`;
+  const byPath = new Map(entries.map(({ path, bytes }) => [path, bytes]));
+  const missing = [PROVENANCE_FILE, PROVENANCE_LICENSES].filter((path) => !byPath.has(path));
+  if (missing.length > 0) throw new Error(`${toolPack.directory}'s archive from ${at} would hold no ${missing.join(" or ")}, which every test data archive carries: ${remedy}`);
+  let record;
+  try {
+    record = JSON.parse(byPath.get(PROVENANCE_FILE).toString("utf8"));
+  } catch (error) {
+    throw new Error(`${label} is not JSON (${error instanceof Error ? error.message : String(error)}): ${remedy}`);
+  }
+  if (record === null || typeof record !== "object" || record.format !== PROVENANCE_FORMAT) {
+    throw new Error(`${label} has format ${JSON.stringify(record?.format)}, not ${JSON.stringify(PROVENANCE_FORMAT)}: ${remedy}`);
+  }
+  const { files } = record;
+  if (files === null || typeof files !== "object" || Array.isArray(files)) throw new Error(`${label} has no \`files\` object: ${remedy}`);
+  const recorded = new Set(Object.keys(files));
+  const archived = [...byPath.keys()].filter((path) => path !== PROVENANCE_FILE && path !== PROVENANCE_LICENSES);
+  const extra = [...recorded].filter((path) => !byPath.has(path) || path === PROVENANCE_FILE || path === PROVENANCE_LICENSES).sort(byBytes);
+  const absent = archived.filter((path) => !recorded.has(path)).sort(byBytes);
+  if (extra.length === 0 && absent.length === 0) return;
+  const problems = [
+    ...(extra.length > 0 ? [`it records ${extra.length} path(s) the archive would not hold (${someOf(extra)})`] : []),
+    ...(absent.length > 0 ? [`it does not record ${absent.length} path(s) the archive would hold (${someOf(absent)})`] : []),
+  ];
+  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${remedy}`);
+}
+
 /** The format of `pack --from`'s manifest. */
 export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
 
 /**
  * The publish workflow's prep (`pack --from <commit>`): archives every tool-pack's publish/ in the commit `from` names,
  * reading nothing of it but blobs (git plumbing in the trusted checkout at `root`, main's; the commit is never checked
- * out and none of its code runs). Per tool-pack and kind present in its publish/:
+ * out and none of its code runs). Per tool-pack and kind present in its publish/, and, for an overlay, per tool-pack
+ * with a test-data.lock whose UPSTREAM.md lists files as Rerail's at the merge base that the commit no longer lists
+ * (.github/workflows/pack-data-publish-request.yml mirrors this trigger):
  *
  * - test data (`publish/<path>`): overlay (default): the archive the commit's test-data.lock names, less the files the
  *   merge base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; `replace`:
@@ -1340,12 +1557,12 @@ export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
  * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, then laid over the
  *   archive the commit's samples.lock names, or alone with `replace`.
  *
- * Base archives come from ARCHIVE_CACHE or S3 (a read). Every file going to S3 must be under a licence the allowlist
- * takes (licenceAllowed): test data by the pack's licenses/<project>/UPSTREAM.md that lists it, else Rerail's
- * Apache-2.0, and samples by their labels' `source.license`; a failure lists every file and licence before anything is
- * written. Then each archive is written compressed under `out` (its key less ARCHIVE_PREFIX), the manifest
- * (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to `summary`, when given. A
- * commit with no publish/ fails: nothing to publish.
+ * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
+ * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
+ * takes (licenceAllowed): test data by sourcesAt, and samples by their labels' `source.license`; a failure lists every
+ * file and licence before anything is written. Then each archive is written compressed under `out` (its key less
+ * ARCHIVE_PREFIX), the manifest (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to
+ * `summary`, when given. A commit with neither a publish/ nor a removed UPSTREAM.md row fails: nothing to publish.
  */
 export async function packFrom({ root = ROOT, from, replace = false, out, manifest, summary, aws = runAws, log = console.log } = {}) {
   if (out === undefined) throw new Error("pack --from needs --out <dir>, where the archives are written");
@@ -1353,7 +1570,6 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
   const at = `${from} (${commit.slice(0, 12)})`;
   const tree = treeEntries(root, commit);
   const requests = publishRequests(tree, at);
-  if (requests.size === 0) throw new Error(`${at} has no ${PUBLISH_DIRECTORY}/ in any packs/<pack>/upstream/<tool>/: nothing to publish`);
   const blob = (path) => {
     const { mode, oid } = tree.get(path);
     if (!REGULAR_FILE_MODES.has(mode)) throw new Error(`${path} at ${at} is not a regular file (mode ${mode})`);
@@ -1365,8 +1581,8 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
   const licensed = sourcesAt(tree, blob);
 
   let mergeBase;
-  /** The authored files the tool directory's UPSTREAM.md lists at the merge base with HEAD and no longer lists at the commit. */
-  const unlisted = (toolPack) => {
+  /** The tree of the merge base of HEAD and the commit, read once. */
+  const baseTree = () => {
     if (mergeBase === undefined) {
       let base;
       try {
@@ -1376,14 +1592,30 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       }
       mergeBase = treeEntries(root, base);
     }
+    return mergeBase;
+  };
+  /** The authored files the tool directory's UPSTREAM.md lists at the merge base with HEAD and no longer lists at the commit. */
+  const unlisted = (toolPack) => {
     const record = `${toolPack.directory}/UPSTREAM.md`;
     const listing = (entries) => {
       const entry = entries.get(record);
       return entry === undefined || !REGULAR_FILE_MODES.has(entry.mode) ? [] : listedAuthored(record, gitBlobs(root, [entry.oid]).get(entry.oid).toString("utf8"));
     };
     const kept = new Set(listing(tree));
-    return new Set(listing(mergeBase).filter((path) => !kept.has(path) && path.startsWith(`${toolPack.directory}/`)));
+    return new Set(listing(baseTree()).filter((path) => !kept.has(path) && path.startsWith(`${toolPack.directory}/`)));
   };
+  // An overlay drops what a removed UPSTREAM.md row listed, so a commit that only removes rows is a request too: for
+  // each tool directory with a test-data.lock whose UPSTREAM.md lists fewer authored files than at the merge base.
+  if (!replace) {
+    for (const path of new Set([...tree.keys(), ...baseTree().keys()])) {
+      const match = TOOL_RECORD.exec(path);
+      if (match === null || !TOOL_ID.test(match[1]) || !TOOL_ID.test(match[2])) continue;
+      const toolPack = namedToolPack(match[1], match[2]);
+      if (requests.has(toolPack.directory) || !tree.has(`${toolPack.directory}/${TEST_DATA_LOCK}`) || unlisted(toolPack).size === 0) continue;
+      requests.set(toolPack.directory, { toolPack, testData: [], samples: [], paths: [] });
+    }
+  }
+  if (requests.size === 0) throw new Error(`${at} has no ${PUBLISH_DIRECTORY}/ in any packs/<pack>/upstream/<tool>/ and removes no UPSTREAM.md row: nothing to publish`);
 
   /** The verified entries of the base archive `lock` names (from ARCHIVE_CACHE, else S3); [] with `optional` when S3 lacks a test data archive. */
   const baseEntries = (toolPack, lock, kind, optional) => {
@@ -1402,9 +1634,9 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
   const allowed = licenceAllowlist();
   const builds = [];
   const refused = [];
-  for (const { toolPack, testData, samples } of requests.values()) {
+  for (const { toolPack, testData, samples } of [...requests.values()].sort((a, b) => byBytes(a.toolPack.directory, b.toolPack.directory))) {
     const kinds = [
-      ...(testData.length > 0 ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData }] : []),
+      ...(testData.length > 0 || (!replace && unlisted(toolPack).size > 0) ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData }] : []),
       ...(samples.length > 0 ? [{ kind: "samples", name: SAMPLES_LOCK, files: samples }] : []),
     ];
     for (const { kind, name, files } of kinds) {
@@ -1424,27 +1656,28 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       }
       for (const { path, bytes } of published) next.set(path, bytes);
       const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
+      if (kind === "test-data") checkProvenance(toolPack, entries, at);
       const archive = buildArchive(entries);
       const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
       const compressed = compressArchive(archive.tar);
       // The archive passes the check upload and confirm make, before anything asks for approval.
       if (kind === "samples") verifiedSamples(compressed, { label, ...archive }, key);
       else verifiedEntries(compressed, { label, ...archive }, key, toolPack.directory);
-      const licenceOf = kind === "samples" ? sampleLicences(entries) : (path) => licensed(toolPack.directory, path);
+      const { licenceOf, sources } = kind === "samples" ? sampleLicences(entries) : { licenceOf: (path) => licensed(toolPack.directory, path), sources: undefined };
       const licences = {};
       for (const { path } of entries) {
         const licence = licenceOf(path);
         licences[licence] = (licences[licence] ?? 0) + 1;
         if (!licenceAllowed(licence, allowed)) refused.push(`${toolPack.directory}/${kind === "samples" ? `${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/` : ""}${path}: ${licence}`);
       }
-      builds.push({ kind, toolPack, label, lock, key, archive, compressed, licences, changes: archiveChanges(base, next) });
+      builds.push({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes: archiveChanges(base, next) });
     }
   }
   if (refused.length > 0) {
     throw new Error(`${refused.length} file(s) going to S3 are under a licence ${LICENCE_ALLOWLIST} does not take (an \`A OR B\` passes when either side is on it), so nothing was packed and no approval is asked:\n${refused.map((line) => `  ${line}`).join("\n")}`);
   }
 
-  const objects = builds.map(({ kind, toolPack, label, lock, key, archive, compressed, licences, changes }) => {
+  const objects = builds.map(({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes }) => {
     const file = join(out, key.slice(ARCHIVE_PREFIX.length));
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, compressed);
@@ -1461,6 +1694,7 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       lockText: lockText(archive),
       base: lock?.sha256 ?? null,
       licences: Object.fromEntries(Object.entries(licences).sort(([a], [b]) => byBytes(a, b))),
+      ...(sources === undefined ? {} : { sources }),
       ...changes,
     };
   });
@@ -1488,15 +1722,26 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
  */
 const SUMMARY_PATHS = 50;
 
-/** The approver's view of a manifest (packFrom's), as markdown: one row per archive, then what each changes. */
+/** Text from a pull request (a licence, a repository name) as inert markdown: every character that could format, link or break a table cell is an HTML entity. */
+const markdownText = (text) => text.replace(/[&<>|`\\*_[\]()!#~]/gu, (character) => `&#${character.codePointAt(0)};`);
+
+/**
+ * The approver's view of a manifest (packFrom's), as markdown: one row per archive, with its licences and, for a samples
+ * archive, each repository its labels name with the licence they record; then what each archive changes.
+ */
 export function publishSummary(manifest) {
   const shown = (paths) => (paths.length === 0 ? "" : `: ${paths.slice(0, SUMMARY_PATHS).map((path) => `\`${path}\``).join(", ")}${paths.length > SUMMARY_PATHS ? ", …" : ""}`);
+  const sources = (object) =>
+    object.sources === undefined ? "`licenses/*/UPSTREAM.md`" : Object.entries(object.sources).map(([repository, licence]) => `${markdownText(repository)} ${markdownText(licence)}`).join(", ") || "none";
   return [
     `### Pack data to publish from ${manifest.commit} (${manifest.replace ? "replace" : "overlay"})`,
     "",
-    "| Kind | Tool-pack | sha256 | Files | Bytes | Licences |",
-    "|---|---|---|---|---|---|",
-    ...manifest.objects.map((object) => `| ${object.kind} | \`${object.pack}/${object.tool}\` | \`${object.sha256}\` | ${object.files} | ${object.bytes} | ${Object.entries(object.licences).map(([licence, count]) => `${licence} ${count}`).join(", ")} |`),
+    "| Kind | Tool-pack | sha256 | Files | Bytes | Licences | Sources |",
+    "|---|---|---|---|---|---|---|",
+    ...manifest.objects.map(
+      (object) =>
+        `| ${object.kind} | \`${object.pack}/${object.tool}\` | \`${object.sha256}\` | ${object.files} | ${object.bytes} | ${Object.entries(object.licences).map(([licence, count]) => `${markdownText(licence)} ${count}`).join(", ")} | ${sources(object)} |`,
+    ),
     "",
     ...manifest.objects.flatMap((object) => [
       `- ${object.kind} \`${object.pack}/${object.tool}\` against ${object.base === null ? "no locked archive" : `the locked \`${object.base}\``}:`,
@@ -1675,7 +1920,7 @@ export function push({ root = ROOT, pack: packId, tool, dryRun = false, tags, aw
 
 /**
  * CI's cache entry for the selected tool-packs' archives and their samples archives: its key (from the locked sha256s
- * alone) and its paths.
+ * alone), its paths, and `archives`, the archiveLines of the locks it keys on (what a job that hits it uses).
  */
 export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
   const selected = selectToolPacks(root, packId, tool);
@@ -1693,7 +1938,11 @@ export function archiveCache({ root = ROOT, pack: packId, tool } = {}) {
       ...(samplesLock === undefined ? [] : [samplesArchiveCachePath(root, toolPack, samplesLock.sha256)]),
     ]),
   ];
-  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")) };
+  const archives = archiveLines(locked.flatMap(({ toolPack, lock, samplesLock }) => [
+    { toolPack, kind: "test-data", sha256: lock.sha256 },
+    ...(samplesLock === undefined ? [] : [{ toolPack, kind: "samples", sha256: samplesLock.sha256 }]),
+  ]));
+  return { key, paths: paths.map((path) => relative(root, path).split(sep).join("/")), archives };
 }
 
 /**
@@ -1731,7 +1980,8 @@ export function check({ root = ROOT, pack: packId, tool, aws = runAws, log = con
 
 const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [--tool <tool>]] [--dry-run]
   pull        fetch, verify and extract the archives the selected tool-packs' test-data.lock files name, and their
-              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them
+              samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them;
+              in GitHub Actions, list each archive used (pack tool kind sha256) as the step's archives output and summary
   stage       --pack <id> [--tool <tool>] [--all]: copy the pack test data on disk that the locked archive lacks or
               holds differently into the tool-pack's ${PUBLISH_DIRECTORY}/ (--all: all of it, for a replace publish)
   push        maintainer with write credentials: pack, then upload (tagged)
@@ -1750,7 +2000,8 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
               holds them, read them back, and print the git add for the locks (no --dry-run)
   check       fail, listing each with its remedy, unless S3 holds every archive the selected tool-packs' locks name
               (head-object only; nothing is downloaded)
-  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON
+  cache       CI: the Actions cache key and paths for the selected tool-packs' archives and samples archives, as JSON,
+              and the archives they are (pack tool kind sha256) as the step's archives output in GitHub Actions
 Every upload is tagged: --commit (default HEAD), --pr (default none), --run-id (default local) and --uploader (default
 the gh CLI's login).`;
 
@@ -1778,7 +2029,7 @@ const TAGS = ["commit", "pr", "run-id", "uploader"];
 
 /** Each command's options, and how it runs with the parsed `values`. */
 const COMMANDS = {
-  pull: { options: SELECT, run: (values) => pull(values) },
+  pull: { options: SELECT, run: (values) => pull({ ...values, env: process.env }) },
   stage: { options: [...SELECT, "all"], run: (values) => stage(values) },
   push: { options: [...SELECT, ...TAGS], run: (values) => push({ ...values, tags: values.dryRun ? undefined : commandTags(values) }) },
   pack: {
@@ -1817,7 +2068,15 @@ const COMMANDS = {
   samples: { options: SELECT, run: (values) => samples(values) },
   "samples push": { options: ["pack", "tool", ...TAGS], run: (values) => samplesPush({ ...values, tags: commandTags(values) }) },
   check: { options: ["pack", "tool"], run: (values) => check(values) },
-  cache: { options: ["pack", "tool"], run: (values) => console.log(JSON.stringify(archiveCache(values))) },
+  cache: {
+    options: ["pack", "tool"],
+    run: (values) => {
+      const entry = archiveCache(values);
+      // A fetching job that hits the cache runs no pull: the archives it keys on are the ones the run uses.
+      reportArchives(entry.archives, { env: process.env, summary: false });
+      console.log(JSON.stringify(entry));
+    },
+  },
 };
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

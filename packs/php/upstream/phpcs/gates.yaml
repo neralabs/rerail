@@ -67,3 +67,23 @@ rules:
   "Squiz.PHP.Eval":
     deprecated: null
     recommended: null
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads each sniff's <Name>UnitTest*.inc and the error lists of <Name>UnitTest.php.
+# DeprecatedFunctions extends ForbiddenFunctionsSniff.
+watch:
+  tests: []
+  code: []
+  shared:
+    - "src/Files/File.php"
+    - "src/Tokenizers/PHP.php"
+    - "src/Tokenizers/Tokenizer.php"
+    - "src/Util/Tokens.php"
+  rules:
+    "Generic.CodeAnalysis.EmptyStatement": { tests: ["src/Standards/Generic/Tests/CodeAnalysis/EmptyStatementUnitTest*.inc", "src/Standards/Generic/Tests/CodeAnalysis/EmptyStatementUnitTest.php"], code: ["src/Standards/Generic/Sniffs/CodeAnalysis/EmptyStatementSniff.php"] }
+    "Generic.PHP.BacktickOperator": { tests: ["src/Standards/Generic/Tests/PHP/BacktickOperatorUnitTest*.inc", "src/Standards/Generic/Tests/PHP/BacktickOperatorUnitTest.php"], code: ["src/Standards/Generic/Sniffs/PHP/BacktickOperatorSniff.php"] }
+    "Generic.PHP.DeprecatedFunctions": { tests: ["src/Standards/Generic/Tests/PHP/DeprecatedFunctionsUnitTest*.inc", "src/Standards/Generic/Tests/PHP/DeprecatedFunctionsUnitTest.php"], code: ["src/Standards/Generic/Sniffs/PHP/DeprecatedFunctionsSniff.php", "src/Standards/Generic/Sniffs/PHP/ForbiddenFunctionsSniff.php"] }
+    "Generic.PHP.ForbiddenFunctions": { tests: ["src/Standards/Generic/Tests/PHP/ForbiddenFunctionsUnitTest*.inc", "src/Standards/Generic/Tests/PHP/ForbiddenFunctionsUnitTest.php"], code: ["src/Standards/Generic/Sniffs/PHP/ForbiddenFunctionsSniff.php"] }
+    "Generic.PHP.LowerCaseConstant": { tests: ["src/Standards/Generic/Tests/PHP/LowerCaseConstantUnitTest*.inc", "src/Standards/Generic/Tests/PHP/LowerCaseConstantUnitTest.php"], code: ["src/Standards/Generic/Sniffs/PHP/LowerCaseConstantSniff.php"] }
+    "Generic.PHP.NoSilencedErrors": { tests: ["src/Standards/Generic/Tests/PHP/NoSilencedErrorsUnitTest*.inc", "src/Standards/Generic/Tests/PHP/NoSilencedErrorsUnitTest.php"], code: ["src/Standards/Generic/Sniffs/PHP/NoSilencedErrorsSniff.php"] }
+    "Squiz.PHP.DisallowSizeFunctionsInLoops": { tests: ["src/Standards/Squiz/Tests/PHP/DisallowSizeFunctionsInLoopsUnitTest*.inc", "src/Standards/Squiz/Tests/PHP/DisallowSizeFunctionsInLoopsUnitTest.php"], code: ["src/Standards/Squiz/Sniffs/PHP/DisallowSizeFunctionsInLoopsSniff.php"] }
+    "Squiz.PHP.Eval": { tests: ["src/Standards/Squiz/Tests/PHP/EvalUnitTest*.inc", "src/Standards/Squiz/Tests/PHP/EvalUnitTest.php"], code: ["src/Standards/Squiz/Sniffs/PHP/EvalSniff.php"] }

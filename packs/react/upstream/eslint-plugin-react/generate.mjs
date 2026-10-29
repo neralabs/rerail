@@ -13,12 +13,13 @@
 // 3. Writes Rerail's own cases (common.mjs `AUTHORED`) beside them and lists them in UPSTREAM.md. Runs the pinned plugin
 //    (common.mjs `config`: every chosen rule, default options) over every fixture file, and writes
 //    fixtures.expected.json.
-// 4. Writes ../../licenses/eslint-plugin-react/UPSTREAM.md and LICENSE.
+// 4. Copies ../../licenses/eslint-plugin-react/LICENSE and writes provenance.json and LICENSES.md: every copied test
+//    file and every extracted case with its upstream path and locator.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertCommit } from "../../../../scripts/pack-data/eslint-expected.mjs";
-import { execute, finishFixtures, options, RULES, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
+import { execute, finishFixtures, options, RULES, toolsRequire, UPSTREAM, writeLicenseAndProvenance } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react";
 const DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -89,10 +90,10 @@ for (const rule of RULES[TOOL]) {
     captured[0].tests[kind].forEach((test, index) => {
       const code = typeof test === "string" ? test : test.code;
       const errors = kind === "valid" ? 0 : typeof test.errors === "number" ? test.errors : test.errors.length;
-      cases.push({ rule, directory: name, kind, index, test, code, errors, origin: `${relativeTest} ${kind}[${index}]`, filename: typeof test === "string" ? undefined : test.filename, ...classify(test) });
+      cases.push({ rule, directory: name, kind, index, test, code, errors, origin: `${relativeTest} ${kind}[${index}]`, from: relativeTest, detail: `${kind}[${index}]`, filename: typeof test === "string" ? undefined : test.filename, ...classify(test) });
     });
   }
 }
 
 const result = await finishFixtures(require, TOOL, DIRECTORY, cases, tools);
-writeLicense(TOOL, upstream, copied, result.kept);
+writeLicenseAndProvenance(TOOL, upstream, copied, result.kept, result.recorded);

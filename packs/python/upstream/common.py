@@ -82,6 +82,14 @@ def write_authored(target: pathlib.Path, cases: dict[str, str]) -> list[str]:
     return sorted(cases)
 
 
+def write_provenance(tool: str, origin: str, upstream: str, files: list[str]) -> None:
+    """upstream/<tool>/provenance.json and LICENSES.md, once every file is written: each of `files` (relative to
+    fixtures/) a verbatim copy of `<upstream>/<file>` at the commit `origin` (`<repository>@<commit>`) pins; the writer
+    classifies Rerail's own files itself."""
+    entries = {f"fixtures/{file}": {"source": tool, "from": f"{upstream}/{file}", "how": "verbatim"} for file in files}
+    pack_fixtures.write_provenance(HERE.parent.name, tool, entries, {tool: origin.rsplit("@", 1)[1]})
+
+
 def write_record(tool: str, title: str, files: list[str], holders: str) -> None:
     """upstream/<tool>/UPSTREAM.md: the fixtures Rerail wrote, which the tool's expected findings score."""
     rows = "".join(f"| `upstream/{tool}/fixtures/{file}` | written by Rerail |\n" for file in files)

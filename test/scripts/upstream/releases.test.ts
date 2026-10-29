@@ -1,8 +1,9 @@
 /**
- * The nightly upstream-release check (scripts/upstream/releases.ts): each registry's answer read as its latest stable
- * release; each tool-pack's gap to it (Rust's on major.minor only) reported and listed for the bump; and every finding,
- * a breaking gap, pins that disagree or a registry that cannot be read, a warning that never fails the run. The registry
- * answers are trimmed copies of real ones, recorded on 2026-10-21; nothing reaches the network.
+ * The upstream-release check (scripts/upstream/releases.ts): each registry's answer read as its latest stable release;
+ * each tool-pack's gap to it (Rust's on major.minor only) reported, and its pinned and latest release listed for the
+ * bump start; and every finding, a breaking gap, pins that disagree or a registry that cannot be read, a warning that
+ * never fails the run. The registry answers are trimmed copies of real ones, recorded on 2026-10-21; nothing reaches the
+ * network.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -180,22 +181,30 @@ function banditRuntime(version: string): string {
 const BANDIT_1_9_4 = banditRuntime("1.9.4");
 
 /**
- * Run the CLI over `root` as the nightly does, under GitHub Actions with a step summary and `--behind`; its exit code,
- * output, and the tool-packs it lists behind.
+ * Run the CLI over `root` as the bump start does, under GitHub Actions with a step summary and `--json`; its exit code,
+ * output, and every tool-pack's pinned and latest release it lists.
  */
-async function nightly(root: string, fetch: Fetch): Promise<{ code: number; stdout: string; summary: string; behind: unknown }> {
+async function nightly(root: string, fetch: Fetch): Promise<{ code: number; stdout: string; summary: string; versions: unknown }> {
   const summaryFile = join(root, "step-summary.md");
-  const behindFile = join(root, "behind.json");
+  const versionsFile = join(root, "versions.json");
   writeFileSync(summaryFile, "");
   const written: string[] = [];
   vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
     written.push(String(chunk));
     return true;
   });
-  const code = await main(root, fetch, { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summaryFile }, { behind: behindFile });
+  const code = await main(root, fetch, { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summaryFile }, { json: versionsFile });
   vi.restoreAllMocks();
-  return { code, stdout: written.join(""), summary: readFileSync(summaryFile, "utf8"), behind: JSON.parse(readFileSync(behindFile, "utf8")) };
+  return { code, stdout: written.join(""), summary: readFileSync(summaryFile, "utf8"), versions: JSON.parse(readFileSync(versionsFile, "utf8")) };
 }
+
+/** demo/bandit's entry in `--json`. */
+function bandit(pinned: string, latest: string | null, gap: string | null, breaking: boolean): object {
+  return { pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned, latest, gap, breaking };
+}
+
+/** rust/clippy's entry in `--json`, pinned at its latest release. */
+const CLIPPY_CURRENT = { pack: "rust", tool: "clippy", toolPack: "rust/clippy", pinned: "1.99.0", latest: "1.99.0", gap: "current", breaking: false };
 
 /** A fetch whose latest release of each pin is its pinned one, except `latest`'s for the tool-packs it names. */
 function releasing(root: string, latest: Record<string, string>): Fetch {
@@ -266,13 +275,13 @@ test("this checkout's pins agree, and pass when every registry's latest is the p
 test("a current pin passes and writes the step summary", async () => {
   const root = checkout(BANDIT_1_9_4);
   roots.push(root);
-  const { code, stdout, summary, behind } = await nightly(root, releasing(root, {}));
+  const { code, stdout, summary, versions } = await nightly(root, releasing(root, {}));
   assert.equal(code, 0, stdout);
   assert.doesNotMatch(stdout, /::(?:error|warning)/u);
   assert.match(summary, /^\| Tool-pack \| Ecosystem \| Package \| Pinned \| Latest stable \| Gap \| Status \|$/mu);
   assert.match(summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.4 \| current \| current \|$/mu);
   assert.match(summary, /Every one of the 2 upstreams is pinned at its latest stable release/u);
-  assert.deepEqual(behind, []);
+  assert.deepEqual(versions, [bandit("1.9.4", "1.9.4", "current", false), CLIPPY_CURRENT]);
 });
 
 test("a patch or minor release upstream is reported and listed for the bump as a warning", async () => {
@@ -282,18 +291,18 @@ test("a patch or minor release upstream is reported and listed for the bump as a
   const patch = await nightly(root, releasing(root, { "demo/bandit": "1.9.5" }));
   assert.equal(patch.code, 0, patch.stdout);
   assert.match(patch.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.9\.5 \| patch \| behind \|$/mu);
-  assert.match(patch.summary, /^1 of 2 upstreams are behind their latest stable release; the nightly's bump pull request moves them:$/mu);
+  assert.match(patch.summary, /^1 of 2 upstreams are behind their latest stable release; a maintainer starts their bump \(upstream-bump-start\.yml\):$/mu);
   assert.match(patch.summary, /^- `demo\/bandit`: bandit 1\.9\.4 is pinned and PyPI's latest stable release is 1\.9\.5, a patch release: npm run upstream:bump -- --pack demo --tool bandit, /mu);
   assert.match(patch.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: patch\): /mu);
   assert.doesNotMatch(patch.stdout, /::error/u);
-  assert.deepEqual(patch.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "1.9.5", gap: "patch", breaking: false }]);
+  assert.deepEqual(patch.versions, [bandit("1.9.4", "1.9.5", "patch", false), CLIPPY_CURRENT]);
 
   const minor = await nightly(root, releasing(root, { "demo/bandit": "1.10.0" }));
   assert.equal(minor.code, 0, minor.stdout);
   assert.match(minor.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| 1\.10\.0 \| minor \| behind \|$/mu);
   assert.match(minor.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: minor\): /mu);
   assert.doesNotMatch(minor.stdout, /::error/u);
-  assert.deepEqual(minor.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "1.10.0", gap: "minor", breaking: false }]);
+  assert.deepEqual(minor.versions, [bandit("1.9.4", "1.10.0", "minor", false), CLIPPY_CURRENT]);
 });
 
 test("a major release upstream, or a minor release of a 0.x pin, is breaking, and still only a warning", async () => {
@@ -306,7 +315,7 @@ test("a major release upstream, or a minor release of a 0.x pin, is breaking, an
   assert.match(major.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit behind \(gap: major \(breaking\)\): /mu);
   assert.doesNotMatch(major.stdout, /::error/u);
   assert.doesNotMatch(major.stdout, /::(?:error|warning) title=Upstream release \(rust\/clippy\)/u);
-  assert.deepEqual(major.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "2.0.0", gap: "major", breaking: true }]);
+  assert.deepEqual(major.versions, [bandit("1.9.4", "2.0.0", "major", true), CLIPPY_CURRENT]);
 
   const zero = checkout(banditRuntime("0.9.4"), "0.9.4");
   roots.push(zero);
@@ -314,12 +323,12 @@ test("a major release upstream, or a minor release of a 0.x pin, is breaking, an
   assert.equal(zeroMinor.code, 0, zeroMinor.stdout);
   assert.match(zeroMinor.summary, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 0\.9\.4 \| 0\.10\.0 \| breaking-minor \(breaking\) \| behind \|$/mu);
   assert.match(zeroMinor.stdout, /^::warning title=Upstream release \(demo\/bandit\)::/mu);
-  assert.deepEqual(zeroMinor.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "0.9.4", latest: "0.10.0", gap: "breaking-minor", breaking: true }]);
+  assert.deepEqual(zeroMinor.versions, [bandit("0.9.4", "0.10.0", "breaking-minor", true), CLIPPY_CURRENT]);
 
   // A patch release of a 0.x pin is not breaking.
   const zeroPatch = await nightly(zero, releasing(zero, { "demo/bandit": "0.9.5" }));
   assert.equal(zeroPatch.code, 0, zeroPatch.stdout);
-  assert.deepEqual(zeroPatch.behind, [{ pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "0.9.4", latest: "0.9.5", gap: "patch", breaking: false }]);
+  assert.deepEqual(zeroPatch.versions, [bandit("0.9.4", "0.9.5", "patch", false), CLIPPY_CURRENT]);
 });
 
 test("Rust's releases are compared on major.minor: a patch release is current, a minor one behind but not breaking", async () => {
@@ -329,31 +338,28 @@ test("Rust's releases are compared on major.minor: a patch release is current, a
   assert.equal(patch.code, 0, patch.stdout);
   assert.match(patch.summary, /^\| `rust\/clippy` \| Rust \| `rust` \| 1\.99\.0 \| 1\.99\.3 \| current \| current \|$/mu);
   assert.doesNotMatch(patch.stdout, /::(?:error|warning)/u);
-  assert.deepEqual(patch.behind, []);
+  assert.deepEqual(patch.versions, [bandit("1.9.4", "1.9.4", "current", false), { ...CLIPPY_CURRENT, latest: "1.99.3" }]);
 
   const minor = await nightly(root, releasing(root, { "rust/clippy": "1.100.1" }));
   assert.equal(minor.code, 0, minor.stdout);
   assert.match(minor.summary, /^\| `rust\/clippy` \| Rust \| `rust` \| 1\.99\.0 \| 1\.100\.1 \| minor \| behind \|$/mu);
   assert.match(minor.stdout, /^::warning title=Upstream release \(rust\/clippy\)::/mu);
-  assert.deepEqual(minor.behind, [{ pack: "rust", tool: "clippy", toolPack: "rust/clippy", pinned: "1.99.0", latest: "1.100.1", gap: "minor", breaking: false }]);
+  assert.deepEqual(minor.versions, [bandit("1.9.4", "1.9.4", "current", false), { ...CLIPPY_CURRENT, latest: "1.100.1", gap: "minor" }]);
 });
 
-test("--behind lists every tool-pack behind upstream, breaking or not, sorted, and only those", async () => {
+test("--json lists every tool-pack's pinned and latest release, behind or not, sorted by tool-pack", async () => {
   const root = checkout(BANDIT_1_9_4);
   roots.push(root);
   const both = await nightly(root, releasing(root, { "demo/bandit": "2.0.0", "rust/clippy": "1.100.0" }));
   assert.equal(both.code, 0, both.stdout);
-  assert.deepEqual(both.behind, [
-    { pack: "demo", tool: "bandit", toolPack: "demo/bandit", pinned: "1.9.4", latest: "2.0.0", gap: "major", breaking: true },
-    { pack: "rust", tool: "clippy", toolPack: "rust/clippy", pinned: "1.99.0", latest: "1.100.0", gap: "minor", breaking: false },
-  ]);
+  assert.deepEqual(both.versions, [bandit("1.9.4", "2.0.0", "major", true), { ...CLIPPY_CURRENT, latest: "1.100.0", gap: "minor" }]);
   assert.match(both.stdout, /^::warning title=Upstream release \(demo\/bandit\)::/mu);
   assert.match(both.stdout, /^::warning title=Upstream release \(rust\/clippy\)::/mu);
 
-  // A tool-pack whose pins are not behind upstream (here they disagree) lists nothing to bump.
+  // Pins that disagree are listed at gates.yaml's pin: the bump of such a tool-pack fails its leg with the reason.
   const disagreeing = checkout(banditRuntime("1.9.3"));
   roots.push(disagreeing);
-  assert.deepEqual((await nightly(disagreeing, releasing(disagreeing, {}))).behind, []);
+  assert.deepEqual((await nightly(disagreeing, releasing(disagreeing, {}))).versions, [bandit("1.9.4", "1.9.4", "current", false), CLIPPY_CURRENT]);
 });
 
 test("gates.yaml and the runtime disagreeing about the pin is reported, as is a runtime that pins no release of upstream", async () => {
@@ -388,6 +394,8 @@ test("a registry that cannot be read is a warning, not a pass", async () => {
   assert.match(answered.stdout, /^::warning title=Upstream release \(demo\/bandit\)::demo\/bandit registry error/mu);
   assert.match(answered.stdout, /^\| `demo\/bandit` \| PyPI \| `bandit` \| 1\.9\.4 \| unknown \| unknown \| registry error \|$/mu);
   assert.match(answered.stdout, /`demo\/bandit`: https:\/\/pypi\.org\/pypi\/bandit\/json: HTTP 503/u);
+  // No latest release, so no gap: the bump start refuses to bump it.
+  assert.deepEqual(answered.versions, [bandit("1.9.4", null, null, false), CLIPPY_CURRENT]);
 
   const offline = await checkUpstreamReleases(pins, async () => {
     throw new Error("getaddrinfo ENOTFOUND");

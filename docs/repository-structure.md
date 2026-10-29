@@ -11,7 +11,7 @@ structure review on PR #1 plus #25, the generated-file manifest.
 |---|---|
 | `src/engine/`, `src/hosts/<harness>/`, `src/<layer>/` | The TypeScript package, one directory per layer, each with an `index.ts` entry point |
 | `native/` | The Rust engine; it compiles only from here (#4) |
-| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (recordings; their test data is not in git: one archive per tool, in S3, named by its `test-data.lock`, #3), `licenses/` |
+| `packs/<id>/` | A rule pack: `pack.json`, `package.json`, `README.md`, `LICENSE`, `NOTICE`, `rules/` (shipped), `candidates/` (scored, never shipped), `upstream/<tool>/` (generators and locks; the test data, expected findings included, is not in git: one archive per tool, in S3, named by its `test-data.lock`, #3), `licenses/` |
 | `fixtures/<family>/<feature>/` | Engine and host test data; `<feature>` names an engine module (#10) |
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |

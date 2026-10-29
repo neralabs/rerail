@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,12 +6,14 @@ import { dirname, join } from "node:path";
 import {
   ManagedUpdater,
   compareSemver,
+  gitBashShim,
   launcherShim,
   validateManagedInstallation,
   type Installation,
   type PackageRegistry,
 } from "../../src/setup/updater.js";
 import { ENTRY_POINTS } from "../../src/engine/index.js";
+import { pinnedNodePath } from "../../src/setup/node-path.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -73,6 +75,34 @@ describe("managed launcher shims", () => {
     expect(shim).toContain('set "RERAIL_NODE=C:\\Program Files\\nodejs\\node.exe"');
     expect(shim).toContain(String.raw`"C:\Users\100%% User\.rerail\current\dist\cli\cli.js" %*`);
     expect(shim.endsWith("\r\n")).toBe(true);
+  });
+
+  it("spells a non-ASCII path in the batch launcher from its own folder, never from the environment, since cmd misreads UTF-8", () => {
+    const profile = String.raw`C:\Users\José García`;
+    // A repository's environment can set LOCALAPPDATA; the launcher must not run whichever node.exe it points at.
+    vi.stubEnv("LOCALAPPDATA", String.raw`${profile}\AppData\Local`);
+    try {
+      const shim = launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\AppData\Local\Volta\100%\node.exe`, "win32");
+      // Unspellable, so node.exe from PATH alone: a bare `node` would let cmd run one from the current folder first.
+      expect(shim).toContain(String.raw`set "RERAIL_NODE="`);
+      expect(shim).toContain(String.raw`for %%I in (node.exe) do set "RERAIL_NODE=%%~$PATH:I"`);
+      expect(shim).not.toMatch(/RERAIL_NODE=node"/u);
+      expect(shim).toContain(String.raw`"%RERAIL_NODE%" "%~dp0..\current\dist\cli\cli.js" %*`);
+      expect(shim).not.toContain("%LOCALAPPDATA%");
+      expect(/^[\x20-\x7e\r\n]*$/u.test(shim)).toBe(true);
+      // A node inside the Rerail home is spelled from the launcher's folder.
+      expect(launcherShim(String.raw`${profile}\.rerail\current`, String.raw`${profile}\.rerail\node\100%\node.exe`, "win32"))
+        .toContain(String.raw`set "RERAIL_NODE=%~dp0..\node\100%%\node.exe"`);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("gives Git Bash an sh launcher with the Windows paths, beside the batch one", () => {
+    const shim = gitBashShim(String.raw`C:\Users\O'Neil\.rerail\current`, String.raw`C:\Program Files\nodejs\node.exe`);
+    expect(shim).toContain(String.raw`NODE='C:\Program Files\nodejs\node.exe'`);
+    expect(shim).toContain(String.raw`exec "$NODE" 'C:\Users\O'\''Neil\.rerail\current\dist\cli\cli.js' "$@"`);
+    expect(shim.includes("\r")).toBe(false);
   });
 });
 
@@ -427,15 +457,30 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     const shim = await readFile(updater.launcherPath, "utf8");
     expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
     expect(shim).toContain(`'${join(updater.currentLink, "dist", "cli", "cli.js")}'`);
-    expect(shim).toContain(`NODE='${process.execPath}'`);
+    expect(shim).toContain(`NODE='${pinnedNodePath()}'`);
     expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
-    expect(shim).toBe(launcherShim(updater.currentLink, process.execPath));
+    expect(shim).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
 
     // Re-running is a no-op: same root, nothing reinstalled, launcher untouched.
     const again = await updater.install();
     expect(again.changed).toBe(false);
     expect(registry.installedVersions).toEqual(["1.0.0"]);
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
+  });
+
+  it("re-pins a launcher that names another node, and writes none where no install did", async () => {
+    const { home, packageRoot } = await fixture();
+    const options = { home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0"), validateInstallation: assertPackageIdentity };
+    const fresh = new ManagedUpdater(options);
+    expect(await fresh.refreshLauncher()).toBe(false);
+    expect(existsSync(fresh.launcherPath)).toBe(false);
+
+    const updater = new ManagedUpdater(options);
+    await updater.install();
+    await writeFile(updater.launcherPath, launcherShim(updater.currentLink, "/gone/node-v24/bin/node"));
+    expect(await updater.refreshLauncher()).toBe(true);
+    expect(await readFile(updater.launcherPath, "utf8")).toBe(launcherShim(updater.currentLink, pinnedNodePath()));
+    expect(await updater.refreshLauncher()).toBe(false);
   });
 
   it("replaces a dangling Windows current junction", async () => {
@@ -455,6 +500,9 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 
     expect(await readlink(updater.currentLink)).toBe(installed.current.packageRoot);
     expect((await lstat(updater.currentLink)).isSymbolicLink()).toBe(true);
+    // Git Bash runs `rerail` through the extensionless sh launcher; it never finds `rerail.cmd` without the extension.
+    expect(await readFile(join(home, "bin", "rerail"), "utf8")).toBe(gitBashShim(updater.currentLink, pinnedNodePath()));
+    expect(existsSync(updater.launcherPath)).toBe(true);
   });
 
   it("keeps a managed previous version for rollback and re-points current on update", async () => {
@@ -491,7 +539,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(bootstrapped.previous).toEqual(first.current);
   });
 
-  it("leaves the previous state untouched when the install fails validation", async () => {
+  it("leaves no Rerail home behind when a first install fails validation", async () => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.0.0");
     const updater = new ManagedUpdater({
@@ -504,9 +552,25 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
       },
     });
     await expect(updater.install()).rejects.toThrow("native health failed");
-    expect(existsSync(join(home, "versions", "1.0.0"))).toBe(false);
-    expect(existsSync(updater.currentLink)).toBe(false);
-    expect(existsSync(updater.launcherPath)).toBe(false);
+    // Set-up then says nothing was changed: not even an empty versions/ or Rerail home remains.
+    expect(existsSync(home)).toBe(false);
+  });
+
+  it("removes only the empty versions/ it made when an install into an existing home fails", async () => {
+    const { home, packageRoot } = await fixture();
+    await mkdir(home);
+    await writeFile(join(home, "keep.json"), "{}");
+    const updater = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: new FakeRegistry("1.0.0"),
+      validateInstallation: async () => {
+        throw new Error("native health failed");
+      },
+    });
+    await expect(updater.install()).rejects.toThrow("native health failed");
+    expect(await readdir(home)).toEqual(["keep.json"]);
   });
 });
 

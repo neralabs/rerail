@@ -66,3 +66,20 @@ rules:
   "variable.undefined":
     deprecated: null
     recommended: { config: "level0", options: [] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator copies tests/skeleton/ and runs tests/Rules/. The ported identifiers are PHPStan's rules run over
+# the compiled templates, so only Bladestan's compiler and error mapping are watched, as shared code.
+watch:
+  tests:
+    - "tests/Rules/**"
+    - "tests/skeleton/**"
+  # No rule code here: the ported identifiers' rules are phpstan/phpstan-src's, which packs/php/upstream/phpstan watches.
+  code: []
+  shared:
+    - "composer.json"
+    - "config/extension.neon"
+    - "src/Blade/PhpLineToTemplateLineResolver.php"
+    - "src/Compiler/BladeToPHPCompiler.php"
+    - "src/ErrorReporting/Blade/TemplateErrorsFactory.php"
+    - "src/PhpParser/NodeVisitor/**"
+    - "src/TemplateCompiler/ErrorFilter.php"
