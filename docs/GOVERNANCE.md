@@ -4,9 +4,10 @@ How Rerail is run: who takes part and how, who the maintainers are, and how deci
 contribute day to day is in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Rerail is an open-source project developed by Nera Software Inc. and licensed under the Apache License 2.0. At this
-stage it is open source with closed contribution: anyone can use, fork and redistribute the code under the licence,
-and anyone can send bug reports, feature requests, questions and links to changes in their fork through the issues,
-but only Nera Software employees and the project's own automation open pull requests here. If that changes, this document changes first.
+stage it is open source with gated contribution: anyone can use, fork and redistribute the code under the licence,
+and anyone can send bug reports, feature requests, questions and changes made in their fork through the issues, but
+code reaches this repository only through a pull request that a Nera Software employee or the project's own
+automation opens. If that changes, this document changes first.
 
 ## Roles
 

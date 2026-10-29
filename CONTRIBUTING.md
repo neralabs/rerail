@@ -9,8 +9,8 @@ decisions are made is in [docs/GOVERNANCE.md](docs/GOVERNANCE.md).
 
 ## Who opens pull requests
 
-Rerail is open source with closed contribution, for now: anyone can open an issue, and only Nera Software employees
-and the project's own automation open pull requests.
+Rerail is open source with gated contribution, for now: anyone can open an issue and propose a change from their
+fork, and only Nera Software employees and the project's own automation open pull requests here.
 
 | | Nera Software employees | Anyone else |
 | --- | --- | --- |
