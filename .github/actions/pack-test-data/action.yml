@@ -2,20 +2,21 @@ name: Pack test data
 description: >-
   Puts the packs' test data (every file PACK_FIXTURE_PATTERNS in scripts/s3/pack-fixtures.mjs matches under
   packs/<pack>/upstream/<tool>/) into the checkout: for each selected tool-pack, the archive its test-data.lock names by
-  sha256 (CONTRIBUTING.md, "Pack test data"), verified against the lock and extracted, with a pull request's tracked
-  copies winning (`fixtures:pull`). The archives come from the Actions cache, keyed by the locks, and reach it from
-  s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here: a pin change
-  reaches CI only as the archives and locks the nightly producer's pull request commits. Use it right after
+  sha256 (CONTRIBUTING.md, "Pack test data"), verified against the lock and extracted, with a pull request's publish/
+  laid over it (`fixtures:pull`), and the real-code samples archive its samples.lock names, when it has one, verified
+  and extracted under .rerail/pack-data/samples/. The archives come from the Actions cache, keyed by the locks, and
+  reach it from s3://nera-test-fixtures/rerail/archives/ under the repository's OIDC read role. Nothing is derived here:
+  a pin change reaches CI only as the archives and locks the upstream bump's pull request commits. Use it right after
   `actions/checkout`, once per tool-pack or once for all of them, in one of two kinds of job. The fetching job
   (`fetch: "true"`) only fills the cache: it looks the key up without restoring it and, on a miss, pulls the archives
   from S3 and saves them; it needs `id-token: write` and `contents: read` (a reusable workflow's caller must grant
-  them too), restores no cache entry and runs nothing but this commit's scripts/s3/pack-fixtures.mjs (the recordings
-  warm-up of port-readiness.yml's test-data job too), and runs only for pushes and same-repository pull requests, since
+  them too), restores no cache entry and runs nothing but this commit's scripts/s3/pack-fixtures.mjs, and runs only for
+  pushes and same-repository pull requests, since
   GitHub gives a fork's or Dependabot's pull request no OIDC token. The AWS credentials reach the pull step alone, never
   the job's environment. The consuming job (`fetch: "false"`) restores the cache entry the fetching job of the same
   workflow run saved, verifies each archive against its lock and extracts it; it holds no `id-token`, never assumes a
   role and never saves, and a miss fails. So a job with `id-token: write` never extracts a cache entry, whoever wrote
-  it, and a job that extracts one, or runs upstream's code (the recorder, the generators), holds no token to mint.
+  it, and a job that extracts one, or runs upstream's code (the generators), holds no token to mint.
   Consumers verify what they restore.
 
 inputs:
@@ -36,6 +37,14 @@ inputs:
     required: false
     default: "true"
 
+outputs:
+  archives:
+    description: >-
+      One line per archive this run used, `<pack> <tool> <kind> <sha256>` (kind test-data or samples): the pull's, or,
+      for a fetching job whose key the cache holds (it runs no pull), the locks the key names. Replay a run from it
+      (CONTRIBUTING.md, "Pack test data").
+    value: ${{ steps.pull.outputs.archives || steps.entry.outputs.archives }}
+
 runs:
   using: composite
   steps:
@@ -46,7 +55,8 @@ runs:
         node-version: "24"
         package-manager-cache: false
 
-    # The key names the locked sha256s alone, so it changes exactly when an archive does.
+    # The key names the locked sha256s alone, so it changes exactly when an archive does. The cache command also writes
+    # the `archives` they are, which a fetching job that hits the cache (and so runs no pull) reports.
     - id: entry
       name: Key the cache by the test-data locks
       shell: bash
@@ -100,7 +110,8 @@ runs:
     # S3 (and has no credentials to). Fetching, on a miss: nothing was restored, so the pull downloads each archive from
     # S3 (or reads the copy an earlier pull of this job downloaded) and verifies it before anything is extracted. A
     # fetching job whose key the cache holds skips this step and the next.
-    - name: Verify and extract the archives (fetching, from S3 on a miss)
+    - id: pull
+      name: Verify and extract the archives (fetching, from S3 on a miss)
       if: inputs.fetch != 'true' || steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:

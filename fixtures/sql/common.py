@@ -169,7 +169,8 @@ def corpus_units(name: str) -> list[tuple[str, str]]:
     return sorted(seen.items())
 
 
-def check_pins(*, need_grammars: bool = True) -> None:
+def check_pins(*, need_grammars: bool = True, corpora: tuple[str, ...] | None = None) -> None:
+    """Refuses any tool, interpreter or checkout but the pinned ones: every corpus, or only `corpora` when given."""
     import sqlite3
 
     import pglast
@@ -187,6 +188,8 @@ def check_pins(*, need_grammars: bool = True) -> None:
     import subprocess
 
     for name, corpus in CORPORA.items():
+        if corpora is not None and name not in corpora:
+            continue
         head = subprocess.run(["git", "-C", str(corpus_dir(name)), "rev-parse", "HEAD"], capture_output=True,
                               text=True).stdout.strip()
         if head != corpus["commit"]:

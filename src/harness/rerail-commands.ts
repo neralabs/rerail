@@ -40,7 +40,13 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
 /** How a coding agent invokes a command: Codex runs skills as `$name`, every other agent as `/name`. */
 export type CommandSigil = "/" | "$";
 
-/** The `Commands` block `/rerail` ends with: every other command, one per line, with what it does. */
+/** The `rerail` commands a terminal answers, named at the end of `/rerail` so no one goes looking for them. */
+export const TERMINAL_COMMANDS_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";
+
+/**
+ * The `Commands` block `/rerail` ends with: every other command, one per line, with what it does, then the terminal
+ * commands, since the coding agent's list is where people look for a `rerail` command first.
+ */
 export function rerailCommandList(sigil: CommandSigil): string {
   const entries = RERAIL_COMMANDS.filter(command => command.name !== "rerail");
   const width = Math.max(...entries.map(command => command.name.length)) + 1 + 3;
@@ -48,6 +54,8 @@ export function rerailCommandList(sigil: CommandSigil): string {
     "Commands",
     ...entries.map(command => (sigil + command.name).padEnd(width) + command.summary),
     "Or just ask me, in plain words.",
+    "",
+    TERMINAL_COMMANDS_LINE,
   ].join("\n");
 }
 
@@ -100,27 +108,33 @@ export function uninstallInstructions(cli: string, sigil: CommandSigil): string 
   return [
     "Remove Rerail from this computer, if the person confirms.",
     "",
-    "First see what would be removed, without changing anything:",
+    "First, see what would be removed, without changing anything:",
     "",
     "```sh",
     `${cli} install --remove --dry-run`,
     "```",
     "",
-    "Then show this, naming the coding agents from that output, and ask once:",
+    "From that output, take the coding agents and the backup folder. Show this, as written, and ask once:",
     "",
     "```text",
-    "This removes Rerail from this computer.",
-    "  Removes   Rerail, from <coding agents>, in every repo",
-    "  Keeps     your rules and history, in a backup folder",
-    "",
     "Remove Rerail from this computer?",
-    "You can install it again later and get your rules back.",
-    `  1. Yes, remove Rerail`,
-    `  2. Just stop it in this repo (${sigil}rerail-stop)`,
-    "  3. Cancel",
+    "",
+    `  Removes   ${sigil}rerail commands, hooks and the status line`,
+    "            from <coding agents>",
+    "            Rerail itself: its installed versions, the rerail",
+    "            command, rule packs and cache",
+    "            Rerail stops in every repo",
+    "  Keeps     your rules and history, in a backup folder:",
+    "            <backup folder>",
+    "",
+    "  You can reinstall anytime and restore your rules from the backup.",
+    "",
+    "  1. Yes, remove Rerail",
+    "  2. Only stop it in this repo    Rerail stays everywhere else",
+    "  3. Cancel                       nothing changes",
     "```",
     "",
-    "Only if the person picks 1, run:",
+    "If they pick 1, run:",
     "",
     "```sh",
     `${cli} install --remove`,
@@ -131,11 +145,16 @@ export function uninstallInstructions(cli: string, sigil: CommandSigil): string 
     "```text",
     "○ Rerail is removed from this computer.",
     "  Removed from   <coding agents>",
-    "  Backup         <backup folder>   your rules and history",
-    "  To come back   install Rerail again, and ask it to restore the backup",
+    "  Backup         <backup folder>",
+    "",
+    "  Restart your coding agents to finish.",
+    "  To come back, install Rerail again and ask it to restore the backup.",
     "```",
     "",
-    `If the person picks 2, run \`${cli} stop\` and report its output. If they pick 3 or anything else, change nothing.`,
+    "If the output has `Could not remove` lines, show each as written: it names what is left and the command that removes it.",
+    "",
+    `If they pick 2, run \`${cli} stop\` and show its output.`,
+    "If they pick 3, or anything else, change nothing.",
     "Never run the removal without the person's explicit yes in this session.",
   ].join("\n");
 }

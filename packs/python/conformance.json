@@ -29,17 +29,6 @@
       "reason": "Ruff never lets a noqa comment silence PGH004, which reports the noqa comments themselves: crates/ruff_linter/src/checkers/noqa.rs:65 skips PGH004 when it applies noqa directives, and only a file-level directive that names it (noqa.rs:273) turns it off, which the document matches."
     }
   ],
-  "corpora": [
-    {
-      "name": "django",
-      "repository": "https://github.com/django/django",
-      "commit": "fd91518f17c8a84fa47fe0e5534ef46afa7a0f7a",
-      "paths": [
-        "django"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "ruff",

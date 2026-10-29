@@ -25,7 +25,7 @@ export function releasePacks(
   tags: readonly string[],
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
-    assertRestricted(name: string): Promise<void>;
+    assertPublic(name: string, version: string): Promise<void>;
     tag(tag: string): void;
     log(line: string): void;
   },

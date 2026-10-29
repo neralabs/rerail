@@ -7,6 +7,7 @@ import { z } from "zod";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
+import { REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
 
 /**
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
@@ -32,6 +33,12 @@ const statusPayloadSchema = z.object({
 });
 
 async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<string> {
+  // The recorded-first fallback can start this on an older `node` from PATH once the node set-up recorded is gone;
+  // the status line is where the person sees that, and Rerail reads nothing on it.
+  const node = process.versions.node;
+  if (Number.parseInt(node, 10) < REQUIRED_NODE_MAJOR) {
+    return formatTerminalStatus(fallbackPresentation(`needs Node ${REQUIRED_NODE_MAJOR} or newer (this is ${node})`));
+  }
   const sessionUnavailable = (): string => formatTerminalStatus(fallbackPresentation("session unavailable"));
   if (!validInput) return sessionUnavailable();
   try {

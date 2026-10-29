@@ -1,17 +1,24 @@
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
+import { mkdir, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
   CODING_AGENT_NAMES,
   codingAgentHome,
+  connectCodingAgents,
+  forgetSeenCodingAgents,
+  recordSeenCodingAgents,
   refreshCodingAgents,
   registrationRoot as packageRegistrationRoot,
+  seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
-import { daemonUsesPackageRoot, lookupDaemon, openDashboard, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
+import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
+import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { daemonUsesPackageRoot, lookupDaemon, openDashboard, processAlive, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
 import { DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import {
   detectHarnesses,
@@ -22,7 +29,9 @@ import {
   type RegistrationReport,
 } from "../setup/harness-registration.js";
 import { checkNodeVersion } from "../setup/node-version.js";
-import { addLauncherToPath, describeLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { pinnedNodePath } from "../setup/node-path.js";
+import { setupPreflight, wslNote } from "../setup/preflight.js";
+import { addLauncherToPath, describeLauncherPath, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
@@ -30,7 +39,7 @@ import { workspaceStartState, type RepositorySetupIo } from "../runtime/reposito
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
-import type { ManagedUpdater } from "../setup/updater.js";
+import { LAUNCHER_HEADER, type ManagedUpdater } from "../setup/updater.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */
@@ -87,6 +96,7 @@ async function launcherOnPath(context: SetupContext, lane: SetupLane): Promise<s
   const binDir = dirname(launcherPath);
   const home = codingAgentHome();
   const change = await addLauncherToPath({ binDir, home });
+  await recordLauncherPath(context.home, change);
   if (change.status === "failed") return renderOnPath({ binDir, locations: [], failure: change.reason, home }, lane).replace(/\n$/u, "");
   if (change.status !== "changed") return undefined;
   return renderOnPath({ binDir, locations: change.locations, home }, lane).replace(/\n$/u, "");
@@ -175,10 +185,165 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
 }
 
 /**
+ * What the uninstall deletes from the installation, each with what it is, in the order it goes. A folder with `ours`
+ * goes whole only when everything in it is Rerail's; otherwise only Rerail's entries go and the folder stays, so a
+ * Rerail home shared with other files (`RERAIL_HOME=$HOME`) keeps its own `bin`, `versions` or `packs`.
+ */
+function installedFiles(context: SetupContext): Array<{ path: string; what: string; ours?: (name: string, path: string) => boolean }> {
+  const { updater } = context;
+  // `rerail.cmd` and, on Windows, Git Bash's `rerail` beside it; each carries the header Rerail writes. A launcher
+  // write cut short leaves `<launcher>.<pid>.<uuid>.tmp`, possibly before the header was written.
+  const launchers = new Set([basename(updater.launcherPath), "rerail"]);
+  const launcherWrite = (name: string) => /^(.+)\.\d+\.[0-9a-f-]+\.tmp$/u.exec(name)?.[1];
+  return [
+    { path: updater.currentLink, what: "the active version's link" },
+    {
+      path: dirname(updater.launcherPath),
+      what: "the rerail command",
+      ours: (name, path) => (launchers.has(name) && isRerailLauncher(path)) || launchers.has(launcherWrite(name) ?? ""),
+    },
+    {
+      path: updater.versionsRoot,
+      what: "the installed versions",
+      ours: (name, path) => /^\..+\.staging$/u.test(name) || existsSync(join(path, "node_modules", "@neralabs", "rerail")),
+    },
+    { path: updater.statePath, what: "the record of them" },
+    { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
+    { path: mainContentStoreDirectory(), what: "the cache" },
+  ];
+}
+
+/** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */
+const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "package.json", "package-lock.json", "staging", ".lock"]);
+
+/**
+ * What Rerail itself writes in its home: settings, records, logs, locks, its databases, `rerail activate`'s profiles
+ * and device secrets, `rules export`'s `rules.json` and the installation, each with the `.<pid>[.<uuid>].tmp` or
+ * `.old` a write cut short leaves beside it.
+ */
+const RERAIL_HOME_ENTRY =
+  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
+
+/**
+ * The command that finishes removing `path` by hand. PowerShell: single quotes expand nothing, and `-LiteralPath` reads
+ * `[` and `]` as themselves. A link (`current`, a junction on Windows) goes through .NET's non-recursive
+ * `Directory.Delete`, which removes the link and never follows it as Windows PowerShell's `Remove-Item -Recurse` does,
+ * and, unlike cmd's `rmdir`, expands no `%NAME%` in the path.
+ */
+export function cleanupCommand(path: string, link: boolean, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") return `rm -rf ${shellQuote(path, platform)}`;
+  const powershell = `'${path.replaceAll("'", "''")}'`;
+  return link ? `[System.IO.Directory]::Delete(${powershell})` : `Remove-Item -LiteralPath ${powershell} -Recurse -Force`;
+}
+
+function isRerailLauncher(path: string): boolean {
+  try {
+    return readFileSync(path, "utf8").includes(LAUNCHER_HEADER);
+  } catch {
+    return false;
+  }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by pid. */
+function cacheHolder(cache: string): number | undefined {
+  try {
+    const { pid } = JSON.parse(readFileSync(join(cache, MAIN_INSTANCE_HOLDER_FILE), "utf8")) as { pid?: unknown };
+    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && processAlive(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What the uninstall removes and keeps, decided before anything goes so `--dry-run` says the same as the real run. */
+function planRemoval(context: SetupContext): { remove: Array<{ path: string; what: string }>; keep: Array<{ path: string; what: string; why: string }> } {
+  const remove: Array<{ path: string; what: string }> = [];
+  const keep: Array<{ path: string; what: string; why: string }> = [];
+  for (const { path, what, ours } of installedFiles(context)) {
+    if (!pathExists(path)) continue;
+    const holder = path === mainContentStoreDirectory() ? cacheHolder(path) : undefined;
+    if (holder !== undefined) {
+      keep.push({ path, what, why: `another Rerail daemon, pid ${holder}, still uses it` });
+      continue;
+    }
+    if (ours === undefined) {
+      remove.push({ path, what });
+      continue;
+    }
+    let entries: string[];
+    try {
+      entries = readdirSync(path);
+    } catch {
+      keep.push({ path, what, why: "it is not a folder Rerail made" });
+      continue;
+    }
+    const foreign = entries.filter(name => !ours(name, join(path, name)));
+    if (foreign.length === 0) {
+      remove.push({ path, what });
+      continue;
+    }
+    for (const name of entries) if (!foreign.includes(name)) remove.push({ path: join(path, name), what });
+    keep.push({ path, what, why: `it holds files that are not Rerail's: ${foreign.sort().join(", ")}` });
+  }
+  return { remove, keep };
+}
+
+/**
+ * The uninstall's last step, once the coding agents are disconnected, the daemon has stopped and the database is in
+ * the backup: delete the installation itself (the versions, the launcher, `current`, the rule packs and the cache), so
+ * "removed from this computer" holds. `current` is unlinked, never followed: `install --root` points it at a checkout.
+ * A file Windows keeps locked (a session still running Rerail, an antivirus scan) is named with the command that
+ * finishes the job; the uninstall itself has happened, so it still exits 0. What stays in the Rerail home is named too.
+ */
+async function removeInstallation(context: SetupContext, dryRun: boolean): Promise<void> {
+  const { remove, keep } = planRemoval(context);
+  if (dryRun) {
+    for (const { path, what } of remove) process.stdout.write(`Would remove ${path} (${what}).\n`);
+    for (const { path, what, why } of keep) process.stdout.write(`Would keep ${path} (${what}): ${why}.\n`);
+    return;
+  }
+  const failed: Array<{ path: string; reason: string }> = [];
+  for (const { path, what } of remove) {
+    try {
+      if (path === context.updater.currentLink) await unlink(path);
+      // rm retries Windows' transient EBUSY and EPERM itself (as the updater's staging cleanup does).
+      else await rm(path, { recursive: true, force: true, maxRetries: 10 });
+      process.stdout.write(`Removed ${path} (${what}).\n`);
+    } catch (error) {
+      failed.push({ path, reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  for (const { path, what, why } of keep) process.stdout.write(`Kept ${path} (${what}): ${why}.\n`);
+  for (const { path, reason } of failed) {
+    const command = cleanupCommand(path, path === context.updater.currentLink);
+    process.stdout.write(`Could not remove ${path} (${reason}). Close every coding agent and terminal still running Rerail, then run: ${command}\n`);
+  }
+  const kept = (await readdir(context.home).catch(() => [])).sort();
+  // A folder kept for the files in it that are not Rerail's (`bin`, `versions`, `packs`) is not Rerail's to delete.
+  const keptForOthers = new Set(keep.map(({ path }) => path));
+  const ours = kept.filter(name => RERAIL_HOME_ENTRY.test(name) && !keptForOthers.has(join(context.home, name)));
+  // A Rerail home shared with other files (`RERAIL_HOME=$HOME`) is never offered for deletion as a whole.
+  if (ours.length < kept.length) {
+    process.stdout.write(`Kept ${context.home}, which also holds files that are not Rerail's.${ours.length === 0 ? "" : ` Rerail's settings, logs and records in it: ${ours.join(", ")}; delete those if you will not install Rerail again.`}\n`);
+  } else if (kept.length > 0) {
+    process.stdout.write(`Kept ${context.home}: ${kept.join(", ")} (Rerail's settings, logs and records; delete it if you will not install Rerail again).\n`);
+  }
+}
+
+/**
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
- * install, so commands it added arrive and ones it retired go; `rerail update` runs it from the version it activated.
- * Coding agents never connected stay untouched, and one whose configuration cannot be read to tell is named and left
- * alone. Exits 1 only when a connected coding agent could not be refreshed.
+ * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
+ * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
+ * one whose configuration cannot be read to tell is named and left alone. Exits 1 only when a connected coding agent
+ * could not be refreshed.
  */
 async function runRefresh(context: SetupContext): Promise<number> {
   const root = registrationRoot(context);
@@ -195,12 +360,35 @@ async function runRefresh(context: SetupContext): Promise<number> {
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);
   }
+  // The hooks above now name the node this runs on; the launcher names it too, or it would keep the one an earlier
+  // set-up recorded and, once that is upgraded or removed, fall back to whichever `node` PATH has.
+  if (await context.updater.refreshLauncher()) {
+    process.stdout.write(`Launcher: ${context.updater.launcherPath} now runs ${pinnedNodePath()}\n`);
+  }
+  // An install made by a version whose set-up never wrote PATH keeps the launcher off it until something puts it
+  // on: the refresh every update ends with is that something, once. A set-up that handled PATH leaves a record, and
+  // from then on PATH is the person's: a block they took out stays out.
+  const pathLine = await repairLauncherPath(context);
+  if (pathLine !== undefined) process.stdout.write(`${pathLine}\n`);
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
   }
   if (result.failures.length === 0) return 0;
   process.stderr.write("rerail: fix that, then run rerail install --refresh\n");
   return 1;
+}
+
+/**
+ * Put the launcher on PATH where no set-up ever handled it; the line to print when that changed or failed, else
+ * undefined. A run that wrote no launcher (an install that failed) has nothing to put on PATH yet.
+ */
+async function repairLauncherPath(context: SetupContext): Promise<string | undefined> {
+  const { launcherPath } = context.updater;
+  if (existsSync(launcherPathMarker(context.home)) || !existsSync(launcherPath)) return undefined;
+  const binDir = dirname(launcherPath);
+  const change = await addLauncherToPath({ binDir, home: codingAgentHome() });
+  await recordLauncherPath(context.home, change);
+  return describeLauncherPath(change, binDir, "add");
 }
 
 export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
@@ -225,6 +413,8 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     ? await unregisterHarnesses(registrationOptions(root, codingAgentHome(), parsed))
     : await registerHarnesses(registrationOptions(root, codingAgentHome(), parsed));
   printReport(report, parsed.dryRun);
+  // What `rerail install` found or was named is seen, so set-up run again connects no agent behind this choice.
+  if (!parsed.dryRun) await recordSeenCodingAgents(context.home, [...detectHarnesses(codingAgentHome()), ...(parsed.hosts ?? [])]);
   // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
   // checkout registered with `--root`, leaves the shared rules and history in place.
   const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
@@ -233,10 +423,13 @@ export async function runInstallCommand(args: readonly string[], context: SetupC
     const binDir = dirname(context.updater.launcherPath);
     const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
     if (removed !== undefined) process.stdout.write(`${removed}\n`);
+    if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
+    await removeInstallation(context, parsed.dryRun);
   }
   if (explicitRoot !== undefined && !remove) {
     const binDir = dirname(context.updater.launcherPath);
     const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
+    await recordLauncherPath(context.home, change, parsed.dryRun);
     const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
     process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
   }
@@ -315,14 +508,17 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
   return {
     packs: context.packs ?? npmPackStore(context.home),
     agentsFound: () => detectHarnesses(codingAgentHome()),
+    agentsSeen: () => seenCodingAgents(context.home),
     async connect(agents, repoRoot) {
+      const home = codingAgentHome();
       // Claude Code's project status line lives in the repository: only one the person said yes to.
-      await registerHarnesses({
-        root: registrationRoot(context),
-        home: codingAgentHome(),
-        harnesses: agents,
-        ...(repoRoot === undefined ? {} : { workspaceDir: repoRoot }),
-      });
+      const result = await connectCodingAgents(registrationRoot(context), home, agents, repoRoot);
+      // One that could not be connected stays unseen, even if `rerail install` recorded it before, so set-up run again
+      // connects it once its config is fixed.
+      const failed = result.failures.map(({ agent }) => agent);
+      await recordSeenCodingAgents(context.home, [...detectHarnesses(home), ...agents].filter(id => !failed.includes(id)));
+      await forgetSeenCodingAgents(context.home, failed);
+      return result;
     },
     sessionsApproved() {
       try {
@@ -529,6 +725,12 @@ function setupRequest(context: SetupContext, parsed: SetupArguments, place: Setu
   };
 }
 
+/** T2w for the folder this run is for, once: on the first run and when a folder is named, not on every answer. */
+function setupWslNote(place: SetupPlace, parsed: SetupArguments, lane: SetupLane): string | undefined {
+  if (parsed.answer !== undefined) return undefined;
+  return wslNote(resolve(place.cwd, parsed.repo ?? "."), lane)?.replace(/\n$/u, "");
+}
+
 async function setupText(args: readonly string[], context: SetupContext, io: SetupIo, nodeVersion: string): Promise<number> {
   // E2 before anything else: an older Node changes nothing on this machine.
   const node = checkNodeVersion(nodeVersion, io.lane);
@@ -536,10 +738,18 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
     io.say(node.message.replace(/\n$/u, ""));
     return 1;
   }
+  // E7 and E8: an engine that cannot load here, or no Git, stop set-up before it installs anything.
+  const stop = setupPreflight(io.lane);
+  if (stop !== undefined) {
+    io.say(stop.replace(/\n$/u, ""));
+    return 1;
+  }
   const parsed = setupArguments(args);
   const banner = renderBanner({ version: context.updater.packageVersionLabel, depth: colourDepth() }, io.lane);
   if (banner !== "") io.say(banner.replace(/\n$/u, ""));
   const place = machinePlace(context);
+  const wsl = setupWslNote(place, parsed, io.lane);
+  if (wsl !== undefined) io.say(wsl);
   const installedLine = await install(context, parsed, place.cwd, io.lane, "setup");
   if (installedLine !== undefined) io.say(installedLine);
   const pathLine = await launcherOnPath(context, io.lane);
@@ -557,11 +767,14 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
   try {
     const node = checkNodeVersion(nodeVersion, "json");
     if (!node.ok) return errorStep(node.message.replace(/\n$/u, ""));
+    const stop = setupPreflight("json");
+    if (stop !== undefined) return errorStep(stop.replace(/\n$/u, ""));
     const parsed = setupArguments(args);
+    const wsl = setupWslNote(place, parsed, "json");
     const installedLine = await install(context, parsed, place.cwd, "json", origin);
     const pathLine = await launcherOnPath(context, "json");
     const step = await runSetupStep({ ...setupRequest(context, parsed, place, "json"), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
-    const opening = [installedLine, pathLine].filter(line => line !== undefined);
+    const opening = [wsl, installedLine, pathLine].filter(line => line !== undefined);
     return opening.length === 0 ? step : { ...step, screen: [...opening, step.screen].join("\n") };
   } catch (error) {
     return errorStep(messageOf(error));

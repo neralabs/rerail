@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadRepoRuleCounts, repoRuleCounts, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
+import { loadRepoRuleCounts, repoLine, repoRuleCounts, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
 import { agentStatus, installedLabel } from "../../ui/settings-model.js";
 
 const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null }>) =>
@@ -57,6 +57,28 @@ describe("a repo's rule tag", () => {
 
   it("is unknown until the counts are read", () => {
     expect(repoTag(null)).toBeNull();
+  });
+});
+
+describe("a repo's line in the repo choices", () => {
+  const repo = (over: Partial<{ setUp: boolean; started: boolean; checkoutCount: number }> = {}) =>
+    ({ setUp: true, started: true, checkoutCount: 1, ...over });
+
+  it("says set up, then the rules on, then the checkouts when there are several", () => {
+    expect(repoLine(repo(), { total: 12, on: 12 })).toBe("Set up · 12 rules on");
+    expect(repoLine(repo({ checkoutCount: 2 }), { total: 50, on: 50 })).toBe("Set up · 50 rules on · 2 checkouts");
+    expect(repoLine(repo(), { total: 0, on: 0 })).toBe("Set up · No rules added");
+  });
+
+  it("says a repo that is not set up runs nothing, whatever it holds", () => {
+    expect(repoLine(repo({ setUp: false, started: true }), null)).toBe("Not set up · nothing runs");
+    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2 })).toBe("Not set up · nothing runs · 3 checkouts");
+  });
+
+  it("says Off with the rules it holds while a repo is off, and only On or Off until the counts are read", () => {
+    expect(repoLine(repo({ started: false }), { total: 12, on: 0 })).toBe("Set up · Off · 12 rules");
+    expect(repoLine(repo({ started: false, checkoutCount: 2 }), null)).toBe("Set up · Off · 2 checkouts");
+    expect(repoLine(repo(), null)).toBe("Set up · On");
   });
 });
 

@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "10 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 8 of them on and 2 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "7 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 5 of them on and 2 off until turned on, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches Blade templates",
   "match": {
     "any": [
@@ -31,22 +31,6 @@
       "on": false
     },
     {
-      "id": "tlint-no-json-directive",
-      "document": "rules/tlint-no-json-directive.json",
-      "title": "tlint NoJsonDirective: No @json directive",
-      "group": "tlint",
-      "examples": {
-        "caught": {
-          "path": "resources/views/profile.blade.php",
-          "text": "<script>\n    const user = @json($user);\n</script>\n"
-        },
-        "passes": {
-          "path": "resources/views/profile.blade.php",
-          "text": "<script>\n    const user = {{ Js::from($user) }};\n</script>\n"
-        }
-      }
-    },
-    {
       "id": "tlint-no-dump-directives",
       "document": "rules/tlint-no-dump-directives.json",
       "title": "tlint NoDumpDirectives: No @dd or @dump directive",
@@ -56,28 +40,6 @@
       "id": "tlint-no-ray-directive",
       "document": "rules/tlint-no-ray-directive.json",
       "title": "tlint NoRayDirective: No @ray directive",
-      "group": "tlint"
-    },
-    {
-      "id": "tlint-space-after-blade-directives",
-      "document": "rules/tlint-space-after-blade-directives.json",
-      "title": "tlint SpaceAfterBladeDirectives: Space after control structure directives",
-      "group": "tlint",
-      "examples": {
-        "caught": {
-          "path": "resources/views/profile.blade.php",
-          "text": "@if($user)\n    <p>{{ $user->name }}</p>\n@endif\n"
-        },
-        "passes": {
-          "path": "resources/views/profile.blade.php",
-          "text": "@if ($user)\n    <p>{{ $user->name }}</p>\n@endif\n"
-        }
-      }
-    },
-    {
-      "id": "tlint-spaces-around-blade-render-content",
-      "document": "rules/tlint-spaces-around-blade-render-content.json",
-      "title": "tlint SpacesAroundBladeRenderContent: One space inside echo delimiters",
       "group": "tlint"
     },
     {

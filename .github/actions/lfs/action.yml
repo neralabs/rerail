@@ -3,8 +3,8 @@ description: >-
   Replaces the checkout's Git LFS pointers (the embedding model, the engine's Unicode names table) with their content.
   The objects come from a cache keyed on their ids (`git lfs ls-files -l`), so a run downloads them from LFS only
   when one of them changes. Use it right after `actions/checkout`, which leaves the pointers when `lfs` is false. The
-  cache is saved by an explicit step straight after the pull, never in the post-job step: by the end of a port
-  readiness job the recorder may have run upstream's code, which could have rewritten .git/lfs.
+  cache is saved by an explicit step straight after the pull, never in the post-job step: by the end of a job that
+  derives pack test data, upstream's code may have run, which could have rewritten .git/lfs.
 
 inputs:
   save:

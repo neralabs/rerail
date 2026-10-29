@@ -3,7 +3,7 @@
   "id": "sql",
   "name": "SQL",
   "category": "language",
-  "covers": "19 SQLFluff 4.4.0 rules ported to Rerail, 17 of them on and 2 off until turned on, each scored against SQLFluff's own recorded findings on its tests; 3 more ports are candidates until they pass the port readiness gates.",
+  "covers": "19 SQLFluff 4.4.0 rules ported to Rerail, 17 of them on and 2 off until turned on, each scored against SQLFluff's own findings on its tests; 3 more ports are candidates until they pass the conformance check.",
   "reason": "matches SQL",
   "match": {
     "any": [

@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
@@ -47,7 +48,7 @@ export const alreadyOnRegistry = (output) => /cannot publish over the previously
  * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
  * publishing) is not published again, only checked and tagged. A pack named in `held` (held at an older `latest`) is
  * published under `next`, every other under `latest`. `steps` does the I/O: `publish(file, distTag)` returns
- * `{ ok, output }`, `assertRestricted(name)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
+ * `{ ok, output }`, `assertPublic(name, version)` and `tag(tag)` throw on failure. Returns each `{ name, version, distTag }`
  * this run released.
  */
 export async function releasePacks(manifest, tags, steps, held = []) {
@@ -64,7 +65,7 @@ export async function releasePacks(manifest, tags, steps, held = []) {
     const published = steps.publish(file, distTag);
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
     if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
-    await steps.assertRestricted(name);
+    await steps.assertPublic(name, version);
     steps.tag(tag);
     steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
     released.push({ name, version, distTag });
@@ -91,6 +92,16 @@ export function readChangesets(directory = join(ROOT, ".changeset")) {
     .map((file) => ({ file, text: readFileSync(join(directory, file), "utf8") }));
 }
 
+/** Each package a changeset's front matter names, with its bump: `{ name, bump }`. */
+export function changesetEntries(text) {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
+  return front
+    .split(/\r?\n/u)
+    .map((line) => /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line))
+    .filter((entry) => entry !== null)
+    .map(([, name, bump]) => ({ name, bump }));
+}
+
 /**
  * What the pending `changesets` bump past a patch on a pack below 1.0.0. A pack is pre-release until 1.0.0, so every
  * change to it is a patch (docs/pack-format.md, "Versioning and release"); `changeset version` would otherwise take
@@ -100,15 +111,45 @@ export function changesetBumpFailures(changesets, packs) {
   const versions = new Map(packs.map((pack) => [pack.name, pack.version]));
   const failures = [];
   for (const { file, text } of changesets) {
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/u.exec(text)?.[1] ?? "";
-    for (const line of front.split(/\r?\n/u)) {
-      const entry = /^\s*["']?([^"':]+)["']?\s*:\s*(patch|minor|major)\s*$/u.exec(line);
-      if (entry === null) continue;
-      const [, name, bump] = entry;
+    for (const { name, bump } of changesetEntries(text)) {
       const version = versions.get(name);
       if (version === undefined || bump === "patch" || !version.startsWith("0.")) continue;
       failures.push(`${file}: ${name} is ${version}, below 1.0.0, so its bump is patch, not ${bump}`);
     }
+  }
+  return failures;
+}
+
+/**
+ * Whether a pack's package.json changed what installing the pack gives, from its text `before` (undefined: the file is
+ * new) to `after`. `publishConfig` only steers `npm publish`, so a change to it alone needs no release.
+ */
+export function manifestChanged(before, after) {
+  if (before === undefined) return true;
+  const { publishConfig: _before, ...was } = JSON.parse(before);
+  const { publishConfig: _after, ...is } = JSON.parse(after);
+  return !isDeepStrictEqual(was, is);
+}
+
+/**
+ * Each pack a pull request changes what it publishes of, with no changeset of that pull request naming it. A pack
+ * publishes its `package.json` and what its `files` list (a file, or everything under a directory); its expected findings,
+ * candidates and `CHANGELOG.md` are not published, and changing them needs no changeset. `changed` lists the pull
+ * request's changed paths (old and new paths of a rename both), `changesets` the changesets it adds or edits, and
+ * `packs` each pack's `{ id, name, files }`.
+ */
+export function missingChangesets(changed, changesets, packs) {
+  const named = new Set(changesets.flatMap(({ text }) => changesetEntries(text).map((entry) => entry.name)));
+  const failures = [];
+  for (const { id, name, files } of packs) {
+    const prefix = `packs/${id}/`;
+    const published = changed
+      .filter((path) => path.startsWith(prefix))
+      .map((path) => path.slice(prefix.length))
+      .filter((path) => path === "package.json" || files.some((entry) => path === entry || path.startsWith(`${entry}/`)));
+    if (published.length === 0 || named.has(name)) continue;
+    const shown = published.slice(0, 3).map((path) => `${prefix}${path}`).join(", ");
+    failures.push(`${name}: ${shown}${published.length > 3 ? ` and ${published.length - 3} more` : ""} changed, and no changeset names it`);
   }
   return failures;
 }

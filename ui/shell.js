@@ -229,16 +229,38 @@ function onPopState() {
   invalidate();
 }
 
-/** After each poll: deep links apply once the first lists are in; then the current view's `afterPoll`. */
+/**
+ * The URL names no repository and Rerail has seen exactly one: show it. A coding agent always opens the dashboard
+ * on a repository; a plain browser or bookmark does not, and with one repository there is nothing to ask. The URL is
+ * replaced, not pushed, so Back leaves the page rather than landing on the bare URL to be picked again; the hash's
+ * view and rule link are kept. `true` when it switched (its poll is on its way).
+ */
+function adoptOnlyRepository() {
+  if (ui.scope !== null || !data.loaded || data.repositories.length !== 1) return false;
+  const url = new URL(repositoryUrl(location.href, data.repositories[0].repositoryKey));
+  if (location.hash !== "") url.hash = location.hash;
+  history.replaceState(null, "", url.href);
+  const route = parseRoute(location.hash);
+  changeScope(readScope(location.search));
+  hooks.enter({ ...route, view: ui.view });
+  applyRule(route);
+  return true;
+}
+
+/** The deep links waiting on the first lists: a rule link is checked, a session link entered; else the view's `afterPoll`. */
+function applyPendingLinks() {
+  if (pendingRule !== null) { const id = pendingRule; pendingRule = null; checkRule(id); }
+  if (pendingSession === null) { hooks.afterPoll(); return; }
+  const session = pendingSession;
+  pendingSession = null;
+  if (ui.view === "sessions") hooks.enter({ view: "sessions", session });
+}
+
+/** After each poll: the only repository is adopted; deep links apply once the first lists are in; then the view's `afterPoll`. */
 export function afterPoll() {
   invalidate();
-  if (!data.loaded || ui.scope === null || data.missing) return;
-  if (pendingRule !== null) { const id = pendingRule; pendingRule = null; checkRule(id); }
-  if (pendingSession !== null) {
-    const session = pendingSession;
-    pendingSession = null;
-    if (ui.view === "sessions") hooks.enter({ view: "sessions", session });
-  } else hooks.afterPoll();
+  if (adoptOnlyRepository() || !data.loaded || ui.scope === null || data.missing) return;
+  applyPendingLinks();
 }
 
 /** Fix the scope and view from the URL before the first render, so a deep link never flashes Overview; then follow it. */

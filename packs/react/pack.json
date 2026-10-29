@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "No rules yet: its 21 eslint-plugin-react and eslint-plugin-react-hooks ports are candidates until they pass the V1 rule validation gates.",
+  "covers": "No rules yet: its 21 eslint-plugin-react and eslint-plugin-react-hooks ports are candidates until they pass the conformance check.",
   "reason": "matches React",
   "match": {
     "any": [

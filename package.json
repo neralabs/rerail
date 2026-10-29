@@ -1,10 +1,10 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.0-next.4",
+  "version": "0.1.0",
   "description": "Local semantic monitor and rule runtime for AI coding harnesses",
   "license": "Apache-2.0",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -112,13 +112,13 @@
     "ui:scenario": "node --import tsx scripts/dev/ui-scenario.ts",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
-    "port-readiness": "node --import tsx conformance/port-readiness/cli.ts",
-    "port-readiness:record": "node --import tsx conformance/recorders/port-readiness/cli.ts",
     "fixtures:pull": "node scripts/s3/pack-fixtures.mjs pull",
+    "fixtures:stage": "node scripts/s3/pack-fixtures.mjs stage",
     "fixtures:push": "node scripts/s3/pack-fixtures.mjs push",
     "fixtures:derive": "node --import tsx scripts/pack-data/derive.ts",
-    "port-readiness:upstream-releases": "node --import tsx conformance/port-readiness/upstream/releases.ts",
-    "port-readiness:bump": "node --import tsx conformance/port-readiness/upstream/bump.ts",
+    "upstream:releases": "node --import tsx scripts/upstream/releases.ts",
+    "upstream:bump": "node --import tsx scripts/upstream/bump.ts",
+    "upstream:watch": "node --import tsx scripts/upstream/watch.ts",
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
@@ -161,7 +161,6 @@
     "@types/node": "26.6.5",
     "@types/semver": "^7.8.0",
     "@vitest/coverage-v8": "^5.0.5",
-    "apache-arrow": "21.2.0",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
     "smol-toml": "1.9.1",

@@ -3,7 +3,7 @@
   "id": "php",
   "name": "PHP",
   "category": "language",
-  "covers": "7 PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail, 3 of them on and 4 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "7 PHP_CodeSniffer, PHPStan and Psalm rules ported to Rerail, 3 of them on and 4 off until turned on, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches PHP",
   "match": {
     "any": [
@@ -12,9 +12,29 @@
           "**/*.php"
         ],
         "exclude": [
-          "**/*.blade.php"
+          "**/*.blade.php",
+          "**/test/**",
+          "**/tests/**",
+          "**/Test/**",
+          "**/Tests/**",
+          "**/spec/**",
+          "**/*Test.php",
+          "**/*TestCase.php",
+          "**/scripts/**",
+          "**/script/**",
+          "**/bin/**",
+          "**/tools/**",
+          "**/ci/**",
+          "**/.github/**",
+          "**/config/**",
+          "**/*.config.php",
+          "**/.*.php",
+          "**/rector.php",
+          "**/ecs.php",
+          "**/docs/**",
+          "**/doc/**"
         ],
-        "label": "*.php files"
+        "label": "PHP source files"
       }
     ]
   },

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addLauncherToPath, removeLauncherFromPath } from "../../src/setup/shell-path.js";
@@ -38,6 +38,30 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
 
     expect(await removeLauncherFromPath(options)).toEqual({ status: "changed", locations: [zshrc] });
     expect(await readFile(zshrc, "utf8")).toBe("alias ll='ls -l'\n");
+  });
+
+  it("keeps one backup of a startup file it changes, and deletes it with the block", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const zshrc = join(home, ".zshrc");
+    await writeFile(zshrc, "alias ll='ls -l'\n");
+    await addLauncherToPath(options);
+    await addLauncherToPath({ ...options, binDir: join(home, "other", "bin") });
+    expect((await readdir(home)).sort()).toEqual([".zshrc", ".zshrc.rerail.bak"]);
+    expect(await readFile(`${zshrc}.rerail.bak`, "utf8")).toContain("# >>> rerail >>>");
+
+    await removeLauncherFromPath({ ...options, binDir: join(home, "other", "bin") });
+    expect(await readdir(home)).toEqual([".zshrc"]);
+    expect(await readFile(zshrc, "utf8")).toBe("alias ll='ls -l'\n");
+  });
+
+  it("falls back to the account's login shell when SHELL is unset, as inside some coding-agent hosts", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const env = { PATH: "/usr/bin:/bin" };
+    expect(await addLauncherToPath({ ...options, env, loginShell: "/bin/zsh" })).toEqual({ status: "changed", locations: [join(home, ".zshrc")] });
+    expect(existsSync(join(home, ".profile"))).toBe(false);
+    // With no login shell known either, the file every POSIX login shell but zsh reads.
+    const other = await machine("/bin/zsh");
+    expect(await addLauncherToPath({ ...other.options, env, loginShell: null })).toEqual({ status: "changed", locations: [join(other.home, ".profile")] });
   });
 
   it("writes nothing when the running PATH has the directory, or RERAIL_MODIFY_PATH=0", async () => {

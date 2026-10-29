@@ -26,7 +26,7 @@ async function directory(prefix: string): Promise<string> {
 
 /**
  * The pack's documents that pinned sourceType commonjs before each file kept its own module system. All are candidates
- * until eslint-plugin-n is gated.
+ * until they are promoted.
  */
 const CODE_RULES = await Promise.all(
   [

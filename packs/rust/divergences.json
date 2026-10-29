@@ -8,22 +8,6 @@
     "evidence": "The finding is inside the token tree of `assert_eq!` (line 64): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
-    "rule": "clippy-else-if-without-else",
-    "source": "ripgrep",
-    "path": "crates/index/src/literal.rs",
-    "line": 426,
-    "kind": "not-comparable",
-    "evidence": "crates/index/src/lib.rs:1 `#![allow(warnings)]` silences every warning-level lint of the grep-index crate, which loads this file as `pub mod literal;` (lib.rs:6), so the recording holds no finding anywhere in crates/index; `cargo +1.99.0 clippy -p grep-index --all-targets --all-features -- -W clippy::else_if_without_else -W clippy::single_char_lifetime_names` reports nothing either. Rerail reads the lint attributes of the file it checks, not those of the crate root that loads it as a module."
-  },
-  {
-    "rule": "clippy-else-if-without-else",
-    "source": "ripgrep",
-    "path": "crates/printer/src/hyperlink/mod.rs",
-    "line": 865,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(windows)]` (line 767) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
     "rule": "clippy-unnested-or-patterns",
     "source": "fixtures",
     "path": "tests/ui/unnested_or_patterns.rs",
@@ -49,112 +33,88 @@
   },
   {
     "rule": "clippy-unreadable-literal",
-    "source": "ripgrep",
-    "path": "tests/feature.rs",
+    "source": "samples",
+    "path": "ripgrep-tests-feature.rs-fbc6455c5d2c/tests/feature.rs",
     "line": 411,
     "kind": "not-comparable",
-    "evidence": "`#[cfg(target_pointer_width = \"32\")]` (line 403) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-unreadable-literal",
-    "source": "tokio",
-    "path": "tokio/tests/tracing_sync.rs",
-    "line": 197,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"tracing\", target_has_atomic = \"64\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
+    "evidence": "`#[cfg(target_pointer_width = \"32\")]` (line 403) leaves this item out of the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
   },
   {
     "rule": "clippy-unreadable-literal-no-fractions",
-    "source": "ripgrep",
-    "path": "tests/feature.rs",
+    "source": "samples",
+    "path": "ripgrep-tests-feature.rs-fbc6455c5d2c/tests/feature.rs",
     "line": 411,
     "kind": "not-comparable",
-    "evidence": "`#[cfg(target_pointer_width = \"32\")]` (line 403) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-unreadable-literal-no-fractions",
-    "source": "tokio",
-    "path": "tokio/tests/tracing_sync.rs",
-    "line": 197,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"tracing\", target_has_atomic = \"64\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
+    "evidence": "`#[cfg(target_pointer_width = \"32\")]` (line 403) leaves this item out of the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
   },
   {
     "rule": "clippy-decimal-literal-representation",
-    "source": "tokio",
-    "path": "tokio/tests/rt_unstable_metrics.rs",
-    "line": 421,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all( feature = \"full\", tokio_unstable, not(target_os = \"wasi\"), target_has_atomic = \"64\" ))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-decimal-literal-representation",
-    "source": "tokio",
-    "path": "tokio/tests/io_buf_reader.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-io_buf_reader.rs-03956adce9ef/tokio/tests/io_buf_reader.rs",
     "line": 188,
     "kind": "rerail-unknown",
     "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The rule language has no hexadecimal reading of a value, so the port reads the digits as `value` ranges and `bitsAny` masks, and a bundled rule's text reaches the engine through JavaScript (src/engine/code-rule/code-rule-dsl-catalog.ts compiles stableJsonText of the parsed document), whose numbers are IEEE-754 doubles: 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) and 2^63 both become 9223372036854776000, so the range this literal needs is empty, and no power of two from 2^55 to 2^69 (the masks and bounds of every digit there) keeps its value. The port reads values below 2^53 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
   },
   {
     "rule": "clippy-decimal-literal-representation-threshold",
-    "source": "tokio",
-    "path": "tokio-util/tests/time_delay_queue.rs",
+    "source": "samples",
+    "path": "tokio-tokio-util-tests-time_delay_queue.rs-7ca922cef2f0/tokio-util/tests/time_delay_queue.rs",
     "line": 99,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `literal-representation-threshold = 0xFFFFFF` (tests/ui-toml/decimal_literal_representation/clippy.toml), under which the literal is below the threshold; the corpus was recorded with Clippy's default threshold, 16384, under which the default port reports the same line (TP)."
   },
   {
     "rule": "clippy-decimal-literal-representation-threshold",
-    "source": "tokio",
-    "path": "tokio/src/runtime/mod.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-mod.rs-17769dc98dcb/tokio/src/runtime/mod.rs",
     "line": 654,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `literal-representation-threshold = 0xFFFFFF` (tests/ui-toml/decimal_literal_representation/clippy.toml), under which the literal is below the threshold; the corpus was recorded with Clippy's default threshold, 16384, under which the default port reports the same line (TP)."
   },
   {
     "rule": "clippy-decimal-literal-representation-threshold",
-    "source": "tokio",
-    "path": "tokio/tests/io_buf_reader.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-io_buf_reader.rs-03956adce9ef/tokio/tests/io_buf_reader.rs",
     "line": 188,
     "kind": "rerail-unknown",
-    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`: the corpus recording's default 16384 and this variant's 0xFFFFFF alike, which the value exceeds, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The rule language has no hexadecimal reading of a value, so the port reads the digits as `value` ranges and `bitsAny` masks, and a bundled rule's text reaches the engine through JavaScript (src/engine/code-rule/code-rule-dsl-catalog.ts compiles stableJsonText of the parsed document), whose numbers are IEEE-754 doubles: 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) and 2^63 both become 9223372036854776000, so the range this literal needs is empty, and no power of two from 2^55 to 2^69 (the masks and bounds of every digit there) keeps its value. The port reads values below 2^53 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
+    "evidence": "`let expected = 9_223_372_036_854_775_802;` is 0x7FFF_FFFF_FFFF_FFFA, which Clippy 0.1.99 reports (clippy_lints/src/literal_representation.rs, DecimalLiteralRepresentation::check_lit and do_lint: `val >= threshold`: the samples' labelling build's default 16384 and this variant's 0xFFFFFF alike, which the value exceeds, then a hexadecimal representation of 4 digits or more whose first digit is 7 and whose middle digits are all F). The rule language has no hexadecimal reading of a value, so the port reads the digits as `value` ranges and `bitsAny` masks, and a bundled rule's text reaches the engine through JavaScript (src/engine/code-rule/code-rule-dsl-catalog.ts compiles stableJsonText of the parsed document), whose numbers are IEEE-754 doubles: 0x7FFF_FFFF_FFFF_FFF0 (9223372036854775792) and 2^63 both become 9223372036854776000, so the range this literal needs is empty, and no power of two from 2^55 to 2^69 (the masks and bounds of every digit there) keeps its value. The port reads values below 2^53 only (its description says so). The engine reads the literal's value exactly; the rule cannot name it."
   },
   {
     "rule": "clippy-needless-raw-strings",
-    "source": "ripgrep",
-    "path": "crates/printer/src/hyperlink/mod.rs",
+    "source": "samples",
+    "path": "ripgrep-crates-printer-src-hyperlink-mod.rs-8887b0669876/crates/printer/src/hyperlink/mod.rs",
     "line": 865,
     "kind": "not-comparable",
-    "evidence": "`#[cfg(windows)]` (line 767) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
+    "evidence": "`#[cfg(windows)]` (line 767) leaves this item out of the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
   },
   {
     "rule": "clippy-needless-raw-string-hashes-one-allowed",
-    "source": "ripgrep",
-    "path": "crates/core/flags/defs.rs",
+    "source": "samples",
+    "path": "ripgrep-crates-core-flags-defs.rs-779953a821d8/crates/core/flags/defs.rs",
     "line": 2997,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `allow-one-hash-in-raw-strings = true` (tests/ui-toml/needless_raw_string_hashes_one_allowed/clippy.toml), which allows a raw string one needless hash; the corpus was recorded with Clippy's default configuration, under which the default port reports the same line (TP)."
   },
   {
     "rule": "clippy-needless-raw-string-hashes-one-allowed",
-    "source": "ripgrep",
-    "path": "crates/core/flags/defs.rs",
+    "source": "samples",
+    "path": "ripgrep-crates-core-flags-defs.rs-779953a821d8/crates/core/flags/defs.rs",
     "line": 5669,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `allow-one-hash-in-raw-strings = true` (tests/ui-toml/needless_raw_string_hashes_one_allowed/clippy.toml), which allows a raw string one needless hash; the corpus was recorded with Clippy's default configuration, under which the default port reports the same line (TP)."
   },
   {
     "rule": "clippy-needless-raw-string-hashes-one-allowed",
-    "source": "ripgrep",
-    "path": "crates/core/flags/defs.rs",
+    "source": "samples",
+    "path": "ripgrep-crates-core-flags-defs.rs-779953a821d8/crates/core/flags/defs.rs",
     "line": 6370,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `allow-one-hash-in-raw-strings = true` (tests/ui-toml/needless_raw_string_hashes_one_allowed/clippy.toml), which allows a raw string one needless hash; the corpus was recorded with Clippy's default configuration, under which the default port reports the same line (TP)."
   },
   {
     "rule": "clippy-needless-raw-string-hashes-one-allowed",
-    "source": "ripgrep",
-    "path": "tests/regression.rs",
+    "source": "samples",
+    "path": "ripgrep-tests-regression.rs-77e84eb6c056/tests/regression.rs",
     "line": 1713,
     "kind": "not-comparable",
     "evidence": "This port is the variant for `allow-one-hash-in-raw-strings = true` (tests/ui-toml/needless_raw_string_hashes_one_allowed/clippy.toml), which allows a raw string one needless hash; the corpus was recorded with Clippy's default configuration, under which the default port reports the same line (TP)."
@@ -169,501 +129,397 @@
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "ripgrep",
-    "path": "crates/ignore/src/pathutil.rs",
-    "line": 114,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(unix))]` (line 113) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "ripgrep",
-    "path": "crates/index/src/literal.rs",
-    "line": 789,
-    "kind": "not-comparable",
-    "evidence": "crates/index/src/lib.rs:1 `#![allow(warnings)]` silences every warning-level lint of the grep-index crate, which loads this file as `pub mod literal;` (lib.rs:6), so the recording holds no finding anywhere in crates/index; `cargo +1.99.0 clippy -p grep-index --all-targets --all-features -- -W clippy::else_if_without_else -W clippy::single_char_lifetime_names` reports nothing either. Rerail reads the lint attributes of the file it checks, not those of the crate root that loads it as a module."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "ripgrep",
-    "path": "crates/index/src/literal.rs",
-    "line": 822,
-    "kind": "not-comparable",
-    "evidence": "crates/index/src/lib.rs:1 `#![allow(warnings)]` silences every warning-level lint of the grep-index crate, which loads this file as `pub mod literal;` (lib.rs:6), so the recording holds no finding anywhere in crates/index; `cargo +1.99.0 clippy -p grep-index --all-targets --all-features -- -W clippy::else_if_without_else -W clippy::single_char_lifetime_names` reports nothing either. Rerail reads the lint attributes of the file it checks, not those of the crate root that loads it as a module."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "ripgrep",
-    "path": "crates/printer/src/util.rs",
-    "line": 360,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(unix))]` (line 359) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-stream/src/stream_ext/all.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-src-stream_ext-all.rs-cedede999910/tokio-stream/src/stream_ext/all.rs",
     "line": 13,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 9): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-stream/src/stream_ext/any.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-src-stream_ext-any.rs-b65bf5a191f0/tokio-stream/src/stream_ext/any.rs",
     "line": 13,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 9): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-stream/src/stream_ext/next.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-src-stream_ext-next.rs-0cf1be873729/tokio-stream/src/stream_ext/next.rs",
     "line": 20,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 9): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-stream/src/stream_ext/try_next.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-src-stream_ext-try_next.rs-3258a10910e8/tokio-stream/src/stream_ext/try_next.rs",
     "line": 20,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-util/src/future/with_cancellation_token.rs",
+    "source": "samples",
+    "path": "tokio-tokio-util-src-future-with_cancellation_token.rs-a2a683b427b7/tokio-util/src/future/with_cancellation_token.rs",
     "line": 19,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 11): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-util/src/io/write_all_vectored.rs",
+    "source": "samples",
+    "path": "tokio-tokio-util-src-io-write_all_vectored.rs-1665381c603d/tokio-util/src/io/write_all_vectored.rs",
     "line": 14,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-util/src/sync/cancellation_token.rs",
+    "source": "samples",
+    "path": "tokio-tokio-util-src-sync-cancellation_token.rs-e1e8131516de/tokio-util/src/sync/cancellation_token.rs",
     "line": 68,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 64): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-util/src/sync/cancellation_token.rs",
+    "source": "samples",
+    "path": "tokio-tokio-util-src-sync-cancellation_token.rs-e1e8131516de/tokio-util/src/sync/cancellation_token.rs",
     "line": 440,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 435): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio-util/src/task/task_tracker.rs",
+    "source": "samples",
+    "path": "tokio-tokio-util-src-task-task_tracker.rs-1333377da37b/tokio-util/src/task/task_tracker.rs",
     "line": 199,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 194): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/poll_evented.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-poll_evented.rs-334619a06d84/tokio/src/io/poll_evented.rs",
     "line": 161,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `feature!` (line 153): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/poll_evented.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-poll_evented.rs-334619a06d84/tokio/src/io/poll_evented.rs",
     "line": 229,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `feature!` (line 153): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/poll_evented.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-poll_evented.rs-334619a06d84/tokio/src/io/poll_evented.rs",
     "line": 280,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `feature!` (line 153): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/seek.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-seek.rs-56c8405acdd8/tokio/src/io/seek.rs",
     "line": 14,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_buf_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_buf_read_ext.rs-5ff991408c5d/tokio/src/io/util/async_buf_read_ext.rs",
     "line": 96,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 8): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_buf_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_buf_read_ext.rs-5ff991408c5d/tokio/src/io/util/async_buf_read_ext.rs",
     "line": 199,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 8): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_read_ext.rs-896c7ecdcd40/tokio/src/io/util/async_read_ext.rs",
     "line": 177,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 19): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_read_ext.rs-896c7ecdcd40/tokio/src/io/util/async_read_ext.rs",
     "line": 258,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 19): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_read_ext.rs-896c7ecdcd40/tokio/src/io/util/async_read_ext.rs",
     "line": 324,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 19): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_read_ext.rs-896c7ecdcd40/tokio/src/io/util/async_read_ext.rs",
     "line": 1356,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 19): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_read_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_read_ext.rs-896c7ecdcd40/tokio/src/io/util/async_read_ext.rs",
     "line": 1406,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 19): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_write_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_write_ext.rs-720b4d838b22/tokio/src/io/util/async_write_ext.rs",
     "line": 130,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 22): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_write_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_write_ext.rs-720b4d838b22/tokio/src/io/util/async_write_ext.rs",
     "line": 182,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 22): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_write_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_write_ext.rs-720b4d838b22/tokio/src/io/util/async_write_ext.rs",
     "line": 266,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 22): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_write_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_write_ext.rs-720b4d838b22/tokio/src/io/util/async_write_ext.rs",
     "line": 336,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 22): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/async_write_ext.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-async_write_ext.rs-720b4d838b22/tokio/src/io/util/async_write_ext.rs",
     "line": 392,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 22): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/copy.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-copy.rs-aa17b30dc0d5/tokio/src/io/util/copy.rs",
     "line": 287,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 235): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/copy_buf.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-copy_buf.rs-9868da624e02/tokio/src/io/util/copy_buf.rs",
     "line": 17,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 7): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/copy_buf.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-copy_buf.rs-9868da624e02/tokio/src/io/util/copy_buf.rs",
     "line": 70,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_util!` (line 7): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/fill_buf.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-fill_buf.rs-223725d82807/tokio/src/io/util/fill_buf.rs",
     "line": 14,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/flush.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-flush.rs-e3384731406f/tokio/src/io/util/flush.rs",
     "line": 18,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read.rs-3583f5adb74d/tokio/src/io/util/read.rs",
     "line": 34,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 27): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read_buf.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read_buf.rs-812ac09bb6e1/tokio/src/io/util/read_buf.rs",
     "line": 27,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 23): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read_exact.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read_exact.rs-200f211e821e/tokio/src/io/util/read_exact.rs",
     "line": 34,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 27): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read_line.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read_line.rs-ac43fa4ef953/tokio/src/io/util/read_line.rs",
     "line": 17,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 13): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read_to_end.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read_to_end.rs-1cbab61e586c/tokio/src/io/util/read_to_end.rs",
     "line": 15,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 12): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read_to_string.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read_to_string.rs-49c8e96c00b3/tokio/src/io/util/read_to_string.rs",
     "line": 17,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 13): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/read_until.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-read_until.rs-3db4a5dcef19/tokio/src/io/util/read_until.rs",
     "line": 17,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 12): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/shutdown.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-shutdown.rs-dbf7e47a06b8/tokio/src/io/util/shutdown.rs",
     "line": 17,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/write.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-write.rs-20d14ee545ab/tokio/src/io/util/write.rs",
     "line": 14,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/write_all.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-write_all.rs-379df45494ed/tokio/src/io/util/write_all.rs",
     "line": 14,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 11): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/write_all_buf.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-write_all_buf.rs-d19bb0491986/tokio/src/io/util/write_all_buf.rs",
     "line": 15,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 11): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/write_buf.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-write_buf.rs-8aefd591de37/tokio/src/io/util/write_buf.rs",
     "line": 15,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 11): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/io/util/write_vectored.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-util-write_vectored.rs-7a335a9f796d/tokio/src/io/util/write_vectored.rs",
     "line": 14,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 10): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/runtime/park.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-park.rs-9828d90e7390/tokio/src/runtime/park.rs",
     "line": 176,
     "kind": "not-comparable",
-    "evidence": "`#[cfg(all(target_os = \"emscripten\", not(target_feature = \"atomics\")))]` (line 138) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
+    "evidence": "`#[cfg(all(target_os = \"emscripten\", not(target_feature = \"atomics\")))]` (line 138) leaves this item out of the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/task/join_set.rs",
-    "line": 75,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(all(tokio_unstable, feature = \"tracing\"))]` (line 72) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/task/join_set.rs",
-    "line": 701,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(all(tokio_unstable, feature = \"tracing\"))]` (line 699) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/task/join_set.rs",
-    "line": 844,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(all(tokio_unstable, feature = \"tracing\"))]` (line 842) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/task/local.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-task-local.rs-14580991444b/tokio/src/task/local.rs",
     "line": 280,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `pin_project!` (line 278): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/util/linked_list.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-util-linked_list.rs-000a612d7424/tokio/src/util/linked_list.rs",
     "line": 269,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_driver_impl!` (line 268): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/util/linked_list.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-util-linked_list.rs-000a612d7424/tokio/src/util/linked_list.rs",
     "line": 289,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_driver_impl!` (line 268): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/util/trace.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-util-trace.rs-cfc48b92d3f9/tokio/src/util/trace.rs",
     "line": 5,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 1): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/src/util/trace.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-util-trace.rs-cfc48b92d3f9/tokio/src/util/trace.rs",
     "line": 20,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 1): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/tests/io_poll_aio.rs",
-    "line": 203,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(target_os = \"freebsd\", feature = \"net\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/tests/io_poll_aio.rs",
-    "line": 208,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(target_os = \"freebsd\", feature = \"net\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/tests/io_poll_aio.rs",
-    "line": 224,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(target_os = \"freebsd\", feature = \"net\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/tests/io_poll_aio.rs",
-    "line": 242,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(target_os = \"freebsd\", feature = \"net\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/tests/io_poll_aio.rs",
-    "line": 244,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(target_os = \"freebsd\", feature = \"net\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-single-char-lifetime-names",
-    "source": "tokio",
-    "path": "tokio/tests/io_poll_aio.rs",
-    "line": 251,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(target_os = \"freebsd\", feature = \"net\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
     "rule": "clippy-allow-attributes",
     "source": "fixtures",
     "path": "tests/ui/decimal_literal_representation.rs",
@@ -673,395 +529,179 @@
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "ripgrep",
-    "path": "tests/util.rs",
-    "line": 236,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(windows)]` (line 235) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "examples/prewarm-fd-table.rs",
-    "line": 57,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(target_os = \"linux\")]` (line 56) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 48,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 49,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 84,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 85,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-util/src/util/mod.rs",
-    "line": 9,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"io\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-util/src/util/poll_buf.rs",
-    "line": 46,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"io\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-util/src/util/poll_buf.rs",
-    "line": 120,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"io\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio-util/tests/udp.rs",
-    "line": 26,
-    "kind": "not-comparable",
-    "evidence": "`#[tokio::test]` (line 27) is a proc-macro attribute: the function, with the #[allow(unused_assignments)] its #[cfg_attr] gives on macOS, reaches Clippy as the macro's output, and Clippy's allow_attributes and allow_attributes_without_reason skip attributes a proc macro emits (`is_from_proc_macro`, clippy_lints/src/attrs/allow_attributes.rs:14, allow_attributes_without_reason.rs:19). A syntax-level reader sees the attribute as written, not what the macro emits."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/blocking.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-blocking.rs-837e6def94fc/tokio/src/blocking.rs",
     "line": 7,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 1): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/io/blocking.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-blocking.rs-29e33ddfe6fe/tokio/src/io/blocking.rs",
     "line": 47,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_blocking!` (line 40): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/io/poll_evented.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-poll_evented.rs-334619a06d84/tokio/src/io/poll_evented.rs",
     "line": 177,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `feature!` (line 153): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-lib.rs-5dbbe9e3be9a/tokio/src/lib.rs",
     "line": 635,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_not_taskdump!` (line 633): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 641,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"sync\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 696,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(all(docsrs, unix))]` (line 695) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/loom/std/mod.rs",
-    "line": 62,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(all(feature = \"parking_lot\", not(miri))))]` (line 61) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/macros/pin.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-macros-pin.rs-d8347f8258e8/tokio/src/macros/pin.rs",
     "line": 131,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! pin` (line 125): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
-    "line": 188,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(any(not(feature = \"fs\"), target_os = \"emscripten\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
-    "line": 237,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(target_os = \"wasi\", allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-blocking-pool.rs-8e3c0a4dab06/tokio/src/runtime/blocking/pool.rs",
     "line": 252,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_blocking!` (line 247): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-blocking-pool.rs-8e3c0a4dab06/tokio/src/runtime/blocking/pool.rs",
     "line": 397,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_blocking!` (line 391): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/schedule.rs",
-    "line": 19,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"test-util\"), allow(unused_variables))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/context/runtime.rs",
-    "line": 12,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"rt\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/driver.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-driver.rs-909512c24dfe/tokio/src/runtime/driver.rs",
     "line": 26,
     "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(any(not(unix), loom), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
+    "evidence": "`#[cfg_attr(any(not(unix), loom), allow(dead_code))]` expands to nothing in the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/driver.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-driver.rs-909512c24dfe/tokio/src/runtime/driver.rs",
     "line": 33,
     "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(all(feature = \"time\", feature = \"test-util\")), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
+    "evidence": "`#[cfg_attr(not(all(feature = \"time\", feature = \"test-util\")), allow(dead_code))]` expands to nothing in the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/mod.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-mod.rs-17769dc98dcb/tokio/src/runtime/mod.rs",
     "line": 462,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_time!` (line 444): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/mod.rs",
-    "line": 39,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(feature = \"rt\"))]` (line 38) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/mod.rs",
-    "line": 52,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"full\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/mod.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-scheduler-mod.rs-c42aac129db1/tokio/src/runtime/scheduler/mod.rs",
     "line": 168,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 67): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/multi_thread/handle.rs",
-    "line": 44,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"time\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/task/mod.rs",
-    "line": 486,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(tokio_unstable)]` (line 485) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/runtime/task/mod.rs",
-    "line": 530,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(target_family = \"wasm\", allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/util/blocking_check.rs",
-    "line": 24,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(unix))]` (line 23) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/src/util/markers.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-util-markers.rs-4f20e670ca3e/tokio/src/util/markers.rs",
     "line": 8,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 7): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 113,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 111): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 114,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 111): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 125,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! assert_value` (line 123): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 126,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! assert_value` (line 123): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/process_raw_handle.rs",
-    "line": 45,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(windows)]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/rt_common.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-rt_common.rs-2a004048490d/tokio/tests/rt_common.rs",
     "line": 299,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `rt_test!` (line 66): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/rt_common.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-rt_common.rs-2a004048490d/tokio/tests/rt_common.rs",
     "line": 756,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `rt_test!` (line 66): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/rt_unstable_metrics.rs",
-    "line": 429,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all( feature = \"full\", tokio_unstable, not(target_os = \"wasi\"), target_has_atomic = \"64\" ))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/rt_unstable_metrics.rs",
-    "line": 523,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all( feature = \"full\", tokio_unstable, not(target_os = \"wasi\"), target_has_atomic = \"64\" ))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 92,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 185,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 199,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 241,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 255,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
@@ -1073,640 +713,192 @@
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "ripgrep",
-    "path": "tests/util.rs",
-    "line": 236,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(windows)]` (line 235) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "examples/prewarm-fd-table.rs",
-    "line": 57,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(target_os = \"linux\")]` (line 56) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 48,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 49,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 84,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-stream/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-stream-tests-async_send_sync.rs-2fde5007212a/tokio-stream/tests/async_send_sync.rs",
     "line": 85,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 46): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-util/src/util/mod.rs",
-    "line": 9,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"io\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-util/src/util/poll_buf.rs",
-    "line": 46,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"io\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-util/src/util/poll_buf.rs",
-    "line": 120,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"io\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio-util/tests/udp.rs",
-    "line": 26,
-    "kind": "not-comparable",
-    "evidence": "`#[tokio::test]` (line 27) is a proc-macro attribute: the function, with the #[allow(unused_assignments)] its #[cfg_attr] gives on macOS, reaches Clippy as the macro's output, and Clippy's allow_attributes and allow_attributes_without_reason skip attributes a proc macro emits (`is_from_proc_macro`, clippy_lints/src/attrs/allow_attributes.rs:14, allow_attributes_without_reason.rs:19). A syntax-level reader sees the attribute as written, not what the macro emits."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/blocking.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-blocking.rs-837e6def94fc/tokio/src/blocking.rs",
     "line": 7,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 1): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/future/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"macros\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/io/blocking.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-blocking.rs-29e33ddfe6fe/tokio/src/io/blocking.rs",
     "line": 47,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_blocking!` (line 40): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/io/interest.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"net\"), allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/io/mod.rs",
-    "line": 199,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr( not(all(feature = \"rt\", feature = \"net\")), allow(dead_code, unused_imports) )]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/io/poll_evented.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-io-poll_evented.rs-334619a06d84/tokio/src/io/poll_evented.rs",
     "line": 177,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `feature!` (line 153): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/io/ready.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"net\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 22,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(docsrs, allow(unused_attributes))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 23,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(loom, allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 24,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(windows, allow(rustdoc::broken_intra_doc_links))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-lib.rs-5dbbe9e3be9a/tokio/src/lib.rs",
     "line": 635,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_not_taskdump!` (line 633): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 641,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"sync\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/lib.rs",
-    "line": 696,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(all(docsrs, unix))]` (line 695) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/loom/std/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(any(not(feature = \"full\"), loom), allow(unused_imports, dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/loom/std/mod.rs",
-    "line": 62,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(all(feature = \"parking_lot\", not(miri))))]` (line 61) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/macros/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"full\"), allow(unused_macros))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/macros/pin.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-macros-pin.rs-d8347f8258e8/tokio/src/macros/pin.rs",
     "line": 131,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! pin` (line 125): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
-    "line": 188,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(any(not(feature = \"fs\"), target_os = \"emscripten\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
-    "line": 237,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(target_os = \"wasi\", allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-blocking-pool.rs-8e3c0a4dab06/tokio/src/runtime/blocking/pool.rs",
     "line": 252,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_blocking!` (line 247): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/pool.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-blocking-pool.rs-8e3c0a4dab06/tokio/src/runtime/blocking/pool.rs",
     "line": 397,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_io_blocking!` (line 391): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/blocking/schedule.rs",
-    "line": 19,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"test-util\"), allow(unused_variables))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/builder.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(loom, allow(unused_imports))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/context/runtime.rs",
-    "line": 12,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"rt\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/driver.rs",
-    "line": 26,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(any(not(unix), loom), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/driver.rs",
-    "line": 33,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(all(feature = \"time\", feature = \"test-util\")), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/io/registration.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"net\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/mod.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-mod.rs-17769dc98dcb/tokio/src/runtime/mod.rs",
     "line": 462,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_time!` (line 444): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/park.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"full\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/process.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"rt\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/mod.rs",
-    "line": 39,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(feature = \"rt\"))]` (line 38) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/mod.rs",
-    "line": 52,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"full\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/mod.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-runtime-scheduler-mod.rs-c42aac129db1/tokio/src/runtime/scheduler/mod.rs",
     "line": 168,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 67): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/scheduler/multi_thread/handle.rs",
-    "line": 44,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(not(feature = \"time\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/signal/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"rt\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/task/mod.rs",
-    "line": 486,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(tokio_unstable)]` (line 485) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/task/mod.rs",
-    "line": 530,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg_attr(target_family = \"wasm\", allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/runtime/time/mod.rs",
-    "line": 5,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"rt\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/batch_semaphore.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(unreachable_pub, dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(loom, allow(dead_code, unreachable_pub, unused_imports))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/mpsc/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/mutex.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(unreachable_pub, dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/notify.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-sync-notify.rs-e3f395913051/tokio/src/sync/notify.rs",
     "line": 6,
     "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(unreachable_pub, dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
+    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(unreachable_pub, dead_code))]` expands to nothing in the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/oneshot.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-sync-watch.rs-034e6769c20b/tokio/src/sync/watch.rs",
     "line": 1,
     "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
+    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(dead_code, unreachable_pub))]` expands to nothing in the samples' labelling build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/task/atomic_waker.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(any(loom, not(feature = \"sync\")), allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/sync/watch.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/task/coop/mod.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"full\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/task/coop/mod.rs",
-    "line": 2,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"rt\"), allow(unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/time/clock.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"rt\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/util/blocking_check.rs",
-    "line": 24,
-    "kind": "not-comparable",
-    "evidence": "`#[cfg(not(unix))]` (line 23) leaves this item out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the item as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/util/cacheline.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"sync\"), allow(dead_code, unreachable_pub))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/util/error.rs",
-    "line": 2,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"full\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/util/linked_list.rs",
-    "line": 1,
-    "kind": "not-comparable",
-    "evidence": "`#![cfg_attr(not(feature = \"full\"), allow(dead_code))]` expands to nothing in the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): its predicate is false there, so the build holds no #[allow] here for Clippy to report. Rerail reads every #[cfg_attr] as active (the port's description). Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/src/util/markers.rs",
+    "source": "samples",
+    "path": "tokio-tokio-src-util-markers.rs-4f20e670ca3e/tokio/src/util/markers.rs",
     "line": 8,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `cfg_rt!` (line 7): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 113,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 111): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 114,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! async_assert_fn` (line 111): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 125,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! assert_value` (line 123): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/async_send_sync.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-async_send_sync.rs-84d83a41bad6/tokio/tests/async_send_sync.rs",
     "line": 126,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the body of `macro_rules! assert_value` (line 123): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/process_raw_handle.rs",
-    "line": 45,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(windows)]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/rt_common.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-rt_common.rs-2a004048490d/tokio/tests/rt_common.rs",
     "line": 299,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `rt_test!` (line 66): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/rt_common.rs",
+    "source": "samples",
+    "path": "tokio-tokio-tests-rt_common.rs-2a004048490d/tokio/tests/rt_common.rs",
     "line": 756,
     "kind": "rerail-unknown",
     "evidence": "The finding is inside the token tree of `rt_test!` (line 66): Clippy lints the code the macro expands to, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/rt_unstable_metrics.rs",
-    "line": 429,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all( feature = \"full\", tokio_unstable, not(target_os = \"wasi\"), target_has_atomic = \"64\" ))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/rt_unstable_metrics.rs",
-    "line": 523,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all( feature = \"full\", tokio_unstable, not(target_os = \"wasi\"), target_has_atomic = \"64\" ))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 92,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 185,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 199,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 241,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
-  },
-  {
-    "rule": "clippy-allow-attributes-without-reason",
-    "source": "tokio",
-    "path": "tokio/tests/time_alt.rs",
-    "line": 255,
-    "kind": "not-comparable",
-    "evidence": "The file's `#![cfg(all(tokio_unstable, feature = \"time\", feature = \"rt-multi-thread\"))]` leaves it out of the corpus recording's build (generate.py: `cargo +1.99.0 clippy --workspace --all-targets --all-features` on aarch64-apple-darwin with RUSTFLAGS unset: every feature on; macOS, unix, 64-bit; tokio_unstable, loom, docsrs and miri off): the predicate is false there, so Clippy never compiled or linted it. Which cfg predicates a build enables is cargo's and rustc's configuration, not the source a syntax-level reader sees. Rerail reads the file as written."
   },
   {
     "rule": "clippy-redundant-static-lifetimes",
-    "source": "ripgrep",
-    "path": "tests/feature.rs",
+    "source": "samples",
+    "path": "ripgrep-tests-feature.rs-fbc6455c5d2c/tests/feature.rs",
     "line": 623,
     "kind": "rerail-unknown",
     "evidence": "The `const SHERLOCK: &'static str` at line 623 is inside the closure passed to `rgtest!(f917_trim, |dir: Dir, mut cmd: TestCommand| { .. })` (line 622; tests/macros.rs:2, `($name:ident, $fun:expr)`): Clippy 0.1.99's redundant_static_lifetimes (clippy_lints/src/redundant_static_lifetimes.rs, check_item, `!item.span.from_expansion()`) lints the expanded item, whose span is the caller's tokens, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."
   },
   {
     "rule": "clippy-redundant-static-lifetimes",
-    "source": "ripgrep",
-    "path": "tests/feature.rs",
+    "source": "samples",
+    "path": "ripgrep-tests-feature.rs-fbc6455c5d2c/tests/feature.rs",
     "line": 649,
     "kind": "rerail-unknown",
     "evidence": "The `const SHERLOCK: &'static str` at line 649 is inside the closure passed to `rgtest!(f917_trim_match, |dir: Dir, mut cmd: TestCommand| { .. })` (line 648; tests/macros.rs:2, `($name:ident, $fun:expr)`): Clippy 0.1.99's redundant_static_lifetimes (clippy_lints/src/redundant_static_lifetimes.rs, check_item, `!item.span.from_expansion()`) lints the expanded item, whose span is the caller's tokens, while tree-sitter-rust parses a macro's input and a macro_rules! body as token trees, which a syntax-level reader does not expand."

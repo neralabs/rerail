@@ -1,0 +1,283 @@
+name: Package
+
+# Builds the @neralabs/rerail package: native rules engines for every supported target, the TypeScript runtime,
+# and the bundled UI, packed into one cross-platform tarball, uploaded as the `rerail-package` artifact of the
+# calling run. release.yml publishes what this builds; env-matrix.yml installs it on Azure VMs. One build, so the
+# environment matrix tests exactly what a release would ship.
+#
+# The cargo cache is restored, never saved: release-cache.yml builds and saves it on main under exactly the key below
+# (same targets, command and paths; change them together), and a tag's run can read caches saved on main but not
+# those an earlier tag's run saved.
+
+on:
+  workflow_call:
+    outputs:
+      tarball:
+        description: File name of the packed tarball inside the rerail-package artifact
+        value: ${{ jobs.package.outputs.tarball }}
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          # Linux engines link against the glibc 2.17 sysroot of napi-rs's cross toolchain: built on the runner's
+          # own glibc (2.39 on Ubuntu 24.04), they failed to load on every older distribution. The toolchain's
+          # linker also drops the symbol tables (`--strip`), which nothing loads at runtime.
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            napi_cross: true
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            napi_cross: true
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            windows_runtime_smoke: true
+          # Cross-compiled on x64; no hosted Windows arm64 runner is used, so this engine is checked
+          # by import inspection only here (env-matrix.yml runs it on a Windows 11 arm64 VM).
+          - runner: windows-2025
+            target: aarch64-pc-windows-msvc
+            windows_runtime_smoke: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      # Windows refuses paths over 260 characters unless Git is told to use long paths. `npm run check` keeps
+      # tracked paths well under that (scripts/check/check-windows-paths.mjs), so this is the backstop.
+      - name: Allow long paths in Git on Windows
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # No npm cache: on a tag, setup-node's cache misses on every runner but macOS arm64, and it saves on a miss.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        shell: bash
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      # Exactly the key release-cache.yml builds from scratch on main (same paths), with no prefix fallback, so a
+      # published engine never links artifacts carried forward from an older cache. A miss builds cold.
+      - name: Restore cargo artifacts
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rerail-release-${{ matrix.target }}${{ matrix.napi_cross && '-napi-cross' || '' }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
+
+      - name: Install dependencies
+        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+      - name: Build TypeScript
+        run: npm run build:ts
+
+      - name: Build native engine
+        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
+
+      # Node 24's own Linux binaries need glibc 2.28, the floor docs/installation.md states. The runner's glibc is
+      # newer, so the smokes below cannot catch an engine that needs more.
+      - name: Check Linux engine loads on glibc 2.28
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          newest="$(objdump -T native/rerail_engine.*.node | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)"
+          echo "newest glibc symbol version: $newest"
+          if [ "$(printf '%s\n' GLIBC_2.28 "$newest" | sort -V | tail -1)" != GLIBC_2.28 ]; then
+            echo "::error::the Linux engine needs $newest, newer than glibc 2.28" >&2
+            exit 1
+          fi
+
+      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch an engine
+      # that needs it; a clean Windows install does not have it.
+      - name: Check Windows engine has no Visual C++ runtime dependency
+        if: endsWith(matrix.target, '-windows-msvc')
+        shell: bash
+        run: node scripts/check/check-windows-runtime.mjs native/rerail_engine.*.node
+
+      - name: Smoke Windows rerail CLI install planning
+        if: matrix.windows_runtime_smoke
+        run: node dist/cli/cli.js install --root . --agents omp,pi,claude-code,codex,cursor --dry-run
+
+      - name: Provision Linux Secret Service
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes dbus-x11 gnome-keyring libsecret-tools
+
+      - name: Smoke macOS Keychain device storage
+        if: startsWith(matrix.runner, 'macos')
+        run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
+
+      - name: Smoke Linux Secret Service device storage
+        if: startsWith(matrix.runner, 'ubuntu')
+        run: |
+          dbus-run-session -- bash <<'EOF'
+          set -euo pipefail
+          # --unlock reads the login keyring password from stdin and creates the
+          # keyring when it does not exist; --start never creates it, which left
+          # secret-tool with no default collection. The password only guards this
+          # ephemeral session bus, so any non-empty throwaway value works.
+          eval "$(gnome-keyring-daemon --unlock --components=secrets <<< 'rerail-ci')"
+          if ! printf 'x' | secret-tool store --label=probe rerail-probe 1 \
+            || [ "$(secret-tool lookup rerail-probe 1)" != 'x' ]; then
+            echo '::error::Secret Service default collection is not writable after gnome-keyring-daemon --unlock' >&2
+            exit 1
+          fi
+          secret-tool clear rerail-probe 1
+          ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
+          EOF
+
+      - name: Smoke Windows Credential Manager device storage
+        if: matrix.windows_runtime_smoke
+        run: ./node_modules/.bin/vitest run integration/signed-profile-cli.test.ts
+
+      - name: Smoke native engine
+        if: matrix.target != 'aarch64-pc-windows-msvc'
+        run: ./node_modules/.bin/vitest run test/engine/native/native-health.test.ts
+
+      - name: Smoke Windows junction lifecycle
+        if: matrix.windows_runtime_smoke
+        run: ./node_modules/.bin/vitest run test/setup/updater.test.ts test/setup/harness-registration.test.ts -t "Windows.*junction"
+
+      - name: Smoke Windows daemon launch handle isolation
+        if: matrix.windows_runtime_smoke
+        run: ./node_modules/.bin/vitest run test/runtime/windows-daemon-launch.test.ts
+
+      - name: Upload native engine
+        uses: actions/upload-artifact@v7
+        with:
+          name: rerail-native-${{ matrix.target }}
+          path: native/*.node
+          if-no-files-found: error
+
+  package:
+    name: Package
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      tarball: ${{ steps.packed-package.outputs.tarball }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # No npm cache, as in the native job.
+      - name: Set up Node.js v24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+      - name: Assemble release package
+        run: |
+          npm run build:clean
+          npm run build:ts
+          npm run build:omp
+          npm run build:events
+          npm run build:cursor
+          npm run build:claude
+          npm run build:codex
+          npm run build:ui
+
+      - name: Download native engines
+        uses: actions/download-artifact@v8
+        with:
+          pattern: rerail-native-*
+          path: native
+          merge-multiple: true
+
+      - name: Verify every supported native target is present
+        run: |
+          set -euo pipefail
+          for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do
+            test -f "native/rerail_engine.${target}.node" || { echo "missing native/rerail_engine.${target}.node" >&2; exit 1; }
+          done
+
+      - id: packed-package
+        name: Pack release package
+        run: |
+          npm pack --json > "$RUNNER_TEMP/packed-package.json"
+          node --input-type=module <<'EOF'
+          import { readFileSync, appendFileSync } from "node:fs";
+          const [{ filename }] = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/packed-package.json`, "utf8"));
+          appendFileSync(process.env.GITHUB_OUTPUT, `tarball=${filename}\n`);
+          EOF
+
+      - name: Smoke installed release package
+        env:
+          PACKAGE_TARBALL: ${{ steps.packed-package.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          smoke_directory="$(mktemp -d)"
+          installed="$smoke_directory/node_modules/@neralabs/rerail"
+          npm install --prefix "$smoke_directory" "$PWD/$PACKAGE_TARBALL"
+          "$smoke_directory/node_modules/.bin/rerail" --help
+          # Every file the package runs by path (src/engine/package-root.ts ENTRY_POINTS: CLI, daemon, hooks, status
+          # line, event stream), read from the installed package itself so a layout change cannot leave this stale.
+          # shellcheck disable=SC2016 # the script is JavaScript; its template literals are not the shell's.
+          node --input-type=module --eval '
+            import { existsSync } from "node:fs";
+            import { join } from "node:path";
+            import { pathToFileURL } from "node:url";
+            const root = process.argv[1];
+            const { ENTRY_POINTS } = await import(pathToFileURL(join(root, "dist", "engine", "package-root.js")).href);
+            const missing = Object.values(ENTRY_POINTS).filter((path) => !existsSync(join(root, path)));
+            if (missing.length > 0) { console.error(`missing ${missing.join(", ")}`); process.exit(1); }
+            console.log(`entry points present: ${Object.keys(ENTRY_POINTS).join(", ")}`);
+          ' "$installed"
+          test -f "$installed/dist/ui/index.html"
+          for notice in LICENSE NOTICE; do
+            test -f "$installed/$notice" || { echo "missing $notice" >&2; exit 1; }
+          done
+          # prepack stamps package.json's version into the host plugin manifests.
+          for host in claude codex cursor; do
+            node -e 'const [pkg, manifest] = process.argv.slice(1).map((path) => require(path)); if (manifest.version !== pkg.version) { console.error(process.argv[2] + " version " + manifest.version + " is not " + pkg.version); process.exit(1); }' \
+              "$installed/package.json" "$installed/.$host-plugin/plugin.json"
+          done
+          (
+            cd "$smoke_directory"
+            node --input-type=module --eval 'import { nativeHealth } from "@neralabs/rerail"; if (!nativeHealth().ok) process.exit(1);'
+          )
+
+      - name: Upload release tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: rerail-package
+          path: ${{ steps.packed-package.outputs.tarball }}
+          if-no-files-found: error

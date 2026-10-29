@@ -7,35 +7,6 @@
     "value",
     "suppression"
   ],
-  "corpora": [
-    {
-      "name": "fastify",
-      "repository": "https://github.com/fastify/fastify",
-      "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
-      "paths": [
-        "fastify.js",
-        "fastify.d.ts",
-        "lib",
-        "test",
-        "examples",
-        "build",
-        "integration",
-        "scripts",
-        "types"
-      ],
-      "exclude": []
-    },
-    {
-      "name": "prettier",
-      "repository": "https://github.com/prettier/prettier",
-      "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
-      "paths": [
-        "src",
-        "scripts"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "eslint-plugin-n",

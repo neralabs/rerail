@@ -9,18 +9,6 @@
     "arguments",
     "suppression"
   ],
-  "corpora": [
-    {
-      "name": "excalidraw",
-      "repository": "https://github.com/excalidraw/excalidraw",
-      "commit": "ed10ac7dca7e40f3f4a31269b4bfba980d0db41e",
-      "paths": [
-        "packages/excalidraw",
-        "excalidraw-app"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "eslint-plugin-react",

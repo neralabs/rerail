@@ -1,6 +1,6 @@
 /**
- * The react pack: eslint-plugin-react's and eslint-plugin-react-hooks' answers on the cases of their own rule tests
- * and on the pack's corpora, recorded by packs/react/upstream/<tool>/generate.mjs. Both generators take the pins
+ * The react pack: eslint-plugin-react's and eslint-plugin-react-hooks' answers on the cases of their own rule tests,
+ * recorded by packs/react/upstream/<tool>/generate.mjs. Both generators take the pins
  * common.mjs holds (PINS: the npm packages they refuse any other version of; UPSTREAM: the repository and commit whose
  * test files they copy, read here from common.mjs so a pin bump there needs no edit here) from a tools directory laid
  * out as `.rerail/tools/react`: the npm install, and the tool's upstream checkout as `upstream-<name>` beside it.
@@ -36,7 +36,7 @@ function recipe(tool: string): DeriveRecipe {
   return {
     pack: "react",
     tool,
-    async derive({ root, toolDirectory, exec, checkout, npmTools, corpora, scratch }: DeriveContext) {
+    async derive({ root, toolDirectory, exec, checkout, npmTools, scratch }: DeriveContext) {
       const upstream = commonConstant<Record<string, Upstream>>(root, "UPSTREAM")[tool];
       const sparse = SPARSE[tool];
       if (upstream === undefined || sparse === undefined) throw new Error(`packs/react/upstream/common.mjs pins no upstream for ${tool}`);
@@ -46,7 +46,7 @@ function recipe(tool: string): DeriveRecipe {
       await symlink(join(installed, "package.json"), join(tools, "package.json"));
       await symlink(join(installed, "node_modules"), join(tools, "node_modules"));
       await symlink(source, join(tools, upstream.checkout));
-      await exec(["node", join(toolDirectory, "generate.mjs"), "--tools", tools, "--corpora", await corpora()]);
+      await exec(["node", join(toolDirectory, "generate.mjs"), "--tools", tools]);
     },
   };
 }

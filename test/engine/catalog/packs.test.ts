@@ -1,8 +1,7 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
  * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
- * ported rules on the tools' fixtures, and on the pinned corpora that are checked out (RERAIL_PACK_CORPORA=1: every
- * corpus, a missing checkout failing; 0: none).
+ * ported rules on the tools' fixtures.
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
@@ -14,7 +13,7 @@ import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation, type ValidatePackOptions } from "../../../conformance/pack-validation.js";
+import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 
@@ -28,8 +27,6 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal =>
 const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
 const TIMEOUT = 600_000;
-
-const CORPORA: ValidatePackOptions = process.env.RERAIL_PACK_CORPORA === "1" ? { corpora: true } : process.env.RERAIL_PACK_CORPORA === "0" ? { corpora: false } : {};
 
 const packs = existsSync(PACKS)
   ? readdirSync(PACKS, { withFileTypes: true })
@@ -50,7 +47,7 @@ function listedRules(id: string): string[] {
 
 describe.each(packs)("pack %s", id => {
   let validation: Promise<PackValidation> | undefined;
-  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id), CORPORA));
+  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id)));
 
   it.each(PACK_CHECKS)("check $number: $name", { timeout: TIMEOUT }, async ({ name }) => {
     expect((await validated()).checks[name]).toEqual([]);
@@ -104,6 +101,11 @@ describe("validatePack", () => {
   const writeJson = (path: string, value: unknown): void => writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
   const editJson = (path: string, edit: (value: Record<string, unknown>) => unknown): void =>
     writeJson(path, edit(z.record(z.string(), z.unknown()).parse(JSON.parse(readFileSync(path, "utf8")))));
+  /** The fixture pack's licenses/examplelint/UPSTREAM.md, rewritten by `edit`. */
+  const editUpstream = (directory: string, edit: (text: string) => string): void => {
+    const path = join(directory, "licenses", "examplelint", "UPSTREAM.md");
+    writeFileSync(path, edit(readFileSync(path, "utf8")));
+  };
 
   /** pack.json with the `pass-statement` rule's listing replaced by `edit`'s result. */
   const editPassStatement = (directory: string, edit: (rule: Record<string, unknown>) => Record<string, unknown>): void =>
@@ -134,7 +136,7 @@ describe("validatePack", () => {
     Object.fromEntries(Object.entries(validation.checks).filter(([, failures]) => failures.length > 0));
 
   it("passes a valid pack, every rule ok", async () => {
-    const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "valid"));
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules).toEqual([
@@ -144,7 +146,7 @@ describe("validatePack", () => {
   });
 
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
-    const validation = await validatePack(join(FIXTURES, "exemplar"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "exemplar"));
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([
       { id: "no-identifier", document: "rules/no-identifier.json", status: "not-supported-yet", reason: "/clauses/0/forbid/ast/language: `exemplar` is not supported yet" },
@@ -152,7 +154,7 @@ describe("validatePack", () => {
   });
 
   it("passes a pack that ships no rules while its ports are candidates", async () => {
-    const validation = await validatePack(join(FIXTURES, "empty"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "empty"));
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
     expect(validation.rules).toEqual([]);
@@ -322,14 +324,14 @@ describe("validatePack", () => {
       },
     ],
     [
-      "a public package",
-      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, publishConfig: { access: "public" } })),
-      { package: ["package.json: publishConfig.access is public; packs stay restricted until launch"] },
+      "a restricted package",
+      directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, publishConfig: { access: "restricted" } })),
+      { package: ["package.json: publishConfig.access is restricted; packs are public"] },
     ],
     [
       "a package.json with no publishConfig",
       directory => editJson(join(directory, "package.json"), ({ publishConfig: _publishConfig, ...manifest }) => manifest),
-      { package: ["package.json: publishConfig.access is missing; packs stay restricted until launch"] },
+      { package: ["package.json: publishConfig.access is missing; packs are public"] },
     ],
     [
       "upstream/ in package.json files",
@@ -342,19 +344,111 @@ describe("validatePack", () => {
       { package: ['package.json: license "Apache-2.0" names Apache-2.0; the pack carries Apache-2.0, MIT (Apache-2.0 and what licenses/*/UPSTREAM.md records)'] },
     ],
     [
-      "a copied file no UPSTREAM.md lists",
-      directory => writeFileSync(join(directory, "upstream", "examplelint", "fixtures", "more.py"), "assert d\n"),
-      { licences: ["upstream/examplelint/fixtures/more.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+      "README rule details for a rule pack.json does not list",
+      directory => appendFileSync(join(directory, "README.md"), "\n### `assert-false`\n\nA candidate's details.\n"),
+      { package: ["README.md: Rule details describes assert-false, which pack.json does not list; a candidate's details go in candidates/README.md"] },
     ],
     [
-      "a file copied from an upstream path its UPSTREAM.md lists as not copied",
-      directory => appendFileSync(join(directory, "licenses", "examplelint", "UPSTREAM.md"), "\n- Not copied: `tests/` — a copyleft project, GPL-3.0-only\n"),
-      { licences: ["licenses/examplelint/UPSTREAM.md lists upstream/examplelint/fixtures/asserts.py as copied from tests/asserts.py, under tests/, which it lists as not copied"] },
+      "a README rule details heading that names no rule",
+      directory => appendFileSync(join(directory, "README.md"), "\n### Shared notes\n\nDetails for no one rule.\n"),
+      { package: ['README.md: the Rule details heading "Shared notes" names no rule'] },
     ],
     [
-      "an authored file the tool's UPSTREAM.md does not list",
-      directory => writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n"),
-      { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but neither licenses/*/UPSTREAM.md (copied) nor its tool's UPSTREAM.md (Rerail's) lists it"] },
+      "candidates/README.md rule details for a rule pack.json lists",
+      directory => {
+        mkdirSync(join(directory, "candidates"));
+        writeFileSync(join(directory, "candidates", "README.md"), "# valid, candidates\n\n## Rule details\n\n### `pass-statement`\n\nA shipped rule's details.\n");
+      },
+      { package: ["candidates/README.md: Rule details describes pass-statement, which pack.json lists; a shipped rule's details go in README.md"] },
+    ],
+    [
+      "a copied file once its glob is removed",
+      directory => editUpstream(directory, text => text.replace(/^\| `upstream\/examplelint\/fixtures\/\*\*`.*\n/mu, "")),
+      { licences: ["upstream/examplelint/fixtures/asserts.py is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)"] },
+    ],
+    [
+      "a glob that matches no file",
+      directory => editUpstream(directory, text => `${text}| \`upstream/examplelint/tests/**\` | \`tests/\` | verbatim |\n`),
+      { licences: ["licenses/examplelint/UPSTREAM.md: `upstream/examplelint/tests/**` matches no copied file"] },
+    ],
+    [
+      // As ruff's licenses/pylint/UPSTREAM.md refuses its fixtures/pylint/: the pack mirrors upstream's layout.
+      "a file under a not-copied glob",
+      directory => {
+        editUpstream(directory, text => `${text}\n- Not copied: \`tests/pylint/\` as \`upstream/examplelint/fixtures/pylint/**\` — a copyleft project, GPL-2.0-or-later\n`);
+        mkdirSync(join(directory, "upstream", "examplelint", "fixtures", "pylint"));
+        writeFileSync(join(directory, "upstream", "examplelint", "fixtures", "pylint", "a.py"), "assert e\n");
+      },
+      { licences: ["upstream/examplelint/fixtures/pylint/a.py matches `upstream/examplelint/fixtures/pylint/**`, which licenses/examplelint/UPSTREAM.md lists as not copied (tests/pylint/)"] },
+    ],
+    [
+      "a not-copied line with no pack-path glob",
+      directory => editUpstream(directory, text => `${text}\n- Not copied: \`tests/pylint/\` — a copyleft project, GPL-2.0-or-later\n`),
+      { licences: ['licenses/examplelint/UPSTREAM.md: "Not copied: `tests/pylint/`" names no pack-path glob (`… as `<glob>``)'] },
+    ],
+    [
+      "a not-copied line spelled otherwise",
+      directory => editUpstream(directory, text => `${text}\n* Not Copied: \`tests/pylint/\` as \`upstream/examplelint/fixtures/pylint/**\` — a copyleft project, GPL-2.0-or-later\n`),
+      { licences: ['licenses/examplelint/UPSTREAM.md: "* Not Copied: `tests/pylint/` as `upstream/examplelint/fixtures/pylint/**` — a copyleft project, GPL-2.0-or-later" is not a `- Not copied: `<prefix>` as `<glob>`` line'] },
+    ],
+    [
+      // clean.py is the tool's authored file, so only the copied asserts.py is judged.
+      "equal-length longest globs that disagree on copy kind",
+      directory => editUpstream(directory, text => `${text}| \`upstream/examplelint/f*xtures/**\` | \`tests/*.py\` | adapted |\n`),
+      {
+        licences: [
+          "upstream/examplelint/fixtures/asserts.py is covered by equal-length globs that disagree: licenses/examplelint/UPSTREAM.md: `upstream/examplelint/fixtures/**`, MIT, verbatim; licenses/examplelint/UPSTREAM.md: `upstream/examplelint/f*xtures/**`, MIT, adapted",
+        ],
+      },
+    ],
+    [
+      "a glob with more than two **",
+      directory => editUpstream(directory, text => `${text}| \`upstream/**/examplelint/**/fixtures/**\` | \`tests/*.py\` | verbatim |\n`),
+      { licences: ["licenses/examplelint/UPSTREAM.md: glob `upstream/**/examplelint/**/fixtures/**` holds 3 `**`; a glob may hold at most 2"] },
+    ],
+    [
+      "an UPSTREAM.md with no Source row",
+      directory => editUpstream(directory, text => text.replace(/^\| https:.*\n/mu, "")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "an UPSTREAM.md whose Source row is truncated",
+      directory => editUpstream(directory, text => text.replace(/^\| https:.*\n/mu, "| https://example.com/examplelint | `v1.0.0` |\n")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: Source row https://example.com/examplelint lacks a 40-hex commit and a licence (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "an UPSTREAM.md whose Source row has an empty tag and a short commit",
+      directory => editUpstream(directory, text => text.replace("| `v1.0.0` | `0000000000000000000000000000000000000000` |", "|  | `0000000` |")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: Source row https://example.com/examplelint lacks a tag and a 40-hex commit (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "an UPSTREAM.md whose only repository-URL row is outside its Source section",
+      directory => editUpstream(directory, text => text.replace("## Source", "## Elsewhere")),
+      { licences: ["licenses/examplelint/UPSTREAM.md: no Source row (| <repository URL> | <tag> | <commit> | <licence> |)"] },
+    ],
+    [
+      "a License: line that ANDs a licence off the allowlist",
+      directory => editUpstream(directory, text => text.replace("License: MIT;", "License: MIT AND GPL-3.0-only;")),
+      {
+        package: ['package.json: license "Apache-2.0 AND MIT" names Apache-2.0, MIT; the pack carries Apache-2.0, GPL-3.0-only, MIT (Apache-2.0 and what licenses/*/UPSTREAM.md records)'],
+        licences: ["licenses/examplelint/UPSTREAM.md: MIT AND GPL-3.0-only is not on the repository licence allowlist"],
+      },
+    ],
+    [
+      "a malformed License: expression",
+      directory => editUpstream(directory, text => text.replace("License: MIT;", "License: (MIT OR Apache-2.0;")),
+      {
+        package: ['package.json: license "Apache-2.0 AND MIT" names Apache-2.0, MIT; licenses/examplelint/UPSTREAM.md records (MIT OR Apache-2.0, which is no SPDX expression'],
+        licences: ["licenses/examplelint/UPSTREAM.md: (MIT OR Apache-2.0 is no SPDX expression"],
+      },
+    ],
+    [
+      "an authored file the tool's UPSTREAM.md does not list, outside every glob",
+      directory => {
+        writeFileSync(join(directory, "upstream", "examplelint", "UPSTREAM.md"), "# examplelint: files Rerail wrote\n");
+        editUpstream(directory, text => text.replace("`upstream/examplelint/fixtures/**`", "`upstream/examplelint/fixtures/asserts.py`"));
+      },
+      { licences: ["upstream/examplelint/fixtures/clean.py is under upstream/<tool>/ but no licenses/*/UPSTREAM.md pattern covers it (copied) and its tool's UPSTREAM.md does not list it (Rerail's)"] },
     ],
     [
       "a description that names its tool and holds code",
@@ -374,9 +468,24 @@ describe("validatePack", () => {
   ];
 
   it.each(cases)("fails %s", async (_name, change, expected) => {
-    const validation = await validatePack(changed("valid", change), { corpora: false });
+    const validation = await validatePack(changed("valid", change));
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it.each([
+    ["MIT OR Apache-2.0", "Apache-2.0 AND MIT"],
+    ["GPL-3.0-only OR MIT", "Apache-2.0 AND MIT"],
+    ["(MIT OR GPL-3.0-only) AND Apache-2.0", "Apache-2.0 AND MIT"],
+  ])("passes License: %s with the package's %s: it elects an alternative of the OR", async (licence, packageLicence) => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        editUpstream(directory, text => text.replace("License: MIT;", `License: ${licence};`));
+        editJson(join(directory, "package.json"), manifest => ({ ...manifest, license: packageLicence }));
+      }),
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
   });
 
   it("passes a rule whatever its message says: messages are left to review", async () => {
@@ -386,7 +495,6 @@ describe("validatePack", () => {
         ...document,
         clauses: (document.clauses as { violation: object }[]).map(clause => ({ ...clause, violation: { ...clause.violation, message } })),
       }))),
-      { corpora: false },
     );
     expect(failing(validation)).toEqual({});
     expect(validation.pass).toBe(true);
@@ -402,7 +510,7 @@ describe("validatePack", () => {
 
   describe("check 7: manifest", () => {
     it("fails a pack.json without match, as a manifest failure besides check 1's schema failure", async () => {
-      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)), { corpora: false });
+      const validation = await validatePack(changed("valid", directory => editJson(join(directory, "pack.json"), ({ match: _match, ...pack }) => pack)));
       expect(failing(validation)).toEqual({
         rules: ["pack.json: ✖ Invalid input: expected object, received undefined\n  → at match"],
         proof: ["pack.json does not parse; see check 1"],
@@ -412,7 +520,7 @@ describe("validatePack", () => {
     });
 
     it("fails a pack core's generated pack list does not name, when it must be listed", async () => {
-      const validation = await validatePack(join(FIXTURES, "valid"), { corpora: false, listed: true });
+      const validation = await validatePack(join(FIXTURES, "valid"), { listed: true });
       expect(failing(validation)).toEqual({ manifest: ["src/engine/catalog/pack-list.generated.ts does not list valid; run npm run generate:packs"] });
     });
   });
@@ -420,7 +528,6 @@ describe("validatePack", () => {
   it("marks the rule a failure belongs to", async () => {
     const validation = await validatePack(
       changed("valid", directory => writeFileSync(join(directory, "divergences.json"), "[]\n")),
-      { corpora: false },
     );
     expect(validation.rules.map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "assert-used", status: "failed" },
@@ -429,7 +536,7 @@ describe("validatePack", () => {
   });
 
   it("passes a pack whose ESLint port honours ESLint's suppression comments", async () => {
-    const validation = await validatePack(join(FIXTURES, "eslint-port"), { corpora: false });
+    const validation = await validatePack(join(FIXTURES, "eslint-port"));
     expect(failing(validation)).toEqual({});
     expect(validation.rules).toEqual([{ id: "no-debugger", document: "rules/no-debugger.json", status: "ok" }]);
   });
@@ -449,7 +556,7 @@ describe("validatePack", () => {
     editJson(join(directory, "conformance.json"), pack => ({ ...pack, suppressionExemptions: [{ rule: "no-debugger", reason: "recorded before the port modelled eslint-disable comments" }] }));
 
   it("fails an ESLint port whose violation does not suppress its upstream rule", async () => {
-    const validation = await validatePack(changed("eslint-port", withoutSuppress), { corpora: false });
+    const validation = await validatePack(changed("eslint-port", withoutSuppress));
     expect(failing(validation)).toEqual({
       ports: [
         "no-debugger: rules/no-debugger.json reports eslint's no-debugger without suppress.eslint.rules naming it (clause debugger-statement), so the comments that silence no-debugger are ignored; add it, or exempt the port in suppressionExemptions with a reason",
@@ -464,13 +571,12 @@ describe("validatePack", () => {
         withoutSuppress(directory);
         exempted(directory);
       }),
-      { corpora: false },
     );
     expect(failing(validation)).toEqual({});
   });
 
   it("fails a stale suppression exemption, for a port that suppresses its upstream rule", async () => {
-    const validation = await validatePack(changed("eslint-port", exempted), { corpora: false });
+    const validation = await validatePack(changed("eslint-port", exempted));
     expect(failing(validation)).toEqual({ ports: ["no-debugger: stale suppression exemption: every violation of rules/no-debugger.json names no-debugger in suppress.eslint.rules"] });
   });
 
@@ -485,7 +591,6 @@ describe("validatePack", () => {
             .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { oxlint: { rules: ["no-debugger"] } } } })),
         })),
       ),
-      { corpora: false },
     );
     expect(failing(validation)).toEqual({
       ports: [
@@ -511,10 +616,10 @@ describe("validatePack", () => {
         "no-debugger: rules/no-debugger.json carries suppress.eslint without suppress.biome naming lint/suspicious/noDebugger (clause debugger-statement), the Biome 2.5.15 rule the same as the ESLint rule it names, so the biome-ignore comments that silence it are ignored; run scripts/generate/packs/biome-suppression.mjs",
       ],
     };
-    expect(failing(await validatePack(changed("eslint-port", suppressing({ eslint, oxlint })), { corpora: false }))).toEqual(missing);
+    expect(failing(await validatePack(changed("eslint-port", suppressing({ eslint, oxlint }))))).toEqual(missing);
     const otherRule = suppressing({ eslint, oxlint, biome: { rules: ["lint/suspicious/noConsole"] } });
-    expect(failing(await validatePack(changed("eslint-port", otherRule), { corpora: false }))).toEqual(missing);
-    const alone = await validatePack(changed("eslint-port", suppressing({ biome: { rules: ["lint/suspicious/noDebugger"] } })), { corpora: false });
+    expect(failing(await validatePack(changed("eslint-port", otherRule)))).toEqual(missing);
+    const alone = await validatePack(changed("eslint-port", suppressing({ biome: { rules: ["lint/suspicious/noDebugger"] } })));
     expect(failing(alone)).toEqual({
       ports: [
         // The fixture's eslint-disable comments no longer silence the port: its recording disagrees.
@@ -540,7 +645,7 @@ describe("validatePack", () => {
             violation: { ...clause.violation, suppress: { eslint: { rules: ["no-debugger"] } } },
           })),
       }));
-    const validation = await validatePack(changed("eslint-port", vue), { corpora: false });
+    const validation = await validatePack(changed("eslint-port", vue));
     // The fixtures are .js files, which a Vue query does not read; nothing asks for suppress.biome.
     expect(failing(validation)).toEqual({
       ports: [

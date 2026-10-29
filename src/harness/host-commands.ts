@@ -151,7 +151,7 @@ async function stopFromCommand(options: HostCommandOptions, ctx: HostCommandCont
 const shellWord = (value: string): string => "'" + value.replaceAll("'", String.raw`'\''`) + "'";
 
 const REMOVE = "Yes, remove Rerail";
-const STOP_HERE = "Just stop it in this repo (/rerail-stop)";
+const STOP_HERE = "Only stop it in this repo";
 
 type CommandAction = (ctx: HostCommandContext, args: string) => Promise<void>;
 
@@ -231,10 +231,13 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   // Design A9/A10: say what goes and what stays, ask once, and remove only on an explicit yes.
   register("rerail-uninstall", async ctx => {
     const choice = await ctx.ui.select([
-      "This removes Rerail from this computer, from every coding agent, in every repo.",
-      "Your rules and history are kept in a backup folder.",
+      "Remove Rerail from this computer?",
       "",
-      "Remove Rerail from this computer? You can install it again later and get your rules back.",
+      "Removes /rerail commands, hooks and the status line from every coding agent; Rerail stops in every repo.",
+      "Removes Rerail itself: its installed versions, the rerail command, rule packs and cache.",
+      "Keeps your rules and history, in a backup folder.",
+      "",
+      "You can reinstall anytime and restore your rules from the backup.",
     ].join("\n"), [REMOVE, STOP_HERE, "Cancel"]);
     if (choice === STOP_HERE) {
       await stopFromCommand(options, ctx);

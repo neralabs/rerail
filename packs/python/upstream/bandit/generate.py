@@ -3,14 +3,13 @@ Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upst
 under CPython 3.14 (Bandit itself runs from its own install, on CPython 3.13):
 
     python3.14 generate.py fixtures <Bandit checkout at tag 1.9.4> <bandit executable, 1.9.4>
-    python3.14 generate.py corpus <bandit executable, 1.9.4> <name>=<corpus checkout> [...]
 
-`fixtures` copies the examples each test fires in (`examples/<file>`; see TESTS) to fixtures/<file> (the pack's
-licenses/bandit/UPSTREAM.md lists them), writes Rerail's own cases (NOSEC, PROBES) to fixtures/rerail/ (listed in
-upstream/bandit/UPSTREAM.md), and runs Bandit with every ported test over every file. `corpus` runs the same
-tests over a corpus's pack paths, files CPython 3.14 does not parse left out. Both run as bare `bandit` does: `# nosec`
-honoured, every severity and confidence. A file Bandit reports an error for is skipped. Each finding is the test id,
-path, line and column (`col_offset` + 1: Bandit's is 0-based)."""
+`fixtures` copies the examples each test fires in (`examples/<file>`; see TESTS) to fixtures/<file>, writes Rerail's own
+cases (NOSEC, PROBES) to fixtures/rerail/ (listed in upstream/bandit/UPSTREAM.md), runs Bandit with every ported test
+over every file, as bare `bandit` does (`# nosec` honoured, every severity and confidence), and writes provenance.json
+and LICENSES.md (each copy's upstream path; `common.write_provenance`). A file Bandit reports an error for is skipped.
+Each finding is the test id, path, line and column (`col_offset` + 1: Bandit's is 0-based). `source.units` names each
+copied example's origin: the tests TESTS lists it for (Rerail's own cases have none)."""
 
 from __future__ import annotations
 
@@ -29,124 +28,11 @@ ORIGIN = "https://github.com/PyCQA/bandit@92ae8b82fb422a639f0ed8d99e96cea769594e
 
 # Each ported test, shipped or candidate, and the examples it fires in when `# nosec` is ignored (bare `bandit
 # --ignore-nosec` over every file of examples/): its examples include the lines `# nosec` suppresses, which the
-# recording, run as bare `bandit` honouring `# nosec`, keeps without a finding.
+# expected findings, run as bare `bandit` honouring `# nosec`, keeps without a finding.
+# The list is fixtures.json ({"rules": {test: [upstream path, ...]}}); here each path is under examples/.
 TESTS: dict[str, list[str]] = {
-    "B101": ["assert.py"],
-    "B102": ["exec.py"],
-    "B103": ["os-chmod.py"],
-    "B104": ["binding.py"],
-    "B105": ["hardcoded-passwords.py"],
-    "B106": ["hardcoded-passwords.py", "pyghmi.py"],
-    "B107": ["hardcoded-passwords.py"],
-    "B108": ["hardcoded-tmp.py", "os-chmod.py"],
-    "B110": ["try_except_pass.py"],
-    "B112": ["try_except_continue.py"],
-    "B113": ["requests-missing-timeout.py"],
-    "B201": ["flask_debug.py"],
-    "B202": ["tarfile_extractall.py"],
-    "B301": [
-        "dill.py",
-        "imports-aliases.py",
-        "jsonpickle.py",
-        "pandas_read_pickle.py",
-        "pickle_deserialize.py",
-        "shelve_open.py",
-    ],
-    "B302": ["marshal_deserialize.py"],
-    "B303": ["ciphers.py", "crypto-md5.py", "nosec.py"],
-    "B304": ["ciphers.py"],
-    "B305": ["cipher-modes.py"],
-    "B306": ["mktemp.py"],
-    "B307": ["eval.py"],
-    "B308": ["mark_safe.py", "mark_safe_insecure.py", "mark_safe_secure.py"],
-    "B310": ["urlopen.py"],
-    "B311": ["mark_safe_insecure.py", "random_module.py"],
-    "B312": ["telnetlib.py"],
-    "B313": ["xml_etree_celementtree.py"],
-    "B314": ["xml_etree_elementtree.py"],
-    "B315": ["xml_expatreader.py"],
-    "B316": ["xml_expatbuilder.py"],
-    "B317": ["new_candidates-all.py", "new_candidates-nosec.py", "new_candidates-some.py", "xml_sax.py"],
-    "B318": ["xml_minidom.py"],
-    "B319": ["xml_pulldom.py"],
-    "B321": ["ftplib.py"],
-    "B323": ["unverified_context.py"],
-    "B324": ["crypto-md5.py", "hashlib_new_insecure_functions.py", "imports-aliases.py"],
-    "B401": ["telnetlib.py"],
-    "B402": ["ftplib.py"],
-    "B403": [
-        "dill.py",
-        "imports-aliases.py",
-        "imports-function.py",
-        "imports-with-importlib.py",
-        "imports.py",
-        "pandas_read_pickle.py",
-        "pickle_deserialize.py",
-        "shelve_open.py",
-    ],
-    "B404": [
-        "imports-aliases.py",
-        "imports-from.py",
-        "imports-function.py",
-        "imports-with-importlib.py",
-        "imports.py",
-        "multiline_statement.py",
-        "nosec.py",
-        "partial_path_process.py",
-        "subprocess_shell.py",
-        "wildcard-injection.py",
-    ],
-    "B405": ["xml_etree_celementtree.py", "xml_etree_elementtree.py"],
-    "B406": ["xml_expatreader.py", "xml_sax.py"],
-    "B407": ["xml_expatbuilder.py"],
-    "B408": ["xml_minidom.py"],
-    "B409": ["xml_pulldom.py"],
-    "B411": ["xml_xmlrpc.py"],
-    "B412": ["httpoxy_cgihandler.py", "httpoxy_twisted_directory.py", "httpoxy_twisted_script.py"],
-    "B413": ["ciphers.py", "crypto-md5.py", "pycrypto.py", "weak_cryptographic_key_sizes.py"],
-    "B415": ["pyghmi.py"],
-    "B501": ["requests-ssl-verify-disabled.py"],
-    "B502": ["ssl-insecure-version.py"],
-    "B503": ["ssl-insecure-version.py"],
-    "B504": ["ssl-insecure-version.py"],
-    "B505": ["weak_cryptographic_key_sizes.py"],
-    "B506": ["new_candidates-all.py", "new_candidates-nosec.py", "new_candidates-some.py", "yaml_load.py"],
-    "B507": ["no_host_key_verification.py"],
-    "B508": ["snmp.py"],
-    "B509": ["snmp.py"],
-    "B601": ["paramiko_injection.py"],
-    "B602": [
-        "imports-aliases.py",
-        "multiline_statement.py",
-        "new_candidates-all.py",
-        "new_candidates-nosec.py",
-        "new_candidates-some.py",
-        "nosec.py",
-        "subprocess_shell.py",
-        "wildcard-injection.py",
-    ],
-    "B603": ["partial_path_process.py", "skip.py", "subprocess_shell.py", "wildcard-injection.py"],
-    "B604": ["subprocess_shell.py"],
-    "B605": ["os-popen.py", "os_system.py", "popen_wrappers.py", "subprocess_shell.py", "wildcard-injection.py"],
-    "B606": ["os-exec.py", "os-spawn.py", "os-startfile.py", "wildcard-injection.py"],
-    "B607": ["nosec.py", "partial_path_process.py"],
-    "B608": ["sql_multiline_statements.py", "sql_statements.py"],
-    "B609": ["wildcard-injection.py"],
-    "B610": ["django_sql_injection_extra.py"],
-    "B611": ["django_sql_injection_raw.py"],
-    "B612": ["logging_config_insecure_listen.py"],
-    "B613": ["trojansource.py"],
-    "B614": ["pytorch_load.py"],
-    "B615": ["huggingface_unsafe_download.py"],
-    "B701": ["jinja2_templating.py"],
-    "B702": ["mako_templating.py"],
-    "B703": ["mark_safe_insecure.py", "mark_safe_secure.py"],
-    "B704": [
-        "markupsafe_markup_xss.py",
-        "markupsafe_markup_xss_allowed_calls.py",
-        "markupsafe_markup_xss_extend_markup_names.py",
-    ],
-}
+    test: [path.removeprefix("examples/") for path in paths]
+    for test, paths in json.loads((HERE / "fixtures.json").read_text())["rules"].items()}
 
 
 # Ours: one case per shipped Bandit test that Bandit reports, `{c}` where the reported line ends.
@@ -311,25 +197,18 @@ def fixtures(checkout: pathlib.Path, executable: str) -> None:
     target = HERE / "fixtures"
     shutil.rmtree(target, ignore_errors=True)
     target.mkdir()
-    files = sorted({file for paths in TESTS.values() for file in paths})
-    for file in files:
+    copied = sorted({file for paths in TESTS.values() for file in paths})
+    for file in copied:
         shutil.copyfile(checkout / "examples" / file, target / file)
     ours = common.write_authored(target, authored())
     common.write_record("bandit", f"Bandit {VERSION}", ours, "`NOSEC`, `PROBES`")
-    files = sorted(files + ours)
+    files = sorted(copied + ours)
     findings, errors = bandit(executable, files, target)
     assert not errors, errors
     common.write(HERE / "fixtures.expected.json", "bandit", version,
-                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files}, findings)
-
-
-def corpus(executable: str, name: str, root: pathlib.Path) -> None:
-    version = common.tool_version(executable, VERSION)
-    files = common.corpus_files(root, name)
-    skipped = set(common.unparsable(root, files))
-    findings, errors = bandit(executable, sorted(set(files) - skipped), root)
-    common.write(HERE / f"corpus-{name}.expected.json", "bandit", version,
-                 common.corpus_source(name, sorted(TESTS), sorted(skipped | errors)), findings)
+                 {"kind": "fixtures", "origin": ORIGIN, "rules": sorted(TESTS), "files": files,
+                  "units": common.origins(TESTS)}, findings)
+    common.write_provenance("bandit", ORIGIN, "examples", copied)
 
 
 def main() -> None:
@@ -337,9 +216,7 @@ def main() -> None:
     if sys.argv[1] == "fixtures":
         fixtures(pathlib.Path(sys.argv[2]).resolve(), sys.argv[3])
     else:
-        for argument in sys.argv[3:]:
-            name, _, path = argument.partition("=")
-            corpus(sys.argv[2], name, pathlib.Path(path).resolve())
+        raise SystemExit(__doc__)
 
 
 if __name__ == "__main__":

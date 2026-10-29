@@ -4,6 +4,8 @@ Rerail lands on a machine through one command, `rerail setup`, delivered by
 `npx` from npmjs. Everything below explains what that command does, what it
 needs before it can run, and how to update, reset, and remove an installation.
 To run Rerail from a source checkout instead, see "Developing from a checkout".
+What Rerail runs on is under [Supported and not supported](#supported-and-not-supported), and
+[Troubleshooting](troubleshooting.md) answers what goes wrong in set-up and after it.
 
 ## One line
 
@@ -12,9 +14,11 @@ npx @neralabs/rerail setup
 ```
 
 Run it again at any time: setup is idempotent, so it doubles as "upgrade". In a
-repository that is set up already it changes nothing there and connects no
-coding agent installed since; name one to connect it, for example
-`npx @neralabs/rerail setup --agents codex`.
+repository that is set up already it changes nothing there and connects only
+the coding agents installed since an earlier set-up or `rerail install` last
+looked, never one you left out with `--agents` or removed with
+`rerail install --remove --agents <id>`; name one to connect it anyway, for
+example `npx @neralabs/rerail setup --agents codex`.
 
 ## What setup does
 
@@ -28,6 +32,8 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── bin/rerail                                          launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
+├── daemon-port.json                                   the port the daemon comes back on after a restart
+├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
 └── versions/<older>/…                                 kept for `rerail update rollback`
 ```
@@ -36,8 +42,10 @@ Set-up follows the same steps in a terminal and from a coding agent. Nothing
 in a repository, its Git metadata, or the database is written before the
 person says yes.
 
-0. **Node check** — on a Node major below 24 set-up stops before changing
-   anything and says how to upgrade.
+0. **Checks** — on a Node major below 24, on a computer Rerail has no engine
+   for (musl Linux such as Alpine, glibc older than 2.28, another system or
+   processor), or without Git, set-up stops before changing anything and says
+   what to do.
 1. **Install** — `ManagedUpdater.install()` runs `npm install @neralabs/rerail@<this version>`
    into `versions/<version>` (a staging directory until validation passes),
    checks the package identity, loads the native kernel and runs a real
@@ -58,7 +66,11 @@ person says yes.
      run was for (`--repo`), and set-up still asks before reading it. "No"
      (`--answer decline`) stops set-up with nothing new connected or started
      and removes an earlier yes, so the next set-up asks again; coding agents
-     connected before stay connected until `rerail install --remove`.
+     connected before stay connected until `rerail install --remove`. The
+     install above has already happened by then (a coding agent's answers run
+     the launcher it writes), so Rerail stays installed, off, with `rerail` on
+     `PATH`, and the screen says so: `rerail install --remove` takes it off
+     the computer.
      `rerail start` in a repository that is not set up asks it too. An
      update's health check (`start --repo <empty scratch folder> --answer
      pick-myself`, no coding agent) is not asked.
@@ -95,7 +107,13 @@ person says yes.
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
    - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
 
-   Existing entries from other tools are preserved byte-for-byte. Entries
+   Existing entries from other tools are kept, with their content unchanged,
+   but the file is written back as JSON indented by two spaces, so its
+   formatting may change. A config that is not plain JSON (a comment, a
+   trailing comma) is never rewritten: set-up leaves that coding agent
+   unconnected, connects the others and starts the repository, and its summary
+   names the file, the parser's reason and what to do (`rerail install` stops
+   with the same reason and writes nothing). Entries
    another install of this package wrote (identified by the `package.json`
    beside the script they run) are replaced, not duplicated; that includes a
    Claude status line such an install composed, and because what it wrapped is
@@ -116,16 +134,29 @@ person says yes.
    a no-op.
 6. **Summary** — the rule packs added (by name, "TSLint in web" when added in
    one folder), the rules on, the other repositories Rerail is on in, the
-   coding agents connected, and the dashboard link (`#rules`, its Overview,
-   scoped to the repository and checkout). The daemon used is the active install's, which
+   dashboard link (`#rules`, its Overview, scoped to the repository and
+   checkout), and each coding agent that could not be connected. Commands are
+   shown as `$rerail-show-me` when Codex is the only coding agent connected,
+   with Codex's form beside the others' when it is one of several, and after
+   Codex's hooks are written a line says to trust them once with `/hooks` in
+   Codex. With no coding agent found it says so, names the ones Rerail works
+   with, and says to run `rerail setup` again once one is installed. The daemon used is the active install's, which
    serves every repository; one from another version or on another port is
    replaced (`--port` picks the port). The browser opens unless
    `BROWSER=none`, the session is over SSH, or Linux has no display.
 
 Every set-up run also puts `~/.rerail/bin` (the Windows launcher is
-`rerail.cmd`) on `PATH`, so `rerail` runs from a new terminal. On macOS and
+`rerail.cmd`, with an sh launcher `rerail` beside it for Git Bash, which runs
+neither `.cmd` nor `.bat` files by bare name) on `PATH`, so `rerail` runs
+from a new terminal. So does every
+`rerail update`, through the `rerail install --refresh` it ends with, for an
+install whose set-up predates this step (0.1.0-next.2 or earlier): it gets the
+entry on its next update, once. Set-up records that it handled `PATH` in
+`~/.rerail/launcher-path.json`, and from then on `PATH` is yours: a block you
+take out stays out of later updates, and only `rerail setup` run again adds
+it back. On macOS and
 Linux it appends a block between `# >>> rerail >>>` and `# <<< rerail <<<` to
-the startup file `$SHELL` reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
+the startup file `$SHELL` (else the account's login shell) reads: `$ZDOTDIR/.zshrc` (else `~/.zshrc`) for zsh;
 `~/.bashrc` and the first of `~/.bash_profile`, `~/.bash_login`,
 `~/.profile` that exists (else `~/.profile`) for bash; its own
 `~/.config/fish/conf.d/rerail.fish` for fish; `~/.profile` otherwise. The block
@@ -134,12 +165,28 @@ once. On Windows it appends the directory to the user `Path`
 (`HKCU\Environment`), keeping that value's registry kind. Set-up says what it
 changed, and changes nothing when the running `PATH` has the directory
 already, when the entry is in place, or with `RERAIL_MODIFY_PATH=0`; a block
-written for another Rerail home is replaced. A file it changes gets the same
-`<file>.<timestamp>.bak` as coding agent config.
+written for another Rerail home is replaced. A startup file it changes keeps
+one backup beside it, `<file>.rerail.bak`: the file as it was before Rerail
+last changed it. Each change replaces that backup, and `rerail install
+--remove` deletes it once it has taken the block out.
+
+The block is in the file an interactive shell reads, so a shell that is not
+interactive misses it: `zsh -c`, `ssh host rerail …` to a zsh account, and a
+script. There, call `~/.rerail/bin/rerail` by its full path, or add the
+directory to `PATH` yourself in a file every such shell reads (`~/.zshenv`
+for zsh). Rerail does not write `~/.zshenv`: every zsh reads it, scripts
+included, and on macOS `/etc/zprofile` reorders `PATH` after it. Coding agents
+run Rerail by its full path, so they need neither.
 
 "Skip for now" (no repository) connects the coding agents found and starts
 Rerail nowhere. Set-up run again in a repository that is set up never asks
-again: it shows the summary, or says Rerail is stopped there. Rerail stays off
+again: it connects the coding agents found since (named in the summary as "Now
+also connected"), then shows the summary, or says Rerail is stopped there.
+Which agents count as found since is kept in `~/.rerail/coding-agents.json`
+(`{ "seen": [<agent id>, …] }`): every coding agent set-up connected, left out
+or found, and every one `rerail install` found or was named, except one that
+could not be connected, so set-up run again tries it once more. Without the
+file every coding agent found counts as new. Rerail stays off
 in every other repository until you start it there (see "Starting and stopping
 Rerail" below); starting a repository that is not set up runs steps 2 to 6
 for it.
@@ -285,11 +332,33 @@ Code, Codex and Cursor relay the questions as text.
 
 ## Prerequisites
 
-- Node.js 24 or newer on `PATH`. The launcher remembers the Node that ran setup
-  and falls back to `PATH`, so version-manager switches do not break hooks.
-- macOS, Linux glibc, or Windows MSVC on arm64/x64. The package carries
-  prebuilt native kernels for those; nothing is compiled on the user's machine.
+- Node.js 24 or newer on `PATH`. Set-up records the Node that ran it for the
+  launcher, the hooks and the Claude Code status line, Homebrew's by the link
+  `brew upgrade` keeps (`/opt/homebrew/bin/node`, not its versioned `Cellar`
+  folder). Each falls back to `node` on `PATH` once the recorded Node is gone
+  (after `nvm uninstall`, say), except the status line on Windows. On a Node
+  older than 24 the CLI and the daemon stop with set-up's message, the hooks do
+  nothing, and the status line says `needs Node 24 or newer`. After moving to
+  another Node, run `rerail install --refresh` with it first on `PATH` to
+  record it for all of them.
+- Git. Rerail reads every repository through it, and runs it only from fixed
+  locations, never from `PATH`, so a repository cannot put its own `git` first:
+  `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`,
+  `/home/linuxbrew/.linuxbrew/bin`, `/run/current-system/sw/bin` and
+  `~/.nix-profile/bin`; on Windows `C:\Program Files\Git\cmd`,
+  `C:\Program Files (x86)\Git\cmd`, `~\AppData\Local\Programs\Git\cmd` (Git for
+  Windows installed for one user) and `~\scoop\apps\git\current\cmd`.
+- macOS, Linux with glibc 2.28 or newer (what Node 24 needs), or Windows MSVC on
+  arm64/x64. The package carries prebuilt native kernels for those; nothing is
+  compiled on the user's machine. Alpine and other musl Linux are not supported.
+- Under WSL, install Rerail on the same side as the coding agent (both in WSL,
+  or both on Windows). A repository on the Windows drive (`/mnt/c/…`) works but
+  is slow from WSL; set-up says so.
 - Read access to `@neralabs/rerail` on npmjs (see "Registry access").
+
+Set-up checks Node, the platform and Git before it installs anything. When one
+is missing it stops, says what to do, and changes nothing; an install that
+fails later removes the empty folders it made.
 
 ## Registry access
 
@@ -298,15 +367,54 @@ is published to. Rerail adds no registry configuration of its own: `setup` and
 `rerail update` run the `npm` next to the Node that runs them, with your normal
 npm configuration.
 
-Until launch the package is restricted. Sign in once with `npm login` as a
-member of the `neralabs` npm organization, or put a read-only granular access
-token for the package in `~/.npmrc`. After launch the package is public and no
-sign-in is needed.
+The package is public, so no sign-in is needed.
 
-When the credential is missing or has expired, npm-backed commands such as
-`rerail update` report that the npm registry credentials are missing or
-expired; sign in again with `npm login`. Rerail redacts `_authToken` and
-`_password` values from any npm output it prints.
+When a token your npm configuration holds for npmjs is invalid or has expired,
+npm-backed commands such as `rerail update` report that the npm registry
+credentials are missing or expired; sign in again with `npm login`, or remove
+the token. Rerail redacts `_authToken` and `_password` values from any npm
+output it prints.
+
+## Supported and not supported
+
+Supported:
+
+- **Operating systems**: macOS on arm64 and x64 (x64 Node under Rosetta works too); Linux on arm64 and x64 with
+  glibc 2.28 or newer, which every distribution Node 24 runs on has (Debian 10 and later, Ubuntu 20.04 and later,
+  RHEL 8 and later and their rebuilds, Amazon Linux 2023, Fedora); Windows 11 on x64 and arm64, profile folders whose
+  name has a space or a non-ASCII letter included.
+- **Node.js** 24 or newer, however it is installed (nodejs.org, Homebrew, nvm, fnm, Volta, NodeSource). Homebrew's
+  Node is recorded by the link `brew upgrade` keeps; after removing the Node that ran set-up, run
+  `rerail install --refresh` with Node 24 or newer first on `PATH`.
+- **Git** at `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, Linuxbrew's `/home/linuxbrew/.linuxbrew/bin`, or a
+  Nix profile (`/run/current-system/sw/bin`, `~/.nix-profile/bin`); on Windows Git for Windows in
+  `C:\Program Files\Git`, `C:\Program Files (x86)\Git` or, installed for one user, `~\AppData\Local\Programs\Git`,
+  and scoop's (`~\scoop\apps\git\current`). Rerail does not look for Git on `PATH`.
+- **Shells** set-up puts `rerail` on `PATH` for: zsh, bash and fish (interactive shells; `zsh -c` and ssh need the
+  full path or `~/.zshenv`), any other shell through `~/.profile`, and on Windows PowerShell, Command Prompt and Git
+  Bash through the user `Path`.
+- **Coding agents**: Claude Code as the CLI, in the VS Code extension (whose panel shows no status line) and in the
+  JetBrains plugin; on Windows, Claude Code 2.1.139 or newer. Codex CLI (trust the hook once with `/hooks`). Cursor's
+  IDE agent and its CLI (`cursor-agent`). OMP and Pi. Each is found by its config folder in your home folder
+  (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent`, `~/.pi/agent`; on Windows the profile folder, `USERPROFILE`),
+  and one installed after set-up is connected by running `rerail setup` again.
+- **Containers and devcontainers** with a glibc image, the default `node:24` and `node:24-slim` included, with or
+  without an init process.
+- **WSL 2**, as Linux, with the coding agent running in WSL too.
+- **A registry mirror or proxy** set in `~/.npmrc`.
+
+Not supported:
+
+- Linux with glibc older than 2.28 (Amazon Linux 2, Ubuntu 18.04, CentOS 7), where Node 24 does not run either.
+  Alpine and other musl distributions (`node:24-alpine`). Other operating systems and processors.
+- Node.js 23 or older.
+- A Git only somewhere else on `PATH`, or no Git.
+- Other coding agents and editors: GitHub Copilot, Windsurf, Gemini CLI, Cline, Roo Code, Zed's agent, Aider,
+  Continue, OpenCode, Amp and the rest. Cursor's cloud agents, which run no user hooks.
+- Agent config folders moved with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. An agent config file that is not strict JSON
+  (comments, trailing commas) is left as it is, and that coding agent stays unconnected until the file is fixed.
+- A coding agent on Windows with Rerail in WSL, or the other way round.
+- Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
 ## After setup
 
@@ -319,6 +427,7 @@ rerail stop              # stop Rerail in this checkout; the daemon keeps servin
 rerail daemon start      # start the background daemon (--port, --host, --open, --dev, ...)
 rerail daemon stop       # stop the background daemon
 rerail status            # whether Rerail is started here, otherwise daemon/database/kernel
+rerail version           # the installed version
 rerail manage            # opens the dashboard's Overview (--print only prints the URL)
 rerail session claude-code ID --open  # this session's status line and page URL; --open opens it
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
@@ -327,7 +436,7 @@ rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
-rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database
+rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
 ```
 
 Every coding agent gets the same commands: `/rerail`, `/rerail-manage`,
@@ -345,7 +454,7 @@ Settings, scans, status, update checks, rollback and reset are the CLI
 commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
-identity. See the [scan and settings contract](../README.md#scan-and-settings-controls)
+identity. See the [scan and settings contract](reference.md#scan-and-settings-controls)
 for scope, mode, persistence, diagnostics, and background versus next-event
 delivery.
 
@@ -514,21 +623,40 @@ rerail install --remove
 installation — harness hooks, the Claude Code status line and commands, the
 Cursor commands, the Codex skill, the OMP extension symlink and MCP entry, and
 the Pi package entry — and leaves other tools' entries alone, writing a
-`<file>.<timestamp>.bak` beside every file it changes. It then stops the
+`<file>.<timestamp>.bak` beside every file it changes. A folder that held only
+what it removed goes too: each `~/.codex/skills/rerail*` (and `~/.codex/skills`
+when those were all it held), and `~/.omp/agent/extensions` when the link was
+all it held. It then stops the
 daemon and moves `rerail.sqlite` (with its `-wal`/`-shm`) into
 `~/.rerail-clean-YYYYMMDD/rerail-home/` (`-YYYYMMDD-HHMMSS` when one from today
 exists), so your rules and history are kept. Restart open harness sessions
 afterwards: their loaded hooks point at files that are about to go.
 
 It also takes the `PATH` entry set-up added out of every shell startup file
-(or the Windows user `Path`). Then delete the Rerail home (`~/.rerail`, or
-`$RERAIL_HOME`) and the content store directory (`~/.cache/rerail`).
+(or the Windows user `Path`). Last, it deletes the installation itself:
+`~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
+`~/.rerail/versions` with `update-state.json`, the rule packs in
+`~/.rerail/packs`, and the cache `~/.cache/rerail` (left alone, and said so,
+while another Rerail home's daemon holds it). In `bin`, `versions` and `packs`
+it deletes only what Rerail put there: a folder that also holds other files
+(a Rerail home shared with them, as with `RERAIL_HOME=$HOME`) is kept with
+those files, and named. It prints each path it removed,
+and what it kept in the Rerail home (settings such as `consent.json`, logs,
+records), which you can delete if you will not install Rerail again; a home
+that also holds other files is never offered for deletion as a whole, only
+Rerail's files in it are named. A file it
+cannot remove, such as one Windows keeps locked while a session still runs
+Rerail, is named with the command that finishes the job once that session is
+closed (`Remove-Item -LiteralPath '<path>' -Recurse -Force` in PowerShell, and
+`[System.IO.Directory]::Delete('<path>')` for the `current` link, which removes the link and not
+what it points at; `rm -rf <path>` elsewhere); the rest of the uninstall has
+happened, so it still exits 0.
 
 ## Developing from a checkout
 
 A source checkout builds and tests with Node.js 24+, npm, Rust, and
-[`just`](https://github.com/casey/just); see [Develop](../README.md#develop)
-in the README.
+[`just`](https://github.com/casey/just); see
+[Development setup](../CONTRIBUTING.md#development-setup) in the contributing guide.
 
 ```sh
 just rerail-dev --install-bridge

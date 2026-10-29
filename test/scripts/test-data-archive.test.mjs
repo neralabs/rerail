@@ -21,6 +21,10 @@ const entry = (path, text) => ({ path, bytes: Buffer.from(text, "utf8") });
  */
 const UNPRINTABLE = ["fixtures/a\u0001.py", "fixtures/a\n.py", "fixtures/a\u001f.py", "fixtures/a\u007f.py", "fixtures/caf\u0065\u0301.py"];
 
+/** Paths Windows cannot hold: a reserved character, or a segment it would strip a trailing dot or space from. */
+const WINDOWS_RESERVED = ["fixtures/a:b.py", "fixtures/a*.py", "fixtures/a?.py", 'fixtures/"a".py'];
+const WINDOWS_TRAILING = ["fixtures/a.", "fixtures/a ", "fixtures./a.py", "fixtures /a.py"];
+
 /** The message `run` throws; fails the test when it does not throw. */
 function failure(run) {
   try {
@@ -149,6 +153,16 @@ describe("buildArchive", () => {
     expect(buildArchive([entry("fixtures/caf\u00e9.py", "x\n")]).files).toBe(1);
   });
 
+  it("refuses a path Windows cannot hold, naming it and why, and keeps a dot or space inside a name", () => {
+    for (const path of WINDOWS_RESERVED) {
+      expect(failure(() => buildArchive([entry(path, "x\n")]))).toBe(`archive path ${JSON.stringify(path)} holds :, *, ? or ", which Windows cannot hold in a file name`);
+    }
+    for (const path of WINDOWS_TRAILING) {
+      expect(failure(() => buildArchive([entry(path, "x\n")]))).toBe(`archive path ${JSON.stringify(path)} has a segment ending in . or a space, which Windows drops from a file name`);
+    }
+    expect(buildArchive([entry("fixtures/x y.expected.json", "{}\n"), entry(".github/a.b.py", "x\n")]).files).toBe(2);
+  });
+
   it("refuses two paths equal but for case, naming both", () => {
     const message = failure(() => buildArchive([entry("fixtures/Cases.json", "a"), entry("fixtures/cases.json", "b")]));
     expect(message).toContain("fixtures/Cases.json");
@@ -175,6 +189,12 @@ describe("readArchive", () => {
 
   it("refuses a path with a control character or not in NFC", () => {
     for (const name of UNPRINTABLE) expect(() => readArchive(rawTar([{ name, type: "0", body }]))).toThrow(JSON.stringify(name));
+  });
+
+  it("refuses a path Windows cannot hold, in the header or a pax record", () => {
+    for (const name of [...WINDOWS_RESERVED, ...WINDOWS_TRAILING]) expect(() => readArchive(rawTar([{ name, type: "0", body }])), name).toThrow(JSON.stringify(name));
+    const pax = Buffer.from("20 path=fixtures/a:\n");
+    expect(() => readArchive(rawTar([{ name: "PaxHeader", type: "x", body: pax }, { name: "a.py", type: "0", body }]))).toThrow("which Windows cannot hold in a file name");
   });
 
   it("refuses two paths equal but for case, naming both", () => {
