@@ -51,7 +51,7 @@ Open an issue before you start on:
 Agree on the approach with a maintainer in the issue before you write the code. A pull request for work nobody agreed
 on may be closed, however good it is.
 
-These go straight to a pull request, with no issue:
+Nera Software employees take these straight to a pull request, with no issue:
 
 - typo and documentation fixes;
 - a bug fix with a test that fails without it;

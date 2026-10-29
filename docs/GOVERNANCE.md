@@ -26,11 +26,11 @@ A pull request from anyone else is closed with a link to
 
 ## How decisions are made
 
-- **In the open.** Decisions about Rerail's code, rules, packs and docs are made in its issues and pull requests. A
-  decision reached somewhere else, such as on a call, is written into the issue or pull request it concerns, with its
-  reason, before anyone acts on it.
-- **Everyday changes.** A pull request merges once a maintainer other than its author approves it and **CI result**
-  passes. It is squash-merged.
+- **In the open.** A decision about Rerail's code, rules, packs or docs, wherever it is reached, is recorded in the
+  issue or pull request it concerns, with its reason, before anyone acts on it.
+- **Everyday changes.** A pull request merges once someone with write access other than its author approves it and
+  **CI result** passes. That approval can come from a maintainer, another Nera Software employee, or, for a low-risk
+  change, the `neralabs-ci` reviewer (`reviewer.yml`). It is squash-merged.
 - **Changes that start with an issue.** For anything [Start with an issue](../CONTRIBUTING.md#start-with-an-issue)
   lists, a maintainer agrees the approach in the issue before the code is written. A large change writes a short design
   there first ([Large changes](../CONTRIBUTING.md#large-changes)).
