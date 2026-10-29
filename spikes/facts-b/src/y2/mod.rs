@@ -148,6 +148,56 @@ impl World {
     }
 }
 
+/// `read_dump`, and with `edges` Y1's edge export: the reference edges come from Y1 only, the
+/// dataflow's go to the oracle side.
+pub(crate) fn read_dumps(dump: &Path, edges: Option<&Path>) -> (Dump, Option<Dump>) {
+    let mut d = read_dump(dump);
+    let y1 = edges.map(|p| {
+        let e = read_dump(p);
+        for (k, t) in d.tabs.iter_mut().enumerate() {
+            if *t == Some(Tab::Refs) {
+                *t = None;
+                assert!(d.outputs[k].ends_with("views/reference_edges"));
+            }
+        }
+        e
+    });
+    (d, y1)
+}
+
+/// The dump's worktrees, ascending (the reference's among them).
+pub(crate) fn worktrees(d: &Dump) -> Vec<u32> {
+    let mut w: Vec<u32> = d.reference_w.into_iter().chain(d.init.keys().copied()).collect();
+    w.sort();
+    w.dedup();
+    w
+}
+
+/// Worktree `wt`'s tables at its first dump: the reference's rows, then its own difference, the
+/// reference edges from Y1's export when given.
+fn load_world(d: &Dump, y1: Option<&Dump>, wt: u32) -> World {
+    let mut oracle = Oracle::default();
+    let mut rows = split(d, &d.reference, &mut oracle);
+    if Some(wt) != d.reference_w {
+        rows.extend(split(d, d.init.get(&wt).map_or(&[][..], Vec::as_slice), &mut oracle));
+    }
+    if let Some(e) = y1 {
+        let refs = |rs: &[(usize, i32, Row)]| rs.iter().map(|(_, c, r)| (Tab::Refs, r.clone(), *c)).collect::<Vec<_>>();
+        rows.extend(refs(&e.reference));
+        if Some(wt) != e.reference_w {
+            rows.extend(refs(e.init.get(&wt).map_or(&[][..], Vec::as_slice)));
+        }
+    }
+    let mut world = World { counts: Counts::default(), facts: Facts::default(), oracle };
+    world.load(rows);
+    world
+}
+
+/// `load_world`'s tables alone.
+pub(crate) fn load_facts(d: &Dump, y1: Option<&Dump>, wt: u32) -> Facts {
+    load_world(d, y1, wt).facts
+}
+
 fn split(d: &Dump, rows: &[(usize, i32, Row)], oracle: &mut Oracle) -> Vec<(Tab, Row, i32)> {
     let mut out = Vec::new();
     for (k, c, r) in rows {
@@ -249,25 +299,12 @@ fn oracle_edge_keys(o: &Oracle) -> Vec<(u32, i64, u32, i64)> {
 pub fn run(dump: &Path, out: &Path, scratch_every: usize, edges: Option<&Path>) {
     std::fs::create_dir_all(out).unwrap();
     let t = Instant::now();
-    let mut d = read_dump(dump);
-    let y1 = edges.map(|p| {
-        let e = read_dump(p);
-        // Refs come from Y1 only: the dataflow's go to the oracle side.
-        for (k, t) in d.tabs.iter_mut().enumerate() {
-            if *t == Some(Tab::Refs) {
-                *t = None;
-                assert!(d.outputs[k].ends_with("views/reference_edges"));
-            }
-        }
-        e
-    });
+    let (d, y1) = read_dumps(dump, edges);
     let y1_events: BTreeMap<(usize, u32), &Event> = y1.as_ref().map(|e| e.events.iter().map(|x| ((x.seq, x.w), x)).collect()).unwrap_or_default();
     let (mut edge_checks, mut edge_diffs) = (0usize, 0usize);
     let read_s = t.elapsed().as_secs_f64();
     eprintln!("y2: dump read in {read_s:.1}s: {} reference rows, {} worktrees initialised, {} events", d.reference.len(), d.init.len(), d.events.len());
-    let mut worktrees: Vec<u32> = d.reference_w.into_iter().chain(d.init.keys().copied()).collect();
-    worktrees.sort();
-    worktrees.dedup();
+    let worktrees = worktrees(&d);
     let mut per_event = Vec::new();
     let mut diffs = Vec::new();
     let mut lat: BTreeMap<String, Vec<f64>> = BTreeMap::new();
@@ -277,20 +314,7 @@ pub fn run(dump: &Path, out: &Path, scratch_every: usize, edges: Option<&Path>) 
     for &wt in &worktrees {
         // One worktree at a time: its events are independent of the others'.
         let t0 = Instant::now();
-        let mut oracle = Oracle::default();
-        let mut rows = split(&d, &d.reference, &mut oracle);
-        if Some(wt) != d.reference_w {
-            rows.extend(split(&d, d.init.get(&wt).map_or(&[][..], Vec::as_slice), &mut oracle));
-        }
-        if let Some(e) = &y1 {
-            let refs = |rs: &[(usize, i32, Row)]| rs.iter().map(|(_, c, r)| (Tab::Refs, r.clone(), *c)).collect::<Vec<_>>();
-            rows.extend(refs(&e.reference));
-            if Some(wt) != e.reference_w {
-                rows.extend(refs(e.init.get(&wt).map_or(&[][..], Vec::as_slice)));
-            }
-        }
-        let mut world = World { counts: Counts::default(), facts: Facts::default(), oracle };
-        world.load(rows);
+        let mut world = load_world(&d, y1.as_ref(), wt);
         let load_ms = t0.elapsed().as_secs_f64() * 1e3;
         let t1 = Instant::now();
         let mut dcs = dc::Dc::scratch(&world.facts);

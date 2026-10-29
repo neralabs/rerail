@@ -7,6 +7,7 @@ mod extract;
 mod facts;
 mod flow;
 mod gen;
+mod lattice;
 mod lmap;
 mod membership;
 mod mutant;
@@ -137,6 +138,8 @@ fn main() {
         "ygraph" => ygraph::main(args.clone()),
         // `y3 symcheck|…`: Y1 + Y2 wired, the symbol table maintained (src/y3).
         "y3" => y3::main(args.clone()),
+        // `lattice build|run …`: E1, the semiring-round fixpoint on the CPU (src/lattice).
+        "lattice" => lattice::main(args.clone()),
         _ => {
             eprintln!("usage: facts-b extract --run-dir DIR [--corpus DIR] [--threads N] | dump FILE");
             std::process::exit(2);
