@@ -3,7 +3,7 @@
   "private": true,
   "description": "eslint-plugin-react-hooks 7.1.1 as published, in the layout of facebook/react's own node_modules at the eslint-plugin-react-hooks@7.1.1 tag: eslint 7.32.0 at the root (@typescript-eslint/parser 3.x's experimental-utils extends its CLIEngine as it loads), the eslint-v7 and eslint-v9 aliases its tests run, their parsers, and the Babel packages of babel.config-ts.js, at the versions its yarn.lock resolves, except eslint-v9 (9.39.5, the latest ^9.0.0 admits, not the lock's 9.0.0). The override accepts what yarn accepts: @typescript-eslint/parser 2.34.0 on eslint 7.",
   "dependencies": {
-    "@babel/core": "7.24.5",
+    "@babel/core": "7.29.6",
     "@babel/eslint-parser": "7.11.4",
     "@babel/plugin-syntax-jsx": "7.23.3",
     "@babel/plugin-transform-class-properties": "7.25.9",
