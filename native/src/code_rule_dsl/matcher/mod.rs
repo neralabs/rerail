@@ -62,6 +62,8 @@ pub(crate) use exported::{
 };
 pub(crate) use format_args::{FormatArgs, Style};
 pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+/// P's: the path of the file being matched (P's `calls` delta reads it).
+pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(test)]
@@ -130,6 +132,9 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Explicit whole-file syntax gate (P's `ast.syntax`); true admits invalid files and their
+    /// error regions.
+    pub(super) invalid_syntax: Option<bool>,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,
@@ -145,6 +150,27 @@ pub(super) struct GrammarMatcher {
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub(super) transform: Option<Arc<Transform>>,
+}
+
+impl GrammarMatcher {
+    /// Share cheap syntax and text admission across preparation and matching (P's).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn admits_source<'a>(
+        &'a self,
+        source: &str,
+        errors: &crate::code_rule_dsl::soundness::SyntaxErrors,
+        searched: &mut rustc_hash::FxHashMap<&'a str, bool>,
+    ) -> bool {
+        self.invalid_syntax
+            .is_none_or(|invalid| invalid != errors.is_empty())
+            && self.text.as_ref().is_none_or(|text| {
+                text.holds_with(source, &mut |source: &str, literal| {
+                    *searched.entry(literal).or_insert_with(|| {
+                        memchr::memmem::find(source.as_bytes(), literal.as_bytes()).is_some()
+                    })
+                })
+            })
+    }
 }
 
 impl GrammarMatcher {

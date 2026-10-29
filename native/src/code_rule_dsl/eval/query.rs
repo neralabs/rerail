@@ -484,7 +484,20 @@ impl<'a> Leaf<'a> {
                 // (`SyntaxErrors::of_doc`): a Blade view reads the template's too.
                 let errors = SyntaxErrors::of_doc(&doc);
                 let target = ast_grep_core::AstGrep::doc(doc);
-                if !errors.is_empty() {
+                // A whole-file syntax gate (`invalid_syntax`) reads only files with, or only
+                // files without, syntax errors, and reads those errors as content.
+                if grammar
+                    .invalid_syntax
+                    .is_some_and(|invalid| invalid == errors.is_empty())
+                {
+                    return Ok(FileStep::Read {
+                        witnesses,
+                        partial: None,
+                        decided: false,
+                    });
+                }
+                let gated = grammar.invalid_syntax.is_none();
+                if gated && !errors.is_empty() {
                     // A file the parser did not read is not read by any clause, sound or not.
                     if let SyntaxReading::Unread(detail) = errors.reading(&lines, file.source.len())
                     {
@@ -502,14 +515,15 @@ impl<'a> Leaf<'a> {
                 };
                 // A file the query's file gates exclude matches nothing, errors or not, as
                 // `run_clause` reads it without them.
-                if !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar) {
+                if gated && !read.is_empty() && !FileGates::new(file, target.root()).admit(grammar)
+                {
                     return Ok(FileStep::Read {
                         witnesses,
                         partial: None,
                         decided: false,
                     });
                 }
-                if read.incomplete(grammar) {
+                if gated && read.incomplete(grammar) {
                     return Ok(FileStep::Failed(None));
                 }
                 // A file read around syntax errors in any of its documents reports the first
@@ -800,7 +814,9 @@ fn evaluate_file_clause(
                         }
                         *work = crate::code_rule_dsl::matcher::end_clause().0;
                     }
-                    if errors.meets(&place.place(matched.get_node())) {
+                    if grammar.invalid_syntax != Some(true)
+                        && errors.meets(&place.place(matched.get_node()))
+                    {
                         return Ok(true);
                     }
                     let matched_node = matched.get_node();

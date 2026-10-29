@@ -9,7 +9,7 @@ use std::sync::{Arc, atomic::AtomicBool};
 
 fn rule() -> CompiledCodeRuleDsl {
     CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"capacity","revision":1,"mode":"log","clauses":[{
-        "id":"nodes","relational":{"partitionBy":"file","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},
+        "id":"nodes","relational":{"partitionBy":"file","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","syntax":"valid","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},
         "syntax":{"name":"nodes","gate":"gate"},
         "stages":[{"name":"descendants","reachability":{"syntax":"nodes","roots":"SELECT __path,id FROM nodes WHERE kind='function_definition'"}}],
         "query":"SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.id FROM nodes n JOIN descendants d ON d.__path=n.__path AND d.node=n.id AND d.root=n.id WHERE n.kind='function_definition'","key":["id"]},

@@ -151,7 +151,11 @@ fn check_dialects<'u>(
     // utility settle it there.
     let ignored = std::cell::RefCell::new(BTreeSet::new());
     // A shared utility's `calls` terms are the calling queries' (their seeds carry its rule).
-    let calls = crate::code_rule_dsl::calls::CallsCollector::new(String::new(), false);
+    let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+        String::new(),
+        false,
+        capabilities.limits.max_regex_pattern_bytes,
+    );
     let new_table = || {
         Arc::new(UtilTable::new(
             utils.keys().cloned().collect(),

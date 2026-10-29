@@ -78,7 +78,7 @@ pub(in crate::code_rule_dsl) fn for_file(
     }
     let root = ast_grep_core::AstGrep::doc(doc.clone());
     let gates = FileGates::new(file, root.root());
-    let _errors = SyntaxErrors::of_doc(doc);
+    let errors = SyntaxErrors::of_doc(doc);
     let mut searched = rustc_hash::FxHashMap::default();
     let mut leaves = Vec::new();
     fn query<'a>(q: &'a Query, leaves: &mut Vec<&'a Query>) {
@@ -133,15 +133,7 @@ pub(in crate::code_rule_dsl) fn for_file(
                 unreachable!()
             };
             let grammar = grammar_matcher(matchers, file)?;
-            // W's GrammarMatcher has no `admits_source` nor D's `invalid_syntax` gate (O18): its
-            // required text, as D's `admits_source` reads it.
-            (grammar.text.as_ref().is_none_or(|text| {
-                text.holds_with(&file.source, &mut |source: &str, literal| {
-                    *searched.entry(literal).or_insert_with(|| {
-                        memchr::memmem::find(source.as_bytes(), literal.as_bytes()).is_some()
-                    })
-                })
-            })
+            (grammar.admits_source(&file.source, &errors, &mut searched)
                 && gates.admit(grammar)
                 && seen.insert(Arc::as_ptr(&grammar.anchors) as usize))
             .then(|| Arc::new(AnchorPlan::compile(&grammar.matcher)))

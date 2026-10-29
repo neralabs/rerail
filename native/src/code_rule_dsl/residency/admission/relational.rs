@@ -659,10 +659,56 @@ impl<'a> Session<'a> {
             tables.insert(name.clone());
             // SQL owns the copied values; only compact anchors remain necessary.
         }
-        // P's native reference graph (`calls::reference_rows`, its `references` call mode) is not
-        // ported: a plan that reads `reference_edges` fails closed (open item O18).
-        if plan.references.is_some() {
-            return Err(invalid("No native reference graph is installed"));
+        if let Some(reference) = &plan.references {
+            let graph = crate::code_rule_dsl::calls::reference_rows(reference.key)
+                .ok_or_else(|| invalid("No native reference graph is installed"))?;
+            if graph
+                .incomplete
+                .iter()
+                .any(|path| code_rule.scope.matches(path))
+            {
+                return Err(invalid("The native reference graph is incomplete"));
+            }
+            create_input(
+                &db,
+                "reference_edges",
+                &REFERENCE_FIELDS
+                    .iter()
+                    .map(|field| (*field).to_owned())
+                    .collect::<Vec<_>>(),
+            )?;
+            let before = db.total_changes();
+            insert::insert_rows(
+                &db,
+                "reference_edges",
+                9,
+                graph
+                    .edges
+                    .iter()
+                    .filter(|edge| code_rule.scope.matches(&edge.path))
+                    .map(|edge| {
+                        use rusqlite::types::Value as Sql;
+                        [
+                            Sql::Text(edge.path.to_string()),
+                            Sql::Integer(edge.source.start as i64),
+                            Sql::Integer(edge.source.end as i64),
+                            Sql::Text(edge.target_path.to_string()),
+                            Sql::Integer(edge.target.start as i64),
+                            Sql::Integer(edge.target.end as i64),
+                            Sql::Text(edge.source_name.text().to_owned()),
+                            Sql::Text(edge.target_name.text().to_owned()),
+                            Sql::Integer(i64::from(
+                                edge.target.flags & crate::code_rule_dsl::calls::summary::CLASS != 0,
+                            )),
+                        ]
+                    }),
+                &work,
+                "native reference row budget exceeded",
+            )?;
+            db.storage
+                .borrow_mut()
+                .written("reference_edges", db.total_changes() != before);
+            tables.insert("reference_edges".to_owned());
         }
         db.execute_batch("COMMIT").map_err(sql_error)?;
         let guard = Arc::clone(&work);

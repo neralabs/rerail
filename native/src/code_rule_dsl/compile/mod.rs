@@ -621,6 +621,7 @@ fn compile_query_as(
                 ast,
                 &[
                     "language",
+                    "syntax",
                     "rule",
                     "utils",
                     "constraints",
@@ -632,6 +633,16 @@ fn compile_query_as(
                 ],
                 &format!("{path}/ast"),
             )?;
+            let invalid_syntax = match ast.get("syntax") {
+                None => None,
+                Some(Value::String(value)) if value == "valid" => Some(false),
+                Some(Value::String(value)) if value == "invalid" => Some(true),
+                Some(_) => {
+                    return Err(invalid(format!(
+                        "{path}/ast/syntax must be valid or invalid"
+                    )));
+                }
+            };
             let language_name = ast
                 .get("language")
                 .and_then(Value::as_str)
@@ -841,7 +852,11 @@ fn compile_query_as(
                 ast.get("languageOptions"),
             ))
             .map_err(|error| invalid(error.to_string()))?;
-            let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
+            let calls = crate::code_rule_dsl::calls::CallsCollector::new(
+                salt,
+                seed,
+                capabilities.limits.max_regex_pattern_bytes,
+            );
             let mut bindable = BTreeSet::new();
             let origins = util_origins(&utils, language_name)?;
             for (dialect, language) in &grammars {
@@ -1021,6 +1036,7 @@ fn compile_query_as(
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
+                        invalid_syntax,
                         three_valued,
                         matcher,
                         anchors,

@@ -5,10 +5,10 @@
 //! process's registry, SQLite demands them through the typed relations of `vtab`, whose `xFilter`
 //! executes the batch once, and the statements' rows come back as violations and failures. N
 //! lowered whole rule catalogs to that SQL itself (`SqlPlans::compile` over `relational_ir`, tree
-//! axes in SQL), which is not copied; the statements come from the logic planner (Phase 6) and the
-//! batches from the waves over `prefilter/` candidate sets (Phase 7). N ran on a private in-memory
-//! connection per thread; here the statements run in one transaction on the store, where the
-//! fact relations and their statistics live.
+//! axes in SQL), placed test-only as `catalog` (O17); the statements come from the logic planner
+//! (Phase 6) and the batches from the waves over `prefilter/` candidate sets (Phase 7). N ran on a
+//! private in-memory connection per thread; here the statements run in one transaction on the
+//! store, where the fact relations and their statistics live.
 
 use super::vtab::{HardPartition, MatchRegistry, PackedDemand, PackedRow, register_module};
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;

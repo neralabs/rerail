@@ -47,6 +47,8 @@ type Stamped = (HashKey, Arc<[TermId]>);
 
 #[derive(Default)]
 pub(super) struct CallsState {
+    globals: BTreeSet<usize>,
+    dirty_globals: BTreeSet<usize>,
     terms: Terms,
     /// Per term, the synthetic clause running its seed query: one per distinct seed query.
     producers: Vec<ClauseId>,
@@ -76,6 +78,22 @@ pub(super) struct CallsState {
 }
 
 impl CallsState {
+    // P's global workspace path (`workspace/global.rs`) reads these; not ported (O18).
+    #[allow(dead_code)]
+    pub(super) fn take_dirty_globals(&mut self) -> BTreeSet<usize> {
+        std::mem::take(&mut self.dirty_globals)
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn evaluation_slot(&self) -> Option<calls::EvaluationSlot> {
+        self.view.as_ref().map(|view| {
+            calls::EvaluationSlot::install(calls::EvaluationCalls {
+                view: Arc::clone(view),
+                summaries: HashMap::new(),
+            })
+        })
+    }
+
     pub(super) fn active(&self) -> bool {
         !self.terms.is_empty()
     }
@@ -116,7 +134,7 @@ impl CallsState {
     ) -> Result<()> {
         for clause_index in 0..code_rule.clauses.len() {
             let clause = &code_rule.clauses[clause_index];
-            let ClauseKind::Forbid(query) = &clause.kind else {
+            let Some(query) = clause.kind.calls_query() else {
                 continue;
             };
             let terms = query.calls();
@@ -160,7 +178,16 @@ impl CallsState {
                 producer.violation.fix = None;
                 code_rule.clauses.push(producer);
             }
-            self.consumers.insert((index, clause_index), ids);
+            // P's relational clauses are test-only in W (O18).
+            #[cfg(test)]
+            let global = matches!(&template.kind, ClauseKind::Relational(_));
+            #[cfg(not(test))]
+            let global = false;
+            if global {
+                self.globals.insert(index);
+            } else {
+                self.consumers.insert((index, clause_index), ids);
+            }
         }
         Ok(())
     }
@@ -345,6 +372,9 @@ impl CallsState {
         if !self.active() {
             return None;
         }
+        if self.view.is_none() || !self.dirty.is_empty() {
+            self.dirty_globals.extend(&self.globals);
+        }
         // `None`: every file; else the files an update names.
         let affected = match &mut self.view {
             None => {
@@ -355,7 +385,7 @@ impl CallsState {
                     .collect();
                 #[cfg(test)]
                 GRAPHS_LINKED.with(|count| count.set(count.get() + 1));
-                self.view = Some(Arc::new(CallsView::build(
+                self.view = Some(Arc::new(CallsView::build_modes(
                     self.terms.questions(),
                     summaries,
                     &self.seeds,
@@ -408,7 +438,7 @@ impl CallsState {
             &Arc<[TermId]>,
             &Arc<Summary>,
         )| {
-            let stamp = view.stamp(summary, terms);
+            let stamp = view.stamp(path, summary, terms);
             (known != Some(stamp)).then(|| Restamp {
                 path: path.clone(),
                 stamp,
@@ -450,7 +480,7 @@ impl CallsState {
     /// linked afresh from the same summaries and seeds.
     #[cfg(test)]
     pub(super) fn stamps_against_fresh_link(&self) -> [BTreeMap<String, Stamped>; 2] {
-        let fresh = CallsView::build(
+        let fresh = CallsView::build_modes(
             self.terms.questions(),
             self.summaries
                 .iter()
@@ -465,7 +495,7 @@ impl CallsState {
                 .filter_map(|(path, (_, terms))| {
                     let summary = self.summaries.get(path)?;
                     let silent = view.silent(summary, terms).into();
-                    Some((path.clone(), (view.stamp(summary, terms), silent)))
+                    Some((path.clone(), (view.stamp(path, summary, terms), silent)))
                 })
                 .collect()
         })
@@ -502,8 +532,24 @@ fn graph_fingerprint(summary: &Summary, seeds: &FileSeeds) -> u64 {
     for (owner, name) in &summary.edges {
         (owner, summary.name(*name)).hash(&mut hasher);
     }
+    summary.references.len().hash(&mut hasher);
+    for (owner, name) in &summary.references {
+        (owner, summary.name(*name)).hash(&mut hasher);
+    }
+    summary.reference_targets.len().hash(&mut hasher);
+    for name in &summary.reference_targets {
+        summary.name(*name).hash(&mut hasher);
+    }
     for (alias, target) in &summary.aliases {
         (summary.name(*alias), summary.name(*target)).hash(&mut hasher);
+    }
+    summary.reference_aliases.len().hash(&mut hasher);
+    for (alias, target) in &summary.reference_aliases {
+        (summary.name(*alias), summary.name(*target)).hash(&mut hasher);
+    }
+    summary.reference_decorators.len().hash(&mut hasher);
+    for (owner, name) in &summary.reference_decorators {
+        (owner, summary.name(*name)).hash(&mut hasher);
     }
     for star in &summary.stars {
         summary.name(*star).hash(&mut hasher);

@@ -1283,7 +1283,8 @@ impl Builder {
                     incomplete_position: None,
                     deduplicate_source: true,
                 });
-                call_through = Some(term.through);
+                // P's `calls` delta gives a term a `Mode`; N's catalog reads its `through`.
+                call_through = Some(term.through.through);
             }
             Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_) => {}
             Semantic::Parse(_) => unreachable!("parse returned before semantic fact lowering"),

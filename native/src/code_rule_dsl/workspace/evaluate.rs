@@ -649,10 +649,13 @@ fn evaluate_document(
             // No AST clause runs on a document the parser did not read, sound or not; the failure
             // reports `file.syntax` in place of its static message (`results::failure_message`).
             SyntaxReading::Unread(message) => {
-                for &(slot, _) in slots {
-                    file.failures
-                        .entry(file.candidates.ast[slot])
-                        .or_insert(("source-incomplete", UNREAD));
+                // A whole-file syntax gate (`invalid_syntax`) reads the errors as content.
+                for &(slot, grammar) in slots {
+                    if grammar.invalid_syntax.is_none() {
+                        file.failures
+                            .entry(file.candidates.ast[slot])
+                            .or_insert(("source-incomplete", UNREAD));
+                    }
                 }
                 file.syntax.get_or_insert(message);
             }
@@ -673,7 +676,11 @@ fn evaluate_document(
         } else {
             &errors
         };
-        if !file.failures.contains_key(&id) && read.incomplete(grammar) && gates.admit(grammar) {
+        if !file.failures.contains_key(&id)
+            && grammar.invalid_syntax.is_none()
+            && read.incomplete(grammar)
+            && gates.admit(grammar)
+        {
             file.failures
                 .insert(id, ("source-incomplete", "file has syntax errors"));
         }
@@ -1049,7 +1056,9 @@ fn evaluate_clauses(
                                 *work = crate::code_rule_dsl::matcher::end_clause().0;
                             }
                             let errors = if grammar.crosses { file_errors } else { errors };
-                            if errors.meets(&place.place(matched.get_node())) {
+                            if grammar.invalid_syntax != Some(true)
+                                && errors.meets(&place.place(matched.get_node()))
+                            {
                                 return Ok(true);
                             }
                             let matched_node = matched.get_node();
