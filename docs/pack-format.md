@@ -112,7 +112,8 @@ that two documents in any packs share.
 Today's schemas from `conformance/languages/pack.ts`, moved next to the rules they validate. The runner reads a pack's
 expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 
-- `conformance.json`: the language family, the engine capabilities the pack declares (with exemptions and their
+- `conformance.json`: the language family (or, for a pack whose ports span languages, the families: complexity's
+  `["python", "ecma", "php", "blade", "rust", "vue"]`), the engine capabilities the pack declares (with exemptions and their
   evidence), the pinned tools, and for each ported rule the upstream tool and rule it reproduces,
   how findings compare (`line` or `line+column`) and the capabilities it exercises. `suppressionExemptions` lists the
   ports, by `id`, whose documents need not carry their tool's suppression comment yet, each with its `reason` (check
@@ -123,7 +124,9 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   schema). A port may
   set `fixtures`, `path.matchesGlob` patterns over the tool's fixture paths: it is then evaluated and scored only on
   the fixtures they match, the tests its upstream configuration ran on. That is how a tool whose tests run each rule
-  with several option sets is scored: one document per option set, each on its own tests.
+  with several option sets is scored: one document per option set, each on its own tests. A port may set `lints`, the
+  file types it covers when that is fewer than its tool-pack's (`gates.yaml`'s `upstream.lints`): `loads`'s in-scope
+  check then asks for those alone, as it does for complexity's one port per language.
 - `upstream/<tool>/fixtures.expected.json`: the expected findings, what the tool reported on its own tests, written by
   the generator in the same directory and run through `npm run fixtures:derive` (each tool-pack's recipe in
   `scripts/pack-data/recipes/`, runtimes in `scripts/pack-data/runtimes/`; tools live under `.rerail/`, gitignored)
@@ -583,6 +586,7 @@ repository's recorded one ([docs/upstream.md](upstream.md#sample-licences)).
 Moved: `python`, `php`, `blade`, `typescript`, `react`, `node`, `next`, `sql` and `rust`, each from `conformance/languages/<id>/`,
 `fixtures/<id>/rules/`, its candidates and probes, and the rule rows of its licence records. The ESLint expected-findings
 helper they share is `scripts/pack-data/eslint-expected.mjs`, and the TypeScript grammar census is `conformance/t1/typescript-syntax.ts`.
-The complexity rules moved to `packs/complexity/` and still ship inside core's package; their lizard
-parity test stays in `test/engine/code-rule/complexity-rules.test.ts`. `vue` moved from `fixtures/vue/upstream/`, its
+The complexity rules moved to `packs/complexity/`; their lizard parity test stays in
+`test/engine/code-rule/complexity-rules.test.ts`, and lizard is a gated tool-pack of its own
+(`packs/complexity/upstream/lizard/gates.yaml`). `vue` moved from `fixtures/vue/upstream/`, its
 draft `rules.json` becoming `packs/vue/conformance.json`.
