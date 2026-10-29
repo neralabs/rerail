@@ -20,9 +20,9 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
-    "@oh-my-pi/pi-agent-core": "18.12.2",
-    "@oh-my-pi/pi-ai": "18.12.2",
-    "@oh-my-pi/pi-catalog": "18.12.2",
+    "@oh-my-pi/pi-agent-core": "18.12.6",
+    "@oh-my-pi/pi-ai": "18.12.6",
+    "@oh-my-pi/pi-catalog": "18.12.6",
     "better-sqlite3": "^12.11.1",
     "chokidar": "4.0.3",
     "node-pty": "1.1.0",
@@ -31,7 +31,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@oh-my-pi/pi-coding-agent": "18.12.2",
+    "@oh-my-pi/pi-coding-agent": "18.12.6",
     "@phosphor-icons/react": "^2.1.10",
     "@tailwindcss/vite": "^4.1.11",
     "@tanstack/react-query": "^5.85.0",
