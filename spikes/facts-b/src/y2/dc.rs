@@ -31,17 +31,17 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 pub type St = u64;
-const NONE: u32 = 0;
-const ANN: u32 = 1;
-const MOD: u32 = 1 << 31;
+pub(crate) const NONE: u32 = 0;
+pub(crate) const ANN: u32 = 1;
+pub(crate) const MOD: u32 = 1 << 31;
 
-fn st(node: u32, layer: u32) -> St {
+pub(crate) fn st(node: u32, layer: u32) -> St {
     ((node as u64) << 32) | layer as u64
 }
-fn node(s: St) -> u32 {
+pub(crate) fn node(s: St) -> u32 {
     (s >> 32) as u32
 }
-fn layer(s: St) -> u32 {
+pub(crate) fn layer(s: St) -> u32 {
     s as u32
 }
 
@@ -251,30 +251,63 @@ impl Dc {
 
     /// From scratch: every root, reachability, every definition's finding.
     pub fn scratch(f: &Facts) -> Dc {
+        let mut dc = Dc::scratch_reach(f);
+        dc.scratch_findings(f);
+        dc
+    }
+
+    /// From scratch, reachability alone (roots, then `propagate` from them): the first half of
+    /// `scratch`, timed apart by the lattice experiment (`lattice::build`).
+    pub fn scratch_reach(f: &Facts) -> Dc {
         let mut dc = Dc::empty();
+        let roots = dc.seed(f);
+        let work: BinaryHeap<Reverse<(u32, St)>> = roots.into_iter().map(|r| Reverse((0, r))).collect();
+        dc.propagate(f, work);
+        dc
+    }
+
+    /// From scratch, every definition's finding over the reached set: the second half of `scratch`.
+    pub fn scratch_findings(&mut self, f: &Facts) {
+        let ids: Vec<u32> = f.defs.keys().copied().collect();
+        for id in ids {
+            let v = self.finding(f, &f.defs[&id]);
+            if !v.is_empty() {
+                self.findings.insert(id, v);
+            }
+        }
+    }
+
+    /// The imported-module counts, then the root states (layer `NONE`, possibly repeated).
+    fn seed(&mut self, f: &Facts) -> Vec<St> {
         for is in f.imports_by_target.values() {
             for i in is {
-                dc.count_import(i.target, !i.symbol_kind, 1);
+                self.count_import(i.target, !i.symbol_kind, 1);
             }
         }
         let mut roots: Vec<u32> = f.roots_by_symbol.keys().copied().collect();
         for r in f.roots_by_symbol.keys() {
             roots.extend(at(&f.public_by_owner, r).iter().copied());
         }
-        roots.extend(dc.imported.keys().map(|m| m | MOD));
+        roots.extend(self.imported.keys().map(|m| m | MOD));
         for fq in f.dyn_fq.keys() {
             roots.extend(at(&f.resolved_by_fq, fq).iter().copied());
         }
-        let work: BinaryHeap<Reverse<(u32, St)>> = roots.into_iter().map(|r| Reverse((0, st(r, NONE)))).collect();
-        dc.propagate(f, work);
-        let ids: Vec<u32> = f.defs.keys().copied().collect();
-        for id in ids {
-            let v = dc.finding(f, &f.defs[&id]);
-            if !v.is_empty() {
-                dc.findings.insert(id, v);
-            }
-        }
-        dc
+        roots.into_iter().map(|r| st(r, NONE)).collect()
+    }
+
+    /// The root states of a from-scratch reachability, as `scratch_reach` seeds them.
+    pub fn root_states(f: &Facts) -> Vec<St> {
+        Dc::empty().seed(f)
+    }
+
+    /// Every reached state with its level.
+    pub fn levels(&self) -> Vec<(St, u32)> {
+        self.reached.iter().map(|(s, l)| (*s, *l)).collect()
+    }
+
+    /// `succ` calls made so far (one per reached state at scratch).
+    pub fn succ_calls(&self) -> usize {
+        self.succ_calls
     }
 
     /// Maintained state, in u32 words: the reached set (3 per state, with its level), its two indexes, the
@@ -878,7 +911,8 @@ pub fn node_string(n: u32) -> String {
     }
 }
 
-fn succ(f: &Facts, s: St, out: &mut Vec<St>) {
+/// The product graph's out-edges of `s` (possibly repeated): local queries at `s`'s node.
+pub(crate) fn succ(f: &Facts, s: St, out: &mut Vec<St>) {
     let (x, l) = (node(s), layer(s));
     if l == ANN {
         for &a in at(&f.ann_by_symbol, &x) {
