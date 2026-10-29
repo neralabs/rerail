@@ -632,11 +632,6 @@ SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = "orm-fixed-tests-doctrine-tests-orm-mapping-php-doctrine.tests.orm.mapping.animal.php-0b890cf84bcc/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
 path = "orm-fixed-tests-doctrine-tests-orm-mapping-php-doctrine.tests.orm.mapping.comment.php-0846be0d9acd/**"
 SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
@@ -678,11 +673,6 @@ SPDX-License-Identifier = "MIT"
 
 [[annotations]]
 path = "orm-tests-doctrine-tests-orm-functional-ticket-ddc2922test.php-cb0880da5137/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-tests-doctrine-tests-orm-mapping-php-doctrine.tests.orm.mapping.animal.php-c3bfad8100f4/**"
 SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
 

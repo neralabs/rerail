@@ -102,37 +102,7 @@ SPDX-FileCopyrightText = "markrogoyski/itertools-php contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = "orm-fixed-lib-doctrine-common-annotations-parser.php-30e00b624389/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-fixed-lib-doctrine-common-util-debug.php-49dbff249f6d/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-fixed-lib-doctrine-dbal-connection.php-32859762af98/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
 path = "orm-fixed-lib-doctrine-orm-internal-hydration-abstracthydrator.php-e905640ca175/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-fixed-lib-doctrine-orm-persisters-standardentitypersister.php-3a109d1f9ded/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-fixed-lib-doctrine-orm-query-parser.php-78a7028cad45/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-fixed-lib-doctrine-orm-query-resultsetmapping.php-46ead40d1073/**"
 SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
 
@@ -142,52 +112,12 @@ SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = "orm-fixed-lib-doctrine-relation-parser.php-dcb4b2b6a5e3/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-lib-doctrine-common-annotations-parser.php-9c0ce4ebf8de/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-lib-doctrine-common-util-debug.php-732bbe04651a/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-lib-doctrine-dbal-connection.php-3516ebb6d6e0/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
 path = "orm-lib-doctrine-orm-internal-hydration-abstracthydrator.php-70f32f951001/**"
 SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = "orm-lib-doctrine-orm-persisters-standardentitypersister.php-06099cc268e2/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-lib-doctrine-orm-query-parser.php-95f9ae0d4f76/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-lib-doctrine-orm-query-resultsetmapping.php-b204b02e2cf8/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
 path = "orm-lib-doctrine-orm-tools-debug.php-f643d438b693/**"
-SPDX-FileCopyrightText = "doctrine/orm contributors"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = "orm-lib-doctrine-relation-parser.php-b57fcc44eb09/**"
 SPDX-FileCopyrightText = "doctrine/orm contributors"
 SPDX-License-Identifier = "MIT"
 

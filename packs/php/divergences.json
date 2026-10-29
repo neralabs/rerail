@@ -2410,22 +2410,6 @@
   {
     "rule": "psalm-forbidden-code",
     "source": "samples",
-    "path": "orm-lib-doctrine-common-util-debug.php-732bbe04651a/lib/Doctrine/Common/Util/Debug.php",
-    "line": 64,
-    "kind": "upstream-wrong",
-    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_contents()` inside Doctrine's `Debug::dump()`: its output is captured into a string the method reformats before printing or returning it (the method exists to render a variable), so removing it, as the finding says, breaks the method. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block."
-  },
-  {
-    "rule": "psalm-forbidden-code",
-    "source": "samples",
-    "path": "orm-lib-doctrine-common-util-debug.php-732bbe04651a/lib/Doctrine/Common/Util/Debug.php",
-    "line": 80,
-    "kind": "upstream-wrong",
-    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_contents()` inside Doctrine's `Debug::dump()`: its output is captured into a string the method reformats before printing or returning it (the method exists to render a variable), so removing it, as the finding says, breaks the method. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block."
-  },
-  {
-    "rule": "psalm-forbidden-code",
-    "source": "samples",
     "path": "orm-lib-doctrine-orm-tools-debug.php-f643d438b693/lib/Doctrine/ORM/Tools/Debug.php",
     "line": 73,
     "kind": "upstream-wrong",

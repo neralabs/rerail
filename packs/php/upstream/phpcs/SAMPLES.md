@@ -1,6 +1,6 @@
 # Real-code samples: php/phpcs
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/php/phpcs/98bf067b4f7006234028e83dba30a18000a24f3823a0d3b84cd0d9cc73e9e061.tar.zst`, 207 files, 973396 bytes) holds 319 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack. 103 sample(s) come from the pack's earlier real-code samples, trimmed to each rule's 10 smallest positive samples when built (clean samples and the samples a divergence names kept); 216 from the PHP test set, real files at the commit that introduced a violation of one rule with the tool's findings at the pack's pins, their hand-fixed copies, and files whose own suppression comment silences the rule.
+The sample set `samples.lock` pins (archive `rerail/archives/samples/php/phpcs/98bf067b4f7006234028e83dba30a18000a24f3823a0d3b84cd0d9cc73e9e061.tar.zst`, 207 files, 973396 bytes) holds 317 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists the pack's earlier samples with their repositories' licence texts; the PHP test set's files are not in it until a `replace` repack, and carry the licence `scripts/samples/licences.ts` records for their repository, which was read at each sample's commit on 2026-10-29 (doctrine/orm's samples from before its 2012-05-26 move from LGPL-2.1 to MIT were dropped). None of it is published with the pack. 103 sample(s) come from the pack's earlier real-code samples, trimmed to each rule's 10 smallest positive samples when built (clean samples and the samples a divergence names kept); 214 from the PHP test set, real files at the commit that introduced a violation of one rule with the tool's findings at the pack's pins, their hand-fixed copies, and files whose own suppression comment silences the rule.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|
@@ -11,7 +11,7 @@ The sample set `samples.lock` pins (archive `rerail/archives/samples/php/phpcs/9
 | cakephp/cakephp | MIT | 1bcada258d4a, 26bad8fda726, b752bad5cae8 and 2 more | 9 |
 | codeigniter4/CodeIgniter4 | MIT | 33b7963dfe77, c46cea4ee042, cf96701aef03 | 8 |
 | composer/composer | MIT | 006985a0ea71, 0ab4dfba7cd1, 0b08daff0293 and 9 more | 22 |
-| doctrine/orm | MIT | 23d36c0d5293, 32ed32cf5652, 60cd5244433f and 8 more | 20 |
+| doctrine/orm | MIT | 23d36c0d5293, 32ed32cf5652, 60cd5244433f and 7 more | 18 |
 | filamentphp/filament | MIT | 41d986b8c57e, c199b1fc22e5 | 4 |
 | guzzle/guzzle | MIT | 00bb8b9a8900, 0f502b598d2c, 201f3e86acfb and 3 more | 14 |
 | laminas/laminas-http | BSD-3-Clause | 9462fc84330d | 1 |
