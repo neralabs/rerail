@@ -212,8 +212,10 @@ Two workflows carry a request. Neither runs any code of the pull request.
    base branch's workflow: it checks out nothing and holds only a token that writes pull request comments. While the
    pull request has anything to publish, it keeps one sticky comment, "Pack data waiting to publish": a row per
    tool-pack with its files in `publish/` and its authored rows removed from `UPSTREAM.md`, and the publish steps by
-   hand and with the `gh` CLI. It deletes that comment, while it is still waiting, once nothing is left to publish.
-   The comment blocks nothing; structure metric #3 does.
+   hand and with the `gh` CLI. On a fork's pull request, a proposal ([Forks](#forks)), the comment is "Pack data in a
+   proposal from a fork": the same rows, saying the data is published from the pull request that ports the change,
+   with no publish steps. It deletes the comment, while it is still waiting, once nothing is left to publish. The
+   comment blocks nothing; structure metric #3 does.
 2. **The dispatch.** A maintainer, or an agent with write access, dispatches **Publish pack data**
    (`pack-data-publish.yml`) on main with the pull request's number. With `replace` off (the default) each tool-pack's
    archive is the locked one, less the files of removed authored rows, with `publish/` laid over it; with `replace`
@@ -249,7 +251,8 @@ Two workflows carry a request. Neither runs any code of the pull request.
    comment then reads "published".
 
 When finish cannot push, the run is red and the comment reads "action needed", with each lock's text and the reason:
-the branch is on a fork ([Forks](#forks)), or someone pushed to it since prep. Commit the locks, delete `publish/` and
+someone pushed to the branch since prep, or the branch is on a fork, which the project never publishes from
+([Forks](#forks)). Commit the locks, delete `publish/` and
 push, or pull and dispatch again. When an object was not put and confirmed (a failed put or confirm, a rejected
 approval, a cancelled job), the **failed** job names each object's failure in the comment; nothing is committed and
 no lock changes. Re-running is safe: puts are create-only and content-addressed, and confirm accepts an object S3
