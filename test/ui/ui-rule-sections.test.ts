@@ -6,7 +6,7 @@ type SourceKind = "pack" | "rerail_rule" | "library_rule";
 
 interface StoredRule {
   kind: string;
-  origin: "rerail" | "user";
+  origin: "pack" | "user";
   source: { kind: SourceKind; id: string; packId: string | null };
   folders: string[];
   enabled: boolean;
@@ -16,7 +16,7 @@ interface StoredRule {
 /** A rule as `poll.js` stores it: present through a pack, added on its own, or created by you. */
 const fileRule = (id: string, kind: SourceKind, sourceId: string = id): StoredRule => ({
   kind: "file",
-  origin: kind === "library_rule" ? "user" : "rerail",
+  origin: kind === "library_rule" ? "user" : "pack",
   source: { kind, id: sourceId, packId: kind === "pack" ? sourceId : null },
   folders: [""],
   enabled: true,

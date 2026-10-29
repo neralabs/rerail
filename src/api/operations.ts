@@ -360,7 +360,7 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack installed on this machine: what it covers, its version and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
     output: rulePackListSchema,
     handler: stores => {
       const catalog = stores.ruleCatalog();

@@ -56,9 +56,9 @@ const PACKS: RecommendedPacksInput = {
     { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: "1.2.0" },
   ],
   available: [
-    { id: "typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
-    { id: "acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
-    { id: "python", version: "0.1.2", name: "Python" },
+    { id: "typescript", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
+    { id: "acme-api", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
+    { id: "python", packageName: "@neralabs/rerail-pack-python", version: "0.1.2", name: "Python" },
   ],
   agentsFound: [CLAUDE, CURSOR],
 };

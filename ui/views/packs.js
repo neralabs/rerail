@@ -1,5 +1,5 @@
 /**
- * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack that comes with Rerail, alphabetical, filtered
+ * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
  * by kind, as a list or as cards; each added or not, with Add pack or a quiet Remove pack that asks first. A pack is
  * added whole: its rules arrive as the pack starts them, opt-in ones off. The review (`#packs?review=1`, set-up's
  * `#rule-packs?review=1`): the packs set-up picked for this repository, each with why and a switch, then the others
@@ -7,7 +7,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { isRunning } from "../derive.js";
+import { isRerailPack, isRunning, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
@@ -43,7 +43,8 @@ function catalogItem(pack) {
       h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
   }
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers), h("span.meta", null, packMeta(pack))),
+    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
+      h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),
     h(`div.pend${asking ? ".ask" : ""}`, null, asking ? null : h("span.pstatus", null, status), action));
 }
 

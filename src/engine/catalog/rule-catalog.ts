@@ -1,42 +1,45 @@
 /**
  * The rule catalog: every rule and pack Rerail can run, read from the packs installed in the Rerail home
- * (`$RERAIL_HOME/packs/node_modules/@neralabs/rerail-pack-*`). Core ships no packs. The installed files are the rules
- * (docs/rule-packs.md, "Where a pack's rules live"): nothing copies them into the database, which names packs and rules
- * by id. Each pack is checked on its own, and one that fails a check is reported in `skipped` and left out while the
- * others load.
+ * (`$RERAIL_HOME/packs/node_modules`: `rerail-pack-<id>` and `@<scope>/rerail-pack-<id>`, Rerail's own under
+ * `@neralabs`). Core ships no packs. The installed files are the rules (docs/rule-packs.md, "Where a pack's rules
+ * live"): nothing copies them into the database, which names packs and rules by id. Each pack is checked on its own,
+ * and one that fails a check is reported in `skipped` and left out while the others load.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { defaultRerailHome } from "../storage/rerail-home.js";
 import type { RuleCatalog, SkippedRulePack } from "./repository-model.js";
-import { compareRulePacks, readRulePack, type LoadedRulePack } from "./rule-packs.js";
+import { compareRulePacks, readRulePack, RERAIL_PUBLISHER, RULE_PACK_PACKAGE_NAME, type LoadedRulePack } from "./rule-packs.js";
 
 /** The npm prefix packs are installed into: `$RERAIL_HOME/packs`. */
 export function installedPacksPrefix(home: string = defaultRerailHome()): string {
   return join(home, "packs");
 }
 
-/** Where npm puts the installed packs under the prefix. */
-function installedPacksScope(home: string): string {
-  return join(installedPacksPrefix(home), "node_modules", "@neralabs");
-}
-
 /**
- * Each installed pack's directory, by package name. Only the prefix's own `node_modules` is read, so one version of a
- * pack is installed at a time.
+ * Each installed pack's directory, by package name: `node_modules/rerail-pack-<id>` and
+ * `node_modules/@<scope>/rerail-pack-<id>` under the prefix, whoever publishes them. Only the prefix's own
+ * `node_modules` is read, so one version of a package is installed at a time.
  */
 export function installedPackDirectories(home: string = defaultRerailHome()): string[] {
-  const scope = installedPacksScope(home);
-  if (!existsSync(scope)) return [];
-  return readdirSync(scope)
-    .filter(name => name.startsWith("rerail-pack-"))
-    .sort(compareDeterministicStrings)
-    .map(name => join(scope, name));
+  const modules = join(installedPacksPrefix(home), "node_modules");
+  if (!existsSync(modules)) return [];
+  const names = readdirSync(modules, { withFileTypes: true }).flatMap(entry => {
+    if (!entry.name.startsWith("@")) return [entry.name];
+    return entry.isDirectory() ? readdirSync(join(modules, entry.name)).map(name => `${entry.name}/${name}`) : [];
+  });
+  return names.filter(name => RULE_PACK_PACKAGE_NAME.test(name)).sort(compareDeterministicStrings).map(name => join(modules, name));
+}
+
+/** The package an installed pack's directory holds: `…/node_modules/@acme/rerail-pack-sql` → `@acme/rerail-pack-sql`. */
+export function installedPackageName(directory: string): string {
+  const scope = basename(dirname(directory));
+  return scope.startsWith("@") ? `${scope}/${basename(directory)}` : basename(directory);
 }
 
 /** The version in `package.json` at `root`, when it is core's. */
@@ -82,18 +85,31 @@ function coreRangeProblem(range: string | undefined, version: string): string {
   return `it is for Rerail ${range}, and this Rerail is ${version}`;
 }
 
-/** Why `loaded` cannot join a catalog that already holds the packs `loadedIds` and their rules `owner`, or undefined. */
-function packProblem(loaded: LoadedRulePack, loadedIds: ReadonlySet<string>, owner: ReadonlyMap<string, string>, options: RuleCatalogOptions): string | undefined {
+/**
+ * Why `loaded` cannot join a catalog whose loaded packs `holders` names by pack id (each one's package name, else its
+ * directory) and whose rules `owner` maps to their pack's id, or undefined.
+ */
+function packProblem(loaded: LoadedRulePack, holders: ReadonlyMap<string, string>, owner: ReadonlyMap<string, string>, options: RuleCatalogOptions): string | undefined {
   const { pack, packageJson } = loaded;
-  if (loadedIds.has(pack.id)) return `another pack ${pack.id} is already loaded`;
+  const holder = holders.get(pack.id);
+  if (holder !== undefined) return `pack id ${pack.id} is taken by ${holder}`;
   if (options.coreVersion !== undefined) {
     if (packageJson === undefined) return `pack ${pack.id} has no package.json naming the core versions it fits`;
     const range = packageJson.peerDependencies[RERAIL_PACKAGE_NAME];
     if (range === undefined || !semver.satisfies(options.coreVersion, range, { includePrerelease: true })) return coreRangeProblem(range, options.coreVersion);
   }
   const taken = pack.rules.find(rule => owner.has(rule.id));
-  if (taken !== undefined) return `rule ${taken.id} is already in pack ${owner.get(taken.id)}`;
+  if (taken !== undefined) return `rule ${taken.id} is already in ${holders.get(owner.get(taken.id)!)}`;
   return undefined;
+}
+
+/**
+ * The order packs claim their pack id and rule ids in, so which of two clashing packs loads never depends on where
+ * they were found: Rerail's own first, then by package name. Packs without a package keep the order they were given.
+ */
+function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): number {
+  const rank = ({ pack }: LoadedRulePack): number => (pack.publisher === RERAIL_PUBLISHER ? 0 : 1);
+  return rank(left) - rank(right) || compareDeterministicStrings(left.pack.packageName ?? "", right.pack.packageName ?? "");
 }
 
 /**
@@ -131,11 +147,14 @@ function skippedPack(path: string, reason: string): SkippedRulePack {
   return { path, packageName, version, reason };
 }
 
-/** Changes whenever a pack is added, removed or changes version, or any of its rule documents or `pack.json` changes. */
+/**
+ * Changes whenever a pack is added, removed, changes version or package, or any of its rule documents or `pack.json`
+ * changes.
+ */
 function catalogDigest(packs: readonly LoadedRulePack[]): string {
   const hash = createHash("sha256");
   for (const { pack, packJson, documents } of packs) {
-    hash.update(`pack\0${pack.id}\0${String(pack.version)}\0${stableJsonText(packJson) ?? ""}\n`);
+    hash.update(`pack\0${pack.id}\0${String(pack.packageName)}\0${String(pack.version)}\0${stableJsonText(packJson) ?? ""}\n`);
     const digests = documents.map(document => [document.rule.id, ruleDocumentDigest(document)] as const)
       .sort(([left], [right]) => compareDeterministicStrings(left, right));
     for (const [id, digest] of digests) hash.update(`rule\0${id}\0${digest}\n`);
@@ -145,23 +164,27 @@ function catalogDigest(packs: readonly LoadedRulePack[]): string {
 
 /**
  * The catalog of the packs in `packDirectories`, read from disk on every call. Each pack is read and checked on its
- * own (`readRulePack`, then the core range and the engine with `options`); a pack whose rule another pack already
- * holds, or whose id another pack has, is skipped. A skipped pack is listed with its reason, and the others load.
+ * own (`readRulePack`, then the core range and the engine with `options`). Two packs may not share a pack id or a
+ * rule id: Rerail's own pack loads and the other is skipped, and between two others the first by package name loads
+ * (`comparePackPrecedence`), wherever each was found. A skipped pack is listed with its reason, in the order given,
+ * and the others load.
  */
 export function readRuleCatalog(packDirectories: readonly string[], options: RuleCatalogOptions = {}): RuleCatalog {
+  const read: { at: number; directory: string; loaded: LoadedRulePack }[] = [];
+  const skipped: { at: number; entry: SkippedRulePack }[] = [];
+  packDirectories.forEach((directory, at) => {
+    try {
+      read.push({ at, directory, loaded: readRulePack(directory) });
+    } catch (error) {
+      skipped.push({ at, entry: skippedPack(directory, error instanceof Error ? error.message : String(error)) });
+    }
+  });
   const loaded: LoadedRulePack[] = [];
-  const skipped: SkippedRulePack[] = [];
+  const holders = new Map<string, string>();
   const owner = new Map<string, string>();
   let compile = options.compile === true;
-  for (const directory of packDirectories) {
-    let pack: LoadedRulePack;
-    try {
-      pack = readRulePack(directory);
-    } catch (error) {
-      skipped.push(skippedPack(directory, error instanceof Error ? error.message : String(error)));
-      continue;
-    }
-    let problem = packProblem(pack, new Set(loaded.map(entry => entry.pack.id)), owner, options);
+  for (const { at, directory, loaded: pack } of read.sort((left, right) => comparePackPrecedence(left.loaded, right.loaded))) {
+    let problem = packProblem(pack, holders, owner, options);
     if (problem === undefined && compile) {
       try {
         problem = compileProblem(pack, options.coreVersion);
@@ -171,9 +194,10 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
       }
     }
     if (problem !== undefined) {
-      skipped.push(skippedPack(directory, problem));
+      skipped.push({ at, entry: skippedPack(directory, problem) });
       continue;
     }
+    holders.set(pack.pack.id, pack.pack.packageName ?? directory);
     for (const rule of pack.pack.rules) owner.set(rule.id, pack.pack.id);
     loaded.push(pack);
   }
@@ -184,7 +208,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
     packOf: new Map(owner),
     sources: new Map(loaded.flatMap(({ sources }) => [...sources])),
     digest: catalogDigest(loaded),
-    skipped,
+    skipped: skipped.sort((left, right) => left.at - right.at).map(({ entry }) => entry),
   };
 }
 

@@ -3,6 +3,8 @@ import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
 import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
+import { isFromPack, publisherLabel } from "../../ui/derive.js";
+import { packKind } from "../../ui/render/pack-panel.js";
 
 type Request = { method: string; body: unknown; answer: (status: number, body?: unknown) => void };
 
@@ -246,5 +248,20 @@ describe("the catalog", () => {
     expect(sheetRules(p, "").map(r => r.id)).toEqual(["x:1", "x:2", "x:3"]);
     expect(sheetRules(p, " ETA ").map(r => r.id)).toEqual(["x:2"]);
     expect(sheetRules(p, "x:3").map(r => r.id)).toEqual(["x:3"]);
+  });
+
+  it("names a third party's pack by its publisher, and Rerail's own as before", () => {
+    const sql = { ...pack("sql", "SQL", "language"), publisher: "rerail" };
+    const scoped = { ...pack("acme-sql", "Acme SQL", "language"), publisher: "@acme" };
+    const unscoped = { ...pack("lint", "Lint", "repository"), publisher: "rerail-pack-lint" };
+
+    expect([sql, scoped, unscoped].map(publisherLabel)).toEqual(["By Rerail", "By @acme", "By rerail-pack-lint"]);
+    expect([sql, scoped, unscoped].map(packKind)).toEqual(["Language", "Language · By @acme", "Repository · By rerail-pack-lint"]);
+  });
+
+  it("takes every rule a pack brings as from a pack, and only the library's as created by you", () => {
+    const rules = toStoredRules([entry("p", ""), entry("r", "", { source: { kind: "rerail_rule", id: "r", packId: null } }), entry("u", "", { source: { kind: "library_rule", id: "u", packId: null } })]);
+
+    expect(["p", "r", "u"].map(id => isFromPack(rules.get(id)!))).toEqual([true, true, false]);
   });
 });

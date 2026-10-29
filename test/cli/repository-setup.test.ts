@@ -967,7 +967,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
   it("asks the confirm question again, saying why and changing nothing, when npm has no such version of a pack its answer names", async () => {
     const setup = await fixture();
     const asked = agentIo();
-    expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: [{ id: "typescript", version: "9.9.9" }] })))
+    expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: [{ packageName: "@neralabs/rerail-pack-typescript", id: "typescript", version: "9.9.9" }] })))
       .toEqual({ status: "waiting" });
     expect(asked.text()).toContain("No matching version found for @neralabs/rerail-pack-typescript@9.9.9");
     expect(asked.text()).toContain("Start Rerail in acme-api with this rule pack?");
@@ -1180,7 +1180,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, ...setupPacks("typescript@01.2.3", "start") })))
       .toEqual({ status: "waiting" });
-    expect(asked.text()).toContain("Name each rule pack as <id>@<version>, for example typescript@0.1.1, not typescript@01.2.3");
+    expect(asked.text()).toContain("Name each rule pack as <id>@<version> or <package>@<version>, for example typescript@0.1.1, not typescript@01.2.3");
   });
 
   it("installs into its pack store's home and checks the packs there, whatever RERAIL_HOME says", async () => {

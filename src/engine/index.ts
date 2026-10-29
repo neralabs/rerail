@@ -59,6 +59,7 @@ export {
   type RulePackFile,
   rulePackFileSchema,
   rulePackPackageName,
+  rulePackPackageOf,
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";

@@ -1,18 +1,26 @@
 /**
  * Installing rule packs and finding the ones that fit a repository (docs/rule-packs.md, "Installing packs"). Packs
- * are npm packages, `@neralabs/rerail-pack-<id>`, installed into the Rerail home's npm prefix
- * (`$RERAIL_HOME/packs`), where the rule catalog reads them. Discovery fetches every pack core lists into a staging
- * folder of its own beside it, which installs nothing, checks each one as the catalog would, runs its match
- * definition against the repository, and removes the folder; only a person's answer installs.
+ * are npm packages, `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` (Rerail's own `@neralabs/rerail-pack-<id>`),
+ * installed into the Rerail home's npm prefix (`$RERAIL_HOME/packs`), where the rule catalog reads them. An installed
+ * pack is known by its package name, since two packages may hold the same pack id. Discovery fetches every pack core
+ * lists into a staging folder of its own beside it, which installs nothing, checks each one as the catalog would, runs
+ * its match definition against the repository, and removes the folder; only a person's answer installs.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { basename, join, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import semver from "semver";
 import { RULE_PACK_LIST } from "../engine/catalog/pack-list.generated.js";
-import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { activeCoreVersion, installedPackageName, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
-import { rulePackPackageName, rulePacksThatFit, type RulePack } from "../engine/catalog/rule-packs.js";
+import {
+  packIdOfPackage,
+  RULE_PACK_PACKAGE_NAME,
+  rulePackPackageName,
+  rulePackPackageOf,
+  rulePacksThatFit,
+  type RulePack,
+} from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
@@ -24,6 +32,9 @@ const STALE_STAGING_MS = 60 * 60 * 1000;
 
 /** One pack at an exact version: what set-up shows a person and installs once they confirm. */
 export interface PackVersion {
+  /** The pack's npm package: `@neralabs/rerail-pack-<id>` for Rerail's own, else the third party's. */
+  readonly packageName: string;
+  /** The pack id the package holds. */
   readonly id: string;
   readonly version: string;
 }
@@ -57,36 +68,35 @@ export interface PackStore {
   fetch(ids: readonly string[], tag: string): Promise<FetchedPacks>;
   /** Installs these npm specs (`<name>@<version>`, a tarball, a folder) into `home`'s packs. */
   install(specs: readonly string[]): Promise<void>;
-  /** Uninstalls these packs from `home`'s packs. */
-  remove(ids: readonly string[]): Promise<void>;
-}
-
-/** `typescript@0.1.1,complexity@0.1.1`, as an answer carries the packs a person confirmed. */
-export function formatPackVersions(packs: readonly PackVersion[]): string {
-  return packs.map(pack => `${pack.id}@${pack.version}`).join(",");
+  /** Uninstalls these packages from `home`'s packs. */
+  remove(packageNames: readonly string[]): Promise<void>;
 }
 
 /**
- * The packs an answer's `--packs` names, each once. Throws on an entry that is not `<id>@<version>` (an exact
- * version), or one pack named at two versions. Any id is taken, a project's own pack included: installing it checks
- * that npm has it, and that the catalog loads it.
+ * The packs an answer's `--packs` names, each once: `<id>@<version>` for one of Rerail's own packs, or
+ * `<package>@<version>` for any pack's package, as `rulePackShortName` names it. Throws on an entry that is neither,
+ * at an exact version, or one pack named at two versions. Any id is taken, a project's own pack included: installing
+ * it checks that npm has it, and that the catalog loads it.
  */
 export function parsePackVersions(list: string): PackVersion[] {
   const packs = new Map<string, PackVersion>();
   for (const entry of list.split(",").map(item => item.trim()).filter(item => item !== "")) {
-    const match = /^([a-z][a-z0-9-]*)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u.exec(entry);
+    const match = /^(.+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u.exec(entry);
+    const packageName = match === null ? undefined : rulePackPackageOf(match[1]!);
     // The regex lets through what semver does not read (`01.2.3`, `1.0.0-a..b`); the downgrade guard compares with it.
-    if (match === null || semver.valid(match[2]) === null) throw new Error(`Name each rule pack as <id>@<version>, for example typescript@0.1.1, not ${entry}`);
-    const [, id, version] = match as unknown as [string, string, string];
-    const named = packs.get(id);
-    if (named !== undefined && named.version !== version) throw new Error(`${id} is named twice, at ${named.version} and ${version}`);
-    packs.set(id, { id, version });
+    if (match === null || packageName === undefined || semver.valid(match[2]) === null) {
+      throw new Error(`Name each rule pack as <id>@<version> or <package>@<version>, for example typescript@0.1.1, not ${entry}`);
+    }
+    const version = match[2]!;
+    const named = packs.get(packageName);
+    if (named !== undefined && named.version !== version) throw new Error(`${match[1]} is named twice, at ${named.version} and ${version}`);
+    packs.set(packageName, { packageName, id: packIdOfPackage(packageName)!, version });
   }
   return [...packs.values()];
 }
 
 /** The npm spec that installs exactly `pack`. */
-export const packSpec = (pack: PackVersion): string => `${rulePackPackageName(pack.id)}@${pack.version}`;
+export const packSpec = (pack: PackVersion): string => `${pack.packageName}@${pack.version}`;
 
 const NO_VERSION_UNDER_TAG = /\bETARGET\b|No matching version found|\bnotarget\b/u;
 const NO_ACCESS = /\bE40[34]\b/u;
@@ -161,10 +171,10 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
       const exact = specs.every(spec => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null);
       await npm(["install", "--prefix", prefix, ...quiet, ...(exact ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs]);
     },
-    async remove(ids) {
-      if (ids.length === 0) return;
+    async remove(packageNames) {
+      if (packageNames.length === 0) return;
       // npm reinstalls a listed package missing from node_modules while it uninstalls another: its scripts must not run.
-      await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...ids.map(rulePackPackageName)]);
+      await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames]);
     },
   };
 }
@@ -192,14 +202,24 @@ function readPackageVersion(directory: string): string | null {
   }
 }
 
-/** The version of pack `id` installed in `home`'s packs, whether or not the catalog loads it; null when none is. */
-export function installedPackVersion(id: string, home: string = defaultRerailHome()): string | null {
-  return readPackageVersion(join(installedPacksPrefix(home), "node_modules", "@neralabs", `rerail-pack-${id}`));
+/**
+ * The version of package `packageName` installed in `home`'s packs, whether or not the catalog loads it; null when
+ * none is.
+ */
+export function installedPackVersion(packageName: string, home: string = defaultRerailHome()): string | null {
+  return readPackageVersion(join(installedPacksPrefix(home), "node_modules", packageName));
+}
+
+/** The installed packages in `home`'s packs that hold pack `id`, by package name: Rerail's own and any other. */
+export function installedPackagesOf(id: string, home: string = defaultRerailHome()): string[] {
+  return installedPackDirectories(home).map(installedPackageName).filter(name => packIdOfPackage(name) === id);
 }
 
 /** A fetched pack, checked, with what matching it against the repository found. */
 export interface DiscoveredPack {
   readonly pack: RulePack;
+  /** The pack's npm package, Rerail's own or a third party's. */
+  readonly packageName: string;
   readonly version: string;
   /** The rules on when the pack is added. */
   readonly ruleCount: number;
@@ -248,9 +268,6 @@ export function packsLeftOutByCore(home: string, current: string, previous: stri
   return leftOut(current).filter(skipped => !before.has(skipped.path)).map(skippedProblem);
 }
 
-/** The pack id an installed or staged pack directory holds (`…/@neralabs/rerail-pack-<id>`). */
-const packIdOf = (directory: string): string => basename(directory).slice("rerail-pack-".length);
-
 /**
  * Every pack core lists, fetched under the update channel's tag, checked against the active core and the engine,
  * and matched against the repository at `repositoryRoot`; with none, nothing is read and no pack is recommended. The
@@ -265,25 +282,28 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
   try {
     // What is on disk, loaded or not: the version set-up would replace, and the one its downgrade guard compares.
     const newerInstalled = (fetched: FetchedPack): boolean => {
-      const installed = installedPackVersion(fetched.id, home);
+      const installed = installedPackVersion(rulePackPackageName(fetched.id), home);
       const offered = readPackageVersion(fetched.directory);
       return installed !== null && offered !== null && semver.valid(installed) !== null && semver.valid(offered) !== null && semver.gt(installed, offered);
     };
     const fromNpm = fetch.fetched.filter(fetched => !newerInstalled(fetched));
-    const fetchedIds = new Set(fromNpm.map(pack => pack.id));
-    const standIns = installedPackDirectories(home).filter(directory => !fetchedIds.has(packIdOf(directory)));
+    // Every other installed package stands in, a third party's included: the catalog decides which of two holding
+    // one pack id loads, Rerail's own first.
+    const fetchedPackages = new Set(fromNpm.map(pack => rulePackPackageName(pack.id)));
+    const standIns = installedPackDirectories(home).filter(directory => !fetchedPackages.has(installedPackageName(directory)));
     const catalog = readRuleCatalog([...fromNpm.map(pack => pack.directory), ...standIns], { coreVersion: activeCoreVersion(home), compile: true });
     const packs = [...catalog.packs.values()];
     const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
-      if (pack.version === null) return [];
+      if (pack.version === null || pack.packageName === null) return [];
       const found = matched.get(pack.id);
       return [{
         pack,
+        packageName: pack.packageName,
         version: pack.version,
         ruleCount: pack.rules.filter(rule => rule.on).length,
         ...(found === undefined ? {} : { match: { reason: found.reason, folder: found.folder } }),
-        installed: installedPackVersion(pack.id, home),
+        installed: installedPackVersion(pack.packageName, home),
       }];
     });
     // Those that fit first, in catalog order within each.
@@ -302,58 +322,58 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
   }
 }
 
-/** One pack in a home's packs prefix: the spec npm recorded for it, if any, and the version on disk, if any. */
+/** One package in a home's packs prefix: the spec npm recorded for it, if any, and the version on disk, if any. */
 interface PrefixEntry {
   readonly spec: string | undefined;
   readonly version: string | null;
 }
 
 /**
- * What npm recorded for each installed pack, by id: the spec in the prefix's `package.json` (`0.1.1`, or `file:…` for
- * one added from a folder or tarball, made absolute), so a pack can be put back exactly as it was installed.
+ * What npm recorded for each installed pack, by package name, whoever publishes it: the spec in the prefix's
+ * `package.json` (`0.1.1`, or `file:…` for one added from a folder or tarball, made absolute), so a pack can be put
+ * back exactly as it was installed.
  */
 function recordedSpecs(home: string): Map<string, string> {
   const prefix = installedPacksPrefix(home);
   try {
     const manifest = JSON.parse(readFileSync(join(prefix, "package.json"), "utf8")) as { dependencies?: Record<string, unknown> };
     return new Map(Object.entries(manifest.dependencies ?? {}).flatMap(([name, spec]) => {
-      if (!name.startsWith("@neralabs/rerail-pack-") || typeof spec !== "string") return [];
-      const id = name.slice("@neralabs/rerail-pack-".length);
-      return [[id, spec.startsWith("file:") ? `${name}@file:${resolve(prefix, spec.slice("file:".length))}` : `${name}@${spec}`] as const];
+      if (!RULE_PACK_PACKAGE_NAME.test(name) || typeof spec !== "string") return [];
+      return [[name, spec.startsWith("file:") ? `${name}@file:${resolve(prefix, spec.slice("file:".length))}` : `${name}@${spec}`] as const];
     }));
   } catch {
     return new Map();
   }
 }
 
-/** Every pack in `home`'s prefix, recorded or on disk, with its spec and version. */
+/** Every pack package in `home`'s prefix, recorded or on disk, with its spec and version. */
 function prefixState(home: string): Map<string, PrefixEntry> {
   const recorded = recordedSpecs(home);
-  const ids = new Set([...recorded.keys(), ...installedPackDirectories(home).map(packIdOf)]);
-  return new Map([...ids].map(id => [id, { spec: recorded.get(id), version: installedPackVersion(id, home) }]));
+  const names = new Set([...recorded.keys(), ...installedPackDirectories(home).map(installedPackageName)]);
+  return new Map([...names].map(name => [name, { spec: recorded.get(name), version: installedPackVersion(name, home) }]));
 }
 
-/** The packs whose spec or version differs between two states of a prefix. */
+/** The packages whose spec or version differs between two states of a prefix. */
 function changedPacks(before: ReadonlyMap<string, PrefixEntry>, after: ReadonlyMap<string, PrefixEntry>): string[] {
-  return [...new Set([...before.keys(), ...after.keys()])].filter(id => {
-    const was = before.get(id);
-    const now = after.get(id);
+  return [...new Set([...before.keys(), ...after.keys()])].filter(name => {
+    const was = before.get(name);
+    const now = after.get(name);
     return was?.spec !== now?.spec || (was?.version ?? null) !== (now?.version ?? null);
   });
 }
 
 /**
- * Puts `home`'s packs back as they were in `before`: each pack whose spec or version changed is installed again from
- * the spec npm had recorded, or removed if it was not there. Each step runs even if the other fails. Returns what to
- * tell the person: nothing changed, or what failed and where to look.
+ * Puts `home`'s packs back as they were in `before`: each package whose spec or version changed is installed again
+ * from the spec npm had recorded, or removed if it was not there. Each step runs even if the other fails. Returns what
+ * to tell the person: nothing changed, or what failed and where to look.
  */
 async function restorePrefix(store: PackStore, before: ReadonlyMap<string, PrefixEntry>): Promise<string> {
   const changed = changedPacks(before, prefixState(store.home));
-  const restore = changed.flatMap(id => before.get(id)?.spec ?? []);
-  const remove = changed.filter(id => before.get(id) === undefined);
+  const restore = changed.flatMap(name => before.get(name)?.spec ?? []);
+  const remove = changed.filter(name => before.get(name) === undefined);
   // Installed before with no record of how (copied into node_modules by hand): npm cannot put it back.
-  const unrecorded = changed.filter(id => before.get(id) !== undefined && before.get(id)!.spec === undefined);
-  const undone = unrecorded.map(id => `${rulePackPackageName(id)}@${before.get(id)!.version} was installed with no npm record to put it back from`);
+  const unrecorded = changed.filter(name => before.get(name) !== undefined && before.get(name)!.spec === undefined);
+  const undone = unrecorded.map(name => `${name}@${before.get(name)!.version} was installed with no npm record to put it back from`);
   try {
     if (restore.length > 0) await store.install(restore);
   } catch (error) {
@@ -362,28 +382,34 @@ async function restorePrefix(store: PackStore, before: ReadonlyMap<string, Prefi
   try {
     if (remove.length > 0) await store.remove(remove);
   } catch (error) {
-    const names = remove.map(rulePackPackageName).join(", ");
+    const names = remove.join(", ");
     undone.push(`removing ${names} failed: ${fetchProblemReason(names, error)}`);
   }
   return undone.length === 0 ? "Nothing was changed." : `Then ${undone.join("; ")}. \`rerail packs list\` shows what is installed now.`;
 }
 
 /**
+ * What a checked install did: the packs it installed or changed, each of which loads; or why not, with the prefix put
+ * back as it was.
+ */
+export type PackInstall = { readonly installed: readonly PackVersion[] } | { readonly problem: string };
+
+/**
  * One install into `store.home`'s packs, checked, holding the packs lock throughout so no other install changes the
  * prefix in between. `specsOf` gives what npm installs, from the prefix as it is; `expectedOf` the packs that must
- * then load at those versions, from the packs the install changed. Every pack the catalog loaded before must still
- * load (an install can push another out: a rule both hold). When npm fails, or a pack is left out, the prefix is put
- * back as it was (`restorePrefix`). Returns the problem for the person, saying what is installed now; undefined when
- * every pack loads.
+ * then load at those versions, from the packages the install changed. Every pack the catalog loaded before must still
+ * load from the same package (an install can push another out: a rule both hold, or a pack id Rerail's own pack
+ * takes). When npm fails, or a pack is left out, the prefix is put back as it was (`restorePrefix`), and the problem
+ * for the person says what is installed now.
  */
 async function installChecked(
   store: PackStore,
   specsOf: (before: ReadonlyMap<string, PrefixEntry>) => readonly string[],
   expectedOf: (changed: readonly string[]) => readonly PackVersion[],
-): Promise<string | undefined> {
+): Promise<PackInstall> {
   const { home } = store;
   return await withPacksLock(home, async () => {
-    const loadedBefore = new Map([...loadRuleCatalog(home).packs.values()].map(pack => [pack.id, pack.version]));
+    const loadedBefore = [...loadRuleCatalog(home).packs.values()];
     const before = prefixState(home);
     const specs = specsOf(before);
     if (specs.length > 0) {
@@ -391,46 +417,49 @@ async function installChecked(
         await store.install(specs);
       } catch (error) {
         // npm usually undoes a failed install itself; one that stopped partway (a full disk) may not have.
-        return `${fetchProblemReason(specs.join(", "), error)}. ${await restorePrefix(store, before)}`;
+        return { problem: `${fetchProblemReason(specs.join(", "), error)}. ${await restorePrefix(store, before)}` };
       }
     }
     const expected = expectedOf(changedPacks(before, prefixState(home)));
     const catalog = loadRuleCatalog(home);
-    const whyLeftOut = (id: string): string => {
-      const skipped = catalog.skipped.find(entry => entry.packageName === rulePackPackageName(id));
+    const loads = (id: string, packageName: string | null, version: string | null): boolean =>
+      catalog.packs.get(id)?.packageName === packageName && catalog.packs.get(id)?.version === version;
+    const whyLeftOut = (packageName: string | null): string => {
+      const skipped = catalog.skipped.find(entry => entry.packageName === packageName);
       return skipped === undefined ? "the catalog does not load it" : skippedReason(skipped);
     };
     const named = new Set(expected.map(pack => pack.id));
     const problems = [
-      ...expected.filter(pack => catalog.packs.get(pack.id)?.version !== pack.version).map(pack => `${packSpec(pack)} cannot be used: ${whyLeftOut(pack.id)}`),
-      ...[...loadedBefore].filter(([id, version]) => !named.has(id) && catalog.packs.get(id)?.version !== version)
-        .map(([id]) => `${rulePackPackageName(id)} would stop loading: ${whyLeftOut(id)}`),
+      ...expected.filter(pack => !loads(pack.id, pack.packageName, pack.version)).map(pack => `${packSpec(pack)} cannot be used: ${whyLeftOut(pack.packageName)}`),
+      ...loadedBefore.filter(pack => !named.has(pack.id) && !loads(pack.id, pack.packageName, pack.version))
+        .map(pack => `${pack.packageName ?? pack.id} would stop loading: ${whyLeftOut(pack.packageName)}`),
     ];
-    if (problems.length === 0) return undefined;
-    return `${problems.join("; ")}. ${await restorePrefix(store, before)}`;
+    if (problems.length === 0) return { installed: expected };
+    return { problem: `${problems.join("; ")}. ${await restorePrefix(store, before)}` };
   });
 }
 
 /** Set-up's install: exactly these versions, each of which must then load. Installs only those not installed already. */
 export async function installPackVersions(packs: readonly PackVersion[], store: PackStore): Promise<string | undefined> {
-  return await installChecked(
+  const result = await installChecked(
     store,
-    before => packs.filter(pack => (before.get(pack.id)?.version ?? null) !== pack.version).map(packSpec),
+    before => packs.filter(pack => (before.get(pack.packageName)?.version ?? null) !== pack.version).map(packSpec),
     () => packs,
   );
+  return "problem" in result ? result.problem : undefined;
 }
 
 /**
  * `rerail packs add`: these npm specs (a pack at a version, range or tag, a tarball, a folder), after which every pack
  * the install changed must load at the version it now has.
  */
-export async function addPackSpecs(specs: readonly string[], store: PackStore): Promise<string | undefined> {
+export async function addPackSpecs(specs: readonly string[], store: PackStore): Promise<PackInstall> {
   return await installChecked(
     store,
     () => specs,
-    changed => changed.flatMap(id => {
-      const version = installedPackVersion(id, store.home);
-      return version === null ? [] : [{ id, version }];
+    changed => changed.flatMap(packageName => {
+      const version = installedPackVersion(packageName, store.home);
+      return version === null ? [] : [{ packageName, id: packIdOfPackage(packageName)!, version }];
     }),
   );
 }

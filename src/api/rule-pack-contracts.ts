@@ -8,7 +8,11 @@ const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string
 export const rulePackSchema = z.object({
   id: z.string(),
   name: z.string(),
-  version: z.string().nullable().describe("The installed version of the pack's npm package, @neralabs/rerail-pack-<id>."),
+  version: z.string().nullable().describe("The installed version of the pack's npm package."),
+  packageName: z.string().nullable()
+    .describe("The pack's npm package: @neralabs/rerail-pack-<id> for Rerail's own, else a third party's rerail-pack-<id> or @<scope>/rerail-pack-<id>; null for a pack directory without one."),
+  publisher: z.string()
+    .describe("Who publishes the pack: rerail for Rerail's own; else the npm scope (@acme), or the package name when it has no scope. Rerail has not reviewed a third party's pack."),
   category: z.enum(RULE_PACK_CATEGORIES),
   covers: z.string(),
   reason: z.string().describe("The pack's own summary of what makes it fit; the reason for a repository comes from the recommendations."),

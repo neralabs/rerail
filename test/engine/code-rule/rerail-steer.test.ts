@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   asLateSteer,
@@ -11,10 +12,11 @@ import {
   type SteerFinding,
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
-import { installPack } from "../../support/installed-packs.js";
+import { installPack, installPackDirectory, thirdPartyPack } from "../../support/installed-packs.js";
 
-// The steer names a rule's pack from the installed catalog.
+// The steer names a rule's pack from the installed catalog, and the publisher of a third party's.
 installPack("complexity");
+installPackDirectory(thirdPartyPack(join(process.env.RERAIL_HOME!, "third-party"), "@acme/rerail-pack-lint", "lint"), "@acme/rerail-pack-lint");
 
 const DASHBOARD = "http://127.0.0.1:4791/";
 const finding = (overrides: Partial<SteerFinding> = {}): SteerFinding => ({
@@ -70,6 +72,14 @@ describe("Rerail steer text", () => {
     expect(steerOrigin("typescript-eslint-no-explicit-any", { kind: "pack", packId: "typescript" })).toBe("From the typescript rule pack.");
     expect(steerOrigin("mine", { kind: "library_rule", packId: null })).toBe("From your rule library.");
     expect(steerOrigin("local:unknown")).toBeUndefined();
+  });
+
+  it("names who publishes a third party's pack, which Rerail has not reviewed, whether its rule came through the pack or on its own", () => {
+    const origin = "From the @acme/rerail-pack-lint's lint rule pack by @acme, which Rerail has not reviewed.";
+    expect(steerOrigin("lint-assert-used")).toBe(origin);
+    expect(steerOrigin("lint-assert-used", { kind: "pack", packId: "lint" })).toBe(origin);
+    expect(steerOrigin("lint-assert-used", { kind: "rerail_rule", packId: null })).toBe(origin);
+    expect(steerOrigin("complexity-cyclomatic-python", { kind: "rerail_rule", packId: null })).toBe("From Rerail's own rules.");
   });
 
   it("keeps each rule once, first-seen, with its state and source, out of the agent's text", () => {

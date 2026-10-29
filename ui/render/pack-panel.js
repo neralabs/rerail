@@ -6,7 +6,7 @@
  */
 import { h, setContent, icon, searchIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { categoryLabel, inPack, packSuppressions } from "../derive.js";
+import { categoryLabel, inPack, isRerailPack, packSuppressions, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
 import { SHEET_FILTER_AT, sheetRules } from "../pack-model.js";
 import { changeOwner } from "../shell.js";
@@ -38,8 +38,11 @@ export function packAction(pack, { solid = false, quiet = false } = {}) {
   return removePackControl(pack, quiet);
 }
 
-/** The pack's category as people read it, e.g. "Language" or "Framework". */
-export const packKind = pack => categoryLabel(pack.category);
+/**
+ * The pack's category as people read it, e.g. "Language" or "Framework", and for a third party's pack who publishes
+ * it: "Language · By @acme".
+ */
+export const packKind = pack => (isRerailPack(pack) ? categoryLabel(pack.category) : `${categoryLabel(pack.category)} · ${publisherLabel(pack)}`);
 
 /** The design's short marks for packs whose name or id does not shorten well. */
 const PACK_LETTERS = { javascript: "JS", typescript: "TS", css: "CSS", complexity: "C6" };

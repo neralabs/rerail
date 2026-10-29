@@ -4,9 +4,13 @@
  */
 import { collapse } from "./format.js";
 
-/** `origin`: "rerail" for rules that come with Rerail ("By Rerail"), "user" for rules created by you (the library). */
-export const isByRerail = stored => stored.origin === "rerail";
-export const originLabel = stored => (isByRerail(stored) ? "By Rerail" : "Created by you");
+/** `origin`: "pack" for rules that come in an installed rule pack, "user" for rules created by you (the library). */
+export const isFromPack = stored => stored.origin === "pack";
+
+/** Whether a pack (`GET /api/rule-packs`) is one of Rerail's own; any other publisher is a third party Rerail has not reviewed. */
+export const isRerailPack = pack => pack.publisher === "rerail";
+/** Who publishes a pack, as the page names it: "By Rerail", else "By @acme" or "By rerail-pack-foo". */
+export const publisherLabel = pack => (isRerailPack(pack) ? "By Rerail" : `By ${pack.publisher}`);
 
 /** Pack category as the origin chip names it: "By Rerail · Language", "By Rerail · Repository". */
 const CATEGORY_LABEL = { language: "Language", framework: "Framework", repository: "Repository" };

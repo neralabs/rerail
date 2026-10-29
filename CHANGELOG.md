@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
+- Rule packs published by third parties load. A pack is any npm package named `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` whose `pack.json` `id` is `<id>`; Rerail's own stay `@neralabs/rerail-pack-<id>`. `rerail packs add` takes such a package name (at a version, range or tag) and says, for each third party's pack it installs, that Rerail has not reviewed it and that its rules and their steer text reach the coding agent; `rerail packs remove` takes a package name, or a pack id for every installed package that holds it; `rerail packs list` names a third party's pack by its package name. `GET /api/rule-packs` gives each pack its `packageName` and `publisher` (`rerail`, else the npm scope or the unscoped package name), the dashboard labels a third party's pack and its rules `By @acme` where Rerail's say `By Rerail`, and the steer note names the publisher. Pack ids and rule ids stay flat: when two installed packs share one, Rerail's own loads and the other is left out, naming it (`pack id sql is taken by @neralabs/rerail-pack-sql`), and of two third parties' packs the first by package name loads, wherever npm put them. Set-up still fetches only Rerail's packs, offers a third party's only when it is installed, and names it in `--packs` by its package name.
 
 ## 0.1.0 (2026-10-27)
 

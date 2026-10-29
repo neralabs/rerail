@@ -23,7 +23,7 @@ export interface CodingAgent {
 }
 
 export interface RecommendedPack {
-  /** The pack's id, which `--packs` names it by. */
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
   readonly name: string;
   readonly ruleCount: number;
@@ -35,9 +35,12 @@ export interface RecommendedPack {
   readonly installed: string | null;
 }
 
-/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not. */
+/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not, and every one installed. */
 export interface AvailablePack {
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
+  /** The npm package set-up installs. */
+  readonly packageName: string;
   readonly version: string;
   readonly name: string;
   /** Why it fits the repository; undefined for a pack that does not. */

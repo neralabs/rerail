@@ -30,7 +30,7 @@ A repository that is set up runs only what is attached to it. The rules of the i
 
 Rules come from two places:
 
-- **By Rerail**: the rules of the rule packs installed from npm (`$RERAIL_HOME/packs`). They are read from the installed packs, never copied into the database.
+- **By Rerail**: the rules of the rule packs installed from npm (`$RERAIL_HOME/packs`). They are read from the installed packs, never copied into the database. A third party's pack is installed and read the same way; the dashboard labels its rules **By** its publisher (`By @acme`) instead ([third parties' packs](rule-packs.md#third-parties-packs)), and everything below applies to them as to Rerail's.
 - **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If an installed pack later ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
 
 A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.

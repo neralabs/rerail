@@ -5,7 +5,7 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { isByRerail, isRunning } from "../derive.js";
+import { isFromPack, isRunning } from "../derive.js";
 import { data, ui, activityAllOf, fires, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
@@ -25,7 +25,7 @@ const ALL_TIME = 9999;
 function ruleSources() {
   const sections = ruleSections();
   const packs = sections.filter(s => s.kind === "pack");
-  const mine = rulesArray().filter(r => !isByRerail(r)).length;
+  const mine = rulesArray().filter(r => !isFromPack(r)).length;
   return { packs, mine };
 }
 

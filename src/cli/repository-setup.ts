@@ -20,7 +20,7 @@ import {
   type RepositorySetupIo,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, recommendRulePacks, rulePackPackageName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, recommendRulePacks, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/repository-lint-config.js";
@@ -167,7 +167,7 @@ export interface RepositorySetupOptions {
    * chose. Nothing is installed before an answer that names them.
    */
   packs?: readonly PackVersion[];
-  /** An answer's `--packs` that is not `<id>@<version>,…`: set-up asks its confirm question again, with this error. */
+  /** An answer's `--packs` that is not `<id>@<version>,…` (or `<package>@<version>`): set-up asks its confirm question again, with this error. */
   packsError?: string;
   /** `rerail start --repository`: start every checkout of the repository, not just this one and those inside it. */
   repository?: boolean;
@@ -363,8 +363,8 @@ async function askFolder(io: RepositorySetupIo): Promise<Repository | undefined>
 }
 
 /**
- * The packs a line names: each entry a number from the list, an id, or an id at the listed version. Undefined, with
- * the reason, for an entry that names none of them.
+ * The packs a line names: each entry a number from the list, a pack as `--packs` names it (its id, or a third party's
+ * package name), or that at the listed version. Undefined, with the reason, for an entry that names none of them.
  */
 export function pickPacks(line: string, available: readonly AvailablePack[]): PackVersion[] | string {
   const entries = line.split(",").map(entry => entry.trim()).filter(entry => entry !== "");
@@ -374,7 +374,7 @@ export function pickPacks(line: string, available: readonly AvailablePack[]): Pa
     const byNumber = /^\d+$/u.test(entry) ? available[Number.parseInt(entry, 10) - 1] : undefined;
     const found = byNumber ?? available.find(pack => pack.id === entry || `${pack.id}@${pack.version}` === entry);
     if (found === undefined) return `${entry} is not one of the rule packs listed.`;
-    if (!picked.some(pack => pack.id === found.id)) picked.push({ id: found.id, version: found.version });
+    if (!picked.some(pack => pack.packageName === found.packageName)) picked.push({ packageName: found.packageName, id: packIdOfPackage(found.packageName)!, version: found.version });
   }
   return picked;
 }
@@ -638,8 +638,8 @@ function withPacksError(run: Run, problem: string): Run {
  */
 async function installAnswered(run: Run, packs: readonly PackVersion[]): Promise<string | undefined> {
   const older = packs.flatMap(pack => {
-    const installed = installedPackVersion(pack.id, packsHome(run));
-    return installed !== null && semver.valid(installed) !== null && semver.lt(pack.version, installed) ? [`${pack.id}@${pack.version} is older than the installed ${installed}`] : [];
+    const installed = installedPackVersion(pack.packageName, packsHome(run));
+    return installed !== null && semver.valid(installed) !== null && semver.lt(pack.version, installed) ? [`${rulePackShortName(pack.packageName)}@${pack.version} is older than the installed ${installed}`] : [];
   });
   if (older.length > 0) return `${older.join("; ")}: set-up does not downgrade a pack every repository uses; rerail packs add does.`;
   return await installPackVersions(packs, run.request.environment.packs);
@@ -672,6 +672,8 @@ async function alreadySetUp(run: Run, repository: Repository, connected?: Agents
 /** A rule pack set-up offers to install and add, at the version it installs. */
 interface Offer {
   readonly recommendation: RulePackRecommendation;
+  /** The pack's npm package, Rerail's own or an installed third party's. */
+  readonly packageName: string;
   readonly version: string;
   /** The version installed now, if any; installing another replaces it for every repository on this computer. */
   readonly installed: string | null;
@@ -691,15 +693,23 @@ interface Offering {
 
 const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
 
+/** A pack "Choose rule packs…" lists, named as `--packs` names it: its id, or a third party's package name. */
+const availablePack = (pack: RulePack, packageName: string, version: string): AvailablePack =>
+  ({ id: rulePackShortName(packageName), packageName, version, name: pack.name });
+
 /** What discovery found: the packs that fit, offered at the version fetched. */
 function discoveryOffering(discovery: PackDiscovery): Offering {
   return {
     offers: discovery.recommended.flatMap(found => found.match === undefined ? [] : [{
       recommendation: { pack: found.pack, ruleCount: found.ruleCount, reason: found.match.reason, folder: found.match.folder },
+      packageName: found.packageName,
       version: found.version,
       installed: found.installed,
     }]),
-    available: discovery.available.map(found => ({ id: found.pack.id, version: found.version, name: found.pack.name, ...(found.match === undefined ? {} : { reason: found.match.reason }) })),
+    available: discovery.available.map(found => ({
+      ...availablePack(found.pack, found.packageName, found.version),
+      ...(found.match === undefined ? {} : { reason: found.match.reason }),
+    })),
     unavailable: discovery.problems,
     withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),
     catalog: discovery.catalog,
@@ -713,25 +723,27 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
  */
 function chosenOffering(run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository = true): Offering {
   const catalog = loadRuleCatalog(packsHome(run));
-  const missing = chosen.filter(({ id, version }) => catalog.packs.get(id)?.version !== version);
-  if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${pack.id}@${pack.version}`).join(", ")}.`);
-  const packs = chosen.map(({ id }) => catalog.packs.get(id)!);
-  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs) : []).map(found => [found.pack.id, found]));
-  const offers = packs.map(pack => ({
+  const missing = chosen.filter(({ id, packageName, version }) => catalog.packs.get(id)?.packageName !== packageName || catalog.packs.get(id)?.version !== version);
+  if (missing.length > 0) throw new Error(`These rule packs are not installed: ${missing.map(pack => `${rulePackShortName(pack.packageName)}@${pack.version}`).join(", ")}.`);
+  const packs = chosen.map(({ id, packageName }) => ({ pack: catalog.packs.get(id)!, packageName }));
+  const matched = new Map((readRepository ? recommendRulePacks(repository.root, packs.map(({ pack }) => pack)) : []).map(found => [found.pack.id, found]));
+  const offers = packs.map(({ pack, packageName }) => ({
     recommendation: matched.get(pack.id) ?? { pack, ruleCount: onRules(pack), reason: "you chose it", folder: "" },
+    packageName,
     version: pack.version!,
     installed: pack.version,
   }));
   return {
     offers,
-    available: offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version, name: offer.recommendation.pack.name, reason: offer.recommendation.reason })),
+    available: offers.map(offer => ({ ...availablePack(offer.recommendation.pack, offer.packageName, offer.version), reason: offer.recommendation.reason })),
     unavailable: [],
     withoutRules: [],
     catalog,
   };
 }
 
-const offeredVersions = (offering: Offering): PackVersion[] => offering.offers.map(offer => ({ id: offer.recommendation.pack.id, version: offer.version }));
+const offeredVersions = (offering: Offering): PackVersion[] =>
+  offering.offers.map(offer => ({ packageName: offer.packageName, id: offer.recommendation.pack.id, version: offer.version }));
 const recommendationsOf = (offering: Offering): RulePackRecommendation[] => offering.offers.map(offer => offer.recommendation);
 const chosenRecommendations = (run: Run, repository: Repository, chosen: readonly PackVersion[], readRepository: boolean): RulePackRecommendation[] =>
   recommendationsOf(chosenOffering(run, repository, chosen, readRepository));
@@ -742,12 +754,12 @@ function packsInput(run: Run, repository: Repository, offering: Offering): Recom
   return {
     repoName: repository.name,
     repoPath: repository.root,
-    packs: offering.offers.map(({ recommendation: { pack, ruleCount, reason }, version, installed }) => ({
-      id: pack.id,
+    packs: offering.offers.map(({ recommendation: { pack, ruleCount, reason }, packageName, version, installed }) => ({
+      id: rulePackShortName(packageName),
       name: pack.name,
       ruleCount,
       reason,
-      packageName: rulePackPackageName(pack.id),
+      packageName,
       version,
       installed,
     })),

@@ -183,7 +183,7 @@ export function toStoredRules(entries) {
       kind: entry.kind,
       rule: { ...entry.rule, mode: entry.mode },
       enabled: entry.on,
-      origin: entry.source.kind === "library_rule" ? "user" : "rerail",
+      origin: entry.source.kind === "library_rule" ? "user" : "pack",
       source: entry.source,
       folders: [entry.folder],
       folderStates: [folderState(entry)],
@@ -534,7 +534,7 @@ function pumpTitles() {
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
  * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
- * - `packs`: every rule pack that comes with Rerail (`data.packs`).
+ * - `packs`: every rule pack installed on this machine (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
  * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
  * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.

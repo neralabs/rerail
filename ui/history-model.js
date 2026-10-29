@@ -3,7 +3,7 @@
  * `poll.js` reads `historyRuleId` to fetch that rule's violations in range.
  */
 import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "./state.js";
-import { isByRerail } from "./derive.js";
+import { isFromPack } from "./derive.js";
 
 /** Distinct violations of rule `id` in the range; 0 for a rule the range has no activity for, or one not measured. */
 const inRange = id => {
@@ -21,7 +21,7 @@ export const historyTitle = id => {
 export function historyOrigin(id) {
   const stored = data.rules.get(id);
   if (!stored) return "No longer in this repo";
-  if (!isByRerail(stored)) return "Created by you";
+  if (!isFromPack(stored)) return "Created by you";
   return (attachedPackOf(stored) ?? packOfRule(stored))?.name ?? "By Rerail";
 }
 

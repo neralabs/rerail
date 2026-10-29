@@ -114,7 +114,7 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <id>`, or go back with `rerail update rollback`.",
+    "Install a version that fits with `rerail packs add <package>`, or go back with `rerail update rollback`.",
   ].join("\n") + "\n");
 }
 
@@ -144,8 +144,8 @@ function usage(): string {
     "  rerail seed",
     "  rerail reset",
     "  rerail packs [list]",
-    "  rerail packs add <id[@version] | package | tarball | folder>...",
-    "  rerail packs remove <id>...",
+    "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
+    "  rerail packs remove <id | package>...",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json>",

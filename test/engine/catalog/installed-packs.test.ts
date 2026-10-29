@@ -14,7 +14,7 @@ import { copyRerailRuleToLibrary, getLibraryRule } from "../../../src/engine/cat
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import type { RerailDatabase } from "../../../src/engine/storage/database.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
-import { installPackDirectory, removeInstalledPacks, uninstallPack } from "../../support/installed-packs.js";
+import { installPackDirectory, removeInstalledPacks, thirdPartyPack, uninstallPack } from "../../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../../support/oracles.js";
 import {
   addRepository,
@@ -124,7 +124,7 @@ describe("the installed-pack catalog", () => {
       {
         name: "a package.json named for another pack",
         breakPack: directory => editJson(directory, "package.json", manifest => ({ ...manifest, name: "@neralabs/rerail-pack-other" })),
-        reason: /^Rule pack complexity must be the package @neralabs\/rerail-pack-complexity, not @neralabs\/rerail-pack-other$/u,
+        reason: /^Rule pack complexity must be the package rerail-pack-complexity or @<scope>\/rerail-pack-complexity, not @neralabs\/rerail-pack-other$/u,
       },
       {
         name: "a listed document that does not exist",
@@ -171,8 +171,81 @@ describe("the installed-pack catalog", () => {
 
       const catalog = loadRuleCatalog();
 
-      expect(summary(catalog)).toEqual({ packs: ["valid"], skipped: [{ path: installed, reason: "rule assert-used is already in pack valid" }] });
+      expect(summary(catalog)).toEqual({ packs: ["valid"], skipped: [{ path: installed, reason: "rule assert-used is already in @neralabs/rerail-pack-valid" }] });
       expect(catalog.skipped[0]).toMatchObject({ packageName: "@neralabs/rerail-pack-valid-copy", version: "0.1.0" });
+    });
+
+    it("for a package.json named for no pack at all", async () => {
+      installPackDirectory(VALID, "valid");
+      const directory = await copyPack(COMPLEXITY);
+      editJson(directory, "package.json", manifest => ({ ...manifest, name: "@acme/complexity" }));
+      const installed = installPackDirectory(directory, "@acme/rerail-pack-complexity");
+
+      expect(summary(loadRuleCatalog()).skipped).toEqual([
+        { path: installed, reason: "Rule pack complexity: package.json name must be rerail-pack-<id> or @<scope>/rerail-pack-<id>" },
+      ]);
+    });
+  });
+
+  describe("third parties' packs", () => {
+    it("loads a scoped and an unscoped one, each with its package name and its publisher", async () => {
+      const copies = await temporaryDirectory();
+      installPackDirectory(VALID, "valid");
+      installPackDirectory(thirdPartyPack(copies, "@acme/rerail-pack-acme-valid", "acme-valid"), "@acme/rerail-pack-acme-valid");
+      installPackDirectory(thirdPartyPack(copies, "rerail-pack-lint", "lint"), "rerail-pack-lint");
+
+      const catalog = loadRuleCatalog();
+
+      expect([...catalog.packs.values()].map(({ id, packageName, publisher }) => ({ id, packageName, publisher })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+        { id: "acme-valid", packageName: "@acme/rerail-pack-acme-valid", publisher: "@acme" },
+        { id: "lint", packageName: "rerail-pack-lint", publisher: "rerail-pack-lint" },
+        { id: "valid", packageName: "@neralabs/rerail-pack-valid", publisher: "rerail" },
+      ]);
+      expect(catalog.packOf.get("lint-assert-used")).toBe("lint");
+      expect(catalog.skipped).toEqual([]);
+    });
+
+    it("leaves one out whose pack id Rerail's own pack holds, whichever is found first", async () => {
+      const copies = await temporaryDirectory();
+      // `@aaa` sorts before `@neralabs`, and `rerail-pack-valid` after it: the scan meets one before Rerail's and one after.
+      const before = installPackDirectory(thirdPartyPack(copies, "@aaa/rerail-pack-valid", "valid"), "@aaa/rerail-pack-valid");
+      const rerail = installPackDirectory(VALID, "valid");
+      const after = installPackDirectory(thirdPartyPack(copies, "rerail-pack-valid", "valid"), "rerail-pack-valid");
+
+      const catalog = loadRuleCatalog();
+
+      expect(catalog.packs.get("valid")?.packageName).toBe("@neralabs/rerail-pack-valid");
+      expect(summary(catalog).skipped).toEqual([
+        { path: before, reason: "pack id valid is taken by @neralabs/rerail-pack-valid" },
+        { path: after, reason: "pack id valid is taken by @neralabs/rerail-pack-valid" },
+      ]);
+      for (const order of [[before, rerail, after], [after, before, rerail]]) {
+        expect(readRuleCatalog(order).packs.get("valid")?.packageName).toBe("@neralabs/rerail-pack-valid");
+      }
+    });
+
+    it("leaves one out that ships a rule id Rerail's own pack holds, whichever is found first", async () => {
+      // A third party's copy of valid under another pack id: the same rule ids.
+      const directory = await copyPack(VALID);
+      editJson(directory, "pack.json", pack => ({ ...pack, id: "copied" }));
+      editJson(directory, "package.json", manifest => ({ ...manifest, name: "@aaa/rerail-pack-copied" }));
+      const copied = installPackDirectory(directory, "@aaa/rerail-pack-copied");
+      const rerail = installPackDirectory(VALID, "valid");
+
+      expect(summary(loadRuleCatalog())).toEqual({ packs: ["valid"], skipped: [{ path: copied, reason: "rule assert-used is already in @neralabs/rerail-pack-valid" }] });
+      expect(summary(readRuleCatalog([rerail, copied])).packs).toEqual(["valid"]);
+    });
+
+    it("loads the first by package name of two others that hold one pack id, whichever is found first", async () => {
+      const copies = await temporaryDirectory();
+      const acme = thirdPartyPack(copies, "@acme/rerail-pack-sql", "sql");
+      const unscoped = thirdPartyPack(copies, "rerail-pack-sql", "sql");
+
+      for (const order of [[acme, unscoped], [unscoped, acme]]) {
+        const catalog = readRuleCatalog(order);
+        expect(catalog.packs.get("sql")).toMatchObject({ packageName: "@acme/rerail-pack-sql", publisher: "@acme" });
+        expect(catalog.skipped).toEqual([expect.objectContaining({ path: unscoped, packageName: "rerail-pack-sql", reason: "pack id sql is taken by @acme/rerail-pack-sql" })]);
+      }
     });
   });
 

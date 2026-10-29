@@ -6,7 +6,7 @@
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isByRerail, originLabel, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { ruleMode, isLog, isFromPack, isRerailPack, publisherLabel, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { ASK, ASK_OPEN, askPrompt, agentSeesPrompt, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
@@ -108,7 +108,9 @@ function renderStats(id) {
 /** Where the rule comes from (its pack, or created by you) and when it was added here and last edited. */
 function renderSource(stored, id) {
   const pack = attachedPackOf(stored) ?? packOfRule(stored);
-  const from = pack ? ["Rule pack", pack.name] : ["Origin", isByRerail(stored) ? "By Rerail, added on its own" : originLabel(stored)];
+  // A third party's pack names its publisher beside it: Rerail has not reviewed it.
+  const from = pack ? ["Rule pack", isRerailPack(pack) ? pack.name : `${pack.name} · ${publisherLabel(pack)}`]
+    : ["Origin", isFromPack(stored) ? "By Rerail, added on its own" : "Created by you"];
   const updated = stored.updatedAt ?? null;
   setContent(p.source, JSON.stringify([id, from, stored.addedAt, updated]), () => kv([
     from,

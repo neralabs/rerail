@@ -90,6 +90,8 @@ declare module "*/ui/poll.js" {
   export interface StoredRule {
     rule: { id: string; mode: string };
     source: { kind: string; id: string };
+    /** "pack" for a rule a rule pack brings, "user" for one created by you. */
+    origin: string;
     enabled: boolean;
     folders: string[];
     folderStates: FolderState[];
@@ -109,6 +111,13 @@ declare module "*/ui/derive.js" {
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
   export function inPack(rule: object, packId: string): boolean;
+  /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
+  export function isFromPack(stored: { origin: string }): boolean;
+  export function publisherLabel(pack: { publisher: string }): string;
+}
+
+declare module "*/ui/render/pack-panel.js" {
+  export function packKind(pack: { category: string; publisher: string }): string;
 }
 
 declare module "*/ui/state.js" {
