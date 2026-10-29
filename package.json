@@ -165,7 +165,7 @@
     "esbuild": "0.28.2",
     "smol-toml": "1.9.1",
     "tsx": "4.23.15",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "vitest": "5.0.5",
     "yaml": "2.9.1"
   },
