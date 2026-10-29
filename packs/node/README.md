@@ -33,9 +33,10 @@ It follows the [pack structure and validation contract](../../docs/pack-format.m
 | `rules/` | The shipped ports; `node_policies.py` writes every document (its `SHIPPED`) but the hand-written `n-no-process-exit` |
 | `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin |
 | `divergences.json` | Declared disagreements with the plugin |
-| `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`), its recording (`fixtures.expected.json`), the recorder (`generate.mjs`, sharing `conformance/recorders/eslint-record.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `upstream/eslint-plugin-n/` | The plugin's upstream manifest (`gates.yaml`), its copied rule tests (`tests/`), one file per test case (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `scripts/pack-data/eslint-expected.mjs` and writing `provenance.json` and `LICENSES.md` through `scripts/pack-data/provenance.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `candidates/` | The ports that do not pass yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
-| `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
+| `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
+| `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the test-data archive) |
 
 No rule pins `languageOptions.sourceType` (the probes do, to state Node facts). The rules that reach CommonJS names
 through scope set `languageOptions.moduleSystem: "package-type"`, so each file has the module system the plugin's
@@ -80,19 +81,17 @@ repository is found, and the scoring workspace's root is the fixtures folder, so
 case upstream runs as a module at a `.js`/`.ts` fixture path beside a package.json without `"type": "module"` is
 written as `.mjs`/`.mts` in the same folder, so its package and module system both hold.
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/eslint-plugin-n/publish/`. The recipe
 (`scripts/pack-data/recipes/node.ts`) runs `upstream/eslint-plugin-n/generate.mjs` against the pinned tools (eslint
-10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0).
+10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0; the same packages
+`scripts/pack-data/runtimes/eslint-plugin-n-18.4.1/` pins for the release check and `npm run upstream:bump`).
 Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
-
-Paused: `fixtures:derive` refuses every tool-pack until the generators write per-repo provenance
-([docs/upstream.md](../../docs/upstream.md#derive-and-bumps-are-paused)). The derive and stage commands below take a
-snapshot once the pause lifts.
 
 ```sh
 npm run fixtures:derive -- --pack node
-npm run fixtures:push -- --pack node     # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack node    # copy what changed into upstream/eslint-plugin-n/publish/
 python3 scripts/generate/packs/node_policies.py
 ```
 
@@ -108,7 +107,8 @@ node --import tsx conformance/languages/cli.ts --pack-dir packs/node/candidates/
 The Node test set's files were mined outside this repository, from full clones of the source repositories: a history
 scan, then a pattern search for the rules the scan left short, keeping only violations a commit introduced, with every
 fixed copy checked to parse, to have no finding of its rule, to add no suppression comment and to keep 70% of its
-lines. They are samples like any other: a new set is a new archive and `samples.lock` ([docs/port-readiness.md](../../docs/port-readiness.md#samples)).
+lines. They are samples like any other: a change to the set is staged under `upstream/eslint-plugin-n/publish/samples/`
+and published with the test data ([docs/upstream.md](../../docs/upstream.md#samples)).
 
 ## Module system per file
 
