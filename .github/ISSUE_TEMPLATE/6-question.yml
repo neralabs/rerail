@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Questions are answered on a best-effort basis. The [docs](https://github.com/neralabs/rerail/tree/main/docs) may have it already.
+        We reply within 5 business days, with an answer within 10 ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)). The [docs](https://github.com/neralabs/rerail/tree/main/docs) may have it already.
   - type: textarea
     id: question
     attributes:

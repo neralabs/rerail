@@ -56,8 +56,8 @@ is reported:
 
 The job writes `summary.md`, `gates.json` and the pull request comment (`comment.md`) to the `conformance-summary`
 artifact, and the `conformance-report` job posts the comment ([The pull request comment](#the-pull-request-comment)).
-A fork's or Dependabot's pull request has no OIDC token to fetch the data, so the job and its comment do not run for
-it ([docs/upstream.md](../docs/upstream.md#ci)).
+A fork's pull request runs no CI, and Dependabot's has no OIDC token to fetch the data, so the job and its comment do
+not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
 
 ### Per-rule checks
 
