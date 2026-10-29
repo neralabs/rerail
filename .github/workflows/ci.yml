@@ -93,13 +93,12 @@ jobs:
           npm run check:ui-tokens
           npm run check:reference
 
-  # Known vulnerabilities in the dependencies the package ships: npm's advisories for the root package's and the
-  # playground's production dependencies (moderate and up; development dependencies are Dependabot alerts' to report,
-  # not a gate), and RustSec's for the engine's crates (vulnerabilities; unmaintained and unsound advisories are the
-  # warnings cargo-audit allows). Both read the lockfiles alone and install nothing from them: `npm audit` sends the
-  # lockfile's names and versions to the registry, and cargo-audit is a prebuilt binary run directly, so rustup never
-  # installs the pinned toolchain here. The fix is `npm audit fix --omit=dev` (in playground/ too) and `cargo update
-  # -p <crate>`; both tools print the advisory with the fix.
+  # Known vulnerabilities in the dependencies the package ships: npm's advisories for the root package's production
+  # dependencies (moderate and up; development dependencies are Dependabot alerts' to report, not a gate), and RustSec's
+  # for the engine's crates (vulnerabilities; unmaintained and unsound advisories are the warnings cargo-audit allows).
+  # Both read the lockfiles alone and install nothing from them: `npm audit` sends the lockfile's names and versions to
+  # the registry, and cargo-audit is a prebuilt binary run directly, so rustup never installs the pinned toolchain here.
+  # The fix is `npm audit fix --omit=dev` and `cargo update -p <crate>`; both tools print the advisory with the fix.
   audit:
     name: Dependency audit
     runs-on: ubuntu-24.04
@@ -117,10 +116,6 @@ jobs:
           node-version: "24"
 
       - name: npm audit (root package, production dependencies)
-        run: npm audit --omit=dev --audit-level=moderate
-
-      - name: npm audit (playground, production dependencies)
-        working-directory: playground
         run: npm audit --omit=dev --audit-level=moderate
 
       - name: Install cargo-audit
@@ -596,7 +591,7 @@ jobs:
   # job saved, and judges every rule of each gated tool-pack (conformance/languages/gates.ts); the conformance-report job
   # posts its summary on the pull request.
   tools:
-    name: Scripts, reference examples, conformance, and rule playground
+    name: Scripts, reference examples, and conformance
     needs: [build, test-data]
     if: >-
       ${{
@@ -662,16 +657,6 @@ jobs:
           path: ${{ runner.temp }}/conformance/
           if-no-files-found: warn
           retention-days: 14
-
-      # The rule playground is a development tool with its own lockfile; it type-checks against dist/.
-      - name: Check, build, and test the rule playground
-        run: |
-          npm ci --prefix playground # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
-          npm --prefix playground run check
-          npm --prefix playground run build
-          npm --prefix playground test
-          npm --prefix playground run test:ui
-          npm --prefix playground run test:integration
 
   # The one sticky pull request comment of the conformance check: the comment that starts with the marker is edited in
   # place, or posted when there is none. It runs nothing from the checkout. Fork pull requests get a read-only token and

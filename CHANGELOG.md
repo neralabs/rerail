@@ -7,6 +7,7 @@
 - `@neralabs/rerail` and its rule packs are public on npm, so installing and adding packs need no npm account. A pack npm cannot find is reported as not published, or refused by the registry or token in `~/.npmrc`, instead of asking Nera for access.
 - The `complexity` pack scores PHP, Blade, Rust and Vue functions too: `complexity-cyclomatic-php`, `complexity-cyclomatic-blade` (functions a template's PHP defines), `complexity-cyclomatic-rust` and `complexity-cyclomatic-vue` (functions in a component's scripts), mode `steer`, limit 6, with lizard 1.24.0's decision points. Set-up now offers the pack for PHP, Blade, Rust and Vue source. SQL gets no rule: lizard scores procedural routines, whose bodies Rerail's SQL grammar does not read.
 - The dashboard's top bar status is shorter and says only what it knows: "Live", "Reconnecting…", "Daemon not responding", "Repo not found", "Not set up" and "Stopped". Each warning's tooltip names the next step, and the tooltips no longer say that new sessions go unsteered while the daemon is down, or that the page is connected when it has only gone quiet.
+- The development rule playground is removed from the repository. It was never published; the package's `THIRD_PARTY_NOTICES` drops the shadcn/ui components it adapted, and a code comment, `README.md` and the dashboard's README stop mentioning it. Nothing else the package ships changes.
 
 ## 0.1.0 (2026-10-27)
 

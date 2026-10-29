@@ -163,7 +163,6 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ├── conformance/      # the conformance check: scores ported rules against upstream tools' findings
 ├── fixtures/         # upstream test fixtures and corpora per language
 ├── benchmark/        # query parity and steer benchmarks
-├── playground/       # tool for developing rules; never published
 ├── test/             # unit tests (Vitest), mirroring src/
 ├── integration/      # end-to-end tests against real agent hosts
 ├── e2e/              # dashboard tests (Playwright)
