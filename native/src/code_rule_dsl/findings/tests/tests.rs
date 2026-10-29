@@ -150,6 +150,8 @@ fn check(sources: Vec<String>) -> Run {
         .collect();
     let modules = BTreeMap::new();
     let indexed = Native::new(&tapes, &compiled, &paths, &modules);
+    // S's oracle as copied, on P's corpus (`s_native_oracle`, O19).
+    let s_indexed = super::s_native_oracle::Native::new(&tapes, &compiled, &paths, &modules);
     let generated = generated_shape::queries();
     let generated_roots: Vec<_> = tapes
         .iter()
@@ -184,6 +186,11 @@ fn check(sources: Vec<String>) -> Run {
         native,
         indexed.run().keys,
         "indexed native must match stateless native"
+    );
+    assert_eq!(
+        native,
+        s_indexed.run().keys,
+        "S's indexed native must match stateless native"
     );
     assert_eq!(
         keys(&run),

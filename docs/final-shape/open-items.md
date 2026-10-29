@@ -312,6 +312,12 @@ compares against W's matcher: `FileAnchorIndex::build` per file (its CPU in `pre
 Still open: whether the oracle should instead compare against `prefilter::select` on the content
 store, once that path runs clauses.
 
+2026-10-29: S's oracle as copied is placed beside that adaptation as `findings::tests::s_native_oracle`
+(O19): with P's anchor engine in the tree (`matcher::p_anchors`, O20) and P's `invalid_syntax` gate
+ported (O18), it runs S's `Corpus`/`anchor_plans`/`build_at`/`selected` path as written; the only
+mutation compiles each grammar's P plan from its matcher and keys it by W's plan. `check` asserts
+both oracles match the stateless native.
+
 ## O16. `mimalloc` against W's jemalloc
 
 Phase 0 lists `mimalloc` among the dependency deltas. G installs it as the global allocator on
@@ -356,14 +362,23 @@ production form. Mutations to fit W, each failing closed where W lacks P's piece
   (P keeps the projection off the shared AST, W does not) and the half of
   `sql_facts_keep_typed_values…` that sets `FactQuery::anchor`;
 - every input anchors at the witness span (P's `FactQuery::{anchor, each, closure}` are not in W);
-- `references` (P's native reference graph, `calls::reference_rows` and the `references` call
-  mode) is refused at compile time;
+- `references` (P's native reference graph) runs: P's `calls` delta is ported onto W's `calls`
+  (3-way merge on P's true merge base with W, `5cf4246e`: `closure.rs`, `mod.rs`, `summary.rs`,
+  `php.rs`, `tests.rs`, `contracts.rs` now in production), with only its call-site changes
+  elsewhere (`Through` → `Mode` in `CallsTerm`/`Terms::questions`, `CallsView::build_modes`, the
+  collector's regex bound, `matcher::file_path`, `ClauseKind::calls_query`, `workspace/calls_state.rs`
+  whole). The summary extractor is P's version 18 (reference tables). P's and D's stages compile
+  the `references` form and read `reference_edges` as P and D wrote them. P's other deltas to
+  `compile`, `eval`, `matcher/resolve.rs` (declaration sites) and `workspace/global.rs` are not
+  ported, so a workspace still ignores relational clauses;
 - no `CorpusSlot` or `TapeCacheSlot` (W's matcher builds per-file anchor indexes and has no tape
   cache); the workspace path (P's `workspace/global.rs`) is not ported, so a workspace ignores the
   clause.
-P's `"syntax":"valid"` AST gate (S's and P's `invalid_syntax`) is not in W's DSL, so the copied
-test policies drop it, and W keeps captures an input's anchor does not need (one assertion
-removed). `calls/contracts.rs` and `violations/projection.rs` are placed test-only and unused. Closure: decide
+P's `"syntax":"valid"|"invalid"` AST gate (`GrammarMatcher::invalid_syntax`, `admits_source`) is
+ported into W's DSL (compile, `eval/query.rs`, `workspace/{evaluate, results}.rs`, as P wrote it),
+so the copied test policies carry it again. No assertion is removed: the two tests that need P's
+`FactQuery::{project, anchor}` shape run `#[ignore]`d. `calls/contracts.rs` is in production with
+P's `calls` delta; `violations/projection.rs` is placed test-only and unused. Closure: decide
 whether any of the stage survives as an engine-internal consumer (Phase 11 row 1, B2, rewrites the
 admission loop rather than copies it) or is removed once the census and admission rules are carried
 by Phase 7's chunked loop.
@@ -376,14 +391,23 @@ beside the adaptations made from them:
   `cfg(test)`, next to P's (O18). `CompiledClause::data_layer` carries D's plan for a `relational`
   clause, compiled by D's compiler, and `eval::data_layer_rows` reads its inputs. Mutations, each
   failing closed: no `matcher::Corpus`/`CorpusSlot` (the owner is an open flag, the workspace is
-  W's `CodeRuleDslWorkspace`); a plan that reads `reference_edges` is refused (no
-  `calls::reference_rows`); the syntax digest hashes the source (W's tape keeps none). The restored
+  W's `CodeRuleDslWorkspace`); a plan reads `reference_edges` from P's ported reference graph
+  (O18); the syntax digest hashes the source (W's tape keeps none). The restored
   `waves/owner/{pool, execution}.rs` and `waves/schedule/batch{,/tests}.rs` are D's stage's own
   files. Two cut tests run again `#[ignore]`d (O18's projection items).
 - M's `lmap` (`951514fe`) is `facts::lmap`, beside `facts::overlay`, its adaptation.
 - M's Y1 reference graph (`758cfa6a`) is `facts::ygraph`.
 - M's facts-a `Facts` with `bindings` and `typedefs` (`66a0d6a1`) is `facts::facts_a`, beside
   `facts::core`, its adaptation; `Grammar::field_name` reads W's private kind catalog for it.
+- G's admission and cutover spikes (`f5de8998`), positional search (`positional_search`) and
+  literal anchors (`packed::literal_anchors`, `packed::sql_backend`) (`b56d8889`), and tree result
+  segments with snapshot trees (`content_store::tree_result_segments`, `ce1b1584`), beside the
+  content store and packed transducer that adapted them.
+- D's projection (`facts::d_projection`, `06abf031`) beside `facts::runs`.
+- D's anchors module and SQL anchor engine with statistics (`matcher::d_anchors`, `c857812b`)
+  beside W's `matcher::anchors` and `prefilter`, as P's (O20).
+- T's SQLite extension entry (`logic::native::extension`, `eceb3b3e`) beside `logic::native`.
+- S's async-call oracle as copied (`findings::tests::s_native_oracle`) beside `native_oracle` (O15).
 Closure: per pair, decide which survives. The adaptation carries the plan's shape, so the copy is
 removed (a mutation, after its tests are carried over or retired), or the copy replaces it.
 
@@ -396,8 +420,8 @@ P's `matcher/anchors.rs` and `anchors/**` (`2814d875`, with `faec6fa4`'s `sql/**
 here as P wrote them. Mutations:
 - W's matchers carry W's `AnchorPlan`, so P's engine compiles P's plan from the matcher
   (`AnchorPlan::compile`) where it read `matcher.anchors`;
-- P's `admits_source` is its required-text check (W has no `invalid_syntax` gate, O18), and P's
-  `Semantic::FilePath` arm is dropped;
+- P's `admits_source` and `invalid_syntax` gate are ported into W's `GrammarMatcher` (O18), so
+  P's and D's plans call it as written; P's `Semantic::FilePath` arm is dropped;
 - test-only additions to shared code: `TapeDoc::index_source_digest` (computed: W's tape keeps no
   digest), `TapeNode::incoming_field`, `test_support::Walk::AnchorBuild`.
 `parallel_connections_do_not_share_a_global_page_cache_mutex` is ignored: W's SQLite keeps

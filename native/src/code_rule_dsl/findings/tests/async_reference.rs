@@ -785,4 +785,6 @@ fn execute_sql<'t>(
 #[cfg(test)]
 mod native_oracle;
 #[cfg(test)]
+mod s_native_oracle;
+#[cfg(test)]
 mod tests;
