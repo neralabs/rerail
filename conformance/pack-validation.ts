@@ -106,6 +106,31 @@ type Compiled =
   | { kind: "not-supported-yet"; reason: string }
   | { kind: "failed"; message: string };
 
+/**
+ * Check 3 on one rule's example pair: each path is in the rule's scope and the engine evaluates it, the caught example
+ * produces one of the rule's violation codes and the passes example none.
+ */
+function exampleFailures(id: string, result: Extract<Compiled, { kind: "compiled" }>, examples: Record<"caught" | "passes", { path?: string | undefined; text: string }>): string[] {
+  const failures: string[] = [];
+  for (const side of ["caught", "passes"] as const) {
+    const example = examples[side];
+    if (example.path === undefined) {
+      failures.push(`${id}: the ${side} example has no path`);
+      continue;
+    }
+    if (!result.compiled.inScope(example.path)) {
+      failures.push(`${id}: the ${side} example's path ${example.path} is outside the rule's scope`);
+      continue;
+    }
+    const evaluation = evaluateExample(result.compiled, example.path, example.text);
+    if (evaluation.failures.length > 0) failures.push(`${id}: the ${side} example (${example.path}) fails in the engine: ${JSON.stringify(evaluation.failures)}`);
+    const hits = evaluation.codes.filter(code => result.codes.has(code));
+    if (side === "caught" && hits.length === 0) failures.push(`${id}: the caught example (${example.path}) produces no ${[...result.codes].join("/")} violation`);
+    if (side === "passes" && hits.length > 0) failures.push(`${id}: the passes example (${example.path}) produces ${hits.join(", ")}`);
+  }
+  return failures;
+}
+
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 const headerSchema = z.object({ format: z.string().optional(), id: z.string().optional() });
@@ -684,7 +709,8 @@ export async function validatePack(directory: string, options: ValidatePackOptio
   const portByDocument = new Map((loaded?.pack.rules ?? []).map(port => [port.policy.replace(/^\.\//u, ""), port]));
 
   // Check 2: proof. Every rule has examples or a port entry.
-  // Check 3: examples. A caught example produces a violation of the rule, a passes example none.
+  // Check 3: examples. A caught example produces a violation of the rule, a passes example none: pack.json's, and the
+  // pairs candidates carry in conformance.json until they ship.
   if (pack === undefined) {
     fail("proof", "pack.json does not parse; see check 1");
     fail("examples", "pack.json does not parse; see check 1");
@@ -693,23 +719,17 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       if (rule.examples === undefined && !portByDocument.has(rule.document)) fail("proof", `${rule.id}: no examples and no port entry in ${CONFORMANCE_FILE}`, rule.id);
       const result = compiled.get(rule.id);
       if (rule.examples === undefined || result?.kind !== "compiled") continue;
-      for (const side of ["caught", "passes"] as const) {
-        const example = rule.examples[side];
-        if (example.path === undefined) {
-          fail("examples", `${rule.id}: the ${side} example has no path`, rule.id);
-          continue;
-        }
-        if (!result.compiled.inScope(example.path)) {
-          fail("examples", `${rule.id}: the ${side} example's path ${example.path} is outside the rule's scope`, rule.id);
-          continue;
-        }
-        const evaluation = evaluateExample(result.compiled, example.path, example.text);
-        if (evaluation.failures.length > 0) fail("examples", `${rule.id}: the ${side} example (${example.path}) fails in the engine: ${JSON.stringify(evaluation.failures)}`, rule.id);
-        const hits = evaluation.codes.filter(code => result.codes.has(code));
-        if (side === "caught" && hits.length === 0) fail("examples", `${rule.id}: the caught example (${example.path}) produces no ${[...result.codes].join("/")} violation`, rule.id);
-        if (side === "passes" && hits.length > 0) fail("examples", `${rule.id}: the passes example (${example.path}) produces ${hits.join(", ")}`, rule.id);
-      }
+      for (const failure of exampleFailures(rule.id, result, rule.examples)) fail("examples", failure, rule.id);
     }
+  }
+  for (const port of loaded?.pack.rules ?? []) {
+    if (port.examples === undefined) continue;
+    const path = join(directory, documentPath(port.policy));
+    // A missing candidate document is check 4's failure (the conformance runner loads every policy).
+    if (!existsSync(path)) continue;
+    const result = compileCodeRule(readFileSync(path, "utf8"));
+    if (result.kind === "failed") fail("examples", `${port.id}: ${documentPath(port.policy)} ${result.message}`);
+    else if (result.kind === "compiled") for (const failure of exampleFailures(port.id, result, port.examples)) fail("examples", failure);
   }
 
   // Check 4: ports. The fixture tier of the conformance runner, with rules not supported yet skipped, plus capability

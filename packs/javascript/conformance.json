@@ -947,7 +947,7 @@
         "tool": "eslint",
         "rule": "default-param-last"
       },
-      "policy": "candidates/rules/eslint-default-param-last.json",
+      "policy": "rules/eslint-default-param-last.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1145,7 +1145,7 @@
         "tool": "eslint",
         "rule": "max-depth"
       },
-      "policy": "candidates/rules/eslint-max-depth.json",
+      "policy": "rules/eslint-max-depth.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1158,7 +1158,7 @@
         "tool": "eslint",
         "rule": "max-nested-callbacks"
       },
-      "policy": "candidates/rules/eslint-max-nested-callbacks.json",
+      "policy": "rules/eslint-max-nested-callbacks.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1171,7 +1171,7 @@
         "tool": "eslint",
         "rule": "max-params"
       },
-      "policy": "candidates/rules/eslint-max-params.json",
+      "policy": "rules/eslint-max-params.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1191,7 +1191,7 @@
         "tool": "eslint",
         "rule": "max-statements"
       },
-      "policy": "candidates/rules/eslint-max-statements.json",
+      "policy": "rules/eslint-max-statements.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1219,7 +1219,7 @@
         "tool": "eslint",
         "rule": "no-array-constructor"
       },
-      "policy": "candidates/rules/eslint-no-array-constructor.json",
+      "policy": "rules/eslint-no-array-constructor.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1316,7 +1316,7 @@
         "tool": "eslint",
         "rule": "no-empty-function"
       },
-      "policy": "candidates/rules/eslint-no-empty-function.json",
+      "policy": "rules/eslint-no-empty-function.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1567,7 +1567,7 @@
         "tool": "eslint",
         "rule": "no-unexpected-multiline"
       },
-      "policy": "candidates/rules/eslint-no-unexpected-multiline.json",
+      "policy": "rules/eslint-no-unexpected-multiline.json",
       "capabilities": [
         "syntax",
         "suppression"

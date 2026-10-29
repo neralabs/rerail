@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "No rules yet: its 24 eslint-plugin-n ports are candidates until they pass the conformance check.",
+  "covers": "21 eslint-plugin-n 18.4.1 rules ported to Rerail, 2 of them on and 19 off until turned on, each scored against eslint-plugin-n's own findings on its rule tests; 3 more ports are candidates until they pass the conformance check.",
   "reason": "matches Node.js",
   "match": {
     "any": [
@@ -24,5 +24,151 @@
       }
     ]
   },
-  "rules": []
+  "rules": [
+    {
+      "id": "n-callback-return",
+      "document": "rules/n-callback-return.json",
+      "title": "eslint-plugin-n callback-return: Require `return` statements after callbacks",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-exports-style",
+      "document": "rules/n-exports-style.json",
+      "title": "eslint-plugin-n exports-style: Enforce either `module.exports` or `exports`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-global-require",
+      "document": "rules/n-global-require.json",
+      "title": "eslint-plugin-n global-require: Require `require()` calls to be placed at top-level module scope",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-handle-callback-err",
+      "document": "rules/n-handle-callback-err.json",
+      "title": "eslint-plugin-n handle-callback-err: Require error handling in callbacks",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-callback-literal",
+      "document": "rules/n-no-callback-literal.json",
+      "title": "eslint-plugin-n no-callback-literal: Enforce Node.js-style error-first callback pattern is followed",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-exports-assign",
+      "document": "rules/n-no-exports-assign.json",
+      "title": "eslint-plugin-n no-exports-assign: Disallow the assignment to `exports`",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-mixed-requires",
+      "document": "rules/n-no-mixed-requires.json",
+      "title": "eslint-plugin-n no-mixed-requires: Disallow `require` calls to be mixed with regular variable declarations",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-new-require",
+      "document": "rules/n-no-new-require.json",
+      "title": "eslint-plugin-n no-new-require: Disallow `new` operators with calls to `require`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-path-concat",
+      "document": "rules/n-no-path-concat.json",
+      "title": "eslint-plugin-n no-path-concat: Disallow string concatenation with `__dirname`, `__filename`, and `import.meta` paths",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-process-env",
+      "document": "rules/n-no-process-env.json",
+      "title": "eslint-plugin-n no-process-env: Disallow the use of `process.env`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-process-exit",
+      "document": "rules/n-no-process-exit.json",
+      "title": "eslint-plugin-n no-process-exit: Disallow the use of `process.exit()`",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-sync",
+      "document": "rules/n-no-sync.json",
+      "title": "eslint-plugin-n no-sync: Disallow synchronous methods",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-buffer",
+      "document": "rules/n-prefer-global-buffer.json",
+      "title": "eslint-plugin-n prefer-global/buffer: Enforce either `Buffer` or `require(\"buffer\").Buffer`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-console",
+      "document": "rules/n-prefer-global-console.json",
+      "title": "eslint-plugin-n prefer-global/console: Enforce either `console` or `require(\"console\")`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-process",
+      "document": "rules/n-prefer-global-process.json",
+      "title": "eslint-plugin-n prefer-global/process: Enforce either `process` or `require(\"process\")`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-text-decoder",
+      "document": "rules/n-prefer-global-text-decoder.json",
+      "title": "eslint-plugin-n prefer-global/text-decoder: Enforce either `TextDecoder` or `require(\"util\").TextDecoder`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-text-encoder",
+      "document": "rules/n-prefer-global-text-encoder.json",
+      "title": "eslint-plugin-n prefer-global/text-encoder: Enforce either `TextEncoder` or `require(\"util\").TextEncoder`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-url",
+      "document": "rules/n-prefer-global-url.json",
+      "title": "eslint-plugin-n prefer-global/url: Enforce either `URL` or `require(\"url\").URL`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-url-search-params",
+      "document": "rules/n-prefer-global-url-search-params.json",
+      "title": "eslint-plugin-n prefer-global/url-search-params: Enforce either `URLSearchParams` or `require(\"url\").URLSearchParams`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-node-protocol",
+      "document": "rules/n-prefer-node-protocol.json",
+      "title": "eslint-plugin-n prefer-node-protocol: Enforce using the `node:` protocol when importing Node.js builtin modules",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-promises-fs",
+      "document": "rules/n-prefer-promises-fs.json",
+      "title": "eslint-plugin-n prefer-promises/fs: Enforce `require(\"fs\").promises`",
+      "group": "eslint-plugin-n",
+      "on": false
+    }
+  ]
 }

@@ -3,7 +3,7 @@
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "24 typescript-eslint rules ported to Rerail, 13 of them on and 11 off until turned on, each scored against the tool's own findings on its test fixtures.",
+  "covers": "46 typescript-eslint rules ported to Rerail, 18 of them on and 28 off until turned on, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -36,9 +36,36 @@
   },
   "rules": [
     {
+      "id": "typescript-eslint-adjacent-overload-signatures",
+      "document": "rules/typescript-eslint-adjacent-overload-signatures.json",
+      "title": "typescript-eslint adjacent-overload-signatures: Require that function overload signatures be consecutive",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-array-type",
+      "document": "rules/typescript-eslint-array-type.json",
+      "title": "typescript-eslint array-type: Require consistently using either `T[]` or `Array<T>` for arrays",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-ban-ts-comment",
+      "document": "rules/typescript-eslint-ban-ts-comment.json",
+      "title": "typescript-eslint ban-ts-comment: Disallow `@ts-<directive>` comments or require descriptions after directives",
+      "group": "typescript-eslint"
+    },
+    {
       "id": "typescript-eslint-ban-tslint-comment",
       "document": "rules/typescript-eslint-ban-tslint-comment.json",
       "title": "typescript-eslint ban-tslint-comment: Disallow `// tslint:<rule-flag>` comments",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-consistent-type-assertions",
+      "document": "rules/typescript-eslint-consistent-type-assertions.json",
+      "title": "typescript-eslint consistent-type-assertions: Enforce consistent usage of type assertions",
       "group": "typescript-eslint",
       "on": false
     },
@@ -53,6 +80,27 @@
       "id": "typescript-eslint-default-param-last",
       "document": "rules/typescript-eslint-default-param-last.json",
       "title": "typescript-eslint default-param-last: Enforce default parameters to be last",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-explicit-member-accessibility",
+      "document": "rules/typescript-eslint-explicit-member-accessibility.json",
+      "title": "typescript-eslint explicit-member-accessibility: Require explicit accessibility modifiers on class properties and methods",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-explicit-module-boundary-types",
+      "document": "rules/typescript-eslint-explicit-module-boundary-types.json",
+      "title": "typescript-eslint explicit-module-boundary-types: Require explicit return and argument types on exported functions' and classes' public class methods",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-max-params",
+      "document": "rules/typescript-eslint-max-params.json",
+      "title": "typescript-eslint max-params: Enforce a maximum number of parameters in function definitions",
       "group": "typescript-eslint",
       "on": false
     },
@@ -83,6 +131,13 @@
       "group": "typescript-eslint"
     },
     {
+      "id": "typescript-eslint-no-dynamic-delete",
+      "document": "rules/typescript-eslint-no-dynamic-delete.json",
+      "title": "typescript-eslint no-dynamic-delete: Disallow using the `delete` operator on computed key expressions",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
       "id": "typescript-eslint-no-empty-function",
       "document": "rules/typescript-eslint-no-empty-function.json",
       "title": "typescript-eslint no-empty-function: Disallow empty functions",
@@ -102,6 +157,13 @@
       "group": "typescript-eslint"
     },
     {
+      "id": "typescript-eslint-no-extraneous-class",
+      "document": "rules/typescript-eslint-no-extraneous-class.json",
+      "title": "typescript-eslint no-extraneous-class: Disallow classes used as namespaces",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
       "id": "typescript-eslint-no-import-type-side-effects",
       "document": "rules/typescript-eslint-no-import-type-side-effects.json",
       "title": "typescript-eslint no-import-type-side-effects: Enforce the use of top-level import type qualifier when an import only has specifiers with inline type qualifiers",
@@ -109,10 +171,44 @@
       "on": false
     },
     {
+      "id": "typescript-eslint-no-inferrable-types",
+      "document": "rules/typescript-eslint-no-inferrable-types.json",
+      "title": "typescript-eslint no-inferrable-types: Disallow explicit type declarations for variables or parameters initialized to a number, string, or boolean",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-invalid-void-type",
+      "document": "rules/typescript-eslint-no-invalid-void-type.json",
+      "title": "typescript-eslint no-invalid-void-type: Disallow `void` type outside of generic or return types",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-magic-numbers",
+      "document": "rules/typescript-eslint-no-magic-numbers.json",
+      "title": "typescript-eslint no-magic-numbers: Disallow magic numbers",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-misused-new",
+      "document": "rules/typescript-eslint-no-misused-new.json",
+      "title": "typescript-eslint no-misused-new: Enforce valid definition of `new` and `constructor`",
+      "group": "typescript-eslint"
+    },
+    {
       "id": "typescript-eslint-no-namespace",
       "document": "rules/typescript-eslint-no-namespace.json",
       "title": "typescript-eslint no-namespace: Disallow TypeScript namespaces",
       "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-non-null-asserted-nullish-coalescing",
+      "document": "rules/typescript-eslint-no-non-null-asserted-nullish-coalescing.json",
+      "title": "typescript-eslint no-non-null-asserted-nullish-coalescing: Disallow non-null assertions in the left operand of a nullish coalescing operator",
+      "group": "typescript-eslint",
+      "on": false
     },
     {
       "id": "typescript-eslint-no-non-null-asserted-optional-chain",
@@ -135,6 +231,32 @@
           "text": "export function port(env: Map<string, string>): string {\n  return env.get(\"PORT\") ?? \"8080\";\n}\n"
         }
       },
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-redeclare",
+      "document": "rules/typescript-eslint-no-redeclare.json",
+      "title": "typescript-eslint no-redeclare: Disallow variable redeclaration",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-require-imports",
+      "document": "rules/typescript-eslint-no-require-imports.json",
+      "title": "typescript-eslint no-require-imports: Disallow invocation of `require()`",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-this-alias",
+      "document": "rules/typescript-eslint-no-this-alias.json",
+      "title": "typescript-eslint no-this-alias: Disallow aliasing `this`",
+      "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-no-unnecessary-parameter-property-assignment",
+      "document": "rules/typescript-eslint-no-unnecessary-parameter-property-assignment.json",
+      "title": "typescript-eslint no-unnecessary-parameter-property-assignment: Disallow unnecessary assignment of constructor property parameter",
+      "group": "typescript-eslint",
       "on": false
     },
     {
@@ -162,11 +284,31 @@
       "group": "typescript-eslint"
     },
     {
+      "id": "typescript-eslint-no-unused-private-class-members",
+      "document": "rules/typescript-eslint-no-unused-private-class-members.json",
+      "title": "typescript-eslint no-unused-private-class-members: Disallow unused private class members",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-use-before-define",
+      "document": "rules/typescript-eslint-no-use-before-define.json",
+      "title": "typescript-eslint no-use-before-define: Disallow the use of variables before they are defined",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
       "id": "typescript-eslint-no-useless-empty-export",
       "document": "rules/typescript-eslint-no-useless-empty-export.json",
       "title": "typescript-eslint no-useless-empty-export: Disallow empty exports that don't change anything in a module file",
       "group": "typescript-eslint",
       "on": false
+    },
+    {
+      "id": "typescript-eslint-no-wrapper-object-types",
+      "document": "rules/typescript-eslint-no-wrapper-object-types.json",
+      "title": "typescript-eslint no-wrapper-object-types: Disallow using confusing built-in primitive class wrappers",
+      "group": "typescript-eslint"
     },
     {
       "id": "typescript-eslint-prefer-as-const",
@@ -178,6 +320,13 @@
       "id": "typescript-eslint-prefer-enum-initializers",
       "document": "rules/typescript-eslint-prefer-enum-initializers.json",
       "title": "typescript-eslint prefer-enum-initializers: Require each enum member value to be explicitly initialized",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-prefer-for-of",
+      "document": "rules/typescript-eslint-prefer-for-of.json",
+      "title": "typescript-eslint prefer-for-of: Enforce the use of `for-of` loop over the standard `for` loop where possible",
       "group": "typescript-eslint",
       "on": false
     },
