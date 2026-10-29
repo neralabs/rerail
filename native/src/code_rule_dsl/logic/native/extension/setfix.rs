@@ -825,7 +825,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
     let mut steps = Vec::new();
     let mut out = Vec::new();
     let mut multi = Vec::new();
-    let tape = crate::TAPE.read().unwrap().clone();
+    let tape = super::TAPE.read().unwrap().clone();
     fn tok(t: &str, syms: &mut Interner) -> Result<Option<Key>> {
         Ok(if t == "_" { None } else if let Some(i) = t.strip_prefix("i:") { Some(Key::Const(num(i)?)) }
            else if let Some(x) = t.strip_prefix("x:") { Some(Key::Const(syms.id(&unhex(x)?))) } else { Some(Key::Slot(slot(t)?)) })
@@ -954,7 +954,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
 fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
     struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     tape: Option<&'a crate::Tape>, key: Vec<i64>, row: Vec<i64> }
+                     tape: Option<&'a super::Tape>, key: Vec<i64>, row: Vec<i64> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -1071,7 +1071,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
         }
     }
-    let tape = crate::TAPE.read().unwrap().clone();
+    let tape = super::TAPE.read().unwrap().clone();
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, tape: tape.as_deref(), key: Vec::new(), row: Vec::new() };
     let mut slots = vec![0i64; j.nslots];
     go(&mut cx, 0, &mut slots);

@@ -12,8 +12,8 @@
 //!   writes `<p>_out(c0, c1)`. Returns "rows waves visits solve_ms total_ms".
 //! - `set_fixpoint_open/run/close` and the `set_rel` vtab evaluate one component of set-valued relations natively
 //!   (see `setfix.rs`).
-// T's `setfix` is `logic::native`'s (its adaptation keeps the copy's functions).
-use super::setfix;
+// T's own set engine as copied (`extension/setfix.rs`); `logic::native::setfix` is its adaptation (O19).
+mod setfix;
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
