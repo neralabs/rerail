@@ -1,1 +1,0 @@
-const { setInterval } = require('node:timers'); setInterval(() => {}, 3000)

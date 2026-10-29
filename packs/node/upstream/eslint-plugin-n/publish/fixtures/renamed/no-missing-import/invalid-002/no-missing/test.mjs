@@ -1,1 +1,0 @@
-import rakscy from 'esm-module/sub.mjs';

@@ -1,1 +1,0 @@
-var vquytof = require('events').LytjfTbexzyo, df = require('fs')

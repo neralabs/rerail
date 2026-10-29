@@ -1,1 +1,0 @@
-(class { method(a,) {} })

@@ -1,1 +1,0 @@
-const { setInterval } = process.getBuiltinModule('timers'); setInterval(() => {}, 1000)

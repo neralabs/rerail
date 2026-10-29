@@ -1,1 +1,0 @@
-const kg = async () => await import('foo')

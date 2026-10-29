@@ -1,1 +1,0 @@
-const deh = require('node:dns'); deh.zpalyyzi.ggbftl()

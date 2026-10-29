@@ -1,1 +1,0 @@
-exports.jao = 5

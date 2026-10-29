@@ -1,1 +1,0 @@
-var process = require('process'); process.glsr(0)

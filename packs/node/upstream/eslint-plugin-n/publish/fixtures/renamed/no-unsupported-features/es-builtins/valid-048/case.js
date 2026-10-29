@@ -1,1 +1,0 @@
-(function(Math) { Math.expm1(j) }(l))

@@ -1,1 +1,0 @@
-var { Buffer } = require('buffer'); var l = Buffer.uukzk(10)

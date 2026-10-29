@@ -1,1 +1,0 @@
-import j from './foo/';

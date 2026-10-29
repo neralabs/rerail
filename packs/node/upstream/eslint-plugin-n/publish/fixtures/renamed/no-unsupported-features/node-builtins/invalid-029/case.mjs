@@ -1,1 +1,0 @@
-import { GqqhrLpnksKnsyihw } from 'async_hooks'; new GqqhrLpnksKnsyihw()

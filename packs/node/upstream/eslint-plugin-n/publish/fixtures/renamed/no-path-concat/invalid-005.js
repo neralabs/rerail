@@ -1,1 +1,0 @@
-var okls = require("path"); var jrnxEvre = `${__dirname}${okls.bpi}jao.mf`;

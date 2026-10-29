@@ -1,1 +1,0 @@
-async function lcaq() { for await (var j of l); }

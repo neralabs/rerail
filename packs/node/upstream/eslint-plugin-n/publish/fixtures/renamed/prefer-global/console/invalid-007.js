@@ -1,1 +1,0 @@
-var console = process.garRqpwnweBjpfyf('console'); console.log(70)

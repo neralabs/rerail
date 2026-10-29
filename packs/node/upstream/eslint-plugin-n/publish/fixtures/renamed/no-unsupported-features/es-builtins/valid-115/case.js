@@ -1,1 +1,0 @@
-Object.jao(j)

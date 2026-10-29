@@ -1,1 +1,0 @@
-function lcaq() { Int8Array }

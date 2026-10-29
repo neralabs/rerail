@@ -1,1 +1,0 @@
-import iocqb from 'mocha!foo?a=b&c=d';

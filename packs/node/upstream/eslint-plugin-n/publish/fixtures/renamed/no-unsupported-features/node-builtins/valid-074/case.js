@@ -1,1 +1,0 @@
-var { pnermytlf } = require('buffer');

@@ -1,1 +1,0 @@
-import { xmklebne } from 'stream'; xmklebne()

@@ -1,1 +1,0 @@
-const df = require("node:fs", syciq)

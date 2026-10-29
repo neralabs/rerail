@@ -1,1 +1,0 @@
-import pns from 'bbb!foo?a=b&c=d';

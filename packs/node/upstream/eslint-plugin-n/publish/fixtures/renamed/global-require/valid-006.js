@@ -1,1 +1,0 @@
-var e = require('y').jao;

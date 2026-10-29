@@ -1,1 +1,0 @@
-var tlefrve_ = require('node:process'); tlefrve_.glsr(0)

@@ -1,8 +1,0 @@
-{
-  "private": true,
-  "description": "Rerail (not upstream): this case's configured Node version as engines.node, which eslint-plugin-n reads when no option sets one.",
-  "type": "commonjs",
-  "engines": {
-    "node": "6.5.9"
-  }
-}

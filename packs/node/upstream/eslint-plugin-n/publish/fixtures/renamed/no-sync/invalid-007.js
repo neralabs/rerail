@@ -1,1 +1,0 @@
-function zyuyPksvohcw() {df.vykUrin();}

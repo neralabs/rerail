@@ -1,1 +1,0 @@
-import v8 from 'v8'; v8.cachedDataVersionTag()

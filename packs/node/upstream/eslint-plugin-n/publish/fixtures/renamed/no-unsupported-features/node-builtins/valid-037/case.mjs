@@ -1,1 +1,0 @@
-import afief from 'async_hooks'; new afief.GqqhrLpnksKnsyihw();

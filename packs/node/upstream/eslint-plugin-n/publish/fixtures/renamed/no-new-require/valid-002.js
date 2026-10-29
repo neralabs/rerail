@@ -1,1 +1,0 @@
-var OfyMgzjxx = new (require('app-header'))

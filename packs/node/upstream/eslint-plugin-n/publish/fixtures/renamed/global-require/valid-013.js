@@ -1,1 +1,0 @@
-var ahksIbnd = require('./someFunc'); ahksIbnd(function(require) { return('nnyignr'); });

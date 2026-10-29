@@ -1,1 +1,0 @@
-import '@typescript-eslint/parser'

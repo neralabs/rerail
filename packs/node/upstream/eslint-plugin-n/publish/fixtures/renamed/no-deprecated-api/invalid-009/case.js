@@ -1,1 +1,0 @@
-var l; new ((l = require('buffer')).Buffer)(); new l.Buffer()

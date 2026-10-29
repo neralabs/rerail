@@ -1,1 +1,0 @@
-var jrnxEvre = import.meta.wkasqols + ".map";

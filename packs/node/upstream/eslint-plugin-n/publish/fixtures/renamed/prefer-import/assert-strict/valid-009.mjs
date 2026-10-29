@@ -1,1 +1,0 @@
-export { psmdrq as assert } from "node:assert";

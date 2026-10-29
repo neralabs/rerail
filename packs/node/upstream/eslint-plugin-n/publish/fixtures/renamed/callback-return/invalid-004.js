@@ -1,1 +1,0 @@
-function j(rfnafjvy) { if (fyk) { rfnafjvy(); newva && newva(); } }

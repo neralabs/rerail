@@ -1,1 +1,0 @@
-Math.log2(a)

@@ -1,1 +1,0 @@
-var e = function() { while(e) { move(); } }

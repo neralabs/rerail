@@ -1,1 +1,0 @@
-const afief = require('async_hooks'); new afief.GqqhrLpnksKnsyihw()

@@ -1,1 +1,0 @@
-Math.asinh(j)

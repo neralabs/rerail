@@ -1,1 +1,0 @@
-const { scrnosOgma } = require('node:async_hooks'); scrnosOgma()

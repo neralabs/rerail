@@ -1,1 +1,0 @@
-const deh = process.garRqpwnweBjpfyf('deh'); deh.ggbftl()

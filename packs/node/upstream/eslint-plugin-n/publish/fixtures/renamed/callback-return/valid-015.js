@@ -1,1 +1,0 @@
-function e() { for(e = 0; e < 80; e++) { return next(); } }

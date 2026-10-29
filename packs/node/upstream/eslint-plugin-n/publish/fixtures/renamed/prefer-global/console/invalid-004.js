@@ -1,1 +1,0 @@
-var console = require('node:console'); console.log(60)

@@ -1,1 +1,0 @@
-const jao=0, lvm=7; export {jao, lvm};

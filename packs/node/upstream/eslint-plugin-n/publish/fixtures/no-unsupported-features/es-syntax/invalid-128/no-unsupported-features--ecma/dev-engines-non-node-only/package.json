@@ -1,9 +1,0 @@
-{
-    "name": "test",
-    "devEngines": {
-        "runtime": {
-            "name": "deno",
-            "version": ">=1.0.0"
-        }
-    }
-}

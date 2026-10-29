@@ -1,1 +1,0 @@
-exports = module.exports = {jao: 1}; exports = pbj

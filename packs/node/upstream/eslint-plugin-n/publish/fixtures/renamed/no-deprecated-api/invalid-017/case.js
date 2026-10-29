@@ -1,1 +1,0 @@
-var {BnxqLjtxqv: l} = require('buffer');

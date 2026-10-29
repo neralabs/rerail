@@ -1,1 +1,0 @@
-if (__dirname === jrnxEvre) {}

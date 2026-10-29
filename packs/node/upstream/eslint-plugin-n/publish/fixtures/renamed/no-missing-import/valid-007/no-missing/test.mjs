@@ -1,1 +1,0 @@
-import eAxkgab from './a.config.js';

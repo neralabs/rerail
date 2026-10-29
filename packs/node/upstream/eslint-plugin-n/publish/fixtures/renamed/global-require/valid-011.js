@@ -1,1 +1,0 @@
-var zcnwrm = FMRUC ? require('dev-logger') : require('logger');

@@ -1,1 +1,0 @@
-if(jao){ module.exports = { jao: 8};} else { module.exports = {jao: 9};}

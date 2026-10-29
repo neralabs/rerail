@@ -1,1 +1,0 @@
-var e = (fyk) => { if (fyk) { rfnafjvy (fyk); } }

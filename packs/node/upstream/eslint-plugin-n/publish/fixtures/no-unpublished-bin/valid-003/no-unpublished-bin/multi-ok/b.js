@@ -1,1 +1,0 @@
-'multi-ok/b.js'

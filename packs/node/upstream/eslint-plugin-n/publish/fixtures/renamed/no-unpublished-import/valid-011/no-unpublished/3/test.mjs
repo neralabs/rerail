@@ -1,1 +1,0 @@
-import rvwc2 from './test2';

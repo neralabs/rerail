@@ -1,1 +1,0 @@
-var e = (e => require(e))('zcqnp')

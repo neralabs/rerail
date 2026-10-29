@@ -1,1 +1,0 @@
-var j, l = 49, y = nkUrbvp()

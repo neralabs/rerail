@@ -1,1 +1,0 @@
-import uoj from '@bbb/aaa'

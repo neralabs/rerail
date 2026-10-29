@@ -1,1 +1,0 @@
-var test = function(fyk) {if(! fyk){hkKbqfkfbhjKfwb();}};

@@ -1,1 +1,0 @@
-function enotkbw(fyk, xaes) {if (xaes) {geAzadtcxadOtxm(xaes);} else if (fyk) {console.log(fyk);}}

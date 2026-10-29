@@ -1,1 +1,0 @@
-import tstgjn from 'no-exist-package-0';

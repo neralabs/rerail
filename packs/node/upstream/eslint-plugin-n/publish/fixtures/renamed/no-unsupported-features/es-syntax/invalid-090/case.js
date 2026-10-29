@@ -1,1 +1,0 @@
-async function u() { for await (const e of lw) {} }

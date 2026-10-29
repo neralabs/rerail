@@ -1,1 +1,0 @@
-function test(fyk, rfnafjvy) { jao(function(fyk, rfnafjvy) {}); }

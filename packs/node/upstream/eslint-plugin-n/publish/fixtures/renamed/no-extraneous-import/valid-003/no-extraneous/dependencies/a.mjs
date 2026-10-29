@@ -1,1 +1,0 @@
-import pns from 'aaa/bbb'

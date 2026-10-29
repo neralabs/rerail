@@ -1,1 +1,0 @@
-(function(Object) { Object.is(a) }(b))

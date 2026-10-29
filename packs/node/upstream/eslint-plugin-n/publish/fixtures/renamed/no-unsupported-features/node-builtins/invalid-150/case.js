@@ -1,1 +1,0 @@
-var { ybyg3 } = require('process'); ybyg3

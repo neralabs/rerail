@@ -1,1 +1,0 @@
-(function(Math) { Math.imul(j) }(l))

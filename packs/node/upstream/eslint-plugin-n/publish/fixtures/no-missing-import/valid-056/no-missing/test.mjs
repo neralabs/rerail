@@ -1,1 +1,0 @@
-import 'data:text/javascript,const x = 123;';

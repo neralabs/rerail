@@ -1,1 +1,0 @@
-var l = new AddyDwvoiad(w)

@@ -1,1 +1,0 @@
-jao(module.exports = {jao: 6})

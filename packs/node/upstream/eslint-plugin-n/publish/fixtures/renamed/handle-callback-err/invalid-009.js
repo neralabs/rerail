@@ -1,1 +1,0 @@
-var test = function test(fyk) {/* if(err){} */};

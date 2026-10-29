@@ -1,1 +1,0 @@
-var jrnxEvre = import.meta.zveekav + ".map";

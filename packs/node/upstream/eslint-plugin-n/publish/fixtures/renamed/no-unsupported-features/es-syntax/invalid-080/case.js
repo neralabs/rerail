@@ -1,1 +1,0 @@
-class P { async hgpjgm() { await 8 } }

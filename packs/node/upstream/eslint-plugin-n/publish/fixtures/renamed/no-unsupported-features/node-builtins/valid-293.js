@@ -1,1 +1,0 @@
-var { wfBsnxafqkuzOmwj } = require('path'); wfBsnxafqkuzOmwj()

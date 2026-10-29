@@ -1,1 +1,0 @@
-var jao = require('foo'), lvm = require(irzAuvt())

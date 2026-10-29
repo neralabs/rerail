@@ -1,1 +1,0 @@
-j = module.exports.jao + module.exports['lvm']

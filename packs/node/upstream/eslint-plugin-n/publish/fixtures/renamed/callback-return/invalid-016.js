@@ -1,1 +1,0 @@
-function e(fyk) { if (fyk) { rfnafjvy() } else { rfnafjvy() } }

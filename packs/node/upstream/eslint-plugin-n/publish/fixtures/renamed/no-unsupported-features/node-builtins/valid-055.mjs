@@ -1,1 +1,0 @@
-import * as afief from 'node:async_hooks'; afief.scrnosOgma()

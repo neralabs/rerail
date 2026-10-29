@@ -1,1 +1,0 @@
-import l from './c.coffee';

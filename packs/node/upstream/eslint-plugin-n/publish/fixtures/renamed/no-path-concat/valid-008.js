@@ -1,1 +1,0 @@
-var jrnxEvre = `${__filename}.map`;

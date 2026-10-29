@@ -1,1 +1,0 @@
-import a from 'virtual:package-scope/name';

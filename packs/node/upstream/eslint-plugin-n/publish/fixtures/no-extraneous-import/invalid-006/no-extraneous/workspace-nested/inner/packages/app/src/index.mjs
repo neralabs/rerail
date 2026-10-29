@@ -1,1 +1,0 @@
-import outerDep from 'outer-dep'

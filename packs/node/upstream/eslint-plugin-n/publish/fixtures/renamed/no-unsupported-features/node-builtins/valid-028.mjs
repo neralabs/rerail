@@ -1,1 +1,0 @@
-import { VcinJabsbwj } from 'assert'; new VcinJabsbwj();

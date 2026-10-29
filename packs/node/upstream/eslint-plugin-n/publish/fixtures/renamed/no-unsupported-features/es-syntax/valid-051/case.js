@@ -1,1 +1,0 @@
-class P { key(j = 0) {} }

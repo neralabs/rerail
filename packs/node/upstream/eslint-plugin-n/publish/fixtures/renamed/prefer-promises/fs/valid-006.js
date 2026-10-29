@@ -1,1 +1,0 @@
-const {zpalyyzi: df} = require('fs'); df.bhbstf()

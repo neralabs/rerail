@@ -1,1 +1,0 @@
-'multi-npmignore/lib/a.js'

@@ -1,1 +1,0 @@
-import umUp from '#is-ip';

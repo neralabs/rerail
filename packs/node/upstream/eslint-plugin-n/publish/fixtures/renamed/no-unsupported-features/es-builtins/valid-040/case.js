@@ -1,1 +1,0 @@
-(function(Math) { Math.clz32(j) }(l))

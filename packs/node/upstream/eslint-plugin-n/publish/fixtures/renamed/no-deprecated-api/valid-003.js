@@ -1,1 +1,0 @@
-jao(require('buffer').Buffer)

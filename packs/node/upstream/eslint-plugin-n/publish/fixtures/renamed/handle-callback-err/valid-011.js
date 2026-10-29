@@ -1,1 +1,0 @@
-function test(fyk, xaes) {if (xaes) {mmLeprvlvjn(function(fyk) {console.error(fyk);});} else if (fyk) {console.log(fyk);}}

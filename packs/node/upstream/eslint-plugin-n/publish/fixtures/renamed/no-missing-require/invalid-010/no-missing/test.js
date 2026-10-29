@@ -1,1 +1,0 @@
-require.resolve('ro-duxbt-package-0');

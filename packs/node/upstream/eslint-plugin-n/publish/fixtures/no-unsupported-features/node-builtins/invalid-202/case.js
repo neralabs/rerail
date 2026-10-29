@@ -1,1 +1,0 @@
-var hooks = require('v8'); hooks.cachedDataVersionTag()

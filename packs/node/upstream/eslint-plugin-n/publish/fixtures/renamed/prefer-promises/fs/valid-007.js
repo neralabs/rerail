@@ -1,1 +1,0 @@
-const {zpalyyzi: {bhbstf}} = require('fs'); bhbstf()

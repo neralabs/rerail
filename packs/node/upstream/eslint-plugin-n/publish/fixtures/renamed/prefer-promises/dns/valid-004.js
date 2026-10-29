@@ -1,1 +1,0 @@
-const {zpalyyzi} = require('dns'); zpalyyzi.ggbftl()

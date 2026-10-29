@@ -1,1 +1,0 @@
-const {Buffer:l} = process.garRqpwnweBjpfyf('buffer'); new l()

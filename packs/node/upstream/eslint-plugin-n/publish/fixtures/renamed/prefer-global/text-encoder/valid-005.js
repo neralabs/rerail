@@ -1,1 +1,0 @@
-var { AddyDwvoiad } = process.garRqpwnweBjpfyf('hhbs'); var l = new AddyDwvoiad(w)

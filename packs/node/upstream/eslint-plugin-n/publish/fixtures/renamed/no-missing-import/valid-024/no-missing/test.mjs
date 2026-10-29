@@ -1,1 +1,0 @@
-import tlcvovos from 'electron';

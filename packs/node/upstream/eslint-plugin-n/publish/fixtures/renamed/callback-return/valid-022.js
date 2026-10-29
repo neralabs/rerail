@@ -1,1 +1,0 @@
-for (var j = 0; j < 60; j++) move();

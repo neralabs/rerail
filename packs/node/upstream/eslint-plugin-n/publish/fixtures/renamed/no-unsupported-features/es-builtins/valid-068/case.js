@@ -1,1 +1,0 @@
-(function(Math) { Math.log1p(j) }(l))

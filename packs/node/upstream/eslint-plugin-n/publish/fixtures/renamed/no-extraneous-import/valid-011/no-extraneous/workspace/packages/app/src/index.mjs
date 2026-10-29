@@ -1,1 +1,0 @@
-import epydMhvQrc from 'root-dev-dep'

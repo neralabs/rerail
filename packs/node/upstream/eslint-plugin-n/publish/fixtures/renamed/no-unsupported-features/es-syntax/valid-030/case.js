@@ -1,1 +1,0 @@
-function lcaq() { 'use strict'; class P {} }

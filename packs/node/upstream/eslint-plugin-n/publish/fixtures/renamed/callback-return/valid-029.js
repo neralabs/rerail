@@ -1,1 +1,0 @@
-class e { newva() { if (fyk) { return rfnafjvy(); } rfnafjvy(); } } 

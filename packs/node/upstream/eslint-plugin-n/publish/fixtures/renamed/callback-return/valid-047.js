@@ -1,1 +1,0 @@
-function e(fyk) { if (fyk) { setTimeout(rfnafjvy, 0); } rfnafjvy(); }

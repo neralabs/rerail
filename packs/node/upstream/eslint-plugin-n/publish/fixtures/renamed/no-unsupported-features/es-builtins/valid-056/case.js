@@ -1,1 +1,0 @@
-(function(Math) { Math.hypot(j) }(l))

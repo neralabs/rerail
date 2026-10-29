@@ -1,1 +1,0 @@
-import oyaomh from 'eslint-plugin-n';

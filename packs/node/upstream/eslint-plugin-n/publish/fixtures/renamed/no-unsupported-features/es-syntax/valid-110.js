@@ -1,1 +1,0 @@
-class P { constructor() { new.target } }

@@ -1,1 +1,0 @@
-var df = require('fs'), jao = require('./foo')

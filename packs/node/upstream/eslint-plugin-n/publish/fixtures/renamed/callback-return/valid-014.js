@@ -1,1 +1,0 @@
-function e() { switch(e) { case 'j': return next(); } }

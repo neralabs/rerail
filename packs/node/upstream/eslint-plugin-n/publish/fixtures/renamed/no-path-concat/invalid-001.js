@@ -1,1 +1,0 @@
-var jrnxEvre = __dirname + "/jao.mf";

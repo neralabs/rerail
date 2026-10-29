@@ -1,1 +1,0 @@
-require('bbb!foo?a=b&c=d');

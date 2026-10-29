@@ -1,1 +1,0 @@
-require('./fixtures/no-missing/a');

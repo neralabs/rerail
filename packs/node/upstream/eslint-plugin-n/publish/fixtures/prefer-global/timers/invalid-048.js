@@ -1,1 +1,0 @@
-const { setTimeout } = process.getBuiltinModule('node:timers'); setTimeout(() => {}, 1000)

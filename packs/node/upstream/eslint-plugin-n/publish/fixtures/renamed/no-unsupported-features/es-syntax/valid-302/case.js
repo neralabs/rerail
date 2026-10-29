@@ -1,1 +1,0 @@
-var j = /\P{Letter}/u

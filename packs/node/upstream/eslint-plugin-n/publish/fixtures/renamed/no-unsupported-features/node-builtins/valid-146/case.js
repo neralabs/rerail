@@ -1,1 +1,0 @@
-var afief = require('crypto'); afief.pnermytlf

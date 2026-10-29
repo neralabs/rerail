@@ -1,1 +1,0 @@
-var j = new RegExp("(pilny", l)

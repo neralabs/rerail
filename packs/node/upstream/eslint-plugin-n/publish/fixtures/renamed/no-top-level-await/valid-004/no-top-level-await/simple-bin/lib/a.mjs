@@ -1,1 +1,0 @@
-async function kg () { for await (const f of ypsseSibgbgw()) { /* ... */ } }

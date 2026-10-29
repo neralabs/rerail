@@ -1,1 +1,0 @@
-(function(WeakRef) { WeakRef }(j))

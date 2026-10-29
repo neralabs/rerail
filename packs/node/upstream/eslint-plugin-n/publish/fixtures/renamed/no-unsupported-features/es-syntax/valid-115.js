@@ -1,1 +1,0 @@
-(class { jao() { super.jao } })

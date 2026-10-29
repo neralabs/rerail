@@ -1,1 +1,0 @@
-import iocqb from 'mocha';

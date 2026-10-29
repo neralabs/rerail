@@ -1,1 +1,0 @@
-var { RJDYqniyvFvbbeg } = require('node:url'); var l = new RJDYqniyvFvbbeg(w)

@@ -1,1 +1,0 @@
-import deh from 'node:dns'; deh.zpalyyzi.ggbftl()

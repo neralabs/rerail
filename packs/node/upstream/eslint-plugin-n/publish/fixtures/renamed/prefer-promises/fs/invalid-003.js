@@ -1,1 +1,0 @@
-const {bhbstf} = require('fs'); bhbstf()

@@ -1,1 +1,0 @@
-function lcaq() { Uint16Array }

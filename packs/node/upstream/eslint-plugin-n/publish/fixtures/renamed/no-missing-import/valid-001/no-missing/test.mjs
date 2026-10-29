@@ -1,1 +1,0 @@
-import tstgjn from 'eslint';

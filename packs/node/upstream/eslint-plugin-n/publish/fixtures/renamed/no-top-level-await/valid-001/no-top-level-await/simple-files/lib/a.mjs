@@ -1,1 +1,0 @@
-import * as jao from 'foo'

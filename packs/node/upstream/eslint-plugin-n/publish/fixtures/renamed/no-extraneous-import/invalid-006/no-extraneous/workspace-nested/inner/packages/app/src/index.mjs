@@ -1,1 +1,0 @@
-import pkijfHqs from 'outer-dep'

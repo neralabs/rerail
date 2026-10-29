@@ -1,1 +1,0 @@
-const deh = require('dns'); deh.empufvnRu()

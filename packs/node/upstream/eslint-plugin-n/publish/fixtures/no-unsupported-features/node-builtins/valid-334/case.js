@@ -1,1 +1,0 @@
-var { finished } = require('stream'); finished()

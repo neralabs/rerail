@@ -1,1 +1,0 @@
-import xdqxFtagsg from "eslint-plugin-n";

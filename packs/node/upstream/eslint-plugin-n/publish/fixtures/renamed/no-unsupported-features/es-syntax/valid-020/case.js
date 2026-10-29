@@ -1,1 +1,0 @@
-'use strict'; function lcaq() { const j = 0 }

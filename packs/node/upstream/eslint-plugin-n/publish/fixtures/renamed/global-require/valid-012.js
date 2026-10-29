@@ -1,1 +1,0 @@
-function rwtdiBtrvvhNxqmbeb(require) { require('y'); }

@@ -1,1 +1,0 @@
-var { xmklebne } = require('stream'); xmklebne()

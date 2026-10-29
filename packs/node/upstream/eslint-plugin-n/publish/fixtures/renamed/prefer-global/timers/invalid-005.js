@@ -1,1 +1,0 @@
-const { clearInterval } = require('timers'); clearInterval(ui)

@@ -1,1 +1,0 @@
-function lcaq() { Int32Array }

@@ -1,1 +1,0 @@
-function j(fyk) { if (fyk) { return /* confusing comment */ rfnafjvy (fyk); } rfnafjvy(); }

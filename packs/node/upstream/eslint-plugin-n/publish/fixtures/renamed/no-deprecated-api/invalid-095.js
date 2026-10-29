@@ -1,1 +1,0 @@
-new (process.garRqpwnweBjpfyf('buffer').Buffer)()

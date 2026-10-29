@@ -1,1 +1,0 @@
-import ycjoigquq from 'inspector'

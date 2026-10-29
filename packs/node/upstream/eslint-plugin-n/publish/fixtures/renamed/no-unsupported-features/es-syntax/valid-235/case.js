@@ -1,1 +1,0 @@
-class P { hgpjgm(j,) {} }

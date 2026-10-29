@@ -1,1 +1,0 @@
-function lcaq() { Promise.allSettled }

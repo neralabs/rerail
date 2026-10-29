@@ -1,1 +1,0 @@
-var j = require(78), l = require(), y = require('y'), g = require(nkUrbvp())
