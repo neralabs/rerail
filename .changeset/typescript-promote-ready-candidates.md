@@ -1,0 +1,5 @@
+---
+"@neralabs/rerail-pack-typescript": patch
+---
+
+TypeScript pack: ships 22 more rules, 46 in all, now that they pass every conformance check. Start on: `typescript-eslint-ban-ts-comment`, `typescript-eslint-no-misused-new`, `typescript-eslint-no-require-imports`, `typescript-eslint-no-this-alias` and `typescript-eslint-no-wrapper-object-types`. Start off, as no approved upstream configuration turns them on: `typescript-eslint-adjacent-overload-signatures`, `typescript-eslint-array-type`, `typescript-eslint-consistent-type-assertions`, `typescript-eslint-explicit-member-accessibility`, `typescript-eslint-explicit-module-boundary-types`, `typescript-eslint-max-params`, `typescript-eslint-no-dynamic-delete`, `typescript-eslint-no-extraneous-class`, `typescript-eslint-no-inferrable-types`, `typescript-eslint-no-invalid-void-type`, `typescript-eslint-no-magic-numbers`, `typescript-eslint-no-non-null-asserted-nullish-coalescing`, `typescript-eslint-no-redeclare`, `typescript-eslint-no-unnecessary-parameter-property-assignment`, `typescript-eslint-no-unused-private-class-members`, `typescript-eslint-no-use-before-define` and `typescript-eslint-prefer-for-of`.
