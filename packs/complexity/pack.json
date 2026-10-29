@@ -3,7 +3,7 @@
   "id": "complexity",
   "name": "Cyclomatic complexity (limit 6)",
   "category": "language",
-  "covers": "Flags a Python, TypeScript or JavaScript function whose cyclomatic complexity, with lizard 1.24.0's decision points, is above 6.",
+  "covers": "Keeps Python, TypeScript and JavaScript functions simple enough to follow, measured as lizard does.",
   "reason": "matches Python, TypeScript or JavaScript source",
   "match": {
     "any": [

@@ -92,7 +92,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "24 typescript-eslint rules ported to Rerail, 13 of them on and 11 off until turned on, each scored against the tool's own findings on its test fixtures.",
+  "covers": "typescript-eslint rules for safe, idiomatic TypeScript.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
@@ -107,6 +107,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
 }
 ```
 
+- `covers` is the line the dashboard shows under the pack's name: one sentence on what the rules are for and where they come from, such as `typescript-eslint rules for safe, idiomatic TypeScript.` It counts no rules and says nothing of which start on; the dashboard shows both beside it.
 - `category` is `language`, `framework` or `repository`. It drives the kind chips of the dashboard's rule pack catalog. Packs are listed languages first, then frameworks, then repository packs.
 - `match` (required) is `{ "any": [signal, …] }`: what set-up recommends the pack for. A signal is one of:
   - `{ "files", "exclude"?, "label" }`: repository-relative globs. `**` crosses folders, `*` and `?` stay within one, and `{a,b}` gives alternatives.
