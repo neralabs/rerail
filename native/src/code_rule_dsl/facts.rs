@@ -9,6 +9,9 @@ pub(crate) mod core;
 pub(crate) mod families;
 #[allow(dead_code)]
 pub(crate) mod memo;
+/// M's layered map as copied; `overlay` is its adaptation (open item O19).
+#[allow(dead_code)]
+pub(crate) mod lmap;
 #[allow(dead_code)]
 pub(crate) mod observe;
 #[allow(dead_code)]
