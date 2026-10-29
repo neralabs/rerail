@@ -75,7 +75,8 @@ environment, and each run then checks that `latest` is the version it published 
 Putting a version back moves only its dist-tag, never the bytes: `release.yml`'s `workflow_dispatch` with `latest`
 set points core's `latest` at an earlier released version, and `release-packs.yml`'s does the same for a pack, and
 holds it there. Both use npm trusted publishing, so no one needs an npm login. The bytes must not be rebuilt between
-channels. npm provenance attestations are generated once the source repository is public.
+channels. Every publish from CI carries an npm provenance attestation: both workflows pass `--provenance`, so a publish
+npm cannot attest fails instead of going out without one.
 
 ## npm-backed explicit updates
 
