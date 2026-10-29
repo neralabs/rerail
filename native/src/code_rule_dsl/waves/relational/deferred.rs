@@ -107,7 +107,7 @@ pub(in crate::code_rule_dsl) fn expose(
     Ok(columns)
 }
 
-pub(super) fn view(db: &super::Database, stage: &Stage) -> Result<()> {
+pub(in crate::code_rule_dsl) fn view(db: &super::Database, stage: &Stage) -> Result<()> {
     if stage.deferred.is_empty() {
         return Ok(());
     }
@@ -123,7 +123,7 @@ pub(super) fn view(db: &super::Database, stage: &Stage) -> Result<()> {
         .map_err(sql_error)
 }
 
-pub(super) fn release(db: &Connection, name: &str, stages: &[Stage]) -> Result<()> {
+pub(in crate::code_rule_dsl) fn release(db: &Connection, name: &str, stages: &[Stage]) -> Result<()> {
     let stage = stages.iter().find(|s| s.name == name);
     match stage {
         Some(stage)

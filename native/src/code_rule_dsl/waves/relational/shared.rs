@@ -339,7 +339,7 @@ impl Bindings {
         nonce: usize,
     ) -> usize {
         self.intern(Key::Evidence {
-            definition: Arc::clone(&rule.canonical),
+            definition: Arc::from(rule.canonical.as_str()),
             definition_digest: rule.digest.clone(),
             clause: clause.into(),
             name: name.into(),

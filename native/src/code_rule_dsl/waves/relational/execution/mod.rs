@@ -1,5 +1,7 @@
 //! An explicit job owns immutable SQL facts; each caller owns its logical membership.
-use super::{CompiledCodeRuleDsl, json::invalid, matcher::Corpus, matcher::CorpusSlot};
+use crate::code_rule_dsl::{CompiledCodeRuleDsl, json::invalid};
+// W's matcher has no corpus (D's `matcher::Corpus`, `CorpusSlot`): the owner is an open flag (O19).
+type Corpus = ();
 use napi::Result;
 use napi_derive::napi;
 use parking_lot::Mutex;
@@ -21,7 +23,7 @@ impl CodeRuleDslExecution {
     #[napi(constructor)]
     pub fn new() -> Self {
         Self {
-            owner: Mutex::new(Some(Arc::new(Corpus::default()))),
+            owner: Mutex::new(Some(Arc::new(()))),
         }
     }
 
@@ -37,20 +39,19 @@ impl CodeRuleDslExecution {
             .lock()
             .clone()
             .ok_or_else(|| invalid("execution is closed"))?;
-        let _domain = CorpusSlot::install(Arc::new(owner.fork()));
+        let _ = owner;
         compiled.evaluate(snapshot, mode)
     }
 
     #[napi]
-    pub fn create_workspace(&self) -> Result<super::workspace::CodeRuleDslWorkspace> {
+    pub fn create_workspace(&self) -> Result<crate::code_rule_dsl::workspace::api::CodeRuleDslWorkspace> {
         let owner = self
             .owner
             .lock()
             .clone()
             .ok_or_else(|| invalid("execution is closed"))?;
-        Ok(super::workspace::CodeRuleDslWorkspace::with_corpus(
-            Arc::new(owner.fork()),
-        ))
+        let _ = owner;
+        Ok(crate::code_rule_dsl::workspace::api::CodeRuleDslWorkspace::new())
     }
 
     #[napi]

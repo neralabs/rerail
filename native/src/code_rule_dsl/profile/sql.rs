@@ -3,6 +3,8 @@
 
 #[path = "sql/coverage.rs"]
 mod coverage;
+#[allow(dead_code)]
+pub(in crate::code_rule_dsl) mod snapshot;
 #[path = "sql/timing.rs"]
 mod timing;
 use rusqlite::{Connection, ffi};

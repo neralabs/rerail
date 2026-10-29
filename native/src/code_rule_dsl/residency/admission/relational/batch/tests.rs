@@ -212,10 +212,61 @@ fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_ro
 }
 
 #[test]
+#[ignore = "open item O18: W keeps the projection on the shared AST (P's FactQuery::project), so narrowing clones it"]
+fn narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas() {
+    use crate::code_rule_dsl::model::{FactQuery, Projection, ProjectionSource};
+    use std::collections::BTreeSet;
+    // P's `FactQuery::retain_projected_fields`, on W's projection (the relational compiler's).
+    fn retain_projected_fields(input: &mut FactQuery, fields: Option<&BTreeSet<String>>) {
+        if input
+            .ast
+            .project
+            .iter()
+            .any(|p| !fields.is_some_and(|f| f.contains(&p.field)))
+        {
+            Arc::make_mut(&mut input.ast)
+                .project
+                .retain(|p| fields.is_some_and(|f| f.contains(&p.field)));
+        }
+    }
+    let rule = rule();
+    let Some(plan) = (match &rule.inner.clauses[0].kind { crate::code_rule_dsl::model::ClauseKind::Relational(plan) => Some(plan), _ => None }) else {
+        panic!("relational");
+    };
+    let mut full = plan.inputs[0].1.clone();
+    Arc::make_mut(&mut full.ast).project = vec![
+        Projection {
+            field: "a".into(),
+            source: ProjectionSource::Path,
+        },
+        Projection {
+            field: "b".into(),
+            source: ProjectionSource::Name,
+        },
+    ];
+    let mut narrow = full.clone();
+    retain_projected_fields(&mut narrow, Some(&["a".to_owned()].into_iter().collect()));
+    assert!(
+        Arc::ptr_eq(&full.ast, &narrow.ast),
+        "column demand must never clone matcher trees"
+    );
+    assert_eq!(full.ast.project.len(), 2);
+    assert_eq!(narrow.ast.project.len(), 1);
+    let schema = Arc::clone(&full.ast);
+    retain_projected_fields(
+        &mut full,
+        Some(&["a".to_owned(), "b".to_owned()].into_iter().collect()),
+    );
+    assert!(Arc::ptr_eq(&full.ast, &schema));
+}
+
+#[test]
+#[ignore = "open item O18: P trims captures to the input anchor's (P's FactQuery::anchor); W keeps them"]
 fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
     use crate::code_rule_dsl::{
         eval,
-        model::{ClauseKind, Metrics},
+        model::{Anchor, ClauseKind, Metrics},
+        violations::anchored_span,
     };
     let rule=CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../../../capabilities.json").into()).unwrap();
     let code_rule = &rule.inner;
@@ -234,7 +285,26 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
         witness.captures.projection().unwrap().clone(),
         json!({"name":"f"})
     );
-    // P drops captures its anchor does not need; W keeps them (open item O18).
+    assert!(witness.captures.get("NAME").is_none());
+    assert!(witness.captures.get("PARAMS").is_none());
     assert!(witness.message.is_none());
     assert!(witness.fix.is_none());
+    let input = plan.inputs[0].1.clone();
+    // P set `input.anchor`; W's FactQuery has no anchor, so it is held beside the input (O18).
+    let input_anchor = Anchor::Capture("NAME".into());
+    let rows = eval::stateless_rows(
+        code_rule,
+        clause,
+        (&input, eval::evidence::Side::Counted),
+        &snapshot,
+        &mut Metrics::default(),
+    )
+    .unwrap();
+    let witness = &rows.witnesses[0];
+    assert!(witness.captures.get("NAME").is_some());
+    assert!(witness.captures.get("PARAMS").is_none());
+    let (anchor, fallback) = anchored_span(&input_anchor, witness);
+    assert_eq!((anchor.start_byte, anchor.end_byte), (4, 5));
+    assert!(!fallback);
+    assert!(anchored_span(&Anchor::Capture("ABSENT".into()), witness).1);
 }

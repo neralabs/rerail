@@ -67,10 +67,10 @@ fn advance(session: &mut Session<'_>, context: &mut Context, result: &mut Evalua
         }
     }
 }
-pub(super) fn evaluate(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
+pub(in crate::code_rule_dsl) fn evaluate(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
     run(jobs, producer::MAX_RESIDENT_BYTES, SQL_RESIDENT_BYTES).0
 }
-pub(super) fn evaluate_prepared(
+pub(in crate::code_rule_dsl) fn evaluate_prepared(
     jobs: Vec<Job<'_>>,
     prepare: impl FnMut(
         &mut Inputs,
@@ -121,8 +121,9 @@ fn run_prepared(
     let mut deferred = None;
     let _syntax = super::syntax::Pool::install();
     let mut allowance = producer::Allowance::default();
-    let corpus = crate::code_rule_dsl::matcher::CorpusSlot::current();
-    let scope = corpus.sql_backing().enter();
+    // W has no matcher corpus to own the SQL backing (D's `CorpusSlot`): each run owns its own.
+    let backing = super::pool::Backing::default();
+    let scope = backing.enter();
     let pool = scope.pool();
     let mut stats = Stats::default();
     while deferred.is_some() || !jobs.is_empty() {
@@ -152,11 +153,7 @@ fn run_prepared(
                         "producer-prepare",
                         "admitted-session",
                     );
-                    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
-                    let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
-                    let crate::code_rule_dsl::model::ClauseKind::Relational(plan) =
-                        &job.clause.kind
-                    else {
+                    let Some(plan) = job.clause.data_layer.as_deref() else {
                         return Err(super::invalid("expected relational job"));
                     };
                     if plan.require_nonempty.is_some() {

@@ -397,13 +397,13 @@ fn authored_comments_and_interleaved_open_cursors_remain_engine_submissions() {
 }
 
 /// A fresh directory for one profiler (W has no `tempfile`).
-struct TempDir(std::path::PathBuf);
+pub(super) struct TempDir(std::path::PathBuf);
 impl TempDir {
-    fn path(&self) -> &std::path::Path {
+    pub(super) fn path(&self) -> &std::path::Path {
         &self.0
     }
 }
-fn tempdir() -> TempDir {
+pub(super) fn tempdir() -> TempDir {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();

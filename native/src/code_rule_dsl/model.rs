@@ -610,6 +610,9 @@ pub(super) struct CompiledClause {
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub(super) decision: bool,
+    /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19).
+    #[cfg(test)]
+    pub(super) data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(super) trait Source: Send + Sync {
+pub(in crate::code_rule_dsl) trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -73,7 +73,7 @@ pub(super) trait Source: Send + Sync {
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
 }
 #[derive(Default)]
-pub(super) struct Counters {
+pub(in crate::code_rule_dsl) struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
@@ -105,7 +105,11 @@ impl Facts {
                 crate::code_rule_dsl::language::tape_tag(*self.doc.get_lang())
                     .expect("tape grammar"),
             ),
-            *self.doc.index_source_digest(),
+            {
+                // W's tape keeps no source digest (D's `index_source_digest`): hash the source.
+                use sha2::Digest;
+                sha2::Sha256::digest(self.doc.get_source().as_bytes()).into()
+            },
         )
     }
 
@@ -114,7 +118,8 @@ impl Facts {
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
         let language =
             eval::file_language(file).ok_or_else(|| invalid("syntax source has no grammar"))?;
-        let (doc, lines) = eval::file_tape(language, file)?;
+        let (doc, lines) = eval::file_tape(language, file)?
+            .ok_or_else(|| invalid("syntax source was not parsed"))?;
         if !doc.syntax_error_ranges().is_empty() {
             return Err(invalid("syntax source is incomplete"));
         }
@@ -201,16 +206,15 @@ impl Facts {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.rows.len()
     }
-    pub(super) fn read_ignores(&self) -> crate::code_rule_dsl::suppress::RerailIgnores {
+    pub(in crate::code_rule_dsl) fn read_ignores(&self) -> crate::code_rule_dsl::suppress::RerailIgnores {
         use ast_grep_core::Doc;
         let target = ast_grep_core::AstGrep::doc(self.doc.clone());
         crate::code_rule_dsl::suppress::RerailIgnores::read(
             &target.root(),
             self.doc.get_source(),
-            &self.lines,
         )
     }
-    pub(super) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
+    pub(in crate::code_rule_dsl) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
         // The preorder table is ordered by source start. Check only equal-start nodes.
         let at = self
             .rows
@@ -273,7 +277,7 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(super) fn subtree_ends(&self) -> &[u32] {
+    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
@@ -995,7 +999,7 @@ pub(super) fn sources(
     Ok(output)
 }
 
-pub(super) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
+pub(in crate::code_rule_dsl) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
     files
         .iter()
         .map(|(_, facts)| {
@@ -1006,7 +1010,7 @@ pub(super) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::p
         })
         .collect()
 }
-pub(super) fn demand(
+pub(in crate::code_rule_dsl) fn demand(
     db: &Connection,
     spec: &super::Reachability,
     prepared: &[super::producer::Tree],

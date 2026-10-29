@@ -1,7 +1,7 @@
 //! Infer storage only for selected physical producers. Logical SQL scopes retain SQLite types.
 use crate::code_rule_dsl::{
     json::invalid,
-    relational::{self, Plan, schema},
+    waves::relational::{self, Plan, schema},
 };
 use napi::Result;
 use std::sync::Arc;

@@ -485,6 +485,30 @@ pub(super) fn relational_rows(
         .collect()
 }
 
+/// Each input relation's rows of D's relational plan (test-only, open item O19).
+#[cfg(test)]
+pub(super) fn data_layer_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &crate::code_rule_dsl::waves::relational::Plan,
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+) -> Result<Vec<evidence::Rows>> {
+    let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            stateless_rows(
+                code_rule,
+                clause,
+                (input, evidence::Side::Counted),
+                snapshot,
+                metrics,
+            )
+        })
+        .collect()
+}
+
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
 pub(in crate::code_rule_dsl) fn stateless_rows(

@@ -10,7 +10,7 @@ use std::sync::{
 };
 
 /// A SQLite value borrowed until the bounded INSERT batch has consumed it.
-pub(super) struct Borrowed<'a>(pub rusqlite::types::ValueRef<'a>);
+pub(in crate::code_rule_dsl) struct Borrowed<'a>(pub rusqlite::types::ValueRef<'a>);
 impl rusqlite::ToSql for Borrowed<'_> {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         Ok(rusqlite::types::ToSqlOutput::Borrowed(self.0))
@@ -35,7 +35,7 @@ struct Stats {
     max_buffered_bytes: usize,
 }
 
-pub(super) fn insert_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
+pub(in crate::code_rule_dsl) fn insert_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     db: &Connection,
     name: &str,
     width: usize,
@@ -114,7 +114,7 @@ pub(super) fn bound_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
 
 /// Derived writes spend SQLite VM work; the producing algorithm charges visits.
 /// They are not new AST inputs, and the loop still polls cancellation.
-pub(super) fn stage_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
+pub(in crate::code_rule_dsl) fn stage_rows<R: IntoIterator<Item = I>, I: rusqlite::ToSql>(
     db: &Connection,
     name: &str,
     width: usize,

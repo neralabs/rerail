@@ -13,7 +13,7 @@ pub(in crate::code_rule_dsl) struct Reachability {
     pub(in crate::code_rule_dsl) expand: bool,
 }
 
-pub(super) fn create(
+pub(in crate::code_rule_dsl) fn create(
     db: &super::Database,
     stage: &Stage,
     spec: &Reachability,
@@ -36,7 +36,7 @@ pub(super) fn create(
         "1"
     };
     #[cfg(feature = "code-rule-profile")]
-    let span = super::super::profile::trace::Span::start("sql-reach-prepare", &stage.name);
+    let span = crate::code_rule_dsl::profile::trace::Span::start("sql-reach-prepare", &stage.name);
     // Unary plus preserves each scalar value and removes declared affinity from
     // CTAS identity columns. Otherwise INTEGER source columns force a numeric
     // comparison against the untyped key catalog and disable its key index term.
@@ -90,7 +90,7 @@ pub(super) fn create(
     #[cfg(feature = "code-rule-profile")]
     drop(span);
     #[cfg(feature = "code-rule-profile")]
-    let mut span = super::super::profile::trace::Span::start("sql-reach-walk", &stage.name);
+    let mut span = crate::code_rule_dsl::profile::trace::Span::start("sql-reach-walk", &stage.name);
     let (mut batches, mut requested) = (0, 0);
     if spec.forest {
         (requested, batches) = super::forest::materialize(
@@ -138,7 +138,7 @@ pub(super) fn create(
     #[cfg(not(feature = "code-rule-profile"))]
     let _ = (batches, requested);
     #[cfg(feature = "code-rule-profile")]
-    let _span = super::super::profile::trace::Span::start("sql-reach-index", &stage.name);
+    let _span = crate::code_rule_dsl::profile::trace::Span::start("sql-reach-index", &stage.name);
     if !spec.forest {
         db.execute_batch(&format!(
             "CREATE INDEX {} ON {pairs}(node,root); ANALYZE temp.{pairs}",

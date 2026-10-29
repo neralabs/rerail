@@ -9,7 +9,7 @@
 //! - `persisted` and `storage`: stored results and the content store.
 //! - `results` and `memory`: reporting and memory accounting.
 
-mod api;
+pub(in crate::code_rule_dsl) mod api;
 mod calls_state;
 mod crossfile;
 mod documents;

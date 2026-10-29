@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-pub(in crate::code_rule_dsl::relational) fn save(
+pub(in crate::code_rule_dsl::waves::relational) fn save(
     db: &Database,
     rule: &str,
     clause: &str,
@@ -61,7 +61,7 @@ pub(in crate::code_rule_dsl::relational) fn save(
                 name,
                 std::iter::once("__path")
                     .chain(["__start", "__end"])
-                    .chain(input.project.iter().map(|p| p.field.as_str()))
+                    .chain(input.ast.project.iter().map(|p| p.field.as_str()))
                     .collect::<Vec<_>>(),
             )
         })

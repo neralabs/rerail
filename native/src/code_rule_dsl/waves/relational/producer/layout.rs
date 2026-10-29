@@ -3,7 +3,7 @@ use super::{Demand, Resident};
 use std::{collections::HashSet, sync::Arc};
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl::relational) struct Footprint {
+pub(in crate::code_rule_dsl::waves::relational) struct Footprint {
     documents: HashSet<usize>,
     selectors: HashSet<(usize, usize)>,
     bytes: usize,
@@ -16,14 +16,14 @@ impl Footprint {
             bytes: resident.resident_bytes,
         }
     }
-    pub(in crate::code_rule_dsl::relational) fn admit(
+    pub(in crate::code_rule_dsl::waves::relational) fn admit(
         &mut self,
         demand: &Demand,
         limit: usize,
     ) -> bool {
         self.admit_parts(&demand.trees, demand.roots.len(), limit)
     }
-    pub(in crate::code_rule_dsl::relational) fn admit_trees(
+    pub(in crate::code_rule_dsl::waves::relational) fn admit_trees(
         &mut self,
         trees: &[super::Tree],
         limit: usize,
@@ -60,7 +60,7 @@ mod tests {
     use super::*;
     use crate::code_rule_dsl::{
         model::FileInput,
-        relational::{
+        waves::relational::{
             producer::{Root, Tree},
             syntax::Facts,
         },

@@ -1,6 +1,6 @@
 //! Indexed access to completed output. No producer runs in callbacks.
 use super::{Completed, MAX_OUTPUT_BYTES, Output, capacity, source, sql_error};
-use crate::code_rule_dsl::relational::syntax::Source;
+use crate::code_rule_dsl::waves::relational::syntax::Source;
 use rusqlite::{types::Value, vtab::Context};
 use std::sync::{
     Arc,

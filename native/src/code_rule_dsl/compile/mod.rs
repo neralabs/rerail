@@ -527,12 +527,26 @@ fn compile_clause(
         &kind,
         &format!("{path}/violation"),
     )?;
+    #[cfg(test)]
+    let data_layer = clause.get("relational").and_then(|relational| {
+        crate::code_rule_dsl::waves::relational::compile::compile(
+            relational,
+            &format!("{path}/relational"),
+            capabilities,
+            defines,
+            required_ast,
+        )
+        .ok()
+        .map(std::sync::Arc::new)
+    });
     Ok(CompiledClause {
         id,
         violation,
         kind,
         synthetic: false,
         decision: false,
+        #[cfg(test)]
+        data_layer,
     })
 }
 

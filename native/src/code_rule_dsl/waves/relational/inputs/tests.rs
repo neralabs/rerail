@@ -1,7 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::{
     CodeRuleDslRuntime,
-    model::ClauseKind,
     violations::{
         Captures, Span,
         projection::{self, Input},
@@ -12,11 +11,11 @@ use serde_json::json;
 use std::sync::atomic::Ordering;
 
 fn rule() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"stream","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"identifier","pattern":"$NAME"}}},"project":{"name":"capture.NAME","pos":"capture.NAME.startByte"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name,pos FROM facts"},"violation":{"code":"STREAM","message":"Stream","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../capabilities.json").into()).unwrap()
+    CodeRuleDslRuntime::compile(json!({"format":"rerail.policy/v1","id":"stream","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"identifier","pattern":"$NAME"}}},"project":{"name":"capture.NAME","pos":"capture.NAME.startByte"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name,pos FROM facts"},"violation":{"code":"STREAM","message":"Stream","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../../capabilities.json").into()).unwrap()
 }
 fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
     let _scope = projection::Scope::enter();
-    let names: Arc<[String]> = sink.input.project.iter().map(|p| p.field.clone()).collect();
+    let names: Arc<[String]> = sink.input.ast.project.iter().map(|p| p.field.clone()).collect();
     for row in 0..count {
         let values = names.iter().map(|name| match name.as_str() {
             "name" if row % 2 == 0 => Input::Source(source, 0..source.len()),
@@ -41,6 +40,7 @@ fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
             message: None,
             fix: None,
             ignored: false,
+            sql_violation: None,
         });
         assert!(witness.captures.projection().is_none());
     }
@@ -48,7 +48,7 @@ fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
 #[test]
 fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
     let rule = rule();
-    let ClauseKind::Relational(plan) = &rule.inner.clauses[0].kind else {
+    let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
         panic!()
     };
     let input = &plan.inputs[0].1;
@@ -58,6 +58,7 @@ fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
         &db,
         "facts",
         &input
+            .ast
             .project
             .iter()
             .map(|p| p.field.clone())
@@ -102,7 +103,7 @@ fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
 #[test]
 fn failed_stream_rolls_back_previously_imported_batches() {
     let rule = rule();
-    let ClauseKind::Relational(plan) = &rule.inner.clauses[0].kind else {
+    let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
         panic!()
     };
     let input = &plan.inputs[0].1;
@@ -112,6 +113,7 @@ fn failed_stream_rolls_back_previously_imported_batches() {
         &db,
         "facts",
         &input
+            .ast
             .project
             .iter()
             .map(|p| p.field.clone())
