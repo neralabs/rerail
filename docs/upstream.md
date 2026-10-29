@@ -260,10 +260,12 @@ Once the locks are committed, **Pack test data is in S3** passes and the conform
 
 ### Forks
 
-prep reads a fork's head through `refs/pull/<n>/head`, so a fork's data is packed, approved and uploaded like any
-other, but finish cannot push to a fork's branch: the comment carries the locks, and the contributor commits them and
-deletes `publish/`. CI's jobs that read S3, the conformance check among them, run only for pushes and same-repository
-pull requests ([CI](#ci)), so a fork's data is judged by the approver and, after merge, by main's CI.
+A fork's pull request runs no CI: maintainers don't approve fork runs, since CI is costly to run. Its data is not
+published from the fork either. When a maintainer ports the change to a branch here
+([CONTRIBUTING.md](../CONTRIBUTING.md#proposing-a-change-from-your-fork)), its `publish/` comes with it, CI judges it
+there, and the publish runs for the ported pull request. The workflow can still read a fork's head through
+`refs/pull/<n>/head` and give a fork's locks in the comment, since finish cannot push to a fork's branch, but the
+project does not publish from forks.
 
 ### Removing data
 
@@ -503,6 +505,6 @@ CI verifies the data by sha256 only: it never derives it again or asks upstream.
 artifact, and no CI job checks that it reproduces from the pins; the approving code owner checks that what a pull
 request publishes follows from it, and the conformance check judges the rules on it.
 
-Forks and Dependabot get no OIDC token, so `test-data`, `test-data-in-s3`, `tools` (and with it the conformance
-comment) and the other jobs that read pack data run only for pushes and same-repository pull requests. On a fork's
-pull request, structure metric #3 is what holds `publish/` back from merging.
+A fork's pull request runs no CI: maintainers don't approve fork runs, and what goes in is ported to a branch here
+([Forks](#forks)). Dependabot gets no OIDC token, so `test-data`, `test-data-in-s3`, `tools` (and with it the
+conformance comment) and the other jobs that read pack data run only for pushes and same-repository pull requests.

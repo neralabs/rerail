@@ -32,7 +32,7 @@
   publisher
 
 ## Repository
-- [GOVERNANCE.md](GOVERNANCE.md): who opens pull requests, who the maintainers are, and how decisions are made
+- [GOVERNANCE.md](GOVERNANCE.md): who takes part and how, who the maintainers are, and how decisions are made
 - [repository-structure.md](repository-structure.md): the layout rules and the structure gate
   (`npm run check:structure`) that enforces them
 

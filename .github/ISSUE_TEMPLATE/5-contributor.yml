@@ -1,0 +1,36 @@
+name: Become a contributor
+description: Ask to push branches here and open pull requests with CI. Anyone can propose a change from a fork without this.
+title: "Contributor: "
+labels: [trust-request, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Contributors push branches to this repository and open pull requests from them, so CI runs on their changes ([how it works](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#contributors)). To propose a single change, you don't need this: open a pull request from your fork or link it in an issue ([proposing a change from your fork](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#proposing-a-change-from-your-fork)). Already working in an issue? Ask there instead.
+        We reply within 5 business days and decide within 10. If it's a yes, a maintainer adds you to the list, gives you push access and assigns you the work; if it's not yet, they say why and what would change it.
+  - type: textarea
+    id: change
+    attributes:
+      label: What you want to change
+      description: Link the issue if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: How you'd go about it
+      description: The approach, the parts of the repository it touches, and how you'd test it.
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: Anything that helps us know your work
+      description: Changes you proposed from your fork here, and links to pull requests or projects elsewhere. Optional.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send it
+      options:
+        - label: I've read the [contributing guide](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md) and agree to follow the [Code of Conduct](https://github.com/neralabs/rerail/blob/main/CODE_OF_CONDUCT.md).
+          required: true
