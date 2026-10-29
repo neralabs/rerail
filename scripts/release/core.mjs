@@ -77,6 +77,17 @@ export function setLockVersion(lock, version) {
 }
 
 /**
+ * The Claude Code plugin's files that pin core's version (`plugins/claude`, the installer the Claude plugin directory
+ * lists): its manifest's `version`, and the `npx @neralabs/rerail@<version>` its skill runs and its README shows.
+ */
+export const CLAUDE_PLUGIN_PINS = ["plugins/claude/.claude-plugin/plugin.json", "plugins/claude/skills/install/SKILL.md", "plugins/claude/README.md"];
+
+/** The text of one of CLAUDE_PLUGIN_PINS with its manifest `version` and every `@neralabs/rerail@<version>` set to `version`. */
+export function setClaudePluginVersion(text, version) {
+  return text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`).replace(/@neralabs\/rerail@\d[^\s`]*/gu, `@neralabs/rerail@${version}`);
+}
+
+/**
  * Whether core `version` may be tagged for release, given the `v*` tags that exist: it must not be tagged yet and must
  * be later than every released version, so a version moved backwards by mistake is never published. Returns the
  * reason it may not, or null.

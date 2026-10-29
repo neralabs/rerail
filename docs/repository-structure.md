@@ -16,6 +16,7 @@ structure review on PR #1 plus #25, the generated-file manifest.
 | `fixtures/packs/` | Pack-validator inputs |
 | `test/`, `integration/` | Unit and integration tests; helpers in `support/` |
 | `e2e/` | The dashboard's Playwright browser specs over seeded scenarios (`e2e/README.md`); helpers in `support/` |
+| `plugins/claude/` | The Claude Code plugin the Claude plugin directory lists: one skill, `install`, that runs `npx @neralabs/rerail@<version> setup --relay`; no hooks or binaries ([release](release.md)) |
 | `scripts/generate/` | Generators of engine, host and pack data, listed in `scripts/generate/README.md` |
 
 ## Running the gate
