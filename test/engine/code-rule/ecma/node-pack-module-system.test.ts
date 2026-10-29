@@ -25,15 +25,18 @@ async function directory(prefix: string): Promise<string> {
 }
 
 /**
- * The pack's documents that pinned sourceType commonjs before each file kept its own module system. All are candidates
- * until they are promoted.
+ * The pack's documents that pinned sourceType commonjs before each file kept its own module system. n-prefer-promises-dns
+ * and n-no-deprecated-api are candidates until they are promoted; the others ship.
  */
+const CANDIDATES = new Set(["n-prefer-promises-dns", "n-no-deprecated-api"]);
 const CODE_RULES = await Promise.all(
   [
     "n-exports-style", "n-global-require", "n-no-exports-assign", "n-no-path-concat", "n-prefer-global-buffer", "n-prefer-global-console",
     "n-prefer-global-process", "n-prefer-global-text-decoder", "n-prefer-global-text-encoder", "n-prefer-global-url-search-params",
     "n-prefer-global-url", "n-prefer-promises-dns", "n-prefer-promises-fs", "n-no-deprecated-api",
-  ].map(async id => codeRuleSchema.parse(JSON.parse(await readFile(repositoryPath("packs", "node", "candidates", "rules", `${id}.json`), "utf8")))),
+  ].map(async id =>
+    codeRuleSchema.parse(JSON.parse(await readFile(repositoryPath("packs", "node", ...(CANDIDATES.has(id) ? ["candidates"] : []), "rules", `${id}.json`), "utf8"))),
+  ),
 );
 
 /** CommonJS code: each line is one rule's finding there. */

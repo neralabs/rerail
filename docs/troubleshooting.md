@@ -308,7 +308,7 @@ restart. Anyone holding the link can read and change your rules, so do not paste
 interface: any other container on the same Docker network (a Compose service, a sidecar) reaches it directly, and is
 refused without the capability.
 
-### The dashboard says "This browser needs the dashboard link"
+### The dashboard says "Needs the dashboard link"
 
 Every request for your data needs the daemon's access capability, which the page keeps in your browser once it has
 been opened from the link `rerail manage` opens or `rerail daemon start` prints. A bookmark, a new browser or

@@ -1,11 +1,11 @@
 # Rerail rule pack: Python
 
-136 code rules for Python, ported from Ruff 0.16.9 (98 rules) and Bandit 1.9.4 (38 tests). Each is scored against the
+160 code rules for Python, ported from Ruff 0.16.9 (111 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
-every disagreement declared in `divergences.json` (one today: ASYNC221 on a probe). Every port honours its tool's
+every disagreement declared in `divergences.json` (two today: ASYNC221 on a probe, and B406 on a Django sample, where Bandit is wrong). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`).
-24 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`). The conformance check
+25 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`). The conformance check
 ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The rename variants that test
 the ECMAScript packs against fitting to their tests (`holds-under-rename`) do not exist for Python yet, so the
 real-code samples are the pack's only such evidence.
@@ -21,7 +21,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, and probes of inputs the ports once misread), its expected findings (`fixtures.expected.json`), the generator (`generate.py`, sharing `upstream/common.py`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
-| `candidates/rules/` | Ports still being evaluated (98 Ruff and Bandit ports): never shipped or listed in `pack.json`. 96 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) have no expected findings |
+| `candidates/rules/` | Ports still being evaluated (74 Ruff and Bandit ports): never shipped or listed in `pack.json`. 72 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) and INP001 (tested only with a `namespace-packages` option) have no expected findings |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 
 Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
@@ -458,3 +458,67 @@ Port of Ruff's SIM910 (dict-get-with-none-default): `.get(key, None, ...)` whose
 ### `ruff-t100-debugger`
 
 Port of Ruff's T100 (debugger): imports of debugger modules (`is_debugger_import`) and of debugger functions (`from M import n` with `M.n` in `is_debugger_call`), once per imported name, matched by module with `resolves.imported`, relative imports by the module's text (`relative: "text"`: Ruff ignores the level). It also flags calls whose callee resolves to a debugger function (`resolve_qualified_name` through the file's imports, or the builtin `breakpoint`).
+
+### `bandit-b103-set-bad-file-permissions`
+
+Any call whose callee name contains `chmod`, with a literal mode. World-write (0o002) is reported by its own clause (higher severity in Bandit); group-write, group-execute or world-execute (0o031 bits) by the other.
+
+### `bandit-b406-import-xml-sax`
+
+Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions.
+
+### `bandit-b610-django-extra-used`
+
+Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported.
+
+### `ruff-b015-useless-comparison`
+
+Port of Ruff's B015 (useless-comparison): an expression statement whose value is a comparison (parentheses transparent). When the statement is the last one of a function body the message asks whether the result was meant to be returned. Reported on the comparison.
+
+### `ruff-b018-useless-expression`
+
+Port of Ruff's B018 (useless-expression): an expression statement (parentheses transparent; a bare tuple counts) that is not a comparison, a string or f-string literal, or `...`, and has no effect in Ruff's `contains_effect` sense: no call other than an argument-less `set()`/`list()`/`tuple()`/`dict()`/`frozenset()`, no `await`, `yield`, walrus, comprehension, generator or subscript, and no binary operation with an operand that is not a literal or display, anywhere inside (lambda bodies included). An attribute access with an effect is reported as a useless attribute access. The builtin names must resolve to the unshadowed builtins (`resolves`, Ruff's `has_builtin_binding`). Reported on the expression.
+
+### `ruff-b035-static-key-dict-comprehension`
+
+Port of Ruff's B035 (static-key-dict-comprehension): the key of a dict comprehension is constant: a literal, a name the comprehension's generators never store (targets and walrus targets, nested ones included), or an attribute, subscript, operator or tuple built only from such parts. Reported on the key, inside any parentheses.
+
+### `ruff-f402-import-shadowed-by-loop-var`
+
+Port of Ruff's F402 (import-shadowed-by-loop-var) on the engine's shadowed-binding pairs (M10a `binds.redefines`): a `for` statement's loop variable (any nesting of its target) whose shadowed binding, in its own scope or the enclosing function or module scope, is an import (used or not), on the same fork (Ruff's same_branch). Reported on the loop variable.
+
+### `ruff-f704-yield-outside-function`
+
+Port of Ruff's F704 (yield-outside-function, a semantic syntax error) with default settings: `yield`, `yield from` or `await` whose scope does not allow it. Scopes are found by climbing: a function or lambda body allows both; a class body or the module allows neither; a list, set or dict comprehension rejects `yield` and is transparent for `await`; a generator expression rejects `yield` and allows `await`. The first iterable of a comprehension, parameter defaults, decorators and class bases belong to the enclosing scope. Reported on the expression.
+
+### `ruff-f722-forward-annotation-syntax-error`
+
+Port of Ruff's F722 (forward-annotation-syntax-error) with default settings: a string Ruff parses as a type definition (a string annotation, a `type` value, a `cast`/`TypeVar` argument, a typing generic's `"..."` slice), read with the `annotation` grammar. Three checks: a string Ruff's parser refuses (the parse is one `ERROR` node), reported on the string; each semantic syntax error Ruff's checker reports in a string it parsed (`await` or `yield` outside a function, a walrus rebinding a comprehension variable, duplicate arguments, `__debug__` stored, a name used before its `global`, ...: an `ERROR` node after the expression), reported at the offending node; and Ruff's second error on an `await` evaluated outside any function ("`await` statement outside of a function": the string's host is not in a function body with no class between them, and the `await` is not in a lambda's body or a generator expression's element, conditions or later iterables), at the `await`. Strings nested in one (`List['a b']` inside a string annotation) are read too. Not inside a function decorated with a `no_type_check` that resolves to `typing`, `_typeshed` or `typing_extensions` (Ruff's match_typing_expr): its parameters, defaults, return annotation and body. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/F722.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it. Divergence: a string after the first element of a subscript whose generic resolves to a jaxtyping import (`Float[Array, "b n"]`, `jaxtyping.Float[...]`, `jt.Shaped[...]`) is a jaxtyping shape, which jaxtyping parses with its own grammar, not a forward annotation, so it is not reported. Ruff 0.16.9 reports it. A shape inside a string annotation (`"Float[Array, 'b n']"`) is still reported.
+
+### `ruff-sim102-collapsible-if`
+
+Port of Ruff's SIM102 (collapsible-if) with default settings: an `if` whose body (or whose last `elif` clause's body, when the last clause is an `elif`) is exactly one `if` without `elif`/`else`, when the `if`'s own body is one statement, the tested condition is not `__name__ == "__main__"` or a boolean literal, and the `if` is not a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Every `if` of a nested chain is reported, as Ruff does (its parent-chain exemption compares the parent with itself and never applies). Reported at the `if` or `elif` keyword.
+
+### `ruff-sim103-needless-bool`
+
+Port of Ruff's SIM103 (needless-bool): an `if`/`else`, a trailing `elif`/`else`, or an `if` followed by a `return` statement, whose two branches are single `return True` / `return False` statements with opposite values, unless the `if` is a `sys.version_info`/`sys.platform` or `TYPE_CHECKING` block. Reported at the `if` (or the last `elif`).
+
+### `ruff-sim117-multiple-with-statements`
+
+Port of Ruff's SIM117 (multiple-with-statements): a `with` whose body is exactly one `with` of the same kind (both `async` or neither), unless either has a single item that calls `asyncio.timeout`/`timeout_at`, `anyio.CancelScope`/`fail_after`/`move_on_after` or `trio.fail_after`/`fail_at`/`move_on_after`/`move_on_at` (`resolve_qualified_name`); only the outermost `with` of a mergeable chain is reported.
+
+### `ruff-sim118-in-dict-keys`
+
+Port of Ruff's SIM118 (in-dict-keys): `key in X.keys()` / `key not in X.keys()` (a single comparison), a non-async `for key in X.keys()` and a comprehension `for key in X.keys()`, where `.keys()` has no arguments and `X` is not the name `self`. Reported from the key (with its parentheses).
+
+### `ruff-sim222-expr-or-true`
+
+Port of Ruff's SIM222 (expr-or-true), `is_short_circuit` in flake8_simplify/rules/ast_bool_op.rs:736. Over the values of one `or` run (tree-sitter nests them to the left; parentheses start a new run), a value whose truthiness is unknown is skipped when the run is not in a boolean test, or when it has a side effect (`contains_effect`). The first value that is not skipped and is truthy (`True`, a non-empty literal, ...), or whose successor is, triggers; the finding starts at the value after the last skipped value before it (the whole expression when none), as Ruff's `furthest`. Truthiness follows `Truthiness::from_expr`, including f-string emptiness and `list(...)`-style calls. The finding spans that value only; Ruff's range runs to the end of the expression. Ported from the Ruff conformance suite (rerail/conformance/ruff/rules/SIM222.json at 3f102adcb), with Ruff's `# noqa` honoured as the Ruff CLI honours it.
+
+### `ruff-sim223-expr-and-false`
+
+Port of Ruff's SIM223 (expr-and-false), `is_short_circuit` in flake8_simplify/rules/ast_bool_op.rs:736. Over the values of one `and` run (tree-sitter nests them to the left; parentheses start a new run), a value whose truthiness is unknown is skipped when the run is not in a boolean test, or when it has a side effect (`contains_effect`). The first value that is not skipped and is falsy (`False`, `None`, zero, an empty literal, ...), or whose successor is, triggers; the finding starts at the value after the last skipped value before it (the whole expression when none), as Ruff's `furthest`. Truthiness follows `Truthiness::from_expr`, including f-string emptiness and `list(...)`-style calls. The finding spans that value only; Ruff's range runs to the end of the expression.
+
+### `ruff-w605-invalid-escape-sequence`
+
+Port of Ruff's W605 (invalid-escape-sequence): a backslash in a non-raw string, bytes, f-string or t-string literal part that does not start a valid escape (newline, backslash, quotes, `a b f n r t v`, octal digits `0`-`7`, `x`, `N`, `u`, `U`), one finding per backslash. tree-sitter-python leaves such a backslash as a bare `\` token inside `string_content` (valid escapes are `escape_sequence` nodes); f-string format specifiers keep their text unsplit, so a regex over the specifier walks its escapes and `each` reports every invalid backslash (a specifier with none binds no group and reports nothing).

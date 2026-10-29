@@ -56,8 +56,8 @@ is reported:
 
 The job writes `summary.md`, `gates.json` and the pull request comment (`comment.md`) to the `conformance-summary`
 artifact, and the `conformance-report` job posts the comment ([The pull request comment](#the-pull-request-comment)).
-A fork's or Dependabot's pull request has no OIDC token to fetch the data, so the job and its comment do not run for
-it ([docs/upstream.md](../docs/upstream.md#ci)).
+A fork's pull request runs no CI, and Dependabot's has no OIDC token to fetch the data, so the job and its comment do
+not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
 
 ### Per-rule checks
 
@@ -181,7 +181,8 @@ To promote a candidate, in one pull request:
 1. move its document to `rules/<id>.json` and point its `conformance.json` port's `policy` there (pack check 1 and 2);
 2. list it in `pack.json` with its `document`, `title` and `group`, `"on": false` when the comment says it starts off,
    and `"mode": "log"` when upstream's recommended configuration only warns
-   ([pack-format.md](../docs/pack-format.md#packjson));
+   ([pack-format.md](../docs/pack-format.md#packjson)); an `examples` pair on its `conformance.json` port moves to that
+   entry (pack check 3 runs it in either place; `conformance.json` refuses it on a shipped port);
 3. move its rule details from `candidates/README.md` to the pack's `README.md`, which publishes only the shipped rules
    (pack check 5);
 4. add a changeset for the pack, since `rules/`, `pack.json` and `README.md` are what it publishes
@@ -190,8 +191,8 @@ To promote a candidate, in one pull request:
    divergence declared ([REVIEW.md](../REVIEW.md)).
 
 Once shipped, the rule blocks CI on any failing check. A shipped rule that starts failing is fixed, or moved back to
-`candidates/` (its `pack.json` entry removed, its `policy` pointed back and its rule details moved to
-`candidates/README.md`).
+`candidates/` (its `pack.json` entry removed, its `policy` pointed back, its `examples` moved to its port and its rule
+details moved to `candidates/README.md`).
 
 ### Packs not gated
 

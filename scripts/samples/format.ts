@@ -48,7 +48,7 @@ export const sampleLabelsSchema = z.strictObject({
   labelledBy: z.strictObject({
     tool: nonEmpty,
     version: nonEmpty,
-    how: z.enum(["port-readiness recording", "corpus recording", "eslint test set", "hand-labelled"]),
+    how: z.enum(["port-readiness recording", "corpus recording", "eslint test set", "php test set", "hand-labelled"]),
   }),
   /** Pack rule id -> its labelled violations; `[]` is clean for that rule. Keys sorted. */
   expected: z.record(nonEmpty, z.array(sampleLabelSchema)),

@@ -9,7 +9,7 @@ test("a fresh browser needs the dashboard link once, which leaves no capability 
   try {
     const page = await context.newPage();
     await page.goto(dashboard);
-    await expect(page.locator("#status")).toContainText("needs the dashboard link");
+    await expect(page.locator("#status")).toContainText("Needs the dashboard link");
     // The page's own files load, but no data: no repository is listed, and a read says what to do.
     await expect(page.locator("#content")).toContainText("Open the dashboard with rerail manage");
     await expect(page.locator("#content [data-repo]")).toHaveCount(0);

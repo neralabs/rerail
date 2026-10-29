@@ -3,7 +3,7 @@
   "id": "rust",
   "name": "Rust",
   "category": "language",
-  "covers": "18 Clippy 0.1.99 lints ported to Rerail, 13 of them on and 5 off until turned on, each scored against Clippy's own findings on its UI tests; 16 more ports are candidates until they pass the conformance check.",
+  "covers": "Clippy's lints for readable, idiomatic Rust.",
   "reason": "matches Rust",
   "match": {
     "any": [
@@ -128,6 +128,107 @@
       "document": "rules/clippy-zero-prefixed-literal.json",
       "title": "Clippy zero_prefixed_literal: Integer literals starting with `0`",
       "group": "Clippy"
+    },
+    {
+      "id": "clippy-allow-attributes-without-reason",
+      "document": "rules/clippy-allow-attributes-without-reason.json",
+      "title": "Clippy allow_attributes_without_reason: Ensures that all `allow` and `expect` attributes have a reason",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-allow-attributes",
+      "document": "rules/clippy-allow-attributes.json",
+      "title": "Clippy allow_attributes: `#[allow]` will not trigger if a warning isn't found. `#[expect]` triggers if there are no warnings",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-decimal-literal-representation-threshold",
+      "document": "rules/clippy-decimal-literal-representation-threshold.json",
+      "title": "Clippy decimal_literal_representation: Using decimal representation when hexadecimal would be better (literal-representation-threshold = 0xFFFFFF)",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-decimal-literal-representation",
+      "document": "rules/clippy-decimal-literal-representation.json",
+      "title": "Clippy decimal_literal_representation: Using decimal representation when hexadecimal would be better",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-double-parens",
+      "document": "rules/clippy-double-parens.json",
+      "title": "Clippy double_parens: Warn on unnecessary double parentheses",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-else-if-without-else",
+      "document": "rules/clippy-else-if-without-else.json",
+      "title": "Clippy else_if_without_else: `if` expression with an `else if`, but without a final `else` branch",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-inconsistent-digit-grouping-no-fractions",
+      "document": "rules/clippy-inconsistent-digit-grouping-no-fractions.json",
+      "title": "Clippy inconsistent_digit_grouping: Integer literals with digits grouped inconsistently (unreadable-literal-lint-fractions = false)",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-needless-raw-string-hashes-one-allowed",
+      "document": "rules/clippy-needless-raw-string-hashes-one-allowed.json",
+      "title": "Clippy needless_raw_string_hashes: Suggests reducing the number of hashes around a raw string literal (allow-one-hash-in-raw-strings = true)",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-needless-raw-strings",
+      "document": "rules/clippy-needless-raw-strings.json",
+      "title": "Clippy needless_raw_strings: Suggests using a string literal when a raw string literal is unnecessary",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-redundant-field-names",
+      "document": "rules/clippy-redundant-field-names.json",
+      "title": "Clippy redundant_field_names: Checks for fields in struct literals where shorthands could be used",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-redundant-static-lifetimes",
+      "document": "rules/clippy-redundant-static-lifetimes.json",
+      "title": "Clippy redundant_static_lifetimes: Using explicit `'static` lifetime for constants or statics when elision rules would allow omitting them",
+      "group": "Clippy"
+    },
+    {
+      "id": "clippy-single-char-lifetime-names",
+      "document": "rules/clippy-single-char-lifetime-names.json",
+      "title": "Clippy single_char_lifetime_names: Warns against single-character lifetime names",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-unnested-or-patterns",
+      "document": "rules/clippy-unnested-or-patterns.json",
+      "title": "Clippy unnested_or_patterns: Unnested or-patterns, e.g., `Foo(Bar) | Foo(Baz)` instead of `Foo(Bar | Baz)`",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-unreadable-literal-no-fractions",
+      "document": "rules/clippy-unreadable-literal-no-fractions.json",
+      "title": "Clippy unreadable_literal: Long literal without underscores (unreadable-literal-lint-fractions = false)",
+      "group": "Clippy",
+      "on": false
+    },
+    {
+      "id": "clippy-unreadable-literal",
+      "document": "rules/clippy-unreadable-literal.json",
+      "title": "Clippy unreadable_literal: Long literal without underscores",
+      "group": "Clippy",
+      "on": false
     }
   ]
 }

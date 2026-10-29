@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "No rules yet: its 21 eslint-plugin-react and eslint-plugin-react-hooks ports are candidates until they pass the conformance check.",
+  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks.",
   "reason": "matches React",
   "match": {
     "any": [
@@ -23,5 +23,118 @@
       }
     ]
   },
-  "rules": []
+  "rules": [
+    {
+      "id": "react-button-has-type",
+      "document": "rules/react-button-has-type.json",
+      "title": "eslint-plugin-react button-has-type: Disallow usage of `button` elements without an explicit `type` attribute",
+      "group": "eslint-plugin-react",
+      "on": false
+    },
+    {
+      "id": "react-hooks-rules-of-hooks",
+      "document": "rules/react-hooks-rules-of-hooks.json",
+      "title": "eslint-plugin-react-hooks rules-of-hooks: Enforces the Rules of Hooks",
+      "group": "eslint-plugin-react-hooks"
+    },
+    {
+      "id": "react-jsx-key",
+      "document": "rules/react-jsx-key.json",
+      "title": "eslint-plugin-react jsx-key: Disallow missing `key` props in iterators/collection literals",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-comment-textnodes",
+      "document": "rules/react-jsx-no-comment-textnodes.json",
+      "title": "eslint-plugin-react jsx-no-comment-textnodes: Disallow comments from being inserted as text nodes",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-duplicate-props",
+      "document": "rules/react-jsx-no-duplicate-props.json",
+      "title": "eslint-plugin-react jsx-no-duplicate-props: Disallow duplicate properties in JSX",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-target-blank",
+      "document": "rules/react-jsx-no-target-blank.json",
+      "title": "eslint-plugin-react jsx-no-target-blank: Disallow `target=\"_blank\"` attribute without `rel=\"noreferrer\"`",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-jsx-no-undef",
+      "document": "rules/react-jsx-no-undef.json",
+      "title": "eslint-plugin-react jsx-no-undef: Disallow undeclared variables in JSX",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-children-prop",
+      "document": "rules/react-no-children-prop.json",
+      "title": "eslint-plugin-react no-children-prop: Disallow passing of children as props",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-danger",
+      "document": "rules/react-no-danger.json",
+      "title": "eslint-plugin-react no-danger: Disallow usage of dangerous JSX properties",
+      "group": "eslint-plugin-react",
+      "on": false
+    },
+    {
+      "id": "react-no-danger-with-children",
+      "document": "rules/react-no-danger-with-children.json",
+      "title": "eslint-plugin-react no-danger-with-children: Disallow when a DOM element is using both children and dangerouslySetInnerHTML",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-direct-mutation-state",
+      "document": "rules/react-no-direct-mutation-state.json",
+      "title": "eslint-plugin-react no-direct-mutation-state: Disallow direct mutation of this.state",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-find-dom-node",
+      "document": "rules/react-no-find-dom-node.json",
+      "title": "eslint-plugin-react no-find-dom-node: Disallow usage of findDOMNode",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-is-mounted",
+      "document": "rules/react-no-is-mounted.json",
+      "title": "eslint-plugin-react no-is-mounted: Disallow usage of isMounted",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-render-return-value",
+      "document": "rules/react-no-render-return-value.json",
+      "title": "eslint-plugin-react no-render-return-value: Disallow usage of the return value of ReactDOM.render",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-string-refs",
+      "document": "rules/react-no-string-refs.json",
+      "title": "eslint-plugin-react no-string-refs: Disallow using string references",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-no-unescaped-entities",
+      "document": "rules/react-no-unescaped-entities.json",
+      "title": "eslint-plugin-react no-unescaped-entities: Disallow unescaped HTML entities from appearing in markup",
+      "group": "eslint-plugin-react"
+    },
+    {
+      "id": "react-self-closing-comp",
+      "document": "rules/react-self-closing-comp.json",
+      "title": "eslint-plugin-react self-closing-comp: Disallow extra closing tags for components without children",
+      "group": "eslint-plugin-react",
+      "on": false
+    },
+    {
+      "id": "react-void-dom-elements-no-children",
+      "document": "rules/react-void-dom-elements-no-children.json",
+      "title": "eslint-plugin-react void-dom-elements-no-children: Disallow void DOM elements (e.g. `<img />`, `<br />`) from receiving children",
+      "group": "eslint-plugin-react",
+      "on": false
+    }
+  ]
 }
