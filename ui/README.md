@@ -7,13 +7,14 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 
 - `index.html` is the frame: the top bar over both columns, the sidebar (`#sidenav`), the content column (`#content`)
   and the sheet (`#panel`). `app.js` renders it and routes clicks to the region's actions.
-- `frame/` draws the frame: `topbar.js` the top bar (sidebar toggle, wordmark, repository pill and menu, status) and
-  `sidenav.js` the sidebar (Overview, one item per added rule pack with how many of its rules are on, Created by
-  you, Add rule packs, Create a rule, History by rule and by session, Settings).
+- `frame/` draws the frame: `topbar.js` the top bar (sidebar toggle, the wordmark, which opens Overview, repository
+  pill and menu, status) and `sidenav.js` the sidebar (Overview, one item per added rule pack with how many of its
+  rules are on, Created by you, Add rule packs, Create a rule, History by rule and by session, Settings).
 - `routes.js` holds the routes as pure functions of the URL: `#overview`, `#pack/<id>`, `#created`, `#packs`,
-  `#packs?review=1`, `#create`, `#history` (`?rule=<id>`), `#sessions`, `#settings` and `#rule/<id>`, and the links
-  from before v8 (`#rules`, `#activity`, `#rule-packs`). `shell.js` applies them and holds what every view shares:
-  render on demand, the toast and clipboard, the theme, the writes, opening and closing the sheet, navigation.
+  `#packs?review=1`, `#create`, `#history` (`?rule=<id>`, and `?outcome=steered|logged` for its chip), `#sessions`
+  (`?filter=violations|in-progress` for its chip), `#settings` and `#rule/<id>`, and the links from before v8
+  (`#rules`, `#activity`, `#rule-packs`). `shell.js` applies them and holds what every view shares: render on
+  demand, the toast and clipboard, the theme, the writes, opening and closing the sheet, navigation.
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, `pack` for a pack page and Created by you, `packs` for the catalog
@@ -30,12 +31,15 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
   whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists
-  and which one it shows), `sessions-model.js` (a session's events as turns and tool calls), `settings-model.js`
-  (coding agent states and the install date) and `repo-rules.js` (each repository's rule counts for Settings and the
-  repository menu). `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.
+  under its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns
+  and tool calls), `settings-model.js` (coding agent states and the install date) and `repo-rules.js` (each
+  repository's rule counts for Settings and the repository menu). `format.js` formats numbers and dates; `dom.js`
+  builds and reconciles elements.
 - `css/base.css` styles the frame and the shared pieces, `css/sheet.css` the sheet, and `css/<view>.css` each view.
   `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;
-  `npm run check:ui-tokens` checks them, and that `index.html` links every sheet under `css/`.
+  `npm run check:ui-tokens` checks them, and that `index.html` links every sheet under `css/`. The dashboard's own
+  tokens (titles, outcomes, the inset surface, the page background, shadows) are in one block at the top of
+  `base.css`, each a Nera token or a mix of them; no colour literal appears elsewhere in the CSS.
 
 The browser specs in `e2e/` drive it over seeded scenarios (`e2e/README.md`); `test/ui/` unit-tests its pure modules.
 
