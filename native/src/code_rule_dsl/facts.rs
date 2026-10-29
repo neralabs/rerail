@@ -14,6 +14,10 @@ pub(crate) mod memo;
 pub(crate) mod lmap;
 #[allow(dead_code)]
 pub(crate) mod facts_a;
+/// D's projection batches as copied; `runs` is their adaptation (open item O19).
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod d_projection;
 #[allow(dead_code)]
 pub(crate) mod observe;
 #[allow(dead_code)]
