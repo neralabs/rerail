@@ -9,7 +9,7 @@
  * - ruff-f722-forward-annotation-syntax-error: Ruff reads a jaxtyping shape (`Float[Array, "b n"]`) as a forward
  *   annotation; jaxtyping parses it with its own grammar.
  *
- * Each case is one file; the test asserts exactly which lines the candidate rule reports. The divergences are declared in
+ * Each case is one file; the test asserts exactly which lines the rule reports. The divergences are declared in
  * each rule's description and, where the pinned corpus has one, in packs/python/divergences.json.
  */
 import { readFile } from "node:fs/promises";
@@ -32,9 +32,8 @@ const evaluationSchema = z.object({
 
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  // The three ports are candidates, not shipped rules, so they load from `candidates/`.
-  const document = loadPackRuleDocuments([repositoryPath("packs", "python", "candidates")]).find(candidate => candidate.rule.id === ruleId);
-  if (document === undefined) throw new Error(`${ruleId} is not in packs/python/candidates`);
+  const document = loadPackRuleDocuments([repositoryPath("packs", "python")]).find(candidate => candidate.rule.id === ruleId);
+  if (document === undefined) throw new Error(`${ruleId} is not in packs/python`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }
 
