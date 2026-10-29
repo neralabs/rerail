@@ -9,8 +9,7 @@ change from their fork, but code reaches this repository only through a pull req
 contributors and the project's own automation open.
 [Reviewing the gate](#reviewing-the-gate) says when and how that is looked at again.
 
-Nera Software Inc. holds the copyright ([NOTICE](../NOTICE)). The licence does not grant use of the Rerail name
-(section 6 of the Apache License), so a fork can use the code but not present itself as Rerail.
+Nera Software Inc. holds the copyright ([NOTICE](../NOTICE)).
 
 ## Roles
 
