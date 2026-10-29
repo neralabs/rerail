@@ -1,0 +1,9 @@
+[project]
+name = "rerail-derive-lizard"
+version = "0"
+description = "lizard as the complexity pack's generator runs it: the release whose scores the parity corpus records."
+requires-python = "==3.13.*"
+dependencies = ["lizard==1.24.0"]
+
+[tool.uv]
+package = false

@@ -14,7 +14,7 @@ export interface PackRule {
 
 export interface PackConformance {
   pack: string;
-  family: string;
+  family: string | string[];
   rules: PackRule[];
 }
 

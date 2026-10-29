@@ -58,6 +58,7 @@ const ADAPTER_PACKAGES: Record<Exclude<GatesManifest["adapter"], "eslint" | "cli
   ruff: { ecosystem: "pypi", package: "ruff" },
   bandit: { ecosystem: "pypi", package: "bandit" },
   sqlfluff: { ecosystem: "pypi", package: "sqlfluff" },
+  lizard: { ecosystem: "pypi", package: "lizard" },
   // PHP_CodeSniffer moved to the PHPCSStandards organisation and still publishes under its old name.
   phpcs: { ecosystem: "packagist", package: "squizlabs/php_codesniffer" },
   // phpstan/phpstan-src is the source; phpstan/phpstan is the release Composer installs, tagged with the same versions.

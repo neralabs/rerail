@@ -247,7 +247,10 @@ describe("the complexity pack's match", () => {
   it.each([
     [{ "app/grade.py": "def grade(): pass\n" }, "matches *.py files in app", "app"],
     [{ "src/index.ts": "export {};\n", "lib/util.js": "module.exports = {};\n" }, "matches *.ts files in src and *.js files in lib", ""],
-  ])("fits Python, TypeScript and JavaScript source: %j", async (files, reason, folder) => {
+    [{ "app/Grade.php": "<?php\n", "resources/views/grade.blade.php": "<p></p>\n" }, "matches *.php files in app and *.blade.php files in resources/views", ""],
+    [{ "crates/core/src/lib.rs": "pub fn f() {}\n" }, "matches *.rs files in crates/core/src", "crates/core/src"],
+    [{ "web/src/App.vue": "<template></template>\n" }, "matches *.vue files in web/src", "web/src"],
+  ])("fits Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue source: %j", async (files, reason, folder) => {
     const root = await temporaryDirectory("rerail-complexity-match-");
     writeFiles(root, files);
     expect(recommendRulePacks(root, [complexity!]).map(found => [found.reason, found.folder])).toEqual([[reason, folder]]);
@@ -255,7 +258,16 @@ describe("the complexity pack's match", () => {
 
   it("does not fit a repository whose only such files are tests", async () => {
     const root = await temporaryDirectory("rerail-complexity-tests-");
-    writeFiles(root, { "tests/test_grade.py": "def test(): pass\n", "src/index.test.ts": "export {};\n", "main.go": "package main\n" });
+    writeFiles(root, {
+      "tests/test_grade.py": "def test(): pass\n",
+      "src/index.test.ts": "export {};\n",
+      "tests/Feature/GradeTest.php": "<?php\n",
+      "app/GradeTest.php": "<?php\n",
+      "tests/views/grade.blade.php": "<p></p>\n",
+      "tests/grade.rs": "fn f() {}\n",
+      "src/__tests__/Grade.vue": "<template></template>\n",
+      "main.go": "package main\n",
+    });
     expect(recommendRulePacks(root, [complexity!])).toEqual([]);
   });
 });
@@ -463,7 +475,7 @@ describe("rule pack API", () => {
       expect(await get(recommendations, rulePackRecommendationsSchema)).toEqual({
         repositoryKey, checkoutPath: checkout,
         recommendations: [
-          { packId: "complexity", ruleCount: 3, reason: "matches *.ts files in src", folder: "src" },
+          { packId: "complexity", ruleCount: complexity!.rules.filter(rule => rule.on).length, reason: "matches *.ts files in src", folder: "src" },
           { packId: "typescript", ruleCount: typescript!.rules.filter(rule => rule.on).length, reason: "matches *.ts files in src", folder: "src" },
         ],
       });

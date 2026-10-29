@@ -390,9 +390,15 @@ function referenceToolPins(root: string, pack: string): string[] {
   return paths.filter((path) => existsSync(join(root, path)));
 }
 
-/** A project's record of where its test data is taken from (docs/pack-format.md). */
-function upstreamRecordPath(root: string, pack: string, project: string): string {
-  const path = `packs/${pack}/licenses/${project}/UPSTREAM.md`;
+/**
+ * A project's record of where its test data is taken from (docs/pack-format.md), or undefined when the pack keeps no
+ * `licenses/<project>/`: a tool-pack whose test data is all Rerail's takes nothing from upstream (complexity's lizard
+ * scores of Rerail's own corpus), and pack check 6 requires a record wherever a pack does take something.
+ */
+function upstreamRecordPath(root: string, pack: string, project: string): string | undefined {
+  const directory = `packs/${pack}/licenses/${project}`;
+  if (!existsSync(join(root, directory))) return undefined;
+  const path = `${directory}/UPSTREAM.md`;
   if (!existsSync(join(root, path))) throw new Error(`${path} is missing: the bump moves its Source row with the pins`);
   return path;
 }
@@ -511,7 +517,7 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
   const record = upstreamRecordPath(root, pack, manifest.rerail.project);
   const gitHeads = ecosystem === "npm" ? await (async () => {
     const old = await npmGitHead(sources, pin.package, from.version);
-    if (old === null || old === from.commit || ![...scripts.own, ...scripts.shared, ...handPins, record].some((path) => edits.read(path).includes(old))) return null;
+    if (old === null || old === from.commit || ![...scripts.own, ...scripts.shared, ...handPins, ...(record === undefined ? [] : [record])].some((path) => edits.read(path).includes(old))) return null;
     const fresh = await npmGitHead(sources, pin.package, version);
     if (fresh === null) throw new Error(`a generator pins npm's gitHead of ${pin.package} ${from.version} (${old}), and npm records none for ${version}`);
     notes.push(`The generators or UPSTREAM.md pin npm's \`gitHead\` of ${pin.package}: ${old} for ${from.version}, ${fresh} for ${version}.`);
@@ -536,8 +542,8 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     edits.write(path, text);
   }
 
-  // UPSTREAM.md's Source row and heading.
-  edits.write(record, bumpUpstreamRecord(record, edits.read(record), { commits, tag: [from.tag, to.tag], version: [from.version, version] }));
+  // UPSTREAM.md's Source row and heading, when the pack takes anything from upstream.
+  if (record !== undefined) edits.write(record, bumpUpstreamRecord(record, edits.read(record), { commits, tag: [from.tag, to.tag], version: [from.version, version] }));
 
   // The tool-packs whose test data the changed runtime derives.
   const derive = [toolPack, ...[...manifests].filter(([id, other]) => id !== toolPack && other.upstream.runtime === newRuntime).map(([id]) => id)];
@@ -550,7 +556,7 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     conformancePath,
     `packs/${pack}/README.md`,
     `packs/${pack}/candidates/README.md`,
-    record,
+    ...(record === undefined ? [] : [record]),
     ...filesUnder(root, RECIPES_DIRECTORY),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], from.version, renames);
@@ -706,6 +712,7 @@ export async function planClippyBump(root: string, version: string, sources: Sou
   // UPSTREAM.md's Source row (unchanged when the point release keeps the .0 tag's Clippy) and its heading's Rust release.
   const oldSourceTag = oldTag ?? `rust-${pinned.toolchain}`;
   const record = upstreamRecordPath(root, "rust", manifest.rerail.project);
+  if (record === undefined) throw new Error(`packs/rust/licenses/${manifest.rerail.project}/ is missing: the bump moves its UPSTREAM.md Source row with the pins`);
   edits.write(record, bumpUpstreamRecord(record, edits.read(record), { commits: [[pinned.commit, source.commit]], tag: [oldSourceTag, source.tag], version: [pinned.toolchain, version] }));
 
   const leftovers = findLeftovers(root, edits, [
