@@ -52,8 +52,8 @@ maintainer, and that file is the public record of who they are.
 
 ## Reviewing the gate
 
-Contribution is gated to keep the project's CI, secrets and release workflows away from code nobody at Nera Software
-has read, and to keep review within the [response times](../CONTRIBUTING.md#response-times) a small team can meet.
+Contribution is gated so that every change reaching this repository comes from someone at Nera Software who answers for
+it, and so that review stays within the [response times](../CONTRIBUTING.md#response-times) a small team can meet.
 
 Nera Software reviews the gate at least every six months, in a public issue that records what was looked at, the
 outcome and why. The first review is due by 30 April 2027. Each review looks at:
@@ -61,8 +61,8 @@ outcome and why. The first review is due by 30 April 2027. Each review looks at:
 - the changes linked from forks since the last review: how many, how many went in, and how long each took to a first
   review;
 - whether the maintainers met the response times for issues and fork changes;
-- whether GitHub's controls let the project take pull requests from outside Nera Software without exposing its secrets
-  and release workflows.
+- whether there is a way to let named people outside Nera Software open pull requests without opening them to
+  everyone.
 
 When the gate opens, it opens first to people whose changes from a fork have gone in, and this document says how
 before it does.
