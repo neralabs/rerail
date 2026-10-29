@@ -16,15 +16,20 @@ concurrency:
 # Real-session jobs call hosted models with repository secrets, and the installed-packs job reads the restricted
 # rule packs from npm with one. GitHub withholds secrets from fork and Dependabot pull requests, so those jobs run on
 # pushes and same-repository pull requests only; there a missing secret or variable is a configuration error and
-# fails the job. The jobs that read the packs' test data (the Rust tests, unit tests, conformance harnesses and port
-# readiness) are guarded the same way: the archives the tool-packs' test-data.lock files name reach the Actions cache
-# from S3 under an OIDC token, which GitHub does not give those pull requests either. A test-data job holds that token
-# and only fills the cache (.github/actions/pack-test-data, `fetch: "true"`); the jobs that read the data hold none,
-# and restore, verify and extract what it saved (`fetch: "false"`). The data reaches CI only as the archives the locks
-# name (CONTRIBUTING.md, "Pack test data"). A pull request that changes a lock is also checked twice: S3 must hold every
-# archive and recording the locks name (test-data-in-s3, so nothing merges that main cannot read), and each tool-pack
-# whose test-data.lock it changes is derived again from its pins with no credentials and must come out byte for byte as
-# the archive (test-data-reproduces).
+# fails the job. The jobs that read the packs' test data (the Rust tests, unit tests and the conformance check) are
+# guarded the same way: the archives the tool-packs' test-data.lock files name reach the Actions cache from S3 under an
+# OIDC token, which GitHub does not give those pull requests either. A test-data job holds that token and only fills
+# the cache (.github/actions/pack-test-data, `fetch: "true"`); the jobs that read the data hold none, and restore,
+# verify and extract what it saved (`fetch: "false"`). The data reaches CI only as the archives the locks name, each
+# verified by its sha256 (CONTRIBUTING.md, "Pack test data"), and S3 must hold every archive the locks name
+# (test-data-in-s3, so nothing merges that main cannot read).
+#
+# CI does not derive pack test data again, on purpose: the data is a point-in-time artifact. What a pull request
+# publishes is checked by the code owner who approves its upload, reading the publish workflow's prep summary (what each
+# archive adds, changes and drops) against the pull request's pin, generator and recipe changes, and by the conformance
+# check on the new data (REVIEW.md, "Approving a pack data upload"). A reviewer re-derives it locally with
+# `npm run fixtures:derive` and compares the result with the pull request's publish/ (CONTRIBUTING.md, "Merging
+# (maintainers)").
 #
 # GitHub reports a job skipped because a job it needs failed as skipped, and a skipped required check passes. So the
 # one required check is ci-result ("CI result"), which needs every job and fails when any failed or was cancelled; a
@@ -130,15 +135,6 @@ jobs:
   # read conformance/, fixtures/, the packs' rules and the language registry (languages/ and its
   # generated TS module); package.json holds the cargo commands, .gitattributes the LFS objects the
   # engine embeds. Pushes to main always run the Rust jobs.
-  #
-  # The filters see only the git diff. The packs' test data is not in git (CONTRIBUTING.md): a change to it is a change
-  # to a tool-pack's test-data.lock, which is under packs/**, and a pull request that checks data in adds it there too.
-  #
-  # Port readiness is filtered on pushes to main as well, against the push's previous head (main takes squash merges
-  # only and no force pushes, so a push is one commit), but only when CI finished green on that head. Otherwise (it
-  # failed, so a shipped rule may still be failing; it was cancelled while queued, so its change was never judged; or
-  # nothing can be found) the push runs port readiness whatever it touches, so main cannot read green past either. A
-  # checkout, lookup or filter that fails on a push runs everything too.
   changes:
     name: Detect engine changes
     runs-on: ubuntu-24.04
@@ -146,40 +142,13 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-      actions: read
     outputs:
       rust: ${{ github.event_name == 'pull_request' && steps.filter.outputs.rust || 'true' }}
-      port-readiness: ${{ (github.event_name != 'push' || steps.previous.outputs.green == 'true') && steps.filter.outcome == 'success' && steps.filter.outputs.port-readiness || 'true' }}
     steps:
-      # The concurrency group lets a push run start only once the previous one finished or was replaced while queued,
-      # so the previous head's run has its conclusion by now.
-      - id: previous
-        name: Check CI finished green on the previous head
-        if: github.event_name == 'push'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          conclusion="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$BEFORE&event=push&per_page=1" --jq '.workflow_runs[0].conclusion // ""')"
-          echo "CI on $BEFORE: ${conclusion:-no finished run}"
-          if [ "$conclusion" = "success" ]; then echo "green=true" >> "$GITHUB_OUTPUT"; else echo "green=false" >> "$GITHUB_OUTPUT"; fi
-
-      # paths-filter lists a pull request's files through the API but diffs a push with git, which needs a checkout;
-      # depth 2 holds the push's previous head. A failed checkout fails the filter below, which then runs everything.
-      - name: Checkout repository
-        if: github.event_name == 'push'
-        continue-on-error: ${{ github.event_name == 'push' }}
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      # No `base`: on a push to the default branch paths-filter compares with the payload's `before` (an all-zeros
-      # `before` lists every file as added).
+      # Pull requests only: paths-filter lists a pull request's files through the API, so no checkout is needed. A
+      # filter that fails leaves the output empty, which runs the Rust jobs.
       - id: filter
-        continue-on-error: ${{ github.event_name == 'push' }}
+        if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
@@ -200,28 +169,13 @@ jobs:
               - '.github/actions/lfs/**'
               - '.github/actions/pack-test-data/**'
               - 'scripts/s3/**'
-            # A rule's verdict depends on its document, the pack's recordings, the gate code and the engine.
-            port-readiness:
-              - 'packs/**'
-              - 'conformance/**'
-              - 'native/**'
-              - 'languages/**'
-              - 'src/engine/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-              - 'package.json'
-              - 'package-lock.json'
-              - '.github/workflows/ci.yml'
-              - '.github/workflows/port-readiness.yml'
-              - '.github/actions/**'
-              - 'scripts/s3/**'
+              - 'scripts/samples/**'
 
   # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
   # tool-pack's archives for the unit and conformance jobs, and the three tool-packs the Rust tests read, each its own
   # key. It holds the OIDC token, which only a miss uses, runs nothing but the pull (scripts/s3/pack-fixtures.mjs, this
   # commit's code), and never extracts a cache entry; the jobs that read the data restore it holding no token. The
-  # Release pull request reads none. Port readiness has a test-data job of its own (port-readiness.yml).
+  # Release pull request reads none.
   test-data:
     name: Pack test data
     if: >-
@@ -268,10 +222,10 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "true"
 
-  # S3 holds every archive each test-data.lock names and every recording each recording.lock names
+  # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
   # (scripts/s3/pack-fixtures.mjs `check`, head-object only, downloading nothing). A pull request that changes a lock
-  # fails here until a maintainer has pushed what it names (the error says how), so it cannot merge with data that only
-  # its own cache scope holds: main's runs read S3 and never record. Nothing needs this job, so the others still report.
+  # fails here until the publish workflow (pack-data-publish.yml) has put what it names, so it cannot merge with data
+  # that only its own cache scope holds: main's runs read S3. Nothing needs this job, so the others still report.
   # It runs this commit's script alone, under the read role, where the test-data job does.
   test-data-in-s3:
     name: Pack test data is in S3
@@ -313,174 +267,13 @@ jobs:
           output-credentials: true
           output-env-credentials: false
 
-      - name: Check S3 holds every locked archive and recording
+      - name: Check S3 holds every locked archive
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
           AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}
           AWS_REGION: us-east-2
         run: node scripts/s3/pack-fixtures.mjs check
-
-  # The tool-packs whose test-data.lock a pull request changes, for test-data-reproduces: against the merge commit's
-  # first parent and against the event's base commit (the same commit unless the base moved), each compared with the
-  # merge commit, so a lock counts as changed when either differs. A lock the pull request deletes names no tool-pack
-  # left to derive. Pull requests only; it runs no code from the checkout.
-  test-data-locks:
-    name: Find the changed test data locks
-    if: >-
-      ${{
-        github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main' &&
-        github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
-      }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      tool-packs: ${{ steps.locks.outputs.tool-packs }}
-    steps:
-      # The merge commit and its first parent.
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-          persist-credentials: false
-
-      # The checkout keeps no credentials, so the event's base commit is fetched with the token, as port readiness's
-      # report job fetches.
-      - id: locks
-        name: List the tool-packs whose test-data.lock changed
-        env:
-          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
-          TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          refs=()
-          parent="$(git rev-parse -q --verify 'HEAD^1' || true)"
-          if [ -n "$parent" ]; then refs+=("$parent"); fi
-          if [ -n "$EVENT_BASE" ] && [ "$EVENT_BASE" != "$parent" ]; then
-            auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
-            if git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$EVENT_BASE"; then
-              refs+=("$EVENT_BASE")
-            else
-              echo "::warning::could not fetch the pull request's base $EVENT_BASE: comparing the locks with ${parent:-nothing} only"
-            fi
-          fi
-          if [ "${#refs[@]}" -eq 0 ]; then
-            echo "::error::the pull request has no base commit to compare its test-data.lock files with"
-            exit 1
-          fi
-          locks="$(for ref in "${refs[@]}"; do git diff --name-only --no-renames "$ref" HEAD -- 'packs/*/upstream/*/test-data.lock'; done | LC_ALL=C sort -u)"
-          tool_packs='[]'
-          while IFS= read -r lock; do
-            [[ "$lock" =~ ^packs/([a-z0-9-]+)/upstream/([a-z0-9._-]+)/test-data\.lock$ ]] || continue
-            git cat-file -e "HEAD:$lock" 2> /dev/null || continue
-            tool_packs="$(jq -c --arg pack "${BASH_REMATCH[1]}" --arg tool "${BASH_REMATCH[2]}" '. + [{ pack: $pack, tool: $tool }]' <<< "$tool_packs")"
-          done <<< "$locks"
-          echo "tool-packs=$tool_packs" >> "$GITHUB_OUTPUT"
-          echo "test-data.lock changed against the base: $(jq -r 'if length == 0 then "none" else map("\(.pack)/\(.tool)") | join(", ") end' <<< "$tool_packs")"
-
-  # Each tool-pack whose test-data.lock the pull request changes, derived again from its pins (npm run fixtures:derive,
-  # without --update) and compared byte for byte with the data the lock's archive holds, so an archive is what its
-  # pins make and not whatever the run that packed it (a maintainer's, or a bump's) put in. The derivation runs
-  # upstream's code, so the job holds no token: the archives come from the test-data job's cache entry (`fetch:
-  # "false"`), and the runtimes are the ones port-readiness-bump.yml's bump job installs. Without --update the tracked
-  # files (the UPSTREAM.md tables) must come out unchanged too. No leg when no lock changed.
-  test-data-reproduces:
-    name: Test data reproduces from the pins (${{ matrix.pack }} · ${{ matrix.tool }})
-    needs: [test-data-locks, test-data]
-    if: needs.test-data-locks.outputs.tool-packs != '' && needs.test-data-locks.outputs.tool-packs != '[]'
-    runs-on: ubuntu-24.04
-    # The derivation clones, installs and runs the pinned upstream, as the bump job does within the same limit.
-    timeout-minutes: 180
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.test-data-locks.outputs.tool-packs) }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      # Every tool-pack's data: a generator may read another tool-pack's, and this is the entry the test-data job warms.
-      - uses: ./.github/actions/pack-test-data
-        with:
-          fetch: "false"
-
-      - uses: ./.github/actions/node-deps
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-
-      - name: Set up the pinned PHP and Composer
-        if: matrix.pack == 'php' || matrix.pack == 'blade'
-        uses: ./.github/actions/php
-
-      - id: clippy-toolchain
-        name: Read the Rust toolchain Clippy's runtime pins
-        if: matrix.tool == 'clippy'
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: |
-          set -euo pipefail
-          runtime="$(sed -n 's/^  runtime: *\([a-z0-9._-]*\) *$/\1/p' "packs/$PACK/upstream/$TOOL/gates.yaml")"
-          [ -n "$runtime" ] || { echo "::error::packs/$PACK/upstream/$TOOL/gates.yaml has no upstream.runtime line this step reads"; exit 1; }
-          toolchain="conformance/recorders/port-readiness/runtimes/$runtime/rust-toolchain.toml"
-          channel="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' "$toolchain")"
-          [ -n "$channel" ] || { echo "::error::$toolchain has no channel line this step reads"; exit 1; }
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-      - name: Install the pinned Rust toolchain with clippy
-        if: matrix.tool == 'clippy'
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: ${{ steps.clippy-toolchain.outputs.channel }}
-          components: clippy
-
-      # The pulled data is the oracle: copied out under the same paths before the derivation removes the derived files.
-      - id: derive
-        name: Derive the tool-pack again and compare it with the pulled data
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: |
-          set -euo pipefail
-          oracle="$RUNNER_TEMP/oracle"
-          mkdir -p "$oracle/packs/$PACK/upstream"
-          cp -a "packs/$PACK/upstream/$TOOL" "$oracle/packs/$PACK/upstream/"
-          npm run fixtures:derive -- --pack "$PACK" --tool "$TOOL" --compare "$oracle"
-
-      # When it differs, what Linux derived from the pins, for a maintainer to review and archive (CONTRIBUTING.md,
-      # "Pack test data": the derived data of a failed reproduction). It is pack test data only, made in this job without
-      # credentials; archiving it is the maintainer's decision, never this job's.
-      - name: Keep the derived data
-        if: failure() && steps.derive.outcome == 'failure'
-        env:
-          PACK: ${{ matrix.pack }}
-          TOOL: ${{ matrix.tool }}
-        run: |
-          set -euo pipefail
-          # The script is JavaScript: its ${…} are template literals, not shell expansions.
-          # shellcheck disable=SC2016
-          node --input-type=module -e '
-            import { toolPackFiles } from "./scripts/s3/pack-fixtures.mjs";
-            const directory = `packs/${process.env.PACK}/upstream/${process.env.TOOL}`;
-            for (const path of toolPackFiles(".", directory)) process.stdout.write(`${directory}/${path}\0`);
-          ' | tar --null -T - -cf "$RUNNER_TEMP/derived.tar"
-
-      - name: Upload the derived data
-        if: failure() && steps.derive.outcome == 'failure'
-        uses: actions/upload-artifact@v7
-        with:
-          name: derived-${{ matrix.pack }}--${{ matrix.tool }}
-          path: ${{ runner.temp }}/derived.tar
-          retention-days: 7
-          if-no-files-found: error
 
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
@@ -526,7 +319,7 @@ jobs:
       - uses: ./.github/actions/lfs
 
       # The clippy leg only compiles the tests; the tests leg runs them, and three read pack test data: Ruff's fixtures,
-      # SQLFluff's recordings and fixtures, and eslint-plugin-vue's fixtures.
+      # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
       - if: matrix.task == 'test'
         uses: ./.github/actions/pack-test-data
         with:
@@ -648,33 +441,6 @@ jobs:
             native/index.d.ts
           if-no-files-found: error
           retention-days: 1
-
-  # Every rule a pack ships must pass the port readiness gates; candidates are only reported (docs/port-readiness.md).
-  # They run when a pull request or a push to main touches a gate input (the changes job's port-readiness filter, and
-  # its accepted gaps); the nightly judges every rule regardless.
-  port-readiness:
-    name: Port readiness
-    needs: [changes, build]
-    if: >-
-      ${{
-        needs.changes.outputs.port-readiness != 'false' &&
-        (
-          github.event_name != 'pull_request' ||
-          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-        )
-      }}
-    # The report job posts the results as a pull request comment; the test-data job pulls each planned tool-pack's test
-    # data, from S3 on a cache miss (the gates legs, which can run upstream's code, get no OIDC token).
-    permissions:
-      contents: read
-      id-token: write
-      issues: write
-      pull-requests: write
-    uses: ./.github/workflows/port-readiness.yml
-    with:
-      base: ${{ github.event.pull_request.base.sha || github.event.before }}
-      # A pull request judges only the tool-packs of the packs it touches; a push to main judges every one.
-      select: ${{ github.event_name == 'pull_request' }}
 
   # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
   # restored from what the test-data job saved.
@@ -826,8 +592,9 @@ jobs:
           RERAIL_INSTALLED_PACKS_NPM: "1"
         run: npx vitest run integration/installed-packs.test.ts
 
-  # The conformance harnesses score every pack's ported rules on its test data, restored from what the test-data job
-  # saved.
+  # The conformance check scores every pack's ported rules on its test data and samples, restored from what the test-data
+  # job saved, and judges every rule of each gated tool-pack (conformance/languages/gates.ts); the conformance-report job
+  # posts its summary on the pull request.
   tools:
     name: Scripts, reference examples, conformance, and rule playground
     needs: [build, test-data]
@@ -837,7 +604,7 @@ jobs:
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -862,10 +629,39 @@ jobs:
           npm run test:scripts
           npm run test:reference
 
-      # Offline: conformance:languages:check scores every pack's ported rules against its recordings. The
-      # identifier-rename gate (test/conformance/) runs with the unit tests.
-      - name: Conformance harnesses
-        run: npm run test:conformance
+      # The not-gated and pending lists may only shrink against the base: the pull request's base, or the push's previous
+      # head. The checkout keeps no credentials, so the base commit is fetched with the token; when it cannot be, the
+      # check fails closed.
+      - name: Fetch the base commit
+        if: (github.event.pull_request.base.sha || github.event.before) != '' && github.event.before != '0000000000000000000000000000000000000000'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          TOKEN: ${{ github.token }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" fetch --no-tags --depth=1 origin "$BASE" || true
+
+      # Offline: every pack's ported rules scored on its test data and samples, then every rule of each gated tool-pack
+      # through loads, compact and the conformance checks. A shipped rule that fails, fails the job; candidates are only
+      # reported. The summary and the pull request comment go to the conformance-summary artifact.
+      - name: Conformance
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CONFORMANCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          CONFORMANCE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # A push that creates a branch has no previous head.
+          if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=""; fi
+          npm run conformance:languages:check -- ${BASE:+--base "$BASE"} --out "$RUNNER_TEMP/conformance"
+
+      - name: Upload the conformance summary
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-summary
+          path: ${{ runner.temp }}/conformance/
+          if-no-files-found: warn
+          retention-days: 14
 
       # The rule playground is a development tool with its own lockfile; it type-checks against dist/.
       - name: Check, build, and test the rule playground
@@ -876,6 +672,52 @@ jobs:
           npm --prefix playground test
           npm --prefix playground run test:ui
           npm --prefix playground run test:integration
+
+  # The one sticky pull request comment of the conformance check: the comment that starts with the marker is edited in
+  # place, or posted when there is none. It runs nothing from the checkout. Fork pull requests get a read-only token and
+  # no tools run, so they get no comment.
+  conformance-report:
+    name: Conformance comment
+    needs: tools
+    if: >-
+      ${{
+        always() && needs.tools.result != 'skipped' && needs.tools.result != 'cancelled' && github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Download the conformance summary
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: conformance-summary
+          path: ${{ runner.temp }}/conformance
+
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          marker='<!-- rerail-conformance -->'
+          body="$RUNNER_TEMP/conformance/comment.md"
+          if [ ! -s "$body" ]; then
+            mkdir -p "$RUNNER_TEMP/conformance"
+            printf '%s\n## Conformance: the run produced no summary\n\nSee the [workflow run](%s).\n' "$marker" "$RUN_URL" > "$body"
+          fi
+          id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | startswith(\"$marker\")) | .id] | first // empty" | sed -n '1p')"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$body" > /dev/null
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -F body=@"$body" > /dev/null
+          fi
 
   real-sessions:
     name: OMP and Pi real-session runtime paths
@@ -1086,8 +928,8 @@ jobs:
 
   # The one required check (the note at the top). It needs every other job, runs whatever happened to them, and fails
   # when any of them failed or was cancelled. A job skipped by its own condition passes: forks and Dependabot get no
-  # secrets or OIDC token, the Release pull request runs only the licence and lint jobs, the path filters skip what a
-  # change cannot affect, and test-data-locks and test-data-reproduces run only on pull requests that change a lock.
+  # secrets or OIDC token, the Release pull request runs only the licence and lint jobs, and the path filters skip what a
+  # change cannot affect.
   ci-result:
     name: CI result
     needs:
@@ -1097,15 +939,13 @@ jobs:
       - changes
       - test-data
       - test-data-in-s3
-      - test-data-locks
-      - test-data-reproduces
       - rust
       - build
-      - port-readiness
       - unit
       - integration
       - installed-packs
       - tools
+      - conformance-report
       - real-sessions
       - provider-smoke
     if: always()

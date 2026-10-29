@@ -11,7 +11,7 @@
 //   For Rust and Python too, the `.generated` infix of the generated-file convention (#20) is not part of
 //   the stem: `builtins.generated.rs` is checked as `builtins`.
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` name files after upstream tools and
-// engine modules (fixtures/README.md: generators are `generate_<tool>.<ext>` beside their recordings).
+// engine modules (fixtures/README.md: generators are `generate_<tool>.<ext>` beside their expected findings).
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 // Exemption `fixture-trees`: files below any `fixtures/` directory mimic the projects under test (framework
 // route files such as `pages/_app.tsx` or `app/(shop)/[id]/`); #3 decides where they may live.

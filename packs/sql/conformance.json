@@ -2,16 +2,10 @@
   "pack": "sql",
   "family": "sql",
   "capabilities": ["syntax", "value", "compare", "scope", "suppression"],
-  "corpora": [
-    {"name": "postgres", "repository": "https://github.com/postgres/postgres", "commit": "724edf9bde9d356724ad384a2e196edc3c9f80f7", "paths": ["src/test/regress/sql", "src/pl/plpgsql/src/sql", "contrib", "src/backend/catalog"], "exclude": []},
-    {"name": "mattermost", "repository": "https://github.com/mattermost/mattermost", "commit": "613bb616cd62c584a606919e6978688e7b87d81e", "paths": ["server/channels/db/migrations/postgres", "server/channels/db/migrations/mysql"], "exclude": []},
-    {"name": "anki", "repository": "https://github.com/ankitects/anki", "commit": "d52ca669f6deac5966b1c5035bc2dc77c78d3260", "paths": ["rslib/src"], "exclude": []},
-    {"name": "application-services", "repository": "https://github.com/mozilla/application-services", "commit": "c19ea2c24eb2f116dae170f5f82054d325e94a42", "paths": ["components"], "exclude": []}
-  ],
   "tools": [{"name": "sqlfluff", "version": "4.4.0"}],
   "rules": [
     {"id": "sqlfluff-al04-aliasing-unique-table", "upstream": {"tool": "sqlfluff", "rule": "AL04"}, "policy": "rules/sqlfluff-al04-aliasing-unique-table.json", "capabilities": ["syntax", "compare", "suppression"], "match": "line+column"},
-    {"id": "sqlfluff-al05-aliasing-unused", "upstream": {"tool": "sqlfluff", "rule": "AL05"}, "policy": "candidates/rules/sqlfluff-al05-aliasing-unused.json", "capabilities": ["syntax", "compare", "value", "scope", "suppression"], "match": "line+column"},
+    {"id": "sqlfluff-al05-aliasing-unused", "upstream": {"tool": "sqlfluff", "rule": "AL05"}, "policy": "rules/sqlfluff-al05-aliasing-unused.json", "capabilities": ["syntax", "compare", "value", "scope", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-al08-aliasing-unique-column", "upstream": {"tool": "sqlfluff", "rule": "AL08"}, "policy": "rules/sqlfluff-al08-aliasing-unique-column.json", "capabilities": ["syntax", "compare", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-al09-aliasing-self-alias-column", "upstream": {"tool": "sqlfluff", "rule": "AL09"}, "policy": "rules/sqlfluff-al09-aliasing-self-alias-column.json", "capabilities": ["syntax", "compare", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-am01-ambiguous-distinct", "upstream": {"tool": "sqlfluff", "rule": "AM01"}, "policy": "rules/sqlfluff-am01-ambiguous-distinct.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
@@ -24,7 +18,7 @@
     {"id": "sqlfluff-cv08-convention-left-join", "upstream": {"tool": "sqlfluff", "rule": "CV08"}, "policy": "rules/sqlfluff-cv08-convention-left-join.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-pg01-postgres-excessive-locks", "upstream": {"tool": "sqlfluff", "rule": "PG01"}, "policy": "rules/sqlfluff-pg01-postgres-excessive-locks.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-pg02-postgres-not-valid-foreign-key", "upstream": {"tool": "sqlfluff", "rule": "PG02"}, "policy": "rules/sqlfluff-pg02-postgres-not-valid-foreign-key.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
-    {"id": "sqlfluff-rf01-references-from", "upstream": {"tool": "sqlfluff", "rule": "RF01"}, "policy": "candidates/rules/sqlfluff-rf01-references-from.json", "capabilities": ["syntax", "scope", "suppression"], "match": "line+column"},
+    {"id": "sqlfluff-rf01-references-from", "upstream": {"tool": "sqlfluff", "rule": "RF01"}, "policy": "rules/sqlfluff-rf01-references-from.json", "capabilities": ["syntax", "scope", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-rf04-references-keywords", "upstream": {"tool": "sqlfluff", "rule": "RF04"}, "policy": "rules/sqlfluff-rf04-references-keywords.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-rf05-references-special-chars", "upstream": {"tool": "sqlfluff", "rule": "RF05"}, "policy": "rules/sqlfluff-rf05-references-special-chars.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},
     {"id": "sqlfluff-rf06-references-quoting", "upstream": {"tool": "sqlfluff", "rule": "RF06"}, "policy": "rules/sqlfluff-rf06-references-quoting.json", "capabilities": ["syntax", "suppression"], "match": "line+column"},

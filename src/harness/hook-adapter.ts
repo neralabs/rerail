@@ -8,6 +8,7 @@ import type { Writable } from "node:stream";
 import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
+import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -288,14 +289,30 @@ export function launchedDirectly(moduleUrl: string): boolean {
   return launchedPath !== undefined && realpathSync(fileURLToPath(moduleUrl)) === realpathSync(resolve(launchedPath));
 }
 
-export async function serveHook(run: (input: HookInput) => Promise<HookOutput>, streams: HookStreams = process): Promise<void> {
+/**
+ * A hook the recorded-first fallback started on an older `node` from PATH, once the node set-up recorded was gone,
+ * does nothing and says so in one line on stderr, which the coding agents keep out of the session: a hook must never
+ * break it.
+ */
+export async function serveHook(
+  run: (input: HookInput) => Promise<HookOutput>,
+  streams: HookStreams = process,
+  nodeVersion: string = process.versions.node,
+): Promise<void> {
   let output: HookOutput = {};
   let serialized = "{}\n";
   try {
     const parsed = JSON.parse(await readStdin(streams.stdin)) as unknown;
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Hook stdin must be a JSON object");
-    output = await run(parsed as HookInput);
-    serialized = `${JSON.stringify(output)}\n`;
+    if (Number.parseInt(nodeVersion, 10) >= REQUIRED_NODE_MAJOR) {
+      output = await run(parsed as HookInput);
+      serialized = `${JSON.stringify(output)}\n`;
+    } else {
+      streams.stderr.write(
+        `rerail hook: Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer and this is Node ${nodeVersion}, so it is off in this session. `
+          + `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then run rerail install --refresh.\n`,
+      );
+    }
   } catch (error) {
     output = {};
     streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);

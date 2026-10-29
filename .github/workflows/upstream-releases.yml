@@ -1,0 +1,46 @@
+name: Upstream releases
+
+# Once a day, and on demand: reports, for every gated tool-pack, what its upstream's latest stable release changed
+# since Rerail's pin (npm run upstream:watch; docs/upstream.md, "Upstream releases"). It reads only GitHub's API and the
+# registries, statically: the trees at the pinned commit and at the release's, compared by blob over the paths each
+# gates.yaml's `watch:` names, and the changed test files from both. Per tool-pack the job summary says whether the
+# tests the generator reads changed (with RuleTester case counts for the ESLint family), whether the ported rules' code
+# changed, whether shared code changed, and which new upstream tests for ported rules the generator does not read. It
+# starts nothing: a maintainer reads the report and starts a bump by hand (upstream-bump-start.yml; docs/upstream.md,
+# "Start a bump"). It never fails on what upstream published, only on its own errors; a tool-pack it cannot read is an
+# error row, and the others are still reported. No upstream code runs here.
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-releases
+  cancel-in-progress: false
+
+jobs:
+  # One row per tool-pack in the job summary: current, behind with nothing relevant changed, or changed (tests, rule
+  # code, shared code, new tests not read), or an error. GITHUB_TOKEN, read-only, raises GitHub's API rate limit.
+  upstream-releases:
+    name: Upstream releases
+    # Main's pins; forks that turn scheduled workflows back on skip it.
+    if: github.repository_owner == 'neralabs' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Report what upstream changed since the pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run upstream:watch

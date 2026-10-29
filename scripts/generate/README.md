@@ -12,8 +12,9 @@ The convention:
   generator listed here. JSON and binary files carry no header: their `.generated.` name, or this table, marks them.
 - Generators pin the tools they read (a version check that refuses any other) and run offline, never in CI; CI only
   checks that the committed output is current where a test can (the language registry, the schema SQL).
-- Fixture oracles are the exception: their recorders sit beside their recordings under `fixtures/<family>/<feature>/`
-  and `packs/<id>/upstream/<tool>/` (see [fixtures/README.md](../../fixtures/README.md)), and are not listed here.
+- Fixture oracles are the exception: their generators sit beside the expected output they write under
+  `fixtures/<family>/<feature>/` and `packs/<id>/upstream/<tool>/` (see [fixtures/README.md](../../fixtures/README.md)),
+  and are not listed here.
 
 `<tools>` below is a directory with the pinned npm packages installed (`npm install --prefix <tools> <package>@<version>`),
 and `<landing>` a checkout of nera-landing, whose design tokens the UI files project.
@@ -63,7 +64,8 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 
 | Generated file | Generator | Command |
 |---|---|---|
-| `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0); every rule but `n-no-process-exit.json`, which is written by hand. Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `node` plugin implements; copies each violation's `suppress.biome` from the committed document. A document keeps its committed revision when nothing else changes; a shipped one (under `packs/node/rules/`) that changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
+| `packs/node/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/candidates/rules/`: the ports its `SHIPPED` lists, every shipped rule but `n-no-process-exit.json`, which is written by hand |
+| `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0); every candidate port. Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `node` plugin implements; copies each violation's `suppress.biome` from the committed document. A document keeps its committed revision when nothing else changes; a shipped one (under `packs/node/rules/`) that changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/node/candidates/probes/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/candidates/rules/` |
 | `packs/typescript/candidates/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 candidates). Writes `suppress.eslint` and `suppress.oxlint` (oxlint 1.88.0's `vitest` plugin implements all three); copies each violation's `suppress.biome` from the committed document and keeps its revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
 | `packs/typescript/candidates/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |

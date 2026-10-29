@@ -3,7 +3,7 @@
   "id": "javascript",
   "name": "JavaScript and TypeScript (ESLint core)",
   "category": "language",
-  "covers": "71 ESLint core rules ported to Rerail, 24 of them on and 47 off until turned on, each scored against ESLint's own recorded findings on its test cases.",
+  "covers": "80 ESLint core rules ported to Rerail, 23 of them on and 57 off until turned on, each scored against ESLint's own findings on its test cases.",
   "reason": "matches JavaScript or TypeScript source",
   "match": {
     "any": [
@@ -98,6 +98,20 @@
       "on": false
     },
     {
+      "id": "eslint-default-param-last",
+      "document": "rules/eslint-default-param-last.json",
+      "title": "ESLint default-param-last: Enforce default parameters to be last",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-dot-notation",
+      "document": "rules/eslint-dot-notation.json",
+      "title": "ESLint dot-notation: Enforce dot notation whenever possible",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-eqeqeq",
       "document": "rules/eslint-eqeqeq.json",
       "title": "ESLint eqeqeq: Require the use of === and !==",
@@ -115,6 +129,41 @@
       "id": "eslint-guard-for-in",
       "document": "rules/eslint-guard-for-in.json",
       "title": "ESLint guard-for-in: Require for-in loops to include an if statement",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-depth",
+      "document": "rules/eslint-max-depth.json",
+      "title": "ESLint max-depth: Enforce a maximum depth that blocks can be nested",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-nested-callbacks",
+      "document": "rules/eslint-max-nested-callbacks.json",
+      "title": "ESLint max-nested-callbacks: Enforce a maximum depth that callbacks can be nested",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-params",
+      "document": "rules/eslint-max-params.json",
+      "title": "ESLint max-params: Enforce a maximum number of parameters in function definitions",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-statements",
+      "document": "rules/eslint-max-statements.json",
+      "title": "ESLint max-statements: Enforce a maximum number of statements allowed in function blocks",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-array-constructor",
+      "document": "rules/eslint-no-array-constructor.json",
+      "title": "ESLint no-array-constructor: Disallow Array constructors",
       "group": "ESLint",
       "on": false
     },
@@ -196,10 +245,24 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint-no-duplicate-imports",
+      "document": "rules/eslint-no-duplicate-imports.json",
+      "title": "ESLint no-duplicate-imports: Disallow duplicate module imports",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-empty",
       "document": "rules/eslint-no-empty.json",
       "title": "ESLint no-empty: Disallow empty block statements",
       "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-empty-function",
+      "document": "rules/eslint-no-empty-function.json",
+      "title": "ESLint no-empty-function: Disallow empty functions",
+      "group": "ESLint",
+      "on": false
     },
     {
       "id": "eslint-no-empty-pattern",
@@ -228,6 +291,13 @@
       "on": false
     },
     {
+      "id": "eslint-no-extra-label",
+      "document": "rules/eslint-no-extra-label.json",
+      "title": "ESLint no-extra-label: Disallow unnecessary labels",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-inline-comments",
       "document": "rules/eslint-no-inline-comments.json",
       "title": "ESLint no-inline-comments: Disallow inline comments after code",
@@ -242,17 +312,11 @@
       "on": false
     },
     {
-      "id": "eslint-no-labels",
-      "document": "rules/eslint-no-labels.json",
-      "title": "ESLint no-labels: Disallow labeled statements",
+      "id": "eslint-no-lonely-if",
+      "document": "rules/eslint-no-lonely-if.json",
+      "title": "ESLint no-lonely-if: Disallow `if` statements as the only statement in `else` blocks",
       "group": "ESLint",
       "on": false
-    },
-    {
-      "id": "eslint-no-loss-of-precision",
-      "document": "rules/eslint-no-loss-of-precision.json",
-      "title": "ESLint no-loss-of-precision: Disallow literal numbers that lose precision",
-      "group": "ESLint"
     },
     {
       "id": "eslint-no-multi-str",
@@ -330,12 +394,6 @@
       "on": false
     },
     {
-      "id": "eslint-no-prototype-builtins",
-      "document": "rules/eslint-no-prototype-builtins.json",
-      "title": "ESLint no-prototype-builtins: Disallow calling some Object.prototype methods directly on objects",
-      "group": "ESLint"
-    },
-    {
       "id": "eslint-no-return-assign",
       "document": "rules/eslint-no-return-assign.json",
       "title": "ESLint no-return-assign: Disallow assignment operators in return statements",
@@ -367,7 +425,17 @@
       "id": "eslint-no-setter-return",
       "document": "rules/eslint-no-setter-return.json",
       "title": "ESLint no-setter-return: Disallow returning values from setters",
-      "group": "ESLint"
+      "group": "ESLint",
+      "examples": {
+        "caught": {
+          "path": "src/point.js",
+          "text": "Object.defineProperty(point, \"x\", {\n  set: value => /* keep in range */ clamp(value),\n});\n"
+        },
+        "passes": {
+          "path": "src/point.js",
+          "text": "class Point {\n  set x(value) {\n    if (value === undefined) return /* nothing to store */;\n    this._x = value;\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "eslint-no-sparse-arrays",
@@ -388,6 +456,12 @@
       "title": "ESLint no-ternary: Disallow ternary operators",
       "group": "ESLint",
       "on": false
+    },
+    {
+      "id": "eslint-no-unexpected-multiline",
+      "document": "rules/eslint-no-unexpected-multiline.json",
+      "title": "ESLint no-unexpected-multiline: Disallow confusing multiline expressions",
+      "group": "ESLint"
     },
     {
       "id": "eslint-no-unneeded-ternary",

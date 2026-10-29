@@ -4,7 +4,7 @@
 // document (JSON whose `format` is `rerail.policy/v1`); the metric counts the offending `rules/`
 // directories.
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` keep upstream projects' own trees,
-// whose `rules/` directories hold upstream sources and recordings.
+// whose `rules/` directories hold upstream sources and expected findings.
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 
 import { finding, isDataPath, isRuleDoc, isVendored, sortFindings } from "../lib.mjs";

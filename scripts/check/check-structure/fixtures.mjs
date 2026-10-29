@@ -2,21 +2,21 @@
 //
 // #3: a tracked file is fixture data when
 //   - a directory in its path is named `fixtures` or `__fixtures__`,
-//   - it is a recording (`*.expected.json`) or a case list (`*.cases.json`),
+//   - it is an expected-findings file (`*.expected.json`) or a case list (`*.cases.json`),
 //   - it is a code-rule document (a JSON object with `format: "rerail.policy/v1"` and `clauses`),
 //   - it sits in a test root (`test/`, `integration/`, `conformance/`, `benchmark/`) and is not TypeScript or
 //     JavaScript source or Markdown: test roots hold code, their data is fixtures, or
 //   - it sits in `test/` or `integration/` and its name says fixture (`hook-fixtures.ts`).
-// It may live only under `fixtures/` or `packs/<id>/upstream/` (a pack's tool recordings and their inputs). Declared
+// It may live only under `fixtures/` or `packs/<id>/upstream/` (a pack's tool expected findings and their inputs). Declared
 // exemptions: `packs/<id>/candidates/` (ports still scored, never shipped, with their hand-labelled probe packs: pack
-// data), `gate-pins` (the port readiness gates' pinned inputs and workers: `conformance/port-readiness/*.json`, the task list and pack lists
-// the gates read; `conformance/recorders/port-readiness/runtimes/**`, the manifests that pin each upstream runtime; and the Python
-// and PHP workers under `conformance/recorders/port-readiness/`, code the recorder runs inside those runtimes) and, for code-rule
-// documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
+// data), `gate-pins` (the conformance gate's lists: `conformance/languages/ungated-rules.json` and
+// `conformance/languages/pending.json`, the not-gated rules and pending tool-packs it reads; and
+// `scripts/pack-data/runtimes/**`, the manifests that pin each runtime the derivation runs upstream on) and, for
+// code-rule documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
 //
 // #10: every directory fixtures/<family>/<feature>/ names a top-level module of the engine
 // (native/src/code_rule_dsl/<feature>.rs or <feature>/), or a documented non-engine group: `upstream` (a language's
-// tool recordings ahead of its pack) or `licenses` (third-party records). `fixtures/host/<area>/` (host-test data) and
+// tool expected findings ahead of its pack) or `licenses` (third-party records). `fixtures/host/<area>/` (host-test data) and
 // `fixtures/packs/<pack>/` (pack-validator inputs) are non-engine families: their children are areas, not features.
 //
 // Usage: node scripts/check/check-structure/fixtures.mjs   (prints the table; exits 1 on data outside or an unmapped feature)
@@ -37,7 +37,7 @@ const NAMED_FIXTURE_ROOTS = ["test/", "integration/"];
 const SOURCE = /\.(?:[cm]?ts|[cm]?js|md)$|^test_\w+\.py$/u;
 const FIXTURE_DIRECTORY = new Set(["fixtures", "__fixtures__"]);
 const FIXTURE_NAME = /(?:^|[-_.])fixtures?(?:[-_.]|$)/iu;
-const RECORDING = /\.(?:expected|cases)\.json$/u;
+const EXPECTED_DATA = /\.(?:expected|cases)\.json$/u;
 const RULE_FORMAT = "rerail.policy/v1";
 
 /** The engine's top-level modules: `native/src/code_rule_dsl/<name>.rs` and `<name>/` directories holding Rust. */
@@ -67,18 +67,17 @@ function fixtureKind(repo, path) {
   const segments = path.split("/");
   const name = segments.at(-1);
   if (segments.slice(0, -1).some(segment => FIXTURE_DIRECTORY.has(segment))) return "directory";
-  if (RECORDING.test(name)) return "recording";
+  if (EXPECTED_DATA.test(name)) return "expected data";
   if (TEST_ROOTS.some(root => path.startsWith(root)) && !SOURCE.test(name)) return "test-root data";
   if (NAMED_FIXTURE_ROOTS.some(root => path.startsWith(root)) && FIXTURE_NAME.test(name)) return "named";
   if (isRuleDocument(repo, path)) return "rule";
   return undefined;
 }
 
-/** Exemption `gate-pins`: the port readiness gates' pinned inputs and the recorder's Python and PHP workers (see the header). */
+/** Exemption `gate-pins`: the conformance gate's lists and the derivation's runtimes (see the header). */
 function isGatePin(path) {
-  if (/^conformance\/port-readiness\/[^/]+\.json$/u.test(path)) return true;
-  if (path.startsWith("conformance/recorders/port-readiness/runtimes/")) return true;
-  return path.startsWith("conformance/recorders/port-readiness/") && (path.endsWith(".py") || path.endsWith(".php"));
+  if (path === "conformance/languages/ungated-rules.json" || path === "conformance/languages/pending.json") return true;
+  return path.startsWith("scripts/pack-data/runtimes/");
 }
 
 function allowed(path, kind) {

@@ -101,7 +101,11 @@ async function createLocalRegistry(root: string): Promise<string> {
   const fixture = join(bin, "npm-fixture.mjs");
   await writeFile(fixture, `import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-const args = process.argv.slice(2);
+// Rerail puts npm's own options (fetch retries) ahead of the command, as npm accepts them: the command is the first
+// argument that is not an option.
+const argv = process.argv.slice(2);
+const command = argv.findIndex(argument => !argument.startsWith("-"));
+const args = command === -1 ? [] : argv.slice(command);
 if (args[0] === "view") {
   process.stdout.write(JSON.stringify(args[1].endsWith("@rejected") ? process.env.RERAIL_REJECTED_VERSION : process.env.RERAIL_ACCEPTED_VERSION) + "\\n");
   process.exit(0);
@@ -129,6 +133,8 @@ process.exit(1);
 }
 
 describe("Rerail managed launcher", () => {
+  // npm packs the whole package (about 20 MB with the native engine and the model) and installs it from the registry,
+  // then runs the CLI a dozen times: about 50 s on a CI runner, so it gets the heavy tests' 180 s.
   test("installs the packaged launcher and accepts then rejects deterministic local updates", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
     temporaryDirectories.push(root);
@@ -176,7 +182,8 @@ describe("Rerail managed launcher", () => {
     await rm(showMe);
 
     const update = await run(["node", entrypoint, "update"], environment);
-    expect(update).toMatchObject({ exitCode: 0, stderr: "" });
+    // Installing a version says what it downloads, on stderr; nothing else is written there.
+    expect(update).toMatchObject({ exitCode: 0, stderr: `Downloading ${manifest.name}@${acceptedVersion} from npm…\n` });
     expect(update.stdout).toContain(`${acceptedVersion}; new harness sessions will use it.`);
     expect(update.stdout).toContain(`Refreshed Rerail in Claude Code:`);
     expect(await readFile(showMe, "utf8")).toContain(join(home, "current", "dist", "cli", "cli.js"));
@@ -231,7 +238,7 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 60_000);
+  }, 180_000);
 
   test("keeps status and rollback available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));

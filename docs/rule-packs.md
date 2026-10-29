@@ -13,19 +13,21 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
 | Cyclomatic complexity (limit 6) | language | 3 (3) | Python, TypeScript or JavaScript source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| JavaScript and TypeScript (ESLint core) | language | 65 (22) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
-| TypeScript | language | 22 (11) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | 138 (113) | Python source outside tests, scripts and docs |
-| PHP | language | 7 (3) | PHP source: `*.php` files, not Blade views |
+| JavaScript and TypeScript (ESLint core) | language | 80 (23) | JavaScript or TypeScript source: ESLint's core rules apply to both. |
+| TypeScript | language | 46 (18) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
+| Python | language | 160 (135) | Python source outside tests, scripts and docs |
+| PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | 10 (8) | Blade templates: `*.blade.php` files |
-| Rust, SQL | language | 0 | never yet: every port is still a candidate, and a pack with no rule that starts on is never recommended |
-| Next.js | framework | 17 (17) | a `next` dependency |
-| Node.js | framework | 22 (22) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
-| React, Vue | framework | 0 | never yet, as above |
+| Rust | language | 33 (17) | `*.rs` files |
+| SQL | language | 21 (19) | `*.sql` files |
+| Next.js | framework | 21 (21) | a `next` dependency |
+| Vue | framework | 23 (21) | `*.vue` files |
+| Node.js | framework | 21 (2) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
+| React | framework | 18 (14) | a `react` dependency, or `*.jsx` files |
 
 A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`.
 
-Every rule is listed in the mode its own document has (all `steer` today). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
+A rule is listed in the mode its own document has (`steer`), unless `pack.json` sets one: a port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
 
 A pack's `mode` and `on` are the values its rules start with in a repository that adds it, and the values a rule a pack upgrade adds starts with; a rule or pack setting in the repository or a checkout overrides them.
 
@@ -35,7 +37,7 @@ A rule honours its linter's suppression comments only where its document says so
 
 Packs are installed into one npm prefix in the Rerail home, `$RERAIL_HOME/packs`, never into a project's `node_modules` (one Rerail serves every repository on the machine, and a Python or PHP repository has none) nor into core's own install (`rerail update` replaces it). Installing uses the person's npm login, as installing Rerail does: whoever can read `@neralabs/rerail` can read every pack.
 
-- **Set-up** (`npx @neralabs/rerail setup` in a repository, or `/rerail-start` in one that is not set up) fetches every listed pack under the update channel's npm dist-tag (`latest` by default, where each new pack version is published, see [pack format](pack-format.md#release); `next` for a pack that has no `latest` version) into a staging folder of its own under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once the packs are read, and checks each one as the catalog does (below). Fetching reads nothing in the repository; matching the packs against it waits until the person has said Rerail may read it. A pack installed at a newer version than the one under the tag (`rerail packs add typescript@next`) is offered at that version, never replaced by an older one; when that newer version does not load (its core range, after `rerail update rollback` say), the pack is named among those set-up could not use, with why, and not offered. An answer that names an older version than the installed one is refused (`rerail packs add` downgrades). The confirm question lists each pack that fits with its rule count and why it fits, says when a yes replaces an installed version (which every repository on the computer runs), and lists the rules the repository's lint config turns off or configures. Nothing is installed before an answer that installs, and an answer installs only what it carries: "Yes" installs the versions shown (an answer run by a coding agent carries them as `--packs typescript@0.1.1,…`), from npm's cache where discovery left them, and "Change rule packs…" (`--answer choose`) installs only the packs the person picks from every pack set-up fetched, replacing any an earlier dashboard review added; it is not offered when set-up could fetch no pack. "Not now" (`--answer not-now`) installs nothing, and asking again after a bad answer installs nothing. "Skip, I'll pick packs" reads nothing in the repository: it lists every pack set-up fetched, installs the ones the person picks and adds each for the whole repository without its lint config, or none ("None for now", `--packs none`). After installing, set-up makes sure the catalog loads every pack named, and still loads every pack it loaded before; when npm fails or a pack is left out (its core range, a rule another pack holds), every pack the install changed is put back as npm recorded it (a pack added from a folder from that folder) or removed, and set-up asks again, saying why: no read access, npm not logged in, the registry unreachable, or why the pack was left out. An installed version stands in for a pack npm cannot give.
+- **Set-up** (`npx @neralabs/rerail setup` in a repository, or `/rerail-start` in one that is not set up) fetches every listed pack under the update channel's npm dist-tag (`latest` by default, where each new pack version is published, see [pack format](pack-format.md#release); `next` for a pack that has no `latest` version) into a staging folder of its own under `$RERAIL_HOME/packs/staging`, which installs nothing and is removed once the packs are read, and checks each one as the catalog does (below). Fetching reads nothing in the repository; matching the packs against it waits until the person has said Rerail may read it. A pack installed at a newer version than the one under the tag (`rerail packs add typescript@next`) is offered at that version, never replaced by an older one; when that newer version does not load (its core range, after `rerail update rollback` say), the pack is named among those set-up could not use, with why, and not offered. An answer that names an older version than the installed one is refused (`rerail packs add` downgrades). The confirm question lists each pack that fits with its rule count and why it fits, says when a yes replaces an installed version (which every repository on the computer runs), and lists the rules the repository's lint config turns off or configures. A pack with no rule that starts on is never offered, since adding it would run nothing; the confirm question names those that would fit as having no rules yet, and "Skip, I'll pick packs" names every such pack. Nothing is installed before an answer that installs, and an answer installs only what it carries: "Yes" installs the versions shown (an answer run by a coding agent carries them as `--packs typescript@0.1.1,…`), from npm's cache where discovery left them, and "Change rule packs…" (`--answer choose`) installs only the packs the person picks from every pack set-up fetched, replacing any an earlier dashboard review added; it is not offered when set-up could fetch no pack. "Not now" (`--answer not-now`) installs nothing, and asking again after a bad answer installs nothing. "Skip, I'll pick packs" reads nothing in the repository: it lists every pack set-up fetched, installs the ones the person picks and adds each for the whole repository without its lint config, or none ("None for now", `--packs none`). After installing, set-up makes sure the catalog loads every pack named, and still loads every pack it loaded before; when npm fails or a pack is left out (its core range, a rule another pack holds), every pack the install changed is put back as npm recorded it (a pack added from a folder from that folder) or removed, and set-up asks again, saying why: no read access, npm not logged in, the registry unreachable, or why the pack was left out. An installed version stands in for a pack npm cannot give.
 - **`rerail packs`**: `list` shows the installed packs with their versions and any left out, with why; `add <id[@version]> …` installs a pack by id or by its package name, at a version, range or dist-tag, or from a tarball or folder that exists, and refuses anything else (npm options, `npm:` aliases, git and URL specs); `remove <id> …` uninstalls; `recommend [--repo <dir>]` runs set-up's discovery and prints what fits, installing nothing. `add` is checked as set-up's install is: when a pack it installed is left out, or another stops loading, what changed is put back and the command fails with why. npm runs no install script in any of them.
 
 Only one change to the installed packs runs at a time: set-up's install and `rerail packs add` and `remove` hold a lock on the prefix (`$RERAIL_HOME/packs/.lock`), and one that finds it held waits for up to five minutes. A lock whose process has gone is taken over.
@@ -51,6 +53,8 @@ Each installed pack is checked on its own when the catalog is read; a pack that 
 3. Its core range (`peerDependencies["@neralabs/rerail"]`) includes the active Rerail's version, prereleases included.
 4. Every code rule compiles in the engine. A rule refused only as `language-not-supported` loads and stays inactive until the engine reads its language; any other refusal leaves the pack out.
 5. No rule it lists is already in another installed pack.
+
+Why a pack is left out is said for the person who sees it in set-up, `rerail packs list` or `rerail update`: a core older than the pack's range says the pack needs a newer Rerail and that `rerail update` installs it, and a rule the engine refuses says this Rerail cannot run it, before the engine's own words. A published pack passed the engine of the core it was released with, so on a person's machine a refused rule almost always means their Rerail is older than the pack.
 
 ## Where a pack's rules live
 
@@ -88,7 +92,7 @@ A pack is `packs/<id>/pack.json`, beside the rule documents it lists in `packs/<
   "id": "typescript",
   "name": "TypeScript",
   "category": "language",
-  "covers": "22 typescript-eslint rules ported to Rerail, 11 of them on and 11 off until turned on, each scored against the tool's own recorded findings on its test fixtures.",
+  "covers": "24 typescript-eslint rules ported to Rerail, 13 of them on and 11 off until turned on, each scored against the tool's own findings on its test fixtures.",
   "reason": "matches TypeScript",
   "match": {
     "any": [
