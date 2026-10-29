@@ -1,3 +1,0 @@
-class Pool:
-    @classmethod
-    def create(cls) -> Pool: ...
