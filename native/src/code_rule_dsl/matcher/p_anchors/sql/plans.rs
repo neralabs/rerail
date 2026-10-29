@@ -19,9 +19,12 @@ pub(in crate::code_rule_dsl) fn plans<'a>(
                     if seen.insert(Arc::as_ptr(&matcher.anchors) as usize) {
                         let lang =
                             u32::from(language::tape_tag(matcher.language).expect("tape language"));
-                        out.entry(lang)
-                            .or_default()
-                            .push(Arc::new(AnchorPlan::compile(&matcher.matcher)));
+                        // On the `p-anchor-corpus` path, one P plan for each W plan (O20).
+                        #[cfg(feature = "p-anchor-corpus")]
+                        let plan = super::super::plan_for(matcher);
+                        #[cfg(not(feature = "p-anchor-corpus"))]
+                        let plan = Arc::new(AnchorPlan::compile(&matcher.matcher));
+                        out.entry(lang).or_default().push(plan);
                     }
                 }
             }
@@ -136,7 +139,13 @@ pub(in crate::code_rule_dsl) fn for_file(
             (grammar.admits_source(&file.source, &errors, &mut searched)
                 && gates.admit(grammar)
                 && seen.insert(Arc::as_ptr(&grammar.anchors) as usize))
-            .then(|| Arc::new(AnchorPlan::compile(&grammar.matcher)))
+            .then(|| {
+                // On the `p-anchor-corpus` path, one P plan for each W plan (O20).
+                #[cfg(feature = "p-anchor-corpus")]
+                return super::super::plan_for(grammar);
+                #[cfg(not(feature = "p-anchor-corpus"))]
+                Arc::new(AnchorPlan::compile(&grammar.matcher))
+            })
         })
         .collect()
 }

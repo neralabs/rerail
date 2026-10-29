@@ -16,9 +16,10 @@ pub(super) use output::{
     coverage, evaluation_json, failure, overflow_evaluation, result_order, violation_from_witness,
     violation_id, violation_ids,
 };
+pub(super) use query::Output;
 pub(super) use query::{
-    WitnessError, document_matcher, evaluate_query, file_language, file_tape, grammar_matcher,
-    witness_from_match, witnesses_from_match,
+    TapeCacheSlot, WitnessError, document_matcher, evaluate_query, file_language, file_tape,
+    grammar_matcher, witness_from_match, witnesses_from_match,
 };
 #[cfg(test)]
 pub(super) use query::{reset_shared_group_lookups, shared_group_lookups};
@@ -244,7 +245,14 @@ pub(super) fn evaluate_code_rule(
     snapshot: &Snapshot,
     mode: &str,
 ) -> Result<Evaluation> {
-    evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)
+    let mut evaluation = evaluate_clauses(code_rule, snapshot, mode, &code_rule.clauses)?;
+    if code_rule
+        .report_count_gt
+        .is_some_and(|maximum| evaluation.violations.len() <= maximum)
+    {
+        evaluation.violations.clear();
+    }
+    Ok(evaluation)
 }
 
 pub(super) fn evaluate_clauses(
@@ -253,6 +261,13 @@ pub(super) fn evaluate_clauses(
     mode: &str,
     clauses: &[CompiledClause],
 ) -> Result<Evaluation> {
+    // P's anchor corpus for every rule (the `p-anchor-corpus` path, open item O20).
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
+    let _tapes = TapeCacheSlot::install();
+    // P's syntax facts, shared by P's relational inputs (test-only, open item O18).
+    #[cfg(test)]
+    let _syntax = super::relational::syntax::Pool::install();
     if mode != "decision" && mode != "report" {
         return Err(invalid(format!("unsupported evaluation mode `{mode}`")));
     }
@@ -286,6 +301,8 @@ pub(super) fn evaluate_clauses(
         },
         clauses: covered,
     };
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
+    prepare_candidates(code_rule, snapshot);
     let _calls = stateless_calls(code_rule, snapshot, clauses, &mut evaluation.metrics)?;
     #[cfg(test)]
     let mut relational_jobs = Vec::new();
@@ -301,7 +318,7 @@ pub(super) fn evaluate_clauses(
                     &code_rule.scope,
                     &mut evaluation.metrics,
                     limits,
-                    mode == "decision",
+                    mode == "decision" && code_rule.report_count_gt.is_none(),
                     &mut partial,
                     Some(&clause.violation),
                     &mut util_limit,
@@ -352,7 +369,7 @@ pub(super) fn evaluate_clauses(
                     evaluation
                         .violations
                         .push(violation_from_witness(code_rule, clause, witness));
-                    if mode == "decision" {
+                    if mode == "decision" && code_rule.report_count_gt.is_none() {
                         break;
                     }
                 }
@@ -461,6 +478,55 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.witnesses += other.metrics.witnesses;
 }
 
+/// P's corpus publication and candidate preparation for one rule's stateless evaluation (the
+/// `p-anchor-corpus` path, open item O20).
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
+    use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
+    let plans = anchor_plans(std::iter::once(code_rule));
+    if plans.is_empty() {
+        return;
+    }
+    let corpus = CorpusSlot::current();
+    let mut demands = BTreeMap::new();
+    for file in snapshot
+        .files
+        .iter()
+        .filter(|file| code_rule.scope.matches(&file.path))
+    {
+        let Some(lang) = file_language(file) else {
+            continue;
+        };
+        if !plans.contains_key(&u32::from(
+            crate::code_rule_dsl::language::tape_tag(lang).expect("tape language"),
+        )) {
+            continue;
+        }
+        match file_tape(lang, file) {
+            Ok(None) => {}
+            Ok(Some((doc, _))) => {
+                demands.insert(
+                    file.path.clone(),
+                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc),
+                );
+                if let Err(error) = corpus.put(
+                    &file.path,
+                    &doc,
+                    &crate::code_rule_dsl::budget::matcher_budget_exhausted,
+                ) {
+                    eprintln!("SQL AST batch publication unavailable: {error}");
+                }
+            }
+            Err(error) => eprintln!("SQL AST batch source unavailable: {error}"),
+        }
+    }
+    #[cfg(feature = "code-rule-profile")]
+    corpus.record_origins(std::iter::once(code_rule));
+    if let Err(error) = corpus.prepare_files(&demands) {
+        eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
+    }
+}
+
 /// Each input relation's rows of a relational clause (P's, test-only, open item O18).
 #[cfg(test)]
 pub(super) fn relational_rows(
@@ -511,12 +577,22 @@ pub(super) fn data_layer_rows(
 
 /// An evidence relation's rows in a stateless snapshot: each file of the code rule's scope and the
 /// relation's domain evaluated alone, so that one file's failure makes only its rows unknown.
-pub(in crate::code_rule_dsl) fn stateless_rows(
+pub(super) fn stateless_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     (relation, side): (&FactQuery, evidence::Side),
     snapshot: &Snapshot,
     metrics: &mut Metrics,
+) -> Result<evidence::Rows> {
+    stateless_rows_to(code_rule, clause, (relation, side), snapshot, metrics, None)
+}
+pub(in crate::code_rule_dsl) fn stateless_rows_to(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    (relation, side): (&FactQuery, evidence::Side),
+    snapshot: &Snapshot,
+    metrics: &mut Metrics,
+    output: Option<&Output<'_>>,
 ) -> Result<evidence::Rows> {
     let ast = relation.ast.as_ref();
     let violation = evidence::producer_violation(clause, relation, side);
@@ -544,7 +620,7 @@ pub(in crate::code_rule_dsl) fn stateless_rows(
         let mut partial = BTreeMap::new();
         let mut util_limit = None;
         let mut file_metrics = Metrics::default();
-        let witnesses = evaluate_query(
+        let witnesses = query::evaluate_query_to(
             &ast.query,
             &single,
             &BTreeMap::new(),
@@ -555,6 +631,7 @@ pub(in crate::code_rule_dsl) fn stateless_rows(
             &mut partial,
             Some(&violation),
             &mut util_limit,
+            output,
         )?;
         metrics.visited_nodes += file_metrics.visited_nodes;
         match witnesses {
@@ -587,7 +664,7 @@ pub(in crate::code_rule_dsl) fn stateless_calls(
 ) -> Result<Option<calls::EvaluationSlot>> {
     let mut terms = Terms::default();
     for clause in clauses {
-        if let ClauseKind::Forbid(query) = &clause.kind {
+        if let Some(query) = clause.kind.calls_query() {
             for term in query.calls() {
                 terms.add(&term);
             }

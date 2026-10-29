@@ -33,6 +33,8 @@ pub(in crate::code_rule_dsl) enum Semantic {
     FormatArgs(Box<FormatArgs>),
     /// `layout`: the node's lines, its first byte, and the lines to a neighbour.
     Layout(Box<Layout>),
+    /// File-path condition within a rule, including a call-graph seed.
+    FilePath(std::sync::Arc<crate::code_rule_dsl::language::TextCondition>),
     /// `calls` (Python): the call's callee reaches a definition the term's inner rule matches,
     /// through the workspace call graph's closure.
     Calls(Box<crate::code_rule_dsl::calls::CallsTest>),
@@ -96,7 +98,11 @@ pub(crate) fn producer_facts<'tree, D: ast_grep_core::Doc>(
 impl Semantic {
     pub(super) fn binds_nothing(&self) -> bool {
         match self {
-            Self::Resolves(_) | Self::Value(_) | Self::Layout(_) | Self::Host(_) => true,
+            Self::Resolves(_)
+            | Self::Value(_)
+            | Self::Layout(_)
+            | Self::FilePath(_)
+            | Self::Host(_) => true,
             Self::Binding(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Binds(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Arguments(arguments) => arguments.bind.is_empty(),
@@ -120,13 +126,16 @@ impl Semantic {
             | Self::Arguments(_)
             | Self::Parse(_)
             | Self::FormatArgs(_)
-            | Self::Calls(_)
-            | Self::Binds(_) => true,
+            | Self::Calls(_) => true,
+            Self::Binds(test) => {
+                !test.declaration_only()
+                    || test.sub_rules().any(|rule| super::reads_values(rule, seen))
+            }
             Self::Host(test) => super::reads_values(&test.rule, seen),
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) => false,
+            Self::Capture(_) | Self::Layout(_) | Self::FilePath(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -163,6 +172,9 @@ impl Semantic {
                 Some(node)
             }
             Self::Layout(layout) => layout.match_node(node, env),
+            Self::FilePath(condition) => super::resolve::file_path()
+                .filter(|path| condition.holds(path))
+                .map(|_| node),
             Self::Value(test) => match test.holds(&node) {
                 Some(true) => Some(node),
                 Some(false) => None,

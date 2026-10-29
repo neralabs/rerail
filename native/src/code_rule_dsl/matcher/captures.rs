@@ -31,7 +31,7 @@ pub(in crate::code_rule_dsl) struct CaptureAnalysis {
 impl CaptureAnalysis {
     /// Names a matcher may bind into the environment it runs in. `not` and `count` keep what they
     /// bind to themselves; a stop rule runs in an environment of its own. A count's own value
-    /// (`as`) is not among them: no other term reads it (`counts`).
+    /// (`as`) is bound as text; the captures of its counted rule remain local.
     pub(in crate::code_rule_dsl) fn binds(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_binds(matcher, &mut self.binds, &mut names);
@@ -61,7 +61,7 @@ impl CaptureAnalysis {
 
     /// The names counts bind their values under (`as`) in the environment a matcher runs in: not
     /// under `not` or inside a count (a probe each), in a stop rule (a fresh environment), or in a
-    /// call's frame. Only a finding's message reads them.
+    /// call's frame. Messages and source-text comparisons read them.
     pub(in crate::code_rule_dsl) fn counts(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_counts(matcher, &mut self.counts, &mut names);
@@ -160,6 +160,9 @@ fn collect_binds(
             names.extend(call.outward(inner).into_iter().map(str::to_owned));
         }
         AstMatcher::Semantic(semantic) => semantic::collect_binds(semantic, summaries, names),
+        AstMatcher::Count(count) => {
+            names.extend(count.binding.iter().map(|binding| binding.name.clone()))
+        }
         AstMatcher::Constrained(core) => {
             collect_binds(&core.rule, summaries, names);
             for (_, constraint) in &core.constraints {
@@ -170,7 +173,6 @@ fn collect_binds(
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
-        | AstMatcher::Count(_)
         | AstMatcher::Never => {}
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => {}
@@ -252,7 +254,11 @@ fn binds_and_reads(
             .map(|rule| binds_and_reads(rule, binds, reads))
             .unwrap_or_default(),
         AstMatcher::Count(count) => (
-            Names::new(),
+            count
+                .binding
+                .iter()
+                .map(|binding| binding.name.clone())
+                .collect(),
             binds_and_reads(&count.relation, binds, reads).1,
         ),
         AstMatcher::Util(util) => (

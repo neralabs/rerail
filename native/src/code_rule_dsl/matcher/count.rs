@@ -26,7 +26,7 @@ pub(crate) struct Count {
 }
 
 /// `as` and `offset`: a count that holds binds `offset` plus the exact count, in decimal, as a
-/// transformed variable named `name`, which only a finding's message reads. The walk then runs to
+/// transformed variable named `name`, which messages and source-text comparisons read. The walk then runs to
 /// its end rather than stopping at `min`, and a count it cannot know exactly is unknown.
 #[derive(Clone, Debug)]
 pub(crate) struct CountBinding {
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn a_count_value_is_for_the_message_alone() {
+    fn a_count_value_has_no_source_node() {
         let count =
             json!({ "has": { "kind": "if_statement", "stopBy": "end" }, "min": 1, "as": "CCN" });
         let bound = json!({ "rule": { "kind": "function_declaration", "count": count } });
@@ -434,13 +434,6 @@ mod tests {
                 "/clauses/0/violation/message: `$CCN` names both a capture and a count's value; rename one",
             ),
             (
-                json!({ "rule": { "kind": "function_declaration", "count": count,
-                    "has": { "kind": "identifier", "pattern": "$NAME" },
-                    "compare": { "left": "CCN", "op": "eq", "right": "NAME" } } }),
-                report("$CCN"),
-                "/clauses/0/forbid/ast/rule/compare/left: `$CCN` is never bound where this comparison runs (names bound under `not` or `count` are visible only inside it; a stopBy rule sees only the names it binds itself)",
-            ),
-            (
                 constrained,
                 report("$CCN"),
                 "/clauses/0/forbid/ast/constraints/CCN: metavariable `$CCN` is not defined by the rule, its utils, or its constraints",
@@ -452,6 +445,35 @@ mod tests {
             ));
             assert_eq!(reason, expected);
         }
+    }
+
+    #[test]
+    fn a_count_value_compares_as_source_text() {
+        let rule = compile_typescript_rule(json!({
+            "kind": "function_declaration", "all": [
+                { "count": { "has": { "kind": "if_statement", "stopBy": "end" }, "min": 1, "as": "N" } },
+                { "has": { "kind": "number", "pattern": "$EXPECTED", "stopBy": "end" } },
+                { "compare": { "left": "N", "right": "EXPECTED", "op": "eq", "text": "source" } }
+            ]
+        })).unwrap();
+        assert_violations(
+            &evaluate_file(
+                &rule,
+                "typescript",
+                "a.ts",
+                "function f() { if (x) return 1; }",
+            ),
+            1,
+        );
+        assert_violations(
+            &evaluate_file(
+                &rule,
+                "typescript",
+                "a.ts",
+                "function f() { if (x) return 1; if (y) return 1; }",
+            ),
+            0,
+        );
     }
 
     #[test]

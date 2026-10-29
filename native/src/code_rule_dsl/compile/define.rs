@@ -67,7 +67,7 @@ pub(super) fn collect_defines<'a>(
         let body = object(define, &define_path)?;
         reject_unknown(
             body,
-            &["language", "utils", "options", "config"],
+            &["language", "utils", "options", "config", "report_when"],
             &define_path,
         )?;
         let language = body
@@ -85,11 +85,14 @@ pub(super) fn collect_defines<'a>(
             .transpose()?;
         // Options and their configuration were read before the document was resolved.
         let Some(utils) = body.get("utils") else {
-            if body.contains_key("options") || body.contains_key("config") {
+            if body.contains_key("options")
+                || body.contains_key("config")
+                || body.contains_key("report_when")
+            {
                 continue;
             }
             return Err(invalid(format!(
-                "{define_path} must hold utils, options or config"
+                "{define_path} must hold utils, options, config or report_when"
             )));
         };
         let Some(language) = language else {
@@ -394,7 +397,7 @@ mod tests {
             ),
             (
                 json!([{ "id": "d", "define": {} }, rule]),
-                "/clauses/0/define must hold utils, options or config",
+                "/clauses/0/define must hold utils, options, config or report_when",
             ),
             (
                 json!([{ "id": "d", "define": { "language": "typescript", "utils": {}, "rules": {} } }, rule]),

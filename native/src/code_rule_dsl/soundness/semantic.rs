@@ -19,6 +19,7 @@ pub(super) fn optional_outward_captures(
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_)
+        | Semantic::FilePath(_)
         | Semantic::Host(_)
         | Semantic::Embedded(_) => {}
         Semantic::FormatArgs(test) => {
@@ -48,7 +49,7 @@ pub(super) fn sound(
     memo: &mut SoundMemo<bool>,
 ) -> bool {
     match semantic {
-        Semantic::Arguments(_) | Semantic::Capture(_) => true,
+        Semantic::Arguments(_) | Semantic::Capture(_) | Semantic::FilePath(_) => true,
         // A parsed tree is the node's own text, whatever the rest of the file holds; its `host`
         // rules read the file around it, each as sound as it is alone, and none negated.
         Semantic::Parse(test) => {
@@ -97,7 +98,8 @@ pub(super) fn leaves_witness(semantic: &Semantic, memo: &mut UtilitySummary<usiz
         | Semantic::Arguments(_)
         | Semantic::Parse(_)
         | Semantic::Capture(_)
-        | Semantic::Layout(_) => false,
+        | Semantic::Layout(_)
+        | Semantic::FilePath(_) => false,
         Semantic::Host(_) | Semantic::Embedded(_) => true,
         Semantic::FormatArgs(test) => test
             .unused

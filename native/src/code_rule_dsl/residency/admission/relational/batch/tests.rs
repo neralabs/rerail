@@ -181,7 +181,6 @@ fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_ro
         };
         plan.inputs[0]
             .1
-            .ast
             .project
             .iter()
             .map(|p| p.field.clone())
@@ -212,56 +211,42 @@ fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_ro
 }
 
 #[test]
-#[ignore = "open item O18: W keeps the projection on the shared AST (P's FactQuery::project), so narrowing clones it"]
 fn narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas() {
-    use crate::code_rule_dsl::model::{FactQuery, Projection, ProjectionSource};
-    use std::collections::BTreeSet;
-    // P's `FactQuery::retain_projected_fields`, on W's projection (the relational compiler's).
-    fn retain_projected_fields(input: &mut FactQuery, fields: Option<&BTreeSet<String>>) {
-        if input
-            .ast
-            .project
-            .iter()
-            .any(|p| !fields.is_some_and(|f| f.contains(&p.field)))
-        {
-            Arc::make_mut(&mut input.ast)
-                .project
-                .retain(|p| fields.is_some_and(|f| f.contains(&p.field)));
-        }
-    }
+    use crate::code_rule_dsl::model::{ClauseKind, Projection, ProjectionSource};
     let rule = rule();
-    let Some(plan) = (match &rule.inner.clauses[0].kind { crate::code_rule_dsl::model::ClauseKind::Relational(plan) => Some(plan), _ => None }) else {
+    let ClauseKind::Relational(plan) = &rule.inner.clauses[0].kind else {
         panic!("relational");
     };
     let mut full = plan.inputs[0].1.clone();
-    Arc::make_mut(&mut full.ast).project = vec![
+    full.project = vec![
         Projection {
             field: "a".into(),
             source: ProjectionSource::Path,
+            extract: None,
         },
         Projection {
             field: "b".into(),
             source: ProjectionSource::Name,
+            extract: None,
         },
-    ];
+    ]
+    .into();
     let mut narrow = full.clone();
-    retain_projected_fields(&mut narrow, Some(&["a".to_owned()].into_iter().collect()));
+    narrow.retain_projected_fields(Some(&["a".to_owned()].into_iter().collect()));
     assert!(
         Arc::ptr_eq(&full.ast, &narrow.ast),
         "column demand must never clone matcher trees"
     );
-    assert_eq!(full.ast.project.len(), 2);
-    assert_eq!(narrow.ast.project.len(), 1);
-    let schema = Arc::clone(&full.ast);
-    retain_projected_fields(
-        &mut full,
-        Some(&["a".to_owned(), "b".to_owned()].into_iter().collect()),
-    );
-    assert!(Arc::ptr_eq(&full.ast, &schema));
+    assert_eq!(full.project.len(), 2);
+    assert_eq!(narrow.project.len(), 1);
+    let schema = Arc::clone(&full.project);
+    full.retain_projected_fields(Some(
+        &["a".to_owned(), "b".to_owned()].into_iter().collect(),
+    ));
+    assert!(Arc::ptr_eq(&full.project, &schema));
 }
 
 #[test]
-#[ignore = "open item O18: P trims captures to the input anchor's (P's FactQuery::anchor); W keeps them"]
 fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
     use crate::code_rule_dsl::{
         eval,
@@ -282,16 +267,15 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
         eval::relational_rows(code_rule, clause, plan, &snapshot, &mut Metrics::default()).unwrap();
     let witness = &rows[0].witnesses[0];
     assert_eq!(
-        witness.captures.projection().unwrap().clone(),
+        witness.captures.projection().unwrap().json(),
         json!({"name":"f"})
     );
     assert!(witness.captures.get("NAME").is_none());
     assert!(witness.captures.get("PARAMS").is_none());
     assert!(witness.message.is_none());
     assert!(witness.fix.is_none());
-    let input = plan.inputs[0].1.clone();
-    // P set `input.anchor`; W's FactQuery has no anchor, so it is held beside the input (O18).
-    let input_anchor = Anchor::Capture("NAME".into());
+    let mut input = plan.inputs[0].1.clone();
+    input.anchor = Anchor::Capture("NAME".into());
     let rows = eval::stateless_rows(
         code_rule,
         clause,
@@ -303,7 +287,7 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
     let witness = &rows.witnesses[0];
     assert!(witness.captures.get("NAME").is_some());
     assert!(witness.captures.get("PARAMS").is_none());
-    let (anchor, fallback) = anchored_span(&input_anchor, witness);
+    let (anchor, fallback) = anchored_span(&input.anchor, witness);
     assert_eq!((anchor.start_byte, anchor.end_byte), (4, 5));
     assert!(!fallback);
     assert!(anchored_span(&Anchor::Capture("ABSENT".into()), witness).1);

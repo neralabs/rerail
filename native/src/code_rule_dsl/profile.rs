@@ -173,6 +173,7 @@ struct Profile {
     active_line_bytes: usize,
     active_navigation_line_bytes: usize,
     peak_transient_bytes: Option<usize>,
+    // W's retained-bytes report (`record_retained`), which P's profile dropped.
     retained_source_bytes: Option<usize>,
     retained_tape_bytes: Option<usize>,
     retained_grammar_bytes: Option<usize>,

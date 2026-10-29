@@ -128,7 +128,7 @@ pub(crate) fn decode_python<D: Doc>(node: &Node<'_, D>) -> Decode {
     Decode::Known(decoded)
 }
 
-fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
+pub(super) fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
     decoded.spans.push(Span {
         at: decoded.text.len() as u32,
         start: start as u32,
@@ -139,7 +139,7 @@ fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
 
 /// Decodes one literal's body into `decoded`: universal newlines, an f-string's doubled braces,
 /// escapes unless raw. False for an escape Python refuses or a name `\N{...}` does not know.
-fn decode_body(body: &str, base: usize, prefix: &Prefix, decoded: &mut Decoded) -> bool {
+pub(super) fn decode_body(body: &str, base: usize, prefix: &Prefix, decoded: &mut Decoded) -> bool {
     let bytes = body.as_bytes();
     let mut index = 0;
     while index < body.len() {

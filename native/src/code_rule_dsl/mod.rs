@@ -43,6 +43,9 @@ mod query;
 // Admission reads these once the batch budget is wired; until then only tests call it.
 #[allow(dead_code)]
 mod residency;
+// P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
+#[cfg(test)]
+use residency::admission::relational;
 mod scope;
 mod semver;
 mod soundness;
@@ -113,11 +116,12 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        let (id, rule_mode, scope, clauses, required) =
+        let (id, rule_mode, scope, clauses, required, report_count_gt) =
             compile_document(&canonical_value, &capabilities)?;
         Ok(CompiledCodeRuleDsl {
             inner: Arc::new(CompiledCodeRule {
                 id,
+                report_count_gt,
                 rule_mode,
                 canonical,
                 digest,

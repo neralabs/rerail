@@ -15,7 +15,7 @@ fn rule() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
 }
 fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
     let _scope = projection::Scope::enter();
-    let names: Arc<[String]> = sink.input.ast.project.iter().map(|p| p.field.clone()).collect();
+    let names: Arc<[String]> = sink.input.project.iter().map(|p| p.field.clone()).collect();
     for row in 0..count {
         let values = names.iter().map(|name| match name.as_str() {
             "name" if row % 2 == 0 => Input::Source(source, 0..source.len()),
@@ -58,7 +58,6 @@ fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
         &db,
         "facts",
         &input
-            .ast
             .project
             .iter()
             .map(|p| p.field.clone())
@@ -113,7 +112,6 @@ fn failed_stream_rolls_back_previously_imported_batches() {
         &db,
         "facts",
         &input
-            .ast
             .project
             .iter()
             .map(|p| p.field.clone())

@@ -37,6 +37,12 @@ impl FileVersion {
         }
     }
 
+    // Read by P's relational workspace path (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn source_digest(&self) -> [u8; 32] {
+        self.source.sha256_bytes().expect("source uses SHA-256")
+    }
+
     /// The (source, file context) key this version's stored clause results are kept under.
     pub(super) fn result_key(&self) -> (HashKey, HashKey) {
         (self.source, self.context)
@@ -45,10 +51,13 @@ impl FileVersion {
 
 /// A document the contract loaded: exactly the source and documents of one file version.
 pub(super) struct Document {
+    /// P's syntax facts, shared by P's relational inputs (test-only, open item O18).
+    #[cfg(test)]
+    pub(super) syntax: std::sync::OnceLock<Arc<crate::code_rule_dsl::relational::syntax::Facts>>,
     pub(super) source: Arc<String>,
     pub(super) image: tape::FileImage,
     language: GrammarDialect,
-    bytes: usize,
+    bytes: std::sync::atomic::AtomicUsize,
 }
 
 /// Resident documents, bounded in bytes. A load beyond the bound evicts the least recently used
@@ -97,6 +106,21 @@ impl DocumentCache {
         self.used = 0;
     }
 
+    #[cfg(test)]
+    pub(super) fn account_syntax(&mut self, version: &FileVersion) {
+        if let Some((_, document)) = self.entries.get(version)
+            && let Some(facts) = document.syntax.get()
+        {
+            let bytes =
+                document.source.len() + document.image.estimated_bytes() + facts.estimated_bytes();
+            let previous = document
+                .bytes
+                .swap(bytes, std::sync::atomic::Ordering::Relaxed);
+            self.used = self.used.saturating_sub(previous) + bytes;
+        }
+        self.shrink();
+    }
+
     pub(super) fn resident_bytes(&self) -> usize {
         self.used
     }
@@ -112,9 +136,9 @@ impl DocumentCache {
 
     fn insert(&mut self, version: FileVersion, document: Arc<Document>) {
         self.clock += 1;
-        self.used += document.bytes;
+        self.used += document.bytes.load(std::sync::atomic::Ordering::Relaxed);
         if let Some((_, previous)) = self.entries.insert(version, (self.clock, document)) {
-            self.used -= previous.bytes;
+            self.used -= previous.bytes.load(std::sync::atomic::Ordering::Relaxed);
         }
         self.shrink();
     }
@@ -130,7 +154,7 @@ impl DocumentCache {
                 break;
             };
             if let Some((_, document)) = self.entries.remove(&oldest) {
-                self.used -= document.bytes;
+                self.used -= document.bytes.load(std::sync::atomic::Ordering::Relaxed);
                 self.loads.evicted += 1;
             }
         }
@@ -236,75 +260,206 @@ pub(super) fn current_version(state: &WorkspaceState, path: &str) -> Option<File
 
 /// The exact current version of `path`, loaded from the resident copy, the document cache, the
 /// store, or a reparse of the stored source.
-pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersion, Arc<Document>)> {
+pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<String>> {
     let version = current_version(state, path)
         .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
     if let Some(document) = state.documents.get(&version) {
-        state.documents.loads.cached += 1;
-        return Ok((version, document));
+        return Ok(Arc::clone(&document.source));
     }
-    let language = u8::try_from(version.grammar)
-        .ok()
-        .and_then(crate::code_rule_dsl::language::from_tape_tag)
-        .ok_or_else(|| invalid(format!("{path} has no tape grammar")))?;
-    let grammar = tape::Grammar::new(language).map_err(invalid)?;
-    let resident = state.files.get(path).filter(|file| {
+    if let Some(file) = state.files.get(path).filter(|file| {
         FileVersion::of(file) == version
             && !file.results_only
             && (file.stored.is_none() || !file.input.source.is_empty())
-    });
-    let (source, image) = if let Some(file) = resident {
-        state.documents.loads.resident += 1;
-        let image = match &file.tape {
-            Some((revision, image)) if *revision == file.source_revision => image.clone(),
-            _ => parse(&file.input.source, &grammar)?,
-        };
-        (Arc::clone(&file.input.source), image)
-    } else if let Some(source) = released_source(state, path, &version) {
-        state.documents.loads.parsed += 1;
-        let image = parse(&source, &grammar)?;
-        (source, image)
-    } else {
-        let storage = state.storage.as_ref().ok_or_else(|| {
-            invalid(format!(
-                "{path} is not resident and the workspace has no store"
-            ))
-        })?;
-        let stored = prefetch(&storage.store, &[version.source])?;
-        let objects = stored
-            .objects
-            .get(&version.source)
-            .ok_or_else(|| invalid(format!("{path}'s current version is not in the store")))?;
-        let bytes = storage
-            .store
-            .get_source(objects.source)
-            .map_err(|error| invalid(error.to_string()))?;
-        if HashKey::sha256(&bytes) != version.source {
-            return Err(invalid(format!(
-                "{path}'s stored source is not its current version"
-            )));
+    }) {
+        return Ok(Arc::clone(&file.input.source));
+    }
+    if let Some(source) = released_source(state, path, &version) {
+        return Ok(source);
+    }
+    let storage = state
+        .storage
+        .as_ref()
+        .ok_or_else(|| invalid(format!("{path} has no available source")))?;
+    let stored = prefetch(&storage.store, &[version.source])?;
+    let objects = stored
+        .objects
+        .get(&version.source)
+        .ok_or_else(|| invalid(format!("{path}'s current source is not in the store")))?;
+    let bytes = storage
+        .store
+        .get_source(objects.source)
+        .map_err(|e| invalid(e.to_string()))?;
+    if HashKey::sha256(&bytes) != version.source {
+        return Err(invalid(format!(
+            "{path}'s stored source is not its current version"
+        )));
+    }
+    Ok(Arc::new(
+        String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not UTF-8")))?,
+    ))
+}
+
+pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersion, Arc<Document>)> {
+    load_many(state, &[path.to_owned()], usize::MAX)?
+        .pop()
+        .ok_or_else(|| invalid("missing document"))
+}
+
+/// Restore one bounded publication batch. Only storage misses enter bulk SQL reads.
+pub(super) fn load_many(
+    state: &mut WorkspaceState,
+    paths: &[String],
+    max_bytes: usize,
+) -> Result<Vec<(FileVersion, Arc<Document>)>> {
+    let mut result = (0..paths.len()).map(|_| None).collect::<Vec<_>>();
+    let mut pending = Vec::new();
+    let mut bytes = 0usize;
+    for (index, path) in paths.iter().enumerate() {
+        let version = current_version(state, path)
+            .ok_or_else(|| invalid(format!("{path} is not a file of this workspace")))?;
+        if let Some(document) = state.documents.get(&version) {
+            bytes = document_bytes(bytes, document.source.len(), max_bytes)?;
+            state.documents.loads.cached += 1;
+            result[index] = Some((version, document));
+            continue;
         }
-        let source = Arc::new(
-            String::from_utf8(bytes).map_err(|_| invalid(format!("{path} is not UTF-8")))?,
-        );
-        let image = objects.tapes.get(&version.grammar).and_then(|&tape_id| {
-            let derived = stored.derived.get(&tape_id).map_or(&[][..], Vec::as_slice);
-            stored_image(&storage.store, tape_id, derived, &grammar).map(|(image, _)| image)
+        let language = u8::try_from(version.grammar)
+            .ok()
+            .and_then(crate::code_rule_dsl::language::from_tape_tag)
+            .ok_or_else(|| invalid(format!("{path} has no tape grammar")))?;
+        let grammar = tape::Grammar::new(language).map_err(invalid)?;
+        let resident = state.files.get(path).filter(|file| {
+            FileVersion::of(file) == version
+                && !file.results_only
+                && (file.stored.is_none() || !file.input.source.is_empty())
         });
-        let image = match image {
-            Some(image) => {
-                state.documents.loads.stored += 1;
-                image
-            }
-            None => {
-                state.documents.loads.parsed += 1;
-                parse(&source, &grammar)?
-            }
+        let loaded = if let Some(file) = resident {
+            bytes = document_bytes(bytes, file.input.source.len(), max_bytes)?;
+            state.documents.loads.resident += 1;
+            let image = match &file.tape {
+                Some((revision, image)) if *revision == file.source_revision => image.clone(),
+                _ => parse(&file.input.source, &grammar)?,
+            };
+            Some((Arc::clone(&file.input.source), image))
+        } else if let Some(source) = released_source(state, path, &version) {
+            bytes = document_bytes(bytes, source.len(), max_bytes)?;
+            state.documents.loads.parsed += 1;
+            let image = parse(&source, &grammar)?;
+            Some((source, image))
+        } else {
+            None
         };
-        (source, image)
-    };
+        if let Some((source, image)) = loaded {
+            result[index] = Some(install_document(state, version, language, source, image));
+        } else {
+            pending.push((index, version, language, grammar));
+        }
+    }
+    if !pending.is_empty() {
+        let store = state
+            .storage
+            .as_ref()
+            .map(|storage| std::sync::Arc::clone(&storage.store))
+            .ok_or_else(|| {
+                invalid("document batch is not resident and the workspace has no store")
+            })?;
+        let stored = prefetch(
+            &store,
+            &pending
+                .iter()
+                .map(|(_, v, _, _)| v.source)
+                .collect::<Vec<_>>(),
+        )?;
+        let ids = pending
+            .iter()
+            .filter_map(|(_, v, _, _)| stored.objects.get(&v.source).map(|o| (o.source, v.source)))
+            .collect::<Vec<_>>();
+        let sources = store
+            .get_sources_by_hash_bulk(&ids, max_bytes.saturating_sub(bytes))
+            .map_err(|e| invalid(e.to_string()))?;
+        // Charge each logical document, including equal contents at different paths, before parsing tapes.
+        for (_, version, _, _) in &pending {
+            let objects = stored.objects.get(&version.source).ok_or_else(|| {
+                invalid(format!(
+                    "{}'s current version is not in the store",
+                    version.path
+                ))
+            })?;
+            let source = sources
+                .get(&objects.source)
+                .ok_or_else(|| invalid("stored source is unavailable"))?;
+            bytes = document_bytes(bytes, source.len(), max_bytes)?;
+        }
+        let ids = pending
+            .iter()
+            .filter_map(|(_, v, _, _)| {
+                stored
+                    .objects
+                    .get(&v.source)
+                    .and_then(|o| o.tapes.get(&v.grammar))
+                    .copied()
+            })
+            .collect::<Vec<_>>();
+        let tapes = store.get_tapes_bulk(&ids).unwrap_or_default();
+        for (index, version, language, grammar) in pending {
+            let objects = &stored.objects[&version.source];
+            let raw = &sources[&objects.source];
+            if HashKey::sha256(raw) != version.source {
+                return Err(invalid(format!(
+                    "{}'s stored source is not its current version",
+                    version.path
+                )));
+            }
+            let source = Arc::new(
+                String::from_utf8(raw.clone())
+                    .map_err(|_| invalid(format!("{} is not UTF-8", version.path)))?,
+            );
+            // A tape that derives documents (`file_documents`) is read with them, never without:
+            // the primary alone comes from the batch's bulk read.
+            let image = objects.tapes.get(&version.grammar).and_then(|&id| {
+                let derived = stored.derived.get(&id).map_or(&[][..], Vec::as_slice);
+                if derived.is_empty() {
+                    let (bytes, _) = tapes.get(&id)?;
+                    tape::FileImage::read(bytes, &grammar, &[]).ok()
+                } else {
+                    stored_image(&store, id, derived, &grammar).map(|(image, _)| image)
+                }
+            });
+            let image = match image {
+                Some(image) => {
+                    state.documents.loads.stored += 1;
+                    image
+                }
+                None => {
+                    state.documents.loads.parsed += 1;
+                    parse(&source, &grammar)?
+                }
+            };
+            result[index] = Some(install_document(state, version, language, source, image));
+        }
+    }
+    Ok(result
+        .into_iter()
+        .map(|d| d.expect("completed document batch"))
+        .collect())
+}
+fn document_bytes(current: usize, added: usize, limit: usize) -> Result<usize> {
+    current
+        .checked_add(added)
+        .filter(|bytes| *bytes <= limit)
+        .ok_or_else(|| invalid("repository input budget exceeded"))
+}
+fn install_document(
+    state: &mut WorkspaceState,
+    version: FileVersion,
+    language: GrammarDialect,
+    source: Arc<String>,
+    image: tape::FileImage,
+) -> (FileVersion, Arc<Document>) {
     let document = Arc::new(Document {
-        bytes: source.len() + image.estimated_bytes(),
+        #[cfg(test)]
+        syntax: std::sync::OnceLock::new(),
+        bytes: std::sync::atomic::AtomicUsize::new(source.len() + image.estimated_bytes()),
         source,
         image,
         language,
@@ -312,7 +467,7 @@ pub(super) fn load(state: &mut WorkspaceState, path: &str) -> Result<(FileVersio
     state
         .documents
         .insert(version.clone(), Arc::clone(&document));
-    Ok((version, document))
+    (version, document)
 }
 
 /// The source of a file whose source was freed while the store was busy (`results_only`), read

@@ -61,7 +61,7 @@ pub(in crate::code_rule_dsl::waves::relational) fn save(
                 name,
                 std::iter::once("__path")
                     .chain(["__start", "__end"])
-                    .chain(input.ast.project.iter().map(|p| p.field.as_str()))
+                    .chain(input.project.iter().map(|p| p.field.as_str()))
                     .collect::<Vec<_>>(),
             )
         })

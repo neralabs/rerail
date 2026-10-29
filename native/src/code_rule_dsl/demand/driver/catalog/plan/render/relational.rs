@@ -11,8 +11,8 @@ use crate::code_rule_dsl::matcher::{
     AstMatcher, MAX_UTIL_DEPTH, Semantic, StopBy, StringCase, Transform, UtilCall, UtilRef,
 };
 use crate::code_rule_dsl::model::{
-    Anchor, ClauseKind, CompiledClause, CompiledCodeRule, ProjectionSource, Query, RegexSource,
-    RuleMode, TemplatePart, ViolationSpec,
+    Anchor, ClauseKind, CompiledClause, CompiledCodeRule, FactQuery, ProjectionSource, Query,
+    RegexOptions, RegexSource, RuleMode, TemplatePart, ViolationSpec,
 };
 use crate::code_rule_dsl::transducer::packed::Program;
 use crate::code_rule_dsl::demand::driver::catalog::sql_backend::{
@@ -206,13 +206,12 @@ impl SqlCatalogPlan {
                     terminals.extend(evidence_terminals);
                     terminals.sort_unstable();
                     terminals.dedup();
+                    builder.refuse_projections(&[subject, evidence], &clause_at);
                     let keys = subject
-                        .ast
                         .project
                         .iter()
                         .filter_map(|left| {
                             evidence
-                                .ast
                                 .project
                                 .iter()
                                 .find(|right| right.field == left.field)
@@ -245,6 +244,7 @@ impl SqlCatalogPlan {
                     distinct,
                 } = &clause.kind
                 {
+                    builder.refuse_projections(&[query], &clause_at);
                     let (terminals, source) =
                         builder.lower_clause_query(&query.ast.query, &format!("{clause_at}/query"));
                     let fields = |names: &[String]| {
@@ -253,7 +253,7 @@ impl SqlCatalogPlan {
                             .filter_map(|name| {
                                 name.split_once('.')
                                     .and_then(|(_, field)| {
-                                        query.ast.project.iter().find(|item| item.field == field)
+                                        query.project.iter().find(|item| item.field == field)
                                     })
                                     .map(|item| Builder::projection_sql(&item.source, "usage"))
                             })
@@ -274,7 +274,13 @@ impl SqlCatalogPlan {
                     builder.clause_irs.push(ir);
                     continue;
                 }
-                if let ClauseKind::Forbid(Query::Regex { regex, source }) = &clause.kind {
+                if let ClauseKind::Forbid(Query::Regex {
+                    regex,
+                    source,
+                    options,
+                }) = &clause.kind
+                {
+                    builder.refuse_regex_options(options, &clause_at);
                     builder.current_clause = (rule_index, clause_index);
                     builder.current_result_limit =
                         u32::try_from(code_rule.capabilities.limits.max_witnesses)
@@ -1288,8 +1294,12 @@ impl Builder {
             }
             Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_) => {}
             Semantic::Parse(_) => unreachable!("parse returned before semantic fact lowering"),
-            // W's `embedded` (embedded documents) has no fact family in N's catalog.
-            Semantic::Value(_) | Semantic::Host(_) | Semantic::Capture(_) | Semantic::Embedded(_) => {
+            // W's `embedded` (embedded documents) and P's `filePath` have no fact family in N's catalog.
+            Semantic::Value(_)
+            | Semantic::Host(_)
+            | Semantic::Capture(_)
+            | Semantic::Embedded(_)
+            | Semantic::FilePath(_) => {
                 self.unsupported.push(format!(
                     "{at}: semantic fact family belongs to a later phase"
                 ));
@@ -1393,7 +1403,8 @@ impl Builder {
             | Semantic::Parse(_)
             | Semantic::Host(_)
             | Semantic::Capture(_)
-            | Semantic::Embedded(_) => {
+            | Semantic::Embedded(_)
+            | Semantic::FilePath(_) => {
                 unreachable!("unsupported semantic families returned before descriptor creation")
             }
         };
@@ -3024,6 +3035,41 @@ impl Builder {
         id
     }
 
+    /// P's projection forms this renderer does not lower (a capture's position, kind, line or text,
+    /// and `extract`): the plan is refused rather than lowered without them.
+    fn refuse_projections(&mut self, relations: &[&FactQuery], at: &str) {
+        for item in relations.iter().flat_map(|relation| relation.project.iter()) {
+            if item.extract.is_some()
+                || matches!(
+                    item.source,
+                    ProjectionSource::CaptureStart(_)
+                        | ProjectionSource::CaptureEnd(_)
+                        | ProjectionSource::CaptureKind(_)
+                        | ProjectionSource::CaptureLine(_)
+                        | ProjectionSource::CaptureText(_)
+                )
+            {
+                self.unsupported
+                    .push(format!("{at}: projection `{}` is not lowered", item.field));
+            }
+        }
+    }
+
+    /// P's regex options (match, content and line filters, paths) are not lowered: a query with any
+    /// is refused rather than lowered without them.
+    fn refuse_regex_options(&mut self, options: &RegexOptions, at: &str) {
+        if !(options.include.is_empty()
+            && options.exclude.is_empty()
+            && options.content_include.is_empty()
+            && options.content_exclude.is_empty()
+            && options.lines.is_none()
+            && options.paths.is_none())
+        {
+            self.unsupported
+                .push(format!("{at}: regex options are not lowered"));
+        }
+    }
+
     fn projection_sql(source: &ProjectionSource, row: &str) -> String {
         match source {
             ProjectionSource::Capture(label) => format!(
@@ -3036,12 +3082,23 @@ impl Builder {
             | ProjectionSource::Stem
             | ProjectionSource::Module
             | ProjectionSource::Package => format!("CAST({row}.file_index AS TEXT)"),
+            // Refused by `refuse_projections`.
+            ProjectionSource::CaptureStart(_)
+            | ProjectionSource::CaptureEnd(_)
+            | ProjectionSource::CaptureKind(_)
+            | ProjectionSource::CaptureLine(_)
+            | ProjectionSource::CaptureText(_) => "NULL".to_owned(),
         }
     }
 
     fn lower_clause_query(&mut self, query: &Query, at: &str) -> (Vec<usize>, RelationalIr) {
         match query {
-            Query::Regex { regex, source } => {
+            Query::Regex {
+                regex,
+                source,
+                options,
+            } => {
+                self.refuse_regex_options(options, at);
                 let id = self.file_terminal(regex, *source);
                 let mut ir = RelationalIr::empty();
                 ir.terminal_spec(TerminalKind::File, format!("terminal:{id}"));

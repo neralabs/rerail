@@ -33,6 +33,8 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct ParseTest {
     pub(crate) grammar: Grammar,
+    /// Opaque slot text for pythonFString; other grammars ignore it.
+    pub(crate) interpolation: String,
     /// The rule matched on the parsed tree's root, compiled for the grammar.
     pub(crate) rule: AstMatcher,
     /// The captures the rule may bind, exported to the host.
@@ -164,11 +166,24 @@ pub(super) fn host_exports<D: Doc>(
     exports
 }
 
+// Read by N's catalog (test-only); W's matcher reads `parse_fact_tree_with`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_fact_tree<'t, D: Doc>(
     node: &Node<'t, D>,
     grammar: Grammar,
     host_kinds: &BTreeSet<u16>,
     reading: Reading,
+) -> Option<Parsed> {
+    parse_fact_tree_with(node, grammar, host_kinds, reading, "{}")
+}
+
+/// `parse_fact_tree` with P's interpolation slot text (`pythonFString`; other grammars ignore it).
+fn parse_fact_tree_with<'t, D: Doc>(
+    node: &Node<'t, D>,
+    grammar: Grammar,
+    host_kinds: &BTreeSet<u16>,
+    reading: Reading,
+    interpolation: &str,
 ) -> Option<Parsed> {
     if !host_kinds.contains(&node.kind_id()) {
         return Some(Parsed::NotString);
@@ -179,7 +194,7 @@ pub(crate) fn parse_fact_tree<'t, D: Doc>(
             .annotation_at(&node.range())
             .map(|annotation| Parsed::Tree(Arc::clone(&annotation.tree)));
     }
-    parsed_tree(node, grammar)
+    parsed_tree_with(node, grammar, interpolation)
 }
 
 impl ParseTest {
@@ -197,7 +212,13 @@ impl ParseTest {
             let _tables = SubTables::enter(table);
             return self.match_tree(node, env, tree);
         }
-        let tree = match parse_fact_tree(&node, self.grammar, &self.host_kinds, self.reading)? {
+        let tree = match parse_fact_tree_with(
+            &node,
+            self.grammar,
+            &self.host_kinds,
+            self.reading,
+            &self.interpolation,
+        )? {
             Parsed::Tree(tree) => tree,
             Parsed::NotString => return None,
             Parsed::Unknown => {
@@ -258,7 +279,15 @@ impl ParseTest {
 /// The node's tree under a text grammar, parsed once per file; `None` when the budget ran out (the
 /// clause fails).
 pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Option<Parsed> {
-    let key = (node.node_id(), grammar);
+    parsed_tree_with(node, grammar, "{}")
+}
+
+fn parsed_tree_with<D: Doc>(
+    node: &Node<'_, D>,
+    grammar: Grammar,
+    interpolation: &str,
+) -> Option<Parsed> {
+    let key = (node.node_id(), grammar, interpolation.to_owned());
     if let Some(memo) = memoized_parse(&key) {
         return Some(match memo {
             Some(tree) => Parsed::Tree(tree),
@@ -267,6 +296,9 @@ pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Optio
     }
     let parsed = match grammar.literal_host() {
         LiteralHost::EcmaComment => literal::parse_comment(node, &mut spend_steps),
+        LiteralHost::PythonString if grammar == Grammar::PythonFString => {
+            literal::parse_python_fstring(node, interpolation, &mut spend_steps)
+        }
         LiteralHost::PythonString => literal::parse_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpString => literal::parse_php_string(node, grammar, &mut spend_steps),
         LiteralHost::PhpComment => literal::parse_php_comment(node, &mut spend_steps),

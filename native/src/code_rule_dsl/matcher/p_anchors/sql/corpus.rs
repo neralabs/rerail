@@ -104,7 +104,7 @@ impl Corpus {
         if let Some(file) = state
             .files
             .get(path)
-            .filter(|file| file.lang == lang && file.digest == doc.index_source_digest())
+            .filter(|file| file.lang == lang && &file.digest == doc.index_source_digest())
         {
             return Ok(file.fid);
         }
@@ -124,7 +124,7 @@ impl Corpus {
             Arc::new(File {
                 fid,
                 lang,
-                digest: doc.index_source_digest(),
+                digest: *doc.index_source_digest(),
                 nodes: doc.transducer_len(),
                 roots: HashMap::new(),
                 bytes: 0,
@@ -140,7 +140,7 @@ impl Corpus {
             .as_ref()?
             .files
             .get(path)
-            .filter(|file| file.lang == lang && file.digest == doc.index_source_digest())?;
+            .filter(|file| file.lang == lang && &file.digest == doc.index_source_digest())?;
         #[cfg(feature = "code-rule-profile")]
         crate::code_rule_dsl::profile::record_sql_index_reuse();
         Some(file.fid)

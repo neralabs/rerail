@@ -493,6 +493,7 @@ impl<'a> Session<'a> {
         let rows = match inputs.rows {
             Some(rows) => rows,
             None => {
+                let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
                 let _calls = if inputs.file_local {
                     crate::code_rule_dsl::eval::stateless_calls(
                         code_rule,
@@ -511,7 +512,6 @@ impl<'a> Session<'a> {
                             return Ok(inputs.gate.take().expect("admitted gate"));
                         }
                         let fields = input
-                            .ast
                             .project
                             .iter()
                             .map(|p| p.field.clone())
@@ -617,7 +617,6 @@ impl<'a> Session<'a> {
                 );
             }
             let fields = input
-                .ast
                 .project
                 .iter()
                 .map(|project| project.field.clone())
@@ -627,28 +626,42 @@ impl<'a> Session<'a> {
                 continue;
             }
             create_input(&db, name, &fields)?;
+            // Bind projection positions once per shared schema, never search field names per row.
+            let mut layouts = HashMap::new();
+            for witness in &rows.witnesses {
+                if let Some(projected) = witness.captures.projection() {
+                    layouts
+                        .entry(projected.schema_identity())
+                        .or_insert_with(|| {
+                            fields
+                                .iter()
+                                .map(|f| projected.index(f))
+                                .collect::<Vec<_>>()
+                        });
+                }
+            }
             let before = db.total_changes();
-            // W's witnesses carry their projection as one JSON object (P's were typed columns).
             insert::insert_rows(
                 &db,
                 name,
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
-                    let location = crate::code_rule_dsl::violations::anchored_span(
-                        &crate::code_rule_dsl::model::Anchor::Span,
-                        witness,
-                    )
-                    .0;
+                    use rusqlite::types::ValueRef;
+                    let location = crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
                     let projected = witness.captures.projection();
+                    let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
-                        rusqlite::types::Value::Text(witness.path.clone()),
-                        rusqlite::types::Value::Integer(location.start_byte as i64),
-                        rusqlite::types::Value::Integer(location.end_byte as i64),
+                        ValueRef::Text(witness.path.as_bytes()),
+                        ValueRef::Integer(location.start_byte as i64),
+                        ValueRef::Integer(location.end_byte as i64),
                     ]
                     .into_iter()
-                    .chain(fields.iter().map(move |field| {
-                        inputs::sql(projected.and_then(|value| value.get(field)))
+                    .chain(fields.iter().enumerate().map(move |(i, _)| {
+                        projected
+                            .zip(layout.and_then(|l| l[i]))
+                            .map_or(ValueRef::Null, |(row, index)| row.sql(index))
                     }))
+                    .map(insert::Borrowed)
                 }),
                 &work,
                 "relational input row budget exceeded",

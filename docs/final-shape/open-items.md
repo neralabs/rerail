@@ -22,6 +22,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | open, **plan gap, decision needed** (closure includes excluded `anchors/sql/lower*`) |
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | open, **decision needed** |
+| O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | open, **decision needed** |
 
 ## O1. Stale-fact detection after a crash
 
@@ -386,6 +387,32 @@ whether any of the stage survives as an engine-internal consumer (Phase 11 row 1
 admission loop rather than copies it) or is removed once the census and admission rules are carried
 by Phase 7's chunked loop.
 
+**2026-10-29: P's workspace path is ported, test-only.** P's deltas to `workspace/{global, api, mod,
+results, evaluate, documents, ingest, crossfile, memory, tests, context_tests}.rs` and their closure
+(`compile/{mod, evidence, line_state}.rs`, `eval/{mod, query, evidence}.rs`, `model.rs`,
+`query/{mod, line_state, name_closure}.rs`, `violations{.rs, /semantic.rs}`, `content_store/objects.rs`,
+`matcher/{semantic, binds, parse, resolve}.rs`, `literal/{identifier_words, python_fstring}.rs`
+and 40 smaller files) are three-way merged onto W (rule 4, base `5cf4246e`), W's side at every
+conflict. A workspace now compiles and evaluates a relational clause under test: producers from
+`compile_relation_producer`, batched across rules by `evaluate_batched_relations`, joined into
+`evaluate_global`. Everything that reaches P's stage (the `Relational` arms, `scoped_source_bytes`,
+`Document.syntax`, the corpus upkeep in `ingest.rs`, `anchor_corpus`, `file_relation_results`) is
+`cfg(test)`, so W's production path is unchanged. The earlier bullets' "a workspace ignores the
+clause" no longer hold under test. P's typed `Captures` and projection rows replace W's JSON bridge
+(`violations::projection` is now compiled in production, as P wrote it); P's sink, anchor and
+projection hunks are restored in `residency::admission::relational` and `waves::relational`, so
+the two `#[ignore]`d tests above run again. Adaptations at conflicts, recorded so they are not
+re-decided:
+- W keeps its `!three_valued` guard on a matcher's required text (`compile/mod.rs`): P's line
+  computes it for clauses that read values, which refuses a consumers' pass on a file without the
+  text (W's `an_evicted_file_kept_for_a_consumer_that_ran_out_keeps_its_other_results`). P's line is
+  kept beside it as a comment, and P's test of it is ignored (O22);
+- P's anchor-corpus tests (`positional_index_lives…`, `stateless_fact_extraction_uses_selective_anchor_postings`,
+  `relational_inputs_share_one_anchor_index…`) run under `p-anchor-corpus` and are ignored without it (O20);
+- W's retained-bytes profile fields (`record_retained`) are kept beside P's profile;
+- P's duplicates of W items (a second production `Relational` variant, `calls_query`, the tape's
+  `mod index` block, a by-value `index_source_digest`) are not taken twice.
+
 ## O19. Copies placed beside their adaptations
 
 Restoring copies that later commits rewrote or removed put the copies in the tree, as copied,
@@ -414,6 +441,11 @@ beside the adaptations made from them:
   store's atoms). The planner's native modes run on T's pair in tests; production would run them on
   the adaptation once the planner's native strata read atoms (O13).
 - S's async-call oracle as copied (`findings::tests::s_native_oracle`) beside `native_oracle` (O15).
+- P's census (`workspace/memory/census.rs`) is `residency::admission::census` again, verbatim, now
+  that P's typed projections are in the tree; `2d41e7d2` had cut it onto W's JSON projections.
+- P's and D's anchor corpora (`p_anchors/sql/corpus.rs`, `d_anchors/sql/corpus.rs`) and their
+  `Semantic::FilePath` arms are restored as written (D's with only the `waves` path changed); W's
+  `matcher::anchors` gains the FilePath arm.
 Closure: per pair, decide which survives. The adaptation carries the plan's shape, so the copy is
 removed (a mutation, after its tests are carried over or retired), or the copy replaces it.
 
@@ -435,6 +467,18 @@ here as P wrote them. Mutations:
 takes P's SQLite flag (it is a process-wide setting), and carry P's decoded lowering into
 `prefilter` (or retire it with relations moving into transducers, §7) before `p_anchors` goes.
 
+**2026-10-29: P's anchor-corpus path, behind a feature.** P's workspace swaps W's per-file
+`FileAnchorIndex::build`/`select` for its corpus (`FileAnchorIndex::build_at`/`selected`,
+roots prepared for every rule before the workers run). That swap is compiled only under
+`cfg(all(test, feature = "p-anchor-corpus"))`: `workspace/evaluate.rs` keeps both `run_jobs`,
+`prepare_candidates` and `evaluate_document` (W's under `not`), and `eval/query.rs::anchor_roots`
+answers `None` without the feature. P's corpus keys prepared roots by its plan's `Arc` address, so
+`matcher::p_anchors::plan_for(grammar)` maps W's plan to one P plan per matcher (a test-only bridge).
+`positional_index_lives_with_the_workspace_across_applies_and_deletions` runs with the feature and
+is ignored without it. Build: `cargo check --lib --tests --features p-anchor-corpus`.
+Closure: the corpus swap is the architecture's per-run anchor index (point 1); decide it with
+Phase 3 rather than by default.
+
 ## O21. G's literal anchors and positional search index, placed test-only
 
 `bb4c9605` merged G's grid closure (`b90a7b0a`) into N's packed runtime but kept W's removals of
@@ -453,3 +497,19 @@ G's search index and literal anchors, so seven G tests in `packed.rs` and two in
 G's admission and cutover spikes (`00229423` had deleted them) are back as copied.
 Closure: W's search index is kind presence by design (Phase 3 row 5); decide whether G's value
 and text streams feed the prefilter's term postings or are removed with these tests.
+
+## O22. P's text prefilter on three-valued clauses
+
+P computes a matcher's required text for every clause (`compile/mod.rs`: "requirements read only
+source-text tests, never values, through monotone connectives"). W computes it only for two-valued
+ones (`!three_valued`). They disagree on a consumers' pass. In
+`an_evicted_file_kept_for_a_consumer_that_ran_out_keeps_its_other_results`, P's prefilter refuses
+`impl.py` (no `async `), so the file records no failure and is evicted. The result then reads its
+stored results, and with the injected read failure the whole apply fails instead of reporting
+`adapter-error`. The test fails in P's own tree at `cbee7a03` with the same panic
+(`crossfile_tests.rs:224`), so this is P's defect, not the merge's. W's guard is kept in
+production; P's `a_three_valued_rule_keeps_its_source_prefilter` is `#[ignore]`d with this reason,
+and P's line is kept as a comment beside W's. **Decision needed:** take P's prefilter (and make an
+evicted read failure on a consumers' pass non-fatal, as `api.rs` already does for one file), or
+keep W's guard and retire P's test.
+

@@ -10,7 +10,7 @@ use napi::Result;
 use regex::Regex;
 use serde_json::Value;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
@@ -128,6 +128,8 @@ fn folder_contains(folder: &str, path: &str) -> bool {
 
 #[derive(Clone)]
 pub(super) struct ViolationSpec {
+    /// SQL inputs retain only their anchor and typed fields, without diagnostic payloads.
+    pub(super) input_only: bool,
     pub(super) code: String,
     pub(super) message: String,
     pub(super) anchor: Anchor,
@@ -437,12 +439,21 @@ pub(super) enum FixPlan {
 pub(super) struct Projection {
     pub(super) field: String,
     pub(super) source: ProjectionSource,
+    /// First regex match's selected group, or null when the source/group does not match.
+    pub(super) extract: Option<(Regex, usize)>,
 }
 
 #[derive(Clone)]
 pub(super) enum ProjectionSource {
     /// A capture's text (a multi-node capture's nodes joined as in the source).
     Capture(String),
+    /// A capture's source byte offset, for identity and partition keys.
+    CaptureStart(String),
+    CaptureEnd(String),
+    CaptureKind(String),
+    CaptureLine(String),
+    /// Decoded/exported capture text, or a host node's source text.
+    CaptureText(String),
     /// The file's path, its directory, its file name, or its name without extensions.
     Path,
     Directory,
@@ -460,13 +471,41 @@ pub(super) struct FactQuery {
     pub(super) predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub(super) ast: Arc<AstRelation>,
+    /// Consumer columns are independent of the shared matcher and file domain.
+    pub(super) project: Arc<[Projection]>,
+    pub(super) closure: Vec<NameClosure>,
+    pub(super) each: Option<String>,
+    pub(super) anchor: Anchor,
+}
+
+impl FactQuery {
+    // Read by P's relational compiler (test-only, open item O18).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn retain_projected_fields(&mut self, fields: Option<&BTreeSet<String>>) {
+        let needed = |p: &Projection| fields.is_some_and(|f| f.contains(&p.field));
+        if self.project.iter().any(|p| !needed(p)) {
+            self.project = self.project.iter().filter(|p| needed(p)).cloned().collect();
+        }
+    }
+}
+
+/// A staged, cycle-safe closure over authored relation fields. Earlier sets may seed later sets;
+/// later edges never feed back into an earlier stage.
+#[derive(Clone, Debug)]
+pub(super) struct NameClosure {
+    pub(super) name: String,
+    pub(super) seeds: Vec<String>,
+    pub(super) seed_field: Option<String>,
+    pub(super) edges: Option<(String, String)>,
+    pub(super) extends: Vec<String>,
+    pub(super) partition_by: Vec<String>,
+    pub(super) contains: Vec<(String, String)>,
 }
 
 #[derive(Clone)]
 pub(super) struct AstRelation {
     /// A `Query::Ast`.
     pub(super) query: Query,
-    pub(super) project: Vec<Projection>,
     /// The files the relation reads, within the code rule's scope; `None` reads all of it.
     pub(super) domain: Option<CodeRuleScope>,
 }
@@ -477,11 +516,58 @@ pub(super) enum RegexSource {
     Path,
 }
 
+/// Optional filters over matched text and independent source lines.
+#[derive(Clone, Default)]
+pub(super) struct RegexOptions {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) content_include: Vec<Regex>,
+    pub(super) content_exclude: Vec<Regex>,
+    pub(super) lines: Option<RegexLines>,
+    pub(super) paths: Option<CodeRuleScope>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLines {
+    pub(super) include: Vec<Regex>,
+    pub(super) exclude: Vec<Regex>,
+    pub(super) first: bool,
+    pub(super) lf_only: bool,
+    pub(super) state: Option<RegexLineState>,
+    pub(super) indentation: Option<RegexIndentation>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineState {
+    pub(super) initial: usize,
+    pub(super) emit: Vec<bool>,
+    pub(super) transitions: Vec<RegexLineTransition>,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexLineTransition {
+    pub(super) from: usize,
+    pub(super) to: usize,
+    pub(super) pattern: Regex,
+    pub(super) min: u64,
+    pub(super) max: Option<u64>,
+    pub(super) odd: Option<bool>,
+    pub(super) skip: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct RegexIndentation {
+    pub(super) exclude_under: Regex,
+    pub(super) reset: Regex,
+    pub(super) ignore: Vec<Regex>,
+}
+
 #[derive(Clone)]
 pub(super) enum Query {
     Regex {
         regex: Regex,
         source: RegexSource,
+        options: Box<RegexOptions>,
     },
     Ast {
         /// One compiled matcher per grammar the rule language spans; a file uses the grammar its label selects.
@@ -657,6 +743,8 @@ impl RuleMode {
 #[derive(Clone)]
 pub(super) struct CompiledCodeRule {
     pub(super) id: String,
+    /// Report the rule's combined findings only when their count exceeds this ceiling.
+    pub(super) report_count_gt: Option<usize>,
     pub(super) rule_mode: RuleMode,
     pub(super) canonical: String,
     pub(super) digest: String,

@@ -45,6 +45,7 @@ pub(super) fn describe_matcher(semantic: &Semantic, language: GrammarDialect) ->
             "seenBefore": resolves.seen_before, "languageOptions": resolves.options.is_some(),
         } }),
         Semantic::Layout(layout) => json!({ "layout": format!("{layout:?}") }),
+        Semantic::FilePath(condition) => json!({ "filePath": format!("{condition:?}") }),
         Semantic::Calls(_) => json!({ "calls": true }),
     }
 }

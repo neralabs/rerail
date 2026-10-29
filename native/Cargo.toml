@@ -9,6 +9,10 @@ crate-type = ["cdylib"]
 
 [features]
 code-rule-profile = []
+# P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
+# rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
+# the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
+p-anchor-corpus = []
 [dependencies]
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched

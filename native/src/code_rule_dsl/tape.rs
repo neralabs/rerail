@@ -1557,6 +1557,9 @@ struct Rec {
 
 #[derive(Clone)]
 pub(super) struct TapeDoc {
+    // P's: the source's digest, read by P's anchor corpus (`matcher::p_anchors`, test-only).
+    #[cfg_attr(not(test), allow(dead_code))]
+    source_digest: [u8; 32],
     source: Arc<String>,
     grammar: Arc<Grammar>,
     data: Arc<Vec<Rec>>,
@@ -1632,6 +1635,8 @@ fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
         .collect()
 }
 
+pub(super) type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
+
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
 /// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
 /// positions keep their own table, built on first use: violations place spans with the line table,
@@ -1681,12 +1686,6 @@ impl TapeDoc {
     #[cfg(test)]
     pub(super) fn transducer_source_arc(&self) -> Arc<String> {
         Arc::clone(&self.source)
-    }
-
-    #[cfg(test)]
-    pub(super) fn index_source_digest(&self) -> [u8; 32] {
-        use sha2::Digest;
-        sha2::Sha256::digest(self.source.as_bytes()).into()
     }
 
     /// The documents `image` encodes over `source`: the file's own, with the guests derived from
@@ -1995,6 +1994,7 @@ impl TapeDoc {
         }
         checked(budget)?;
         Ok(Self {
+            source_digest: image.source_digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
                 rows: std::sync::OnceLock::new(),
@@ -2108,6 +2108,11 @@ impl TapeDoc {
     ) -> Result<Self, String> {
         let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
         Self::restore_with_lines(source, grammar, &image.file_image(), lines, budget)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn index_source_digest(&self) -> &[u8; 32] {
+        &self.source_digest
     }
 
     /// The source's line table, shared with the evaluator that restored this document.
@@ -2282,6 +2287,11 @@ impl<'a> TapeNode<'a> {
     #[cfg(test)]
     pub(super) fn incoming_field(&self) -> u16 {
         self.rec().field
+    }
+
+    /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
+    pub(super) fn is_first_field(&self, field: u16) -> bool {
+        field != 0 && self.rec().field == field && self.rec().first_field
     }
 
     fn rec(&self) -> &Rec {
@@ -2471,7 +2481,18 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         if field_id == 0 {
             None
         } else {
-            self.children().find(|child| child.rec().field == field_id)
+            #[cfg(feature = "code-rule-profile")]
+            let mut examined = 0;
+            let found = self.children().find(|child| {
+                #[cfg(feature = "code-rule-profile")]
+                {
+                    examined += 1;
+                }
+                child.rec().field == field_id
+            });
+            #[cfg(feature = "code-rule-profile")]
+            super::profile::navigation::record(examined, found.is_some());
+            found
         }
     }
 }

@@ -2,30 +2,18 @@
 use super::{FactQuery, Rows, insert};
 use crate::code_rule_dsl::{
     eval,
-    model::{Anchor, CompiledClause, CompiledCodeRule, Metrics, Snapshot},
+    model::{CompiledClause, CompiledCodeRule, Metrics, Snapshot},
     violations::{Witness, anchored_span, projection::Row},
 };
 use napi::Result;
 use rusqlite::types::ValueRef;
-use std::sync::{Arc, atomic::AtomicUsize};
+use std::{
+    cell::RefCell,
+    sync::{Arc, atomic::AtomicUsize},
+};
 
 #[cfg(test)]
 mod tests;
-
-/// A JSON projected value as the SQL value its column stores.
-pub(super) fn sql(value: Option<&serde_json::Value>) -> rusqlite::types::Value {
-    use rusqlite::types::Value as Sql;
-    use serde_json::Value;
-    match value {
-        None | Some(Value::Null) => Sql::Null,
-        Some(Value::Bool(b)) => Sql::Integer(i64::from(*b)),
-        Some(Value::Number(n)) => n
-            .as_i64()
-            .map_or_else(|| Sql::Real(n.as_f64().unwrap_or(f64::NAN)), Sql::Integer),
-        Some(Value::String(s)) => Sql::Text(s.clone()),
-        Some(other) => Sql::Text(other.to_string()),
-    }
-}
 
 struct Pending {
     path: Arc<str>,
@@ -58,7 +46,7 @@ impl Sink<'_> {
         insert::bound_rows(
             self.db,
             self.table,
-            self.input.ast.project.len() + 3,
+            self.input.project.len() + 3,
             self.pending[..published].iter().map(|p| {
                 [
                     ValueRef::Text(p.path.as_bytes()),
@@ -66,7 +54,7 @@ impl Sink<'_> {
                     ValueRef::Integer(p.end),
                 ]
                 .into_iter()
-                .chain((0..self.input.ast.project.len()).map(|i| {
+                .chain((0..self.input.project.len()).map(|i| {
                     p.projection
                         .as_ref()
                         .map_or(ValueRef::Null, |row| row.sql(i))
@@ -90,7 +78,7 @@ impl Sink<'_> {
         if self.path.as_ref() != witness.path {
             self.path = Arc::from(witness.path.as_str());
         }
-        let location = anchored_span(&Anchor::Span, &witness).0;
+        let location = anchored_span(&self.input.anchor, &witness).0;
         self.pending.push(Pending {
             path: Arc::clone(&self.path),
             start: location.start_byte as i64,
@@ -137,19 +125,15 @@ pub(super) fn stream(
         peak: 0,
         batches: 0,
     };
-    // W's matcher has no witness sink (P's `stateless_rows_to`): each witness reaches the sink
-    // once its relation is read, its JSON projection as a typed row.
-    let mut rows = eval::stateless_rows(
+    let mut output = |w| sink.emit(w);
+    let rows = eval::stateless_rows_to(
         code_rule,
         clause,
         (input, eval::evidence::Side::Counted),
         snapshot,
         metrics,
+        Some(&RefCell::new(&mut output)),
     )?;
-    rows.witnesses = std::mem::take(&mut rows.witnesses)
-        .into_iter()
-        .map(|w| sink.emit(w))
-        .collect();
     if let Some(e) = sink.error.take() {
         return Err(e);
     }

@@ -5,7 +5,7 @@ mod identity;
 #[path = "src/build_languages.rs"]
 mod languages;
 
-use identity::{grammar_build_id, hex, locked_version};
+use identity::{grammar_build_id, hex, locked_version, parser_cache_key};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -256,14 +256,28 @@ fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
     let source = grammar.source;
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
-    let parser = if grammar.committed_parser {
-        committed_parser(grammar, &json, generator)
-    } else {
-        generate_parser(grammar, &json)
-    };
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
-    std::fs::write(&parser_path, parser).expect("generated parser is writable");
+    if grammar.committed_parser {
+        let parser = committed_parser(grammar, &json, generator);
+        std::fs::write(&parser_path, parser).expect("generated parser is writable");
+    } else {
+        // Rust-only edits rerun this script for the engine identity. Reuse a parser generated from
+        // this grammar.json, version and generator, including after a bounded build was interrupted.
+        let stamp_path = parser_path.with_extension("sha256");
+        let key = parser_cache_key(
+            generator.as_bytes(),
+            json.as_bytes(),
+            &format!("{:?}", grammar.version),
+        );
+        if !parser_path.is_file()
+            || std::fs::read_to_string(&stamp_path).ok().as_deref() != Some(&key)
+        {
+            let parser = generate_parser(grammar, &json);
+            std::fs::write(&parser_path, parser).expect("generated parser is writable");
+            std::fs::write(stamp_path, key).expect("parser fingerprint is writable");
+        }
+    }
     cc::Build::new()
         .include(grammar.headers)
         .file(parser_path)

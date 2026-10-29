@@ -2137,7 +2137,7 @@ fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let directory = TempDir::new("partial-pass");
     let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
-    // `a`, a regex clause with one match, polls its allowance once, before `b` runs.
+    // `a` polls before scanning and once for its match, before `b` runs.
     let code_rule = compile(
         "partial-pass",
         json!([
@@ -2154,7 +2154,7 @@ fn running_out_of_work_in_a_pass_over_some_clauses_is_never_stored() {
     let file = json!([{ "path": "partial.py", "language": "python", "source": "print(1)\n" }]);
     // `a` runs and is stored; the ceiling stops `b`, which is not.
     let first = stored_workspace(&store, "/partial-pass", &code_rule);
-    TEST_CLAUSE_WORK_CEILING.set(Some(1));
+    TEST_CLAUSE_WORK_CEILING.set(Some(2));
     let capped = apply_json(&first, 1, file.clone());
     TEST_CLAUSE_WORK_CEILING.set(None);
     assert_eq!(
@@ -2304,8 +2304,8 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
             "forbid": { "ast": { "language": "python", "rule": { "pattern": "print($A)" } } }
         })
     };
-    // Every element reads each one before it: quadratic in the list, with no text to rule a
-    // file out.
+    // Enough roots to exhaust the clause allowance even when candidate selection and sibling
+    // checks share their work. No required literal rules the file out before matching.
     let costly = json!({
         "id": "costly", "violation": { "anchor": "witness.span", "code": "SLOW", "message": "slow" },
         "forbid": { "ast": { "language": "python", "rule": {
@@ -2315,7 +2315,7 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
         "clause-allowance",
         json!([print("before"), costly, print("after")]),
     );
-    let numbers = (0..3_000)
+    let numbers = (0..30_000)
         .map(|n| n.to_string())
         .collect::<Vec<_>>()
         .join(", ");

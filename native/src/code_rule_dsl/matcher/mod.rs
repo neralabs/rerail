@@ -4,6 +4,11 @@ mod anchors;
 #[cfg(test)]
 #[allow(dead_code, unused_imports)]
 pub(in crate::code_rule_dsl) mod p_anchors;
+// P's anchor corpus at P's paths, for P's relational workspace code and the `p-anchor-corpus` path.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use p_anchors::sql::{Corpus, CorpusSlot, anchor_plans_for_file};
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+pub(in crate::code_rule_dsl) use p_anchors::sql::anchor_plans;
 /// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
 /// plan-input statistics (O19).
 #[cfg(test)]
@@ -61,7 +66,7 @@ pub(crate) use exported::{
     WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
 };
 pub(crate) use format_args::{FormatArgs, Style};
-pub(crate) use layout::{Gap, Layout, LineCount, Neighbour};
+pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 /// P's: the path of the file being matched (P's `calls` delta reads it).
 pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(super) use memo::with_file as with_file_memo;

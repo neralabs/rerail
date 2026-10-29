@@ -206,6 +206,8 @@ pub(crate) fn append<'a>(
         }
     })
 }
+// Some of P's row accessors are read only by P's relational stage (test-only, open item O18).
+#[cfg_attr(not(test), allow(dead_code))]
 impl Row {
     fn data(&self) -> &Data {
         self.data

@@ -1831,3 +1831,20 @@ fn combine<'index>(
     }
     Ok(Selection::Roots(Cow::Owned(result)))
 }
+
+/// A W grammar's anchors as P's plan, one for each W plan while it lives: P's corpus keys a file's
+/// prepared roots by its plan's address, so every caller on the `p-anchor-corpus` path (open item
+/// O20) reaches the same `Arc` through W's.
+#[cfg(feature = "p-anchor-corpus")]
+pub(in crate::code_rule_dsl) fn plan_for(grammar: &super::GrammarMatcher) -> Arc<AnchorPlan> {
+    type Plans = std::collections::HashMap<usize, (Arc<super::AnchorPlan>, Arc<AnchorPlan>)>;
+    static PLANS: std::sync::LazyLock<std::sync::Mutex<Plans>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut plans = PLANS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (_, plan) = plans
+        .entry(Arc::as_ptr(&grammar.anchors) as usize)
+        .or_insert_with(|| {
+            (Arc::clone(&grammar.anchors), Arc::new(AnchorPlan::compile(&grammar.matcher)))
+        });
+    Arc::clone(plan)
+}

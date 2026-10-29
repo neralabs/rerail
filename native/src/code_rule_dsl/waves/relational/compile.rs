@@ -133,13 +133,12 @@ pub(in crate::code_rule_dsl) fn compile(
             defines,
             required_ast,
         )?;
-        if input.predicate.is_some() {
+        if input.predicate.is_some() || !input.closure.is_empty() {
             return Err(invalid(format!(
                 "{path}/inputs/{name}: use SQL WHERE and recursive stages instead of evidence where/closure"
             )));
         }
         let fields = input
-            .ast
             .project
             .iter()
             .map(|project| project.field.clone())
@@ -609,17 +608,7 @@ pub(in crate::code_rule_dsl) fn compile(
     // Keep the original matching/anchor semantics while omitting unconsumed projection work.
     for (name, input) in &mut inputs {
         let fields = input_fields.get(name);
-        // P's `FactQuery::retain_projected_fields`, on W's projection (which the AST relation holds).
-        if input
-            .ast
-            .project
-            .iter()
-            .any(|p| !fields.is_some_and(|f| f.contains(&p.field)))
-        {
-            Arc::make_mut(&mut input.ast)
-                .project
-                .retain(|p| fields.is_some_and(|f| f.contains(&p.field)));
-        }
+        input.retain_projected_fields(fields);
     }
     let mut plan = Plan {
         require_nonempty,

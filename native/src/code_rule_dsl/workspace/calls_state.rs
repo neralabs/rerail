@@ -78,7 +78,7 @@ pub(super) struct CallsState {
 }
 
 impl CallsState {
-    // P's global workspace path (`workspace/global.rs`) reads these; not ported (O18).
+    // P's global workspace path (`workspace/global.rs`) reads these, under test (O18).
     #[allow(dead_code)]
     pub(super) fn take_dirty_globals(&mut self) -> BTreeSet<usize> {
         std::mem::take(&mut self.dirty_globals)

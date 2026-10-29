@@ -104,6 +104,39 @@ fn fixture(
     (native, tape, image, grammar)
 }
 
+#[test]
+fn known_field_edges_match_native_first_child_without_larger_records() {
+    assert_eq!(std::mem::size_of::<Rec>(), 40);
+    for (lang, source) in [
+        (
+            GrammarDialect::Python,
+            "import alpha, beta, gamma\ndef f(a: int, b=2): return a + b\n",
+        ),
+        (
+            GrammarDialect::TypeScript,
+            "const x = f(a, b); if (x) { g(x); }",
+        ),
+    ] {
+        let (native, tape, _, grammar) = fixture(source, lang);
+        let native = AstGrep::doc(native);
+        let restored = AstGrep::doc(tape);
+        for (left, right) in native.root().dfs().zip(restored.root().dfs()) {
+            for field in 0..=grammar.kinds.field_count() as u16 {
+                let expected = left
+                    .parent()
+                    .and_then(|parent| parent.child_by_field_id(field))
+                    .is_some_and(|first| first.node_id() == left.node_id());
+                assert_eq!(
+                    right.get_inner_node().is_first_field(field),
+                    expected,
+                    "{lang:?} {:?} field {field}",
+                    right.range()
+                );
+            }
+        }
+    }
+}
+
 type MatchResult = (Range<usize>, Vec<(String, Vec<Range<usize>>)>);
 
 fn matches<D: Doc>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {

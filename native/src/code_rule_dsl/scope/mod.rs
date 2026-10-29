@@ -416,6 +416,8 @@ pub(crate) struct ScopeTable {
     pub(crate) module_imports: Vec<ModuleImport>,
     /// Python usedness, built on first use.
     pub(crate) usage: OnceLock<Arc<usage::Usage>>,
+    /// Declaration names alone, without resolving every read in the file.
+    pub(crate) declaration_sites: OnceLock<Arc<usage::Usage>>,
     /// PHP: what reaches each read of a variable.
     pub(crate) php: Option<Box<php::Flow>>,
     /// SQL: the file's query blocks, relations and qualified references, which resolve a
@@ -544,6 +546,7 @@ impl ScopeTable {
                 locals_scopes: Vec::new(),
                 module_imports: Vec::new(),
                 usage: OnceLock::new(),
+                declaration_sites: OnceLock::new(),
                 php: None,
                 sql: None,
             },
