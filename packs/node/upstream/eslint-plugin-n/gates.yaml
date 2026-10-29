@@ -178,7 +178,6 @@ rules:
 # (lib/unsupported-features/), and package.json (eslint-utils, eslint-plugin-es-x, globals, semver).
 watch:
   rule-prefix: "n/"
-  extra-rules: ["hashbang", "no-deprecated-api"]
   tests:
     - "tests/lib/rules/{rule}.js"
     - "tests/fixtures/**"
