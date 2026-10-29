@@ -19,6 +19,7 @@
 //! `ov_off`, `ov_tgt`, `seeds`, `y2_id`, `y2_lvl` (u32), concatenated over worktrees with their
 //! ranges in `meta.json`.
 use super::cols;
+use super::round::{self, Csr, Lattice, Values};
 use crate::y2::dc::{self, Dc, St};
 use crate::y2::facts::Facts;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -112,39 +113,6 @@ pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit:
         let t0 = Instant::now();
         let f = crate::y2::load_facts(&d, y1.as_ref(), wt);
         let load_ms = t0.elapsed().as_secs_f64() * 1e3;
-        // Y2 from scratch: reachability, then findings, `y2_runs` times.
-        let (mut reach_ms, mut find_ms, mut la) = (Vec::new(), Vec::new(), Vec::new());
-        let mut y2 = None;
-        for _ in 0..y2_runs.max(1) {
-            la.push(cols::load_average()[0]);
-            let t1 = Instant::now();
-            let mut dcs = Dc::scratch_reach(&f);
-            reach_ms.push(t1.elapsed().as_secs_f64() * 1e3);
-            let t2 = Instant::now();
-            dcs.scratch_findings(&f);
-            find_ms.push(t2.elapsed().as_secs_f64() * 1e3);
-            y2 = Some(dcs);
-        }
-        let y2 = y2.unwrap();
-        let levels = y2.levels();
-        let succ_calls = y2.succ_calls();
-        let findings = y2.finding_rows().len();
-        drop(y2);
-        // The part of Y2's reachability that evaluates edges: `succ` at every reached state, alone
-        // (the rest is its traversal: the level heap, the reached map and the dispatch indexes).
-        let mut succ_ms = Vec::new();
-        let mut buf = Vec::new();
-        let mut succ_out = 0usize;
-        for _ in 0..y2_runs.max(1) {
-            succ_out = 0;
-            let t1 = Instant::now();
-            for (s, _) in &levels {
-                buf.clear();
-                dc::succ(&f, *s, &mut buf);
-                succ_out += buf.len();
-            }
-            succ_ms.push(t1.elapsed().as_secs_f64() * 1e3);
-        }
         // The product graph.
         let t3 = Instant::now();
         let e = enumerate(&f);
@@ -174,6 +142,59 @@ pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit:
             kinds[layer_kind(*s)] += 1;
         }
         let edges: usize = rows.iter().map(|r| r.1.len()).sum();
+        let assemble_ms = t4.elapsed().as_secs_f64() * 1e3;
+        // This worktree's graph as a flat CSR over the ids so far, for the same-process
+        // comparison below (the columns written at the end are the layered form).
+        let nn = ids.len();
+        let (mut foff, mut ftgt) = (vec![0u32; nn + 1], Vec::with_capacity(edges));
+        let mut j = 0;
+        for v in 0..nn {
+            if j < rows.len() && rows[j].0 as usize == v {
+                ftgt.extend_from_slice(&rows[j].1);
+                j += 1;
+            }
+            foff[v + 1] = ftgt.len() as u32;
+        }
+        let flat = Csr::new(&foff, &ftgt, nn);
+        let seed_ids: Vec<u32> = e.seeds.iter().map(|s| ids[s]).collect();
+        // Y2 from scratch (reachability, then findings), `succ` alone at the states it reached
+        // (its edge evaluation; the rest of its reachability is traversal: the level heap, the
+        // reached map, the dispatch indexes), and the lattice's sequential fixpoint on the flat
+        // CSR: interleaved, `y2_runs` times, so each run of the four shares the machine's load.
+        let (mut reach_ms, mut find_ms, mut succ_ms, mut fix_ms, mut la) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut levels, mut succ_calls, mut findings, mut succ_out, mut fix_edges, mut fix_rounds) = (Vec::new(), 0, 0, 0usize, 0u64, 0usize);
+        let mut buf = Vec::new();
+        for _ in 0..y2_runs.max(1) {
+            la.push(cols::load_average()[0]);
+            let tr = Instant::now();
+            let mut dcs = Dc::scratch_reach(&f);
+            reach_ms.push(tr.elapsed().as_secs_f64() * 1e3);
+            let tf = Instant::now();
+            dcs.scratch_findings(&f);
+            find_ms.push(tf.elapsed().as_secs_f64() * 1e3);
+            levels = dcs.levels();
+            succ_calls = dcs.succ_calls();
+            findings = dcs.finding_rows().len();
+            drop(dcs);
+            succ_out = 0;
+            let ts = Instant::now();
+            for (s, _) in &levels {
+                buf.clear();
+                dc::succ(&f, *s, &mut buf);
+                succ_out += buf.len();
+            }
+            succ_ms.push(ts.elapsed().as_secs_f64() * 1e3);
+            let tx = Instant::now();
+            let (v, c) = round::sequential(&flat, &seed_ids, Lattice::MinLevel);
+            fix_ms.push(tx.elapsed().as_secs_f64() * 1e3);
+            (fix_edges, fix_rounds) = (c.edges(), c.rounds.len());
+            let Values::Levels(l) = v else { unreachable!() };
+            assert_eq!(l.iter().filter(|x| **x != round::INF).count(), levels.len(), "worktree {wt}: flat fixpoint reached ≠ Y2");
+            for (s, lvl) in &levels {
+                assert_eq!(l[ids[s] as usize], *lvl, "worktree {wt}: flat fixpoint level ≠ Y2 at {s:#x}");
+            }
+        }
+        let t5 = Instant::now();
         if wi == 0 {
             // The base: every id of this worktree, in id order (ids 0..n here).
             assert_eq!(rows.len(), ids.len());
@@ -191,7 +212,7 @@ pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit:
                 }
             }
         }
-        let assemble_ms = t4.elapsed().as_secs_f64() * 1e3;
+        let layer_ms = t5.elapsed().as_secs_f64() * 1e3;
         // Roots and Y2's reached states with their levels, by id.
         let s0 = seeds_col.len();
         seeds_col.extend(e.seeds.iter().map(|s| ids[s]));
@@ -212,8 +233,9 @@ pub fn run(dump: &Path, edges: Option<&Path>, out: &Path, y2_runs: usize, limit:
             "y2": {"runs": y2_runs.max(1), "reach_ms": reach_ms, "reach_ms_median": median(&reach_ms), "findings_ms": find_ms, "findings_ms_median": median(&find_ms), "load_average_1m": la,
                    "reached": levels.len(), "reached_flow_annotated_dispatch": reached_kinds, "succ_calls": succ_calls, "succ_edges_examined": y2_edges, "findings": findings,
                    "succ_at_reached_ms": succ_ms, "succ_at_reached_ms_median": median(&succ_ms)},
+            "lattice_seq": {"note": "sequential min_level fixpoint on this worktree's flat CSR, interleaved with the Y2 runs above; levels checked = Y2's", "fixpoint_ms": fix_ms, "fixpoint_ms_median": median(&fix_ms), "rounds": fix_rounds, "edges_scanned": fix_edges},
             "graph": {"states": e.states.len(), "states_flow_annotated_dispatch": kinds, "edges_with_repeats": raw_edges, "edges": edges, "new_ids": fresh.len(), "first_new_id": first_new,
-                      "enumerate_ms": enum_ms, "assemble_ms": assemble_ms, "replaced_rows": overrides.len(), "replaced_row_edges": ov_edges},
+                      "enumerate_ms": enum_ms, "assemble_ms": assemble_ms, "layer_ms": layer_ms, "replaced_rows": overrides.len(), "replaced_row_edges": ov_edges},
             "seeds": [s0, e.seeds.len()], "y2_levels": [y0, lv.len()],
         });
         eprintln!("lattice build: worktree {wt}: {}", m);

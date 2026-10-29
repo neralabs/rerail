@@ -75,6 +75,51 @@ def main():
             print(f"| {c['lattice']} | {c['mode']} | {c['threads']} | {c['runs']} | {c['wall_ms']:.2f} | {c['wall_ms_min']:.2f} | {c['cpu_ms']:.1f} | {c.get('speedup_vs_seq', float('nan')):.2f} | {c['load_1m']:.1f} | "
                   f"{c['peak_footprint_mb']:.1f} | {c['max_rss_mb']:.1f} | {c['mapped_mb']:.1f} | {c['copied_bytes']} | {c['exact']} | {c.get('digests_equal_seq')} |" + extra)
         print()
+    # Y2's baseline on the same inputs (graph build), per worktree.
+    ws = meta["worktrees"]
+    y2 = {"reach_ms": sum(w["y2"]["reach_ms_median"] for w in ws), "succ_at_reached_ms": sum(w["y2"]["succ_at_reached_ms_median"] for w in ws),
+          "findings_ms": sum(w["y2"]["findings_ms_median"] for w in ws), "enumerate_ms": sum(w["graph"]["enumerate_ms"] for w in ws),
+          "assemble_ms": sum(w["graph"]["assemble_ms"] for w in ws), "load_1m": [w["y2"]["load_average_1m"][0] for w in ws][:3]}
+    y2["traversal_ms"] = y2["reach_ms"] - y2["succ_at_reached_ms"]
+    out["y2"] = y2
+    print(f"## Y2 on the same inputs ({len(ws)} worktree(s), sums of per-worktree medians)\n")
+    print("| reach ms | of which succ at reached states | traversal (reach − succ) | findings ms | CSR: enumerate ms | CSR: assemble ms |")
+    print("|---|---|---|---|---|---|")
+    print(f"| {y2['reach_ms']:.1f} | {y2['succ_at_reached_ms']:.1f} | {y2['traversal_ms']:.1f} | {y2['findings_ms']:.1f} | {y2['enumerate_ms']:.1f} | {y2['assemble_ms']:.1f} |\n")
+    # Workload A per round: medians over every run of each kernel at 1 and 6 threads.
+    per = {}
+    for (w, lat, mode, t), rs in rows.items():
+        if w == "a" and lat == "level":
+            rm = [x for r in rs for x in r["round_ms"]]
+            per[(mode, t)] = [med([x[k] for x in rm]) for k in range(len(rm[0]))]
+            counts = rs[0]["counts"]
+            per[("counts", mode)] = counts
+    if ("seq", 1) in per:
+        c = per[("counts", "seq")]
+        cols = [k for k in [("seq", 1), ("par", 1), ("par", 6), ("edge", 6), ("par", 12)] if k in per]
+        print("## Workload A, min_level, per round (ms: medians over runs)\n")
+        print("| round | width | edges | changed | " + " | ".join(f"{m}@{t} ms" for m, t in cols) + " | par@6 speedup | edge@6 speedup |")
+        print("|" + "---|" * (4 + len(cols) + 2))
+        for k in range(len(c["width"])):
+            v = [per[x][k] for x in cols]
+            sp = lambda m: per[("seq", 1)][k] / per[(m, 6)][k] if (m, 6) in per and per[(m, 6)][k] > 0 else float("nan")
+            print(f"| {k} | {c['width'][k]} | {c['edges'][k]} | {c['changed'][k]} | " + " | ".join(f"{x:.3f}" for x in v) + f" | {sp('par'):.2f} | {sp('edge'):.2f} |")
+        out["per_round"] = {f"{m}@{t}": per[(m, t)] for m, t in cols}
+        print()
+    # Workload B per worktree.
+    seqb = rows.get(("b", "level", "within-seq", 1))
+    if seqb:
+        wt = seqb[0]["worktrees"]
+        rr = sorted(x["counts"]["rounds"] for x in wt)
+        mw = sorted(x["counts"]["max_width"] for x in wt)
+        es = sorted(x["counts"]["edges_scanned"] for x in wt)
+        fx = sorted(x["fixpoint_ms_median"] for x in wt)
+        rep = sorted(w["graph"]["replaced_rows"] for w in ws)
+        q = lambda v: f"{v[0]} / {v[len(v) // 2]} / {v[-1]}"
+        print("## Workload B per worktree (min / median / max)\n")
+        print(f"- rounds {q(rr)}; max frontier width {q(mw)}; edges scanned {q(es)}; replaced rows {q(rep)}")
+        print(f"- sequential fixpoint ms {fx[0]:.2f} / {fx[len(fx) // 2]:.2f} / {fx[-1]:.2f}; Y2 reach ms (median per worktree) "
+              f"{min(w['y2']['reach_ms_median'] for w in ws):.1f} / {sorted(w['y2']['reach_ms_median'] for w in ws)[len(ws) // 2]:.1f} / {max(w['y2']['reach_ms_median'] for w in ws):.1f}\n")
     if len(sys.argv) > 4 and sys.argv[3] == "--json":
         Path(sys.argv[4]).write_text(json.dumps(out, indent=1))
 

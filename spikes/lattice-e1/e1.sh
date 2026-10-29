@@ -28,7 +28,7 @@ mkdir -p "$rd"
 
 load1() { sysctl -n vm.loadavg | awk '{print $2}'; }
 
-run() {
+wait_quiet() {
   if [ -n "${QUIET:-}" ]; then
     local waited=0
     while awk -v l="$(load1)" -v q="$QUIET" 'BEGIN { exit !(l >= q) }' && [ "$waited" -lt "${QUIET_WAIT:-600}" ]; do
@@ -36,16 +36,22 @@ run() {
       waited=$((waited + 10))
     done
   fi
+}
+
+run() {
+  wait_quiet
   "$BIN" lattice run "$@" 2>>"$rd/runs.log"
 }
 
 case $cmd in
 build-oracle)
-  "$BIN" lattice build --dump "$Y2/20261023-210008-dump-oracle/dump.tsv" --out "$rd/graph" --y2-runs 5 2>"$rd/build.log"
+  wait_quiet
+  "$BIN" lattice build --dump "$Y2/20261023-210008-dump-oracle/dump.tsv" --out "$rd/graph" --y2-runs "${Y2_RUNS:-5}" 2>"$rd/build.log"
   ;;
 build-fleet)
+  wait_quiet
   "$BIN" lattice build --dump "$Y2/20261023-211927-dump-replay-300/dump.tsv" --edges "$Y2/20261023-223115-y1-edges-300/edges.tsv" \
-    --out "$rd/graph" --y2-runs 5 2>"$rd/build.log"
+    --out "$rd/graph" --y2-runs "${Y2_RUNS:-5}" 2>"$rd/build.log"
   ;;
 sweep-oracle)
   g=$3
