@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    # Not Rerail's dependencies: test data (sample apps and packs the rule tests read) and the upstream tools' runtimes,
+    # which pin upstream's own versions on purpose (docs/upstream.md); a bump there changes upstream's recorded answers.
+    exclude-paths:
+      - "fixtures/**"
+      - "packs/*/candidates/**/fixtures/**"
+      - "scripts/pack-data/runtimes/**"
+      - "conformance/recorders/*/runtimes/**"
     groups:
       # First match wins, so these come before npm-minor-patch. Each lands in a pull request of its own, so one that
       # breaks holds back none of the others. Files that pin a version in step with these (the OMP host and its digests,
@@ -23,6 +30,9 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    # The Rust crates under fixtures/ are test data, not Rerail's dependencies.
+    exclude-paths:
+      - "fixtures/**"
     groups:
       cargo-minor-patch:
         update-types: [minor, patch]
