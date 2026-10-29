@@ -109,7 +109,7 @@ function unwrap(node: t.Node): t.Node {
 
 /** The static evaluator over one file's source. */
 class Evaluator {
-  private readonly bindings = new Map<string, t.Node[]>();
+  private readonly bindings = new Map<string, (t.Node | null)[]>();
   private readonly resolving = new Set<string>();
 
   constructor(private readonly source: string, program: t.Program) {
@@ -121,7 +121,7 @@ class Evaluator {
 
   private bind(name: string, node: t.Node | null): void {
     // A binding without an initializer still counts, so a name declared twice stays ambiguous.
-    this.bindings.set(name, [...(this.bindings.get(name) ?? []), ...(node === null ? [{ type: "Noop" } as t.Noop] : [node])]);
+    this.bindings.set(name, [...(this.bindings.get(name) ?? []), node]);
   }
 
   text(node: t.Node): string {
@@ -135,7 +135,7 @@ class Evaluator {
     this.resolving.add(name);
     try {
       const node = nodes[0]!;
-      return node.type === "FunctionDeclaration" ? { type: "function", node, env: null } : this.ev(node, null);
+      return node?.type === "FunctionDeclaration" ? { type: "function", node, env: null } : this.ev(node, null);
     } finally {
       this.resolving.delete(name);
     }
