@@ -53,6 +53,12 @@ Nera Software appoints and removes maintainers internally. There is no nominatio
 maintainer, from being a contributor or otherwise. A pull request to [.github/CODEOWNERS](../.github/CODEOWNERS) adds
 or removes a maintainer, and that file is the public record of who they are.
 
+## Internal-testing features
+
+Features in [internal testing](internal-testing.md) are in the code but not supported. Rerail's product owner at Nera
+Software proposes graduating one to supported, or removing it, in an issue with the reason, and Nera Software's chief
+product officer approves it there. The pull request that follows links that issue.
+
 ## Reviewing the gate
 
 Contribution is gated so that every change reaching this repository comes from someone who answers for it, so that CI,
