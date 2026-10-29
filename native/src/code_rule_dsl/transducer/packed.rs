@@ -21,6 +21,17 @@ use std::time::Duration;
 
 #[cfg(test)]
 mod admission_spike;
+/// G's literal anchors over its positional search index (O21).
+#[cfg(test)]
+#[allow(dead_code)]
+mod literal_anchors;
+#[cfg(test)]
+#[allow(unused_imports)]
+use literal_anchors::*;
+/// G's SQL match vtab (O21).
+#[cfg(test)]
+#[allow(dead_code)]
+mod sql_backend;
 mod capture_run;
 #[cfg(test)]
 mod capture_run_entry_tests;
@@ -5989,8 +6000,6 @@ mod tests {
         );
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[test]
     fn query_independent_fts_feeds_batched_execution_and_scopes_ordinals_to_tapes() {
         let database = std::env::temp_dir().join(format!(
@@ -6065,8 +6074,6 @@ mod tests {
         }
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[test]
     fn sqlite_virtual_table_drives_batched_matching_and_relational_composition() {
         let files = [
@@ -6168,8 +6175,6 @@ mod tests {
         }
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[test]
     fn cpu_jit_and_metal_anchor_scan_match_anchored_interpreter() {
@@ -6571,8 +6576,6 @@ mod tests {
         println!("TRANSDUCER_BENCHMARK={report}");
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[test]
     #[ignore = "full ast-index-spike source corpus indexing benchmark"]
     fn benchmark_full_fts_source_corpus() {
@@ -7044,8 +7047,6 @@ mod tests {
         assert!(grid_routes.len() <= 10);
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[test]
     #[ignore = "full ast-index-spike tree-sitter query corpus audit"]
     fn audit_tree_sitter_query_corpus() {
@@ -7154,7 +7155,8 @@ mod tests {
                 ));
             }
         }
-        let sql = TapeLanguage::Sql.get_ts_language();
+        // G's TapeLanguage::Sql is W's SQL dialect.
+        let sql = crate::code_rule_dsl::language::GrammarDialect::Sql.get_ts_language();
         let mut valid_sql = 0usize;
         let mut lowered_sql = 0usize;
         let mut sql_errors = BTreeMap::<String, usize>::new();
@@ -7184,8 +7186,6 @@ mod tests {
         );
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[test]
     #[ignore = "controlled corpus FTS storage and lookup benchmark"]
     fn benchmark_fts_search_index() {
@@ -7232,7 +7232,8 @@ mod tests {
             let native = StrDoc::new(&source, SupportLang::Python);
             let image =
                 TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-            let tape_bytes = image.to_bytes().unwrap();
+            // W's encode yields a FileImage; G's tape bytes are its primary's.
+            let tape_bytes = image.primary.to_bytes().unwrap();
             let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
             tape_ids.push(store.put_tape(source_id, 1, 1, 2, &tape_bytes).unwrap());
             tapes.push(
@@ -7329,8 +7330,6 @@ mod tests {
         }
     }
 
-    // Tempo's test of code W keeps outside the packed runtime (search index, SQL backend, literal anchors): ported with that code
-#[cfg(any())]
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[test]
     #[ignore = "Apple Silicon backend benchmark"]

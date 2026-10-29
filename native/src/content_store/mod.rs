@@ -13,6 +13,9 @@ mod derivation;
 mod facts_memo;
 mod objects;
 mod postings;
+/// G's positional search index (value and text streams), for G's literal anchors (O21).
+#[cfg(test)]
+pub(crate) mod positional_search;
 mod vocabulary;
 #[allow(unused_imports)]
 pub(crate) use postings::append_delta;

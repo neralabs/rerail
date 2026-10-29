@@ -367,3 +367,59 @@ removed). `calls/contracts.rs` and `violations/projection.rs` are placed test-on
 whether any of the stage survives as an engine-internal consumer (Phase 11 row 1, B2, rewrites the
 admission loop rather than copies it) or is removed once the census and admission rules are carried
 by Phase 7's chunked loop.
+
+## O19. Copies placed beside their adaptations
+
+Restoring copies that later commits rewrote or removed put the copies in the tree, as copied,
+beside the adaptations made from them:
+- D's relational stage (`c759569d`, `8d3c3137`, `e2789364`, `1e28006e`) is `waves::relational` under
+  `cfg(test)`, next to P's (O18). `CompiledClause::data_layer` carries D's plan for a `relational`
+  clause, compiled by D's compiler, and `eval::data_layer_rows` reads its inputs. Mutations, each
+  failing closed: no `matcher::Corpus`/`CorpusSlot` (the owner is an open flag, the workspace is
+  W's `CodeRuleDslWorkspace`); a plan that reads `reference_edges` is refused (no
+  `calls::reference_rows`); the syntax digest hashes the source (W's tape keeps none). The restored
+  `waves/owner/{pool, execution}.rs` and `waves/schedule/batch{,/tests}.rs` are D's stage's own
+  files. Two cut tests run again `#[ignore]`d (O18's projection items).
+- M's `lmap` (`951514fe`) is `facts::lmap`, beside `facts::overlay`, its adaptation.
+- M's Y1 reference graph (`758cfa6a`) is `facts::ygraph`.
+- M's facts-a `Facts` with `bindings` and `typedefs` (`66a0d6a1`) is `facts::facts_a`, beside
+  `facts::core`, its adaptation; `Grammar::field_name` reads W's private kind catalog for it.
+Closure: per pair, decide which survives. The adaptation carries the plan's shape, so the copy is
+removed (a mutation, after its tests are carried over or retired), or the copy replaces it.
+
+## O20. P's anchors module and SQL anchor engine, placed test-only
+
+P's `matcher/anchors.rs` and `anchors/**` (`2814d875`, with `faec6fa4`'s `sql/**` and `8a6a69f1`'s
+`fields.rs`) are `matcher::p_anchors` under `cfg(test)`, beside W's `matcher::anchors`. W's
+`prefilter` is the adaptation of P's `sql/**` onto the content store (rows `8165bd54`,
+`0afc80d4`), so P's private store, session, schema, decoded lowering and preparation tests run
+here as P wrote them. Mutations:
+- W's matchers carry W's `AnchorPlan`, so P's engine compiles P's plan from the matcher
+  (`AnchorPlan::compile`) where it read `matcher.anchors`;
+- P's `admits_source` is its required-text check (W has no `invalid_syntax` gate, O18), and P's
+  `Semantic::FilePath` arm is dropped;
+- test-only additions to shared code: `TapeDoc::index_source_digest` (computed: W's tape keeps no
+  digest), `TapeNode::incoming_field`, `test_support::Walk::AnchorBuild`.
+`parallel_connections_do_not_share_a_global_page_cache_mutex` is ignored: W's SQLite keeps
+`ENABLE_MEMORY_MANAGEMENT`, which P's `.cargo/config.toml` undefines. Closure: decide whether W
+takes P's SQLite flag (it is a process-wide setting), and carry P's decoded lowering into
+`prefilter` (or retire it with relations moving into transducers, §7) before `p_anchors` goes.
+
+## O21. G's literal anchors and positional search index, placed test-only
+
+`bb4c9605` merged G's grid closure (`b90a7b0a`) into N's packed runtime but kept W's removals of
+G's search index and literal anchors, so seven G tests in `packed.rs` and two in
+`metal_semantic_conformance.rs` were `#[cfg(any())]`. They now run with their closure:
+- G's positional index, literal and kind anchor loaders and literal materialization
+  (`transducer.rs` lines 3395–3783, `1c040f4a`) are `transducer::packed::literal_anchors`, and G's
+  SQL match vtab is `transducer::packed::sql_backend`, both under `cfg(test)`;
+- G's store side (`f9f175f3`) is `content_store::positional_search` under `cfg(test)`: G's value
+  and text FTS streams and kind instance vocabulary, created on first use beside W's kind-only
+  `search_kind_fts`, published by `put_positional_search_indexes_bulk` (W's
+  `put_search_indexes_bulk` takes W's index). `rusqlite`'s `array` feature is a dev-dependency
+  feature for G's `rarray` statements.
+- The semantic differentials use every node as a root: G's anchor plans read G's
+  `AstMatcher::Program`, which W's matcher does not have. Both are `#[ignore]`d corpus runs.
+G's admission and cutover spikes (`00229423` had deleted them) are back as copied.
+Closure: W's search index is kind presence by design (Phase 3 row 5); decide whether G's value
+and text streams feed the prefilter's term postings or are removed with these tests.

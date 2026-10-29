@@ -867,7 +867,6 @@ impl PreparedAnchorScan {
         unsafe {
             self.hit_count.buffer.contents().cast::<u32>().write(0);
         }
-        let _execution_guard = metal_execution_guard()?;
         let dispatch_started = std::time::Instant::now();
         let command = self.queue.new_command_buffer();
         let encoder = command.new_compute_command_encoder();

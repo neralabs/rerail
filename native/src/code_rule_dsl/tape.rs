@@ -1677,6 +1677,12 @@ impl TapeSource {
 impl TapeDoc {
     /// P's: the digest of the source the tape was built from (P's SQL anchor engine,
     /// test-only). W's tape keeps no digest, so it is computed.
+    /// G's: the shared source (G's literal anchors, test-only).
+    #[cfg(test)]
+    pub(super) fn transducer_source_arc(&self) -> Arc<String> {
+        Arc::clone(&self.source)
+    }
+
     #[cfg(test)]
     pub(super) fn index_source_digest(&self) -> [u8; 32] {
         use sha2::Digest;

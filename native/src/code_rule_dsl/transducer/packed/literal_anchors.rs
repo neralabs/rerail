@@ -1,3 +1,7 @@
+//! G's positional index, literal and kind anchors and literal materialization (1c040f4a),
+//! test-only (open item O21): W's search index keeps kind presence only.
+use super::*;
+
 pub(super) const POSITIONAL_INDEX_VERSION: i64 = 3;
 const VALUE_INDEX_LIMIT: usize = 96;
 
@@ -107,8 +111,8 @@ impl SearchIndexDraft {
     pub(super) fn to_index(
         &self,
         tape_id: crate::content_store::TapeId,
-    ) -> crate::content_store::TapeSearchIndex {
-        crate::content_store::TapeSearchIndex {
+    ) -> crate::content_store::positional_search::TapeSearchIndex {
+        crate::content_store::positional_search::TapeSearchIndex {
             tape_id,
             index_version: POSITIONAL_INDEX_VERSION,
             node_count: self.node_count,
@@ -122,7 +126,7 @@ impl SearchIndexDraft {
 pub(crate) fn search_index_document(
     tape_id: crate::content_store::TapeId,
     file: &TapeDoc,
-) -> crate::content_store::TapeSearchIndex {
+) -> crate::content_store::positional_search::TapeSearchIndex {
     let node_count =
         u32::try_from(file.transducer_len()).expect("tape node count is limited to u32");
     let mut kinds = String::with_capacity(file.transducer_len().saturating_mul(6));
@@ -160,12 +164,12 @@ pub(crate) fn persist_search_index_batch(
             .zip(tape_ids)
             .map(|(file, &tape_id)| search_index_document(tape_id, file))
             .collect::<Vec<_>>();
-        store.put_search_indexes_bulk(&indexes)?;
+        store.put_positional_search_indexes_bulk(&indexes)?;
     }
     Ok(())
 }
 
-fn load_literal_eligibility_batch(
+pub(super) fn load_literal_eligibility_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     programs: &[Program],
@@ -225,7 +229,7 @@ pub(crate) fn load_literal_anchor_batch(
 }
 
 #[cfg(all(test, target_os = "macos"))]
-fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vec<u32>> {
+pub(super) fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vec<u32>> {
     let words = programs.div_ceil(32);
     eligibility
         .into_iter()
@@ -241,7 +245,7 @@ fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Ve
         .collect()
 }
 
-fn widen_anchor_candidates(
+pub(super) fn widen_anchor_candidates(
     programs: &[Program],
     files: &[TapeDoc],
     selections: Vec<Vec<Option<Vec<u32>>>>,
@@ -300,7 +304,7 @@ pub(crate) fn load_kind_anchor_batch(
         .flat_map(|&tape_id| {
             kinds
                 .iter()
-                .map(move |&kind| crate::content_store::SearchAnchorLookup {
+                .map(move |&kind| crate::content_store::positional_search::SearchAnchorLookup {
                     tape_id,
                     index_version: POSITIONAL_INDEX_VERSION,
                     kind_token: kind_index_token(kind),
@@ -314,11 +318,11 @@ pub(crate) fn load_kind_anchor_batch(
         .map(|file| {
             file.iter()
                 .map(|selection| match selection {
-                    crate::content_store::StoredAnchorSelection::Roots(roots) => {
+                    crate::content_store::positional_search::StoredAnchorSelection::Roots(roots) => {
                         Some(roots.clone())
                     }
-                    crate::content_store::StoredAnchorSelection::Unknown
-                    | crate::content_store::StoredAnchorSelection::Candidate => None,
+                    crate::content_store::positional_search::StoredAnchorSelection::Unknown
+                    | crate::content_store::positional_search::StoredAnchorSelection::Candidate => None,
                 })
                 .collect()
         })

@@ -20,8 +20,6 @@ mod phase_four;
 #[path = "metal_phase_three_mixed_inputs.rs"]
 mod phase_three_mixed_inputs;
 
-// Needs Tempo's anchor plans and matcher (`anchors`, `AstMatcher::Program`), which W does not have: ported with the anchor index
-#[cfg(any())]
 #[test]
 #[ignore = "pinned corpus differential subset against the independent CPU interpreter"]
 fn pinned_corpus_optional_body_and_injection_differential() {
@@ -60,25 +58,14 @@ fn pinned_corpus_optional_body_and_injection_differential() {
         .iter()
         .map(|source| tape(source))
         .collect::<Vec<_>>();
-    use crate::code_rule_dsl::anchors::{AnchorPlan, FileAnchorIndex, Selection};
-    use crate::code_rule_dsl::matcher::AstMatcher;
-    let plans = programs
-        .iter()
-        .map(|program| AnchorPlan::compile(&AstMatcher::Program(Arc::new(program.clone()))))
-        .collect::<Vec<_>>();
-    let plan_refs = plans.iter().collect::<Vec<_>>();
+    // G's anchor plans read G's `AstMatcher::Program`, which W's matcher does not have (O21):
+    // every node is a root. CPU and Metal still share the anchors the differential compares.
     let anchors = files
         .iter()
-        .zip(&sources)
-        .map(|(file, source)| {
-            let native = ast_grep_core::AstGrep::doc(StrDoc::new(source, SupportLang::Python));
-            let index = FileAnchorIndex::build(&native, &plan_refs, usize::MAX, || false);
-            plans
+        .map(|file| {
+            programs
                 .iter()
-                .map(|plan| match index.select(plan) {
-                    Selection::All => (0..file.transducer_len() as u32).collect(),
-                    Selection::Roots(roots) => roots.iter().map(|&root| root as u32).collect(),
-                })
+                .map(|_| (0..file.transducer_len() as u32).collect::<Vec<_>>())
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -3910,8 +3897,6 @@ mod retained_grid_history_runtime {
     }
 }
 
-// Calls the anchor-dependent differential above; ported with it.
-#[cfg(any())]
 #[test]
 #[ignore = "all pinned patterns through the successor-view operator against the independent CPU interpreter"]
 fn pinned_corpus_successor_view_differential() {

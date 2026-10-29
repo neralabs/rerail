@@ -5,7 +5,7 @@
 //! engine; no scalar function executes one matcher for each joined row.
 
 use super::{Error, ExecutionBackend, Output, Program, execute_with_backend};
-use crate::policy_dsl::tape::TapeDoc;
+use crate::code_rule_dsl::tape::TapeDoc;
 use rusqlite::ffi;
 use rusqlite::vtab::{
     Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection,

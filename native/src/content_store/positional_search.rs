@@ -1,31 +1,37 @@
-DROP TABLE anchor_postings;
-DROP TABLE anchor_predicates;
-DROP TABLE anchor_index_sets;
-CREATE TABLE search_index_sets (
-    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
-    index_version INTEGER NOT NULL CHECK(index_version >= 0),
-    node_count INTEGER NOT NULL CHECK(node_count > 0),
-    complete INTEGER NOT NULL CHECK(complete IN (0,1))
-) STRICT;
-CREATE VIRTUAL TABLE search_kind_fts USING fts5(
-    token, content='', contentless_delete=1, detail=full, tokenize='ascii'
-);
-CREATE VIRTUAL TABLE search_value_fts USING fts5(
+//! Tempo's (G@4c94cf77e) positional search index as copied from `tempo/native/src/content_store.rs`
+//! (types, publication, and the anchor, exact-value and text readers), test-only, for G's literal
+//! anchors and their tests (`transducer::packed::literal_anchors`). W's search index keeps kind
+//! presence only (`search_index.rs`); this one adds G's value and text streams beside W's tables
+//! (open item O21).
+//!
+//! Mutations: G's `TapeSearchIndex` publication is `put_positional_search_indexes_bulk` (W's
+//! `put_search_indexes_bulk` takes W's index); G's value and text FTS tables, the kind instance
+//! vocabulary and their delete trigger are created on first use (`POSITIONAL_SCHEMA`), since W's
+//! schema has only the kind stream; `search_index_sets` rows take W's `has_errors` default.
+use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::vtab::array::Array;
+use rusqlite::{Transaction, TransactionBehavior, params};
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
+use std::sync::Arc;
+
+/// G's value and text streams and the kind instance vocabulary, as in G's schema.
+const POSITIONAL_SCHEMA: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS search_value_fts USING fts5(
     token, content='', contentless_delete=1, detail=none, tokenize='ascii'
 );
-CREATE VIRTUAL TABLE search_text_fts USING fts5(
+CREATE VIRTUAL TABLE IF NOT EXISTS search_text_fts USING fts5(
     token, content='', contentless_delete=1, detail=none,
     tokenize='unicode61 remove_diacritics 0'
 );
-CREATE VIRTUAL TABLE search_kind_instances USING fts5vocab(search_kind_fts, 'instance');
-CREATE TRIGGER delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
-    DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
+CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_instances USING fts5vocab(search_kind_fts, 'instance');
+CREATE TRIGGER IF NOT EXISTS delete_tape_positional_search_index BEFORE DELETE ON tape_objects BEGIN
     DELETE FROM search_value_fts WHERE rowid=OLD.tape_id;
     DELETE FROM search_text_fts WHERE rowid=OLD.tape_id;
 END;
 "#;
 
-#[cfg(test)]
 impl TapeId {
     pub(crate) const fn for_benchmark(value: i64) -> Self {
         Self(value)
@@ -59,10 +65,23 @@ pub(crate) enum StoredAnchorSelection {
 
 
 impl ContentStore {
+    /// G's tables, and the `rarray` module G's statements read (W's store connections load
+    /// `series` but not `rarray`).
+    fn positional_schema(&self) -> StoreResult<()> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        rusqlite::vtab::array::load_module(&connection)?;
+        connection.execute_batch(POSITIONAL_SCHEMA)?;
+        Ok(())
+    }
+
     /// Publish one query-independent FTS document per immutable tape. The kind stream contains one
     /// token per preorder node. The value stream contains distinct bounded values for file filtering.
     /// All string construction and validation finish before the short write transaction starts.
-    pub(crate) fn put_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
+    pub(crate) fn put_positional_search_indexes_bulk(&self, indexes: &[TapeSearchIndex]) -> StoreResult<()> {
+        self.positional_schema()?;
         self.require_write_capacity()?;
         let mut connection = self
             .connection
@@ -235,6 +254,7 @@ impl ContentStore {
         Ok(())
     }
 
+
     /// Resolve all requested tape/predicate pairs with one SQL statement. Kind queries return
     /// preorder positions. Exact-value queries return file candidates for terminal confirmation.
     /// Missing index sets remain unknown. A complete noncandidate returns an empty root list.
@@ -242,6 +262,7 @@ impl ContentStore {
         &self,
         lookups: &[SearchAnchorLookup],
     ) -> StoreResult<Vec<StoredAnchorSelection>> {
+        self.positional_schema()?;
         let requests: Array = Rc::new(
             lookups
                 .iter()
@@ -347,6 +368,7 @@ impl ContentStore {
         index_version: i64,
         value_tokens: &[String],
     ) -> StoreResult<Vec<Vec<Option<bool>>>> {
+        self.positional_schema()?;
         if value_tokens.is_empty() {
             return Ok(tape_ids.iter().map(|_| Vec::new()).collect());
         }
@@ -418,6 +440,7 @@ impl ContentStore {
     /// Return the live SQLite pages for the search-index tables and FTS shadow tables.
     #[cfg(test)]
     pub(crate) fn search_index_storage_bytes(&self) -> StoreResult<(u64, [u64; 4])> {
+        self.positional_schema()?;
         let connection = self
             .connection
             .lock()
@@ -449,6 +472,7 @@ impl ContentStore {
         tape_ids: &[TapeId],
         required_words: &[String],
     ) -> StoreResult<Vec<Option<bool>>> {
+        self.positional_schema()?;
         if required_words.is_empty() {
             return Ok(vec![Some(true); tape_ids.len()]);
         }
