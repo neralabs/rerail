@@ -626,12 +626,10 @@ fn directives_in_elements_tags_and_scripts_are_reported() {
     let ray_source = "<div>\n    @if ($d)\n        @ray($f)\n    @endif\n</div>\n";
     assert_eq!(pack_rule_lines(ray, ray_source), [3]);
     let spacing = "<input @if($a == 1) checked @endif>\n<div class=\"x @if($a) y @endif\">z</div>\n@if($b)\nx\n@endif\n<script>\nvar n = '{{$prefix}}';\n</script>\n<p>{{$prefix}}</p>\n";
-    let space_after = include_str!(
-        "../../../../packs/blade/candidates/rules/tlint-space-after-blade-directives.json"
-    );
-    let render_content = include_str!(
-        "../../../../packs/blade/candidates/rules/tlint-spaces-around-blade-render-content.json"
-    );
+    let space_after =
+        include_str!("../../../../packs/blade/rules/tlint-space-after-blade-directives.json");
+    let render_content =
+        include_str!("../../../../packs/blade/rules/tlint-spaces-around-blade-render-content.json");
     assert_eq!(pack_rule_lines(space_after, spacing), [1, 2, 3]);
     assert_eq!(pack_rule_lines(render_content, spacing), [7, 9]);
 }

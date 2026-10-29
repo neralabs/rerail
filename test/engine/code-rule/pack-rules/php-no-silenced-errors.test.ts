@@ -1,5 +1,5 @@
 /**
- * phpcs-generic-php-no-silenced-errors (packs/php/, candidate) must not steer an agent into removing an @ that the code needs
+ * phpcs-generic-php-no-silenced-errors (packs/php/) must not steer an agent into removing an @ that the code needs
  *. PHP_CodeSniffer's sniff reports every @ operator and its message only says silencing is discouraged, so
  * an agent removes the @. Two idioms need it:
  *
@@ -9,7 +9,7 @@
  * - Symfony's deprecation convention, `@trigger_error('...', E_USER_DEPRECATED)`: the notice is silenced so that only
  *   error handlers that opt in log it; without the @, every deprecation reaches the default handler.
  *
- * Each case below is one source; the test asserts exactly which lines the candidate rule reports.
+ * Each case below is one source; the test asserts exactly which lines the rule reports.
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -24,7 +24,7 @@ const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_r
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "phpcs-generic-php-no-silenced-errors";
-const RULE_PATH = repositoryPath("packs", "php", "candidates", "rules", `${RULE_ID}.json`);
+const RULE_PATH = repositoryPath("packs", "php", "rules", `${RULE_ID}.json`);
 
 const evaluationSchema = z.object({
   violations: z

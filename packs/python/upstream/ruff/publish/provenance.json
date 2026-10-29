@@ -4415,11 +4415,19 @@
       "source": "rerail",
       "how": "authored"
     },
+    "fixtures/rerail/noqa/B015.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
     "fixtures/rerail/noqa/B016.py": {
       "source": "rerail",
       "how": "authored"
     },
     "fixtures/rerail/noqa/B017.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/B018.py": {
       "source": "rerail",
       "how": "authored"
     },
@@ -4472,6 +4480,10 @@
       "how": "authored"
     },
     "fixtures/rerail/noqa/B034.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/B035.py": {
       "source": "rerail",
       "how": "authored"
     },
@@ -4715,6 +4727,10 @@
       "source": "rerail",
       "how": "authored"
     },
+    "fixtures/rerail/noqa/F402.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
     "fixtures/rerail/noqa/F403.py": {
       "source": "rerail",
       "how": "authored"
@@ -4828,6 +4844,10 @@
       "how": "authored"
     },
     "fixtures/rerail/noqa/F702.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/F704.py": {
       "source": "rerail",
       "how": "authored"
     },
@@ -5783,6 +5803,14 @@
       "source": "rerail",
       "how": "authored"
     },
+    "fixtures/rerail/noqa/SIM102.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/SIM103.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
     "fixtures/rerail/noqa/SIM107.py": {
       "source": "rerail",
       "how": "authored"
@@ -5804,6 +5832,14 @@
       "how": "authored"
     },
     "fixtures/rerail/noqa/SIM116.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/SIM117.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/SIM118.py": {
       "source": "rerail",
       "how": "authored"
     },
@@ -5836,6 +5872,14 @@
       "how": "authored"
     },
     "fixtures/rerail/noqa/SIM221.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/SIM222.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/SIM223.py": {
       "source": "rerail",
       "how": "authored"
     },
@@ -6084,6 +6128,10 @@
       "how": "authored"
     },
     "fixtures/rerail/noqa/UP050.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/rerail/noqa/W605.py": {
       "source": "rerail",
       "how": "authored"
     },

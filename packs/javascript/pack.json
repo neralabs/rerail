@@ -3,7 +3,7 @@
   "id": "javascript",
   "name": "JavaScript and TypeScript (ESLint core)",
   "category": "language",
-  "covers": "72 ESLint core rules ported to Rerail, 22 of them on and 50 off until turned on, each scored against ESLint's own findings on its test cases.",
+  "covers": "80 ESLint core rules ported to Rerail, 23 of them on and 57 off until turned on, each scored against ESLint's own findings on its test cases.",
   "reason": "matches JavaScript or TypeScript source",
   "match": {
     "any": [
@@ -98,6 +98,13 @@
       "on": false
     },
     {
+      "id": "eslint-default-param-last",
+      "document": "rules/eslint-default-param-last.json",
+      "title": "ESLint default-param-last: Enforce default parameters to be last",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-dot-notation",
       "document": "rules/eslint-dot-notation.json",
       "title": "ESLint dot-notation: Enforce dot notation whenever possible",
@@ -122,6 +129,41 @@
       "id": "eslint-guard-for-in",
       "document": "rules/eslint-guard-for-in.json",
       "title": "ESLint guard-for-in: Require for-in loops to include an if statement",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-depth",
+      "document": "rules/eslint-max-depth.json",
+      "title": "ESLint max-depth: Enforce a maximum depth that blocks can be nested",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-nested-callbacks",
+      "document": "rules/eslint-max-nested-callbacks.json",
+      "title": "ESLint max-nested-callbacks: Enforce a maximum depth that callbacks can be nested",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-params",
+      "document": "rules/eslint-max-params.json",
+      "title": "ESLint max-params: Enforce a maximum number of parameters in function definitions",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-statements",
+      "document": "rules/eslint-max-statements.json",
+      "title": "ESLint max-statements: Enforce a maximum number of statements allowed in function blocks",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-array-constructor",
+      "document": "rules/eslint-no-array-constructor.json",
+      "title": "ESLint no-array-constructor: Disallow Array constructors",
       "group": "ESLint",
       "on": false
     },
@@ -214,6 +256,13 @@
       "document": "rules/eslint-no-empty.json",
       "title": "ESLint no-empty: Disallow empty block statements",
       "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-empty-function",
+      "document": "rules/eslint-no-empty-function.json",
+      "title": "ESLint no-empty-function: Disallow empty functions",
+      "group": "ESLint",
+      "on": false
     },
     {
       "id": "eslint-no-empty-pattern",
@@ -407,6 +456,12 @@
       "title": "ESLint no-ternary: Disallow ternary operators",
       "group": "ESLint",
       "on": false
+    },
+    {
+      "id": "eslint-no-unexpected-multiline",
+      "document": "rules/eslint-no-unexpected-multiline.json",
+      "title": "ESLint no-unexpected-multiline: Disallow confusing multiline expressions",
+      "group": "ESLint"
     },
     {
       "id": "eslint-no-unneeded-ternary",

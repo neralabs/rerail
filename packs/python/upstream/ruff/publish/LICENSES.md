@@ -445,4 +445,4 @@ are:
 
 ## Rerail
 
-871 file(s): 1 recorded, 870 authored. Rerail's, under Apache-2.0 (the pack's `LICENSE`): `authored` files were written by Rerail, and `recorded` files are a tool's output on this data, recorded by the pack's generators.
+883 file(s): 1 recorded, 882 authored. Rerail's, under Apache-2.0 (the pack's `LICENSE`): `authored` files were written by Rerail, and `recorded` files are a tool's output on this data, recorded by the pack's generators.

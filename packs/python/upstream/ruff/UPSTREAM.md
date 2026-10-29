@@ -47,8 +47,10 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/B011.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B013.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B014.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/B015.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B016.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B017.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/B018.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B019.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B020.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B021.py` | written by Rerail |
@@ -62,6 +64,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/B032.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B033.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B034.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/B035.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B039.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B904.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/B905.py` | written by Rerail |
@@ -122,6 +125,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/EM101.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/EM102.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/EM103.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/F402.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F403.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F404.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F405.py` | written by Rerail |
@@ -151,6 +155,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/F634.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F701.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F702.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/F704.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F706.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F707.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/F722.py` | written by Rerail |
@@ -389,12 +394,16 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/RUF064.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/RUF068.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM101.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM102.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM103.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM107.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM109.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM112.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM113.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM115.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM116.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM117.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM118.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM201.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM202.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM208.py` | written by Rerail |
@@ -403,6 +412,8 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/SIM212.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM220.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM221.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM222.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/SIM223.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM300.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM905.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/SIM910.py` | written by Rerail |
@@ -465,6 +476,7 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/ruff/fixtures/rerail/noqa/UP043.pyi` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/UP049.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/UP050.py` | written by Rerail |
+| `upstream/ruff/fixtures/rerail/noqa/W605.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/YTT101.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/YTT102.py` | written by Rerail |
 | `upstream/ruff/fixtures/rerail/noqa/YTT103.py` | written by Rerail |

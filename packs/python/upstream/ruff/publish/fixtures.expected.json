@@ -1460,8 +1460,10 @@
    "rerail/noqa/B011.py",
    "rerail/noqa/B013.py",
    "rerail/noqa/B014.py",
+   "rerail/noqa/B015.py",
    "rerail/noqa/B016.py",
    "rerail/noqa/B017.py",
+   "rerail/noqa/B018.py",
    "rerail/noqa/B019.py",
    "rerail/noqa/B020.py",
    "rerail/noqa/B021.py",
@@ -1475,6 +1477,7 @@
    "rerail/noqa/B032.py",
    "rerail/noqa/B033.py",
    "rerail/noqa/B034.py",
+   "rerail/noqa/B035.py",
    "rerail/noqa/B039.py",
    "rerail/noqa/B904.py",
    "rerail/noqa/B905.py",
@@ -1535,6 +1538,7 @@
    "rerail/noqa/EM101.py",
    "rerail/noqa/EM102.py",
    "rerail/noqa/EM103.py",
+   "rerail/noqa/F402.py",
    "rerail/noqa/F403.py",
    "rerail/noqa/F404.py",
    "rerail/noqa/F405.py",
@@ -1564,6 +1568,7 @@
    "rerail/noqa/F634.py",
    "rerail/noqa/F701.py",
    "rerail/noqa/F702.py",
+   "rerail/noqa/F704.py",
    "rerail/noqa/F706.py",
    "rerail/noqa/F707.py",
    "rerail/noqa/F722.py",
@@ -1802,12 +1807,16 @@
    "rerail/noqa/RUF064.py",
    "rerail/noqa/RUF068.py",
    "rerail/noqa/SIM101.py",
+   "rerail/noqa/SIM102.py",
+   "rerail/noqa/SIM103.py",
    "rerail/noqa/SIM107.py",
    "rerail/noqa/SIM109.py",
    "rerail/noqa/SIM112.py",
    "rerail/noqa/SIM113.py",
    "rerail/noqa/SIM115.py",
    "rerail/noqa/SIM116.py",
+   "rerail/noqa/SIM117.py",
+   "rerail/noqa/SIM118.py",
    "rerail/noqa/SIM201.py",
    "rerail/noqa/SIM202.py",
    "rerail/noqa/SIM208.py",
@@ -1816,6 +1825,8 @@
    "rerail/noqa/SIM212.py",
    "rerail/noqa/SIM220.py",
    "rerail/noqa/SIM221.py",
+   "rerail/noqa/SIM222.py",
+   "rerail/noqa/SIM223.py",
    "rerail/noqa/SIM300.py",
    "rerail/noqa/SIM905.py",
    "rerail/noqa/SIM910.py",
@@ -1878,6 +1889,7 @@
    "rerail/noqa/UP043.pyi",
    "rerail/noqa/UP049.py",
    "rerail/noqa/UP050.py",
+   "rerail/noqa/W605.py",
    "rerail/noqa/YTT101.py",
    "rerail/noqa/YTT102.py",
    "rerail/noqa/YTT103.py",
@@ -17812,6 +17824,36 @@
    "rule": "ANN001",
    "path": "rerail/noqa/RUF051.py",
    "line": 21,
+   "column": 7
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 13,
+   "column": 7
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 19,
+   "column": 7
+  },
+  {
+   "rule": "ANN001",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 25,
    "column": 7
   },
   {
@@ -37358,6 +37400,36 @@
   },
   {
    "rule": "ANN201",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "ANN201",
    "path": "rerail/noqa/SIM107.py",
    "line": 1,
    "column": 5
@@ -52100,6 +52172,30 @@
   },
   {
    "rule": "B007",
+   "path": "rerail/noqa/F402.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "rerail/noqa/F402.py",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "rerail/noqa/F402.py",
+   "line": 18,
+   "column": 5
+  },
+  {
+   "rule": "B007",
+   "path": "rerail/noqa/F402.py",
+   "line": 23,
+   "column": 5
+  },
+  {
+   "rule": "B007",
    "path": "rerail/noqa/PERF102.py",
    "line": 2,
    "column": 8
@@ -53410,6 +53506,18 @@
    "rule": "B015",
    "path": "pycodestyle/E721.py",
    "line": 140,
+   "column": 1
+  },
+  {
+   "rule": "B015",
+   "path": "rerail/noqa/B015.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B015",
+   "path": "rerail/noqa/B015.py",
+   "line": 14,
    "column": 1
   },
   {
@@ -56714,6 +56822,18 @@
   },
   {
    "rule": "B018",
+   "path": "rerail/noqa/B018.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "B018",
+   "path": "rerail/noqa/B018.py",
+   "line": 14,
+   "column": 1
+  },
+  {
+   "rule": "B018",
    "path": "rerail/noqa/DTZ901.py",
    "line": 2,
    "column": 1
@@ -58727,6 +58847,18 @@
    "path": "pyupgrade/UP008.py",
    "line": 55,
    "column": 10
+  },
+  {
+   "rule": "B035",
+   "path": "rerail/noqa/B035.py",
+   "line": 1,
+   "column": 6
+  },
+  {
+   "rule": "B035",
+   "path": "rerail/noqa/B035.py",
+   "line": 9,
+   "column": 6
   },
   {
    "rule": "B035",
@@ -68066,6 +68198,12 @@
   },
   {
    "rule": "D100",
+   "path": "rerail/noqa/B015.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
    "path": "rerail/noqa/B016.py",
    "line": 1,
    "column": 1
@@ -68073,6 +68211,12 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/B017.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/B018.py",
    "line": 1,
    "column": 1
   },
@@ -68151,6 +68295,12 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/B034.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/B035.py",
    "line": 1,
    "column": 1
   },
@@ -68516,6 +68666,12 @@
   },
   {
    "rule": "D100",
+   "path": "rerail/noqa/F402.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
    "path": "rerail/noqa/F403.py",
    "line": 1,
    "column": 1
@@ -68685,6 +68841,12 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/F702.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/F704.py",
    "line": 1,
    "column": 1
   },
@@ -69962,6 +70124,18 @@
   },
   {
    "rule": "D100",
+   "path": "rerail/noqa/SIM102.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
    "path": "rerail/noqa/SIM107.py",
    "line": 1,
    "column": 1
@@ -69993,6 +70167,18 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/SIM116.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/SIM117.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/SIM118.py",
    "line": 1,
    "column": 1
   },
@@ -70041,6 +70227,18 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/SIM221.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/SIM222.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/SIM223.py",
    "line": 1,
    "column": 1
   },
@@ -70407,6 +70605,12 @@
   {
    "rule": "D100",
    "path": "rerail/noqa/UP050.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "D100",
+   "path": "rerail/noqa/W605.py",
    "line": 1,
    "column": 1
   },
@@ -77481,6 +77685,36 @@
   {
    "rule": "D101",
    "path": "rerail/noqa/E742.py",
+   "line": 13,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/noqa/F704.py",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/noqa/F704.py",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/noqa/F704.py",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/noqa/F704.py",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "D101",
+   "path": "rerail/noqa/F704.py",
    "line": 13,
    "column": 7
   },
@@ -98858,6 +99092,36 @@
   },
   {
    "rule": "D103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 1,
+   "column": 5
+  },
+  {
+   "rule": "D103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "D103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "D103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "D103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 25,
+   "column": 5
+  },
+  {
+   "rule": "D103",
    "path": "rerail/noqa/SIM107.py",
    "line": 1,
    "column": 5
@@ -116756,6 +117020,30 @@
   },
   {
    "rule": "E402",
+   "path": "rerail/noqa/F402.py",
+   "line": 6,
+   "column": 1
+  },
+  {
+   "rule": "E402",
+   "path": "rerail/noqa/F402.py",
+   "line": 11,
+   "column": 1
+  },
+  {
+   "rule": "E402",
+   "path": "rerail/noqa/F402.py",
+   "line": 16,
+   "column": 1
+  },
+  {
+   "rule": "E402",
+   "path": "rerail/noqa/F402.py",
+   "line": 21,
+   "column": 1
+  },
+  {
+   "rule": "E402",
    "path": "rerail/noqa/F405.py",
    "line": 4,
    "column": 1
@@ -127009,6 +127297,18 @@
    "column": 9
   },
   {
+   "rule": "F402",
+   "path": "rerail/noqa/F402.py",
+   "line": 3,
+   "column": 5
+  },
+  {
+   "rule": "F402",
+   "path": "rerail/noqa/F402.py",
+   "line": 23,
+   "column": 5
+  },
+  {
    "rule": "F403",
    "path": "pycodestyle/E402_3.py",
    "line": 8,
@@ -130295,6 +130595,18 @@
    "path": "pyupgrade/UP018.py",
    "line": 76,
    "column": 1
+  },
+  {
+   "rule": "F704",
+   "path": "rerail/noqa/F704.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "F704",
+   "path": "rerail/noqa/F704.py",
+   "line": 14,
+   "column": 5
   },
   {
    "rule": "F704",
@@ -139778,6 +140090,30 @@
   },
   {
    "rule": "F811",
+   "path": "rerail/noqa/F704.py",
+   "line": 4,
+   "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/F704.py",
+   "line": 7,
+   "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/F704.py",
+   "line": 10,
+   "column": 7
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/F704.py",
+   "line": 13,
+   "column": 7
+  },
+  {
+   "rule": "F811",
    "path": "rerail/noqa/F823.py",
    "line": 7,
    "column": 5
@@ -142042,6 +142378,30 @@
    "rule": "F811",
    "path": "rerail/noqa/RUF059.py",
    "line": 17,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 7,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 13,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 19,
+   "column": 5
+  },
+  {
+   "rule": "F811",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 25,
    "column": 5
   },
   {
@@ -179372,6 +179732,12 @@
   },
   {
    "rule": "INP001",
+   "path": "rerail/noqa/B015.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "rerail/noqa/B016.py",
    "line": 1,
    "column": 1
@@ -179379,6 +179745,12 @@
   {
    "rule": "INP001",
    "path": "rerail/noqa/B017.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/B018.py",
    "line": 1,
    "column": 1
   },
@@ -179457,6 +179829,12 @@
   {
    "rule": "INP001",
    "path": "rerail/noqa/B034.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/B035.py",
    "line": 1,
    "column": 1
   },
@@ -179822,6 +180200,12 @@
   },
   {
    "rule": "INP001",
+   "path": "rerail/noqa/F402.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "rerail/noqa/F403.py",
    "line": 1,
    "column": 1
@@ -179991,6 +180375,12 @@
   {
    "rule": "INP001",
    "path": "rerail/noqa/F702.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/F704.py",
    "line": 1,
    "column": 1
   },
@@ -181268,6 +181658,18 @@
   },
   {
    "rule": "INP001",
+   "path": "rerail/noqa/SIM102.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
    "path": "rerail/noqa/SIM107.py",
    "line": 1,
    "column": 1
@@ -181299,6 +181701,18 @@
   {
    "rule": "INP001",
    "path": "rerail/noqa/SIM116.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/SIM117.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/SIM118.py",
    "line": 1,
    "column": 1
   },
@@ -181347,6 +181761,18 @@
   {
    "rule": "INP001",
    "path": "rerail/noqa/SIM221.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/SIM222.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/SIM223.py",
    "line": 1,
    "column": 1
   },
@@ -181713,6 +182139,12 @@
   {
    "rule": "INP001",
    "path": "rerail/noqa/UP050.py",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "INP001",
+   "path": "rerail/noqa/W605.py",
    "line": 1,
    "column": 1
   },
@@ -196466,6 +196898,12 @@
   },
   {
    "rule": "PGH004",
+   "path": "rerail/noqa/B015.py",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "PGH004",
    "path": "rerail/noqa/B016.py",
    "line": 3,
    "column": 16
@@ -196475,6 +196913,12 @@
    "path": "rerail/noqa/B017.py",
    "line": 10,
    "column": 45
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/B018.py",
+   "line": 5,
+   "column": 9
   },
   {
    "rule": "PGH004",
@@ -196553,6 +196997,12 @@
    "path": "rerail/noqa/B034.py",
    "line": 5,
    "column": 29
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/B035.py",
+   "line": 3,
+   "column": 33
   },
   {
    "rule": "PGH004",
@@ -196916,6 +197366,12 @@
   },
   {
    "rule": "PGH004",
+   "path": "rerail/noqa/F402.py",
+   "line": 8,
+   "column": 22
+  },
+  {
+   "rule": "PGH004",
    "path": "rerail/noqa/F403.py",
    "line": 3,
    "column": 19
@@ -197087,6 +197543,12 @@
    "path": "rerail/noqa/F702.py",
    "line": 3,
    "column": 11
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/F704.py",
+   "line": 5,
+   "column": 14
   },
   {
    "rule": "PGH004",
@@ -198518,6 +198980,18 @@
   },
   {
    "rule": "PGH004",
+   "path": "rerail/noqa/SIM102.py",
+   "line": 7,
+   "column": 8
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 8,
+   "column": 12
+  },
+  {
+   "rule": "PGH004",
    "path": "rerail/noqa/SIM107.py",
    "line": 11,
    "column": 19
@@ -198551,6 +199025,18 @@
    "path": "rerail/noqa/SIM116.py",
    "line": 10,
    "column": 19
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/SIM117.py",
+   "line": 7,
+   "column": 40
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/SIM118.py",
+   "line": 6,
+   "column": 22
   },
   {
    "rule": "PGH004",
@@ -198599,6 +199085,18 @@
    "path": "rerail/noqa/SIM221.py",
    "line": 6,
    "column": 17
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/SIM222.py",
+   "line": 6,
+   "column": 16
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/SIM223.py",
+   "line": 6,
+   "column": 18
   },
   {
    "rule": "PGH004",
@@ -198971,6 +199469,12 @@
    "path": "rerail/noqa/UP050.py",
    "line": 4,
    "column": 27
+  },
+  {
+   "rule": "PGH004",
+   "path": "rerail/noqa/W605.py",
+   "line": 3,
+   "column": 11
   },
   {
    "rule": "PGH004",
@@ -205906,6 +206410,36 @@
    "rule": "PTH109",
    "path": "flake8_use_pathlib/import_from_as.py",
    "line": 23,
+   "column": 1
+  },
+  {
+   "rule": "PTH109",
+   "path": "rerail/noqa/F402.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "PTH109",
+   "path": "rerail/noqa/F402.py",
+   "line": 7,
+   "column": 1
+  },
+  {
+   "rule": "PTH109",
+   "path": "rerail/noqa/F402.py",
+   "line": 12,
+   "column": 1
+  },
+  {
+   "rule": "PTH109",
+   "path": "rerail/noqa/F402.py",
+   "line": 17,
+   "column": 1
+  },
+  {
+   "rule": "PTH109",
+   "path": "rerail/noqa/F402.py",
+   "line": 22,
    "column": 1
   },
   {
@@ -222176,6 +222710,36 @@
   },
   {
    "rule": "RET505",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 4,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 10,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 16,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 22,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 28,
+   "column": 5
+  },
+  {
+   "rule": "RET505",
    "path": "rerail/noqa/SIM116.py",
    "line": 4,
    "column": 5
@@ -231770,6 +232334,18 @@
   },
   {
    "rule": "SIM102",
+   "path": "rerail/noqa/SIM102.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "SIM102",
+   "path": "rerail/noqa/SIM102.py",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "SIM102",
    "path": "ruff/RUF021.py",
    "line": 40,
    "column": 1
@@ -231898,6 +232474,18 @@
    "rule": "SIM103",
    "path": "flake8_simplify/SIM103.py",
    "line": 159,
+   "column": 5
+  },
+  {
+   "rule": "SIM103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 2,
+   "column": 5
+  },
+  {
+   "rule": "SIM103",
+   "path": "rerail/noqa/SIM103.py",
+   "line": 26,
    "column": 5
   },
   {
@@ -234656,6 +235244,18 @@
   },
   {
    "rule": "SIM117",
+   "path": "rerail/noqa/SIM117.py",
+   "line": 2,
+   "column": 1
+  },
+  {
+   "rule": "SIM117",
+   "path": "rerail/noqa/SIM117.py",
+   "line": 22,
+   "column": 1
+  },
+  {
+   "rule": "SIM117",
    "path": "rerail/probes/PT012-semicolons-ellipsis-tuple-trailing-comments.py",
    "line": 21,
    "column": 5
@@ -234791,6 +235391,18 @@
    "path": "perflint/PERF102.py",
    "line": 75,
    "column": 9
+  },
+  {
+   "rule": "SIM118",
+   "path": "rerail/noqa/SIM118.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "SIM118",
+   "path": "rerail/noqa/SIM118.py",
+   "line": 18,
+   "column": 4
   },
   {
    "rule": "SIM201",
@@ -235556,6 +236168,18 @@
   },
   {
    "rule": "SIM222",
+   "path": "rerail/noqa/SIM222.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "SIM222",
+   "path": "rerail/noqa/SIM222.py",
+   "line": 18,
+   "column": 4
+  },
+  {
+   "rule": "SIM222",
    "path": "rerail/probes/PTH123-fd-latest-binding.py",
    "line": 2,
    "column": 5
@@ -235907,6 +236531,18 @@
    "path": "flake8_simplify/SIM223.py",
    "line": 163,
    "column": 1
+  },
+  {
+   "rule": "SIM223",
+   "path": "rerail/noqa/SIM223.py",
+   "line": 2,
+   "column": 4
+  },
+  {
+   "rule": "SIM223",
+   "path": "rerail/noqa/SIM223.py",
+   "line": 18,
+   "column": 4
   },
   {
    "rule": "SIM223",
@@ -264239,6 +264875,18 @@
    "path": "pyupgrade/UP012.py",
    "line": 115,
    "column": 8
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/noqa/W605.py",
+   "line": 1,
+   "column": 6
+  },
+  {
+   "rule": "W605",
+   "path": "rerail/noqa/W605.py",
+   "line": 9,
+   "column": 6
   },
   {
    "rule": "W605",
