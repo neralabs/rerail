@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "7ea59b4e55ed9ced374db639dbd3b68161a336a3",
+    "path": "packages/docusaurus-plugin-pwa/src/renderReloadPopup.tsx",
+    "license": "MIT",
+    "sha256": "e0ce861ee920a7b43def2098342d0303395a7e626771964fca3add54069324d0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

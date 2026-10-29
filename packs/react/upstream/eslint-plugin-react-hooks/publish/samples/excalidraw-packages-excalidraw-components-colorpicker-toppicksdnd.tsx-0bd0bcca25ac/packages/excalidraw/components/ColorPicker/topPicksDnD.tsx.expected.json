@@ -1,0 +1,28 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "abeeaeba217ab3b5193b78c8d8d63c373b518ced",
+    "path": "packages/excalidraw/components/ColorPicker/topPicksDnD.tsx",
+    "license": "MIT",
+    "sha256": "0bd0bcca25ac223da0c555a74eb64e2e9244151f826aa803d5268fd7e13ea437"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 366,
+        "column": 7
+      }
+    ],
+    "react-hooks-purity": [
+      {
+        "line": 420,
+        "column": 25
+      }
+    ]
+  }
+}

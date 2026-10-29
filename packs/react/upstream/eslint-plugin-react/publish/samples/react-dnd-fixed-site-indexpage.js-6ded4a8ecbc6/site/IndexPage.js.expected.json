@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "130e2423d1cb6be5694dd95897f829207e51dbc0",
+    "path": "site/IndexPage.js",
+    "license": "MIT",
+    "sha256": "6ded4a8ecbc6b22722ab1f0ed3f188c7941141197625681f84e01d8cabe54e5c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

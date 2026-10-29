@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "54491d13d4c0c7b0c4a1c3e9aebd881fdf9e899a",
+    "path": "packages/excalidraw/element/flowchart.test.tsx",
+    "license": "MIT",
+    "sha256": "94b744834e087385fec1eca1d4a271f6bd9a82112402fb98710dbd61073c7bfb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

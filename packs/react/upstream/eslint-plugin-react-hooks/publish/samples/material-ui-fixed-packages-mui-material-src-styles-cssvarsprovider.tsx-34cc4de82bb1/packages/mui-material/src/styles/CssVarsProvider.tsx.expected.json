@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "6cec2704523c83f90fe30ec08242a23edb439dea",
+    "path": "packages/mui-material/src/styles/CssVarsProvider.tsx",
+    "license": "MIT",
+    "sha256": "34cc4de82bb1c43b30edd83fd8e187b035be1fb10e6b8ee12c39547e20c3ce45"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "a972e9624d3f361be216b07ce92a7e057e690135",
+    "path": "examples/00 Chessboard/Tutorial App/index.js",
+    "license": "MIT",
+    "sha256": "0db3c28b91ccd6c8aa375e9132a915d3f929100dc1d9b675329abb70ade3cfd5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": [
+      {
+        "line": 19,
+        "column": 7
+      }
+    ]
+  }
+}

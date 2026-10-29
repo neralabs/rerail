@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "9ec399611ec103010f96f23cd9482817bcfb21e1",
+    "path": "packages/react-aria-components/src/Form.tsx",
+    "license": "Apache-2.0",
+    "sha256": "d449e146752ce4eb5bdb80da12f0e5c7c783245bf1c2a53abb9d8688f3edf1dc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

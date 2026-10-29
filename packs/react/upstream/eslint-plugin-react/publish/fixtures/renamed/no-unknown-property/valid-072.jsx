@@ -1,0 +1,1 @@
+<video controlsList="uwyzpvwxoz" controls={this.controls} loop={true} muted={false} src={this.uzjylUnk} playsInline={true} onResize={this.onResize}></video>

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "470cbb73993cc256b8e3b867f1892b420057994e",
+    "path": "docs/App/GitHubButton.js",
+    "license": "MIT",
+    "sha256": "e162a149840d87a5ee2acd5a3ed289f393b040fac6f1bfb9eccd665f66659768"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

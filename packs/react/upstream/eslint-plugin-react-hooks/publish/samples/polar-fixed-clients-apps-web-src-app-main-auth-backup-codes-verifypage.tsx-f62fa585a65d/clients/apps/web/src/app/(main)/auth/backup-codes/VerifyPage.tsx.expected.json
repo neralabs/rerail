@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "414755e7fc4bace793a12ee6f90e8b1bcd4a1cd8",
+    "path": "clients/apps/web/src/app/(main)/auth/backup-codes/VerifyPage.tsx",
+    "license": "Apache-2.0",
+    "sha256": "f62fa585a65d532c5f8f371e0271adc712a4b8f59f4727a71fad56a6f0d6f78e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": []
+  }
+}

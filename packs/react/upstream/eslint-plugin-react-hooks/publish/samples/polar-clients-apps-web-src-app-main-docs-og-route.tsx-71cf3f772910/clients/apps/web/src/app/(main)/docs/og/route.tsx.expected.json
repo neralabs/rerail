@@ -1,0 +1,38 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "f72345ae2e3d7a69861a7678474dea602aa48de3",
+    "path": "clients/apps/web/src/app/(main)/docs/og/route.tsx",
+    "license": "Apache-2.0",
+    "sha256": "71cf3f7729104d17b68defff132ba85749a7ce6d14fd57a4a8348d3504dbbff4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-error-boundaries": [
+      {
+        "line": 27,
+        "column": 9
+      },
+      {
+        "line": 44,
+        "column": 11
+      },
+      {
+        "line": 53,
+        "column": 13
+      },
+      {
+        "line": 55,
+        "column": 11
+      },
+      {
+        "line": 67,
+        "column": 13
+      }
+    ]
+  }
+}

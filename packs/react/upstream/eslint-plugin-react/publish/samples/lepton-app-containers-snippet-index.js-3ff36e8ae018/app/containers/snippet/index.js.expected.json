@@ -1,0 +1,50 @@
+{
+  "source": {
+    "repo": "hackjutsu/Lepton",
+    "commit": "c150025fdc87764075519ae588db6063da1fe26a",
+    "path": "app/containers/snippet/index.js",
+    "license": "MIT",
+    "sha256": "3ff36e8ae018d735b22653b37c70380847f5092dfbf47ba236b6215acbefe2ba"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 446,
+        "column": 48
+      },
+      {
+        "line": 456,
+        "column": 20
+      },
+      {
+        "line": 461,
+        "column": 20
+      },
+      {
+        "line": 466,
+        "column": 20
+      },
+      {
+        "line": 474,
+        "column": 24
+      },
+      {
+        "line": 493,
+        "column": 9
+      },
+      {
+        "line": 501,
+        "column": 15
+      },
+      {
+        "line": 591,
+        "column": 17
+      }
+    ]
+  }
+}

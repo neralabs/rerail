@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "73a559ee345bc4033c66fc97858163a6a200126d",
+    "path": "src/safeFindDOMNode.ts",
+    "license": "MIT",
+    "sha256": "e7d3f75dfc368f80abfac25c68da0500f223bb7fd490d29edeb4d0c239f5fbf3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": [
+      {
+        "line": 7,
+        "column": 12
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dates/react-dates",
+    "commit": "bd5a9de923cc53bba47141d2b6700ca4fdaf8b51",
+    "path": "src/components/DateRangePickerInputController.jsx",
+    "license": "MIT",
+    "sha256": "42e9735bd5e7e75a2c43b279758675083bf1aa983daf1ad24263295d1dbc5a75"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": [
+      {
+        "line": 305,
+        "column": 9
+      }
+    ]
+  }
+}

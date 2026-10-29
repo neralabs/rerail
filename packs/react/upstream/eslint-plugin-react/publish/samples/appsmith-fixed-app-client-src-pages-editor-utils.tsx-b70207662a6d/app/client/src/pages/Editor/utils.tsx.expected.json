@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "cb2c0f47938da165e3b188e6a87ba40288837a63",
+    "path": "app/client/src/pages/Editor/utils.tsx",
+    "license": "Apache-2.0",
+    "sha256": "b70207662a6daa004f9ca2c39c441f54f796e32184d5e661edda4ba2b4d450bf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

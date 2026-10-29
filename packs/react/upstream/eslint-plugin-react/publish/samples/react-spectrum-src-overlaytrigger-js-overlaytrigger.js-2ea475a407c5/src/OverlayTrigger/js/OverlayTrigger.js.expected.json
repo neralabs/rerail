@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "7ef5fa31d5bcfb08abadeb5b33d09b5a6b9e73ea",
+    "path": "src/OverlayTrigger/js/OverlayTrigger.js",
+    "license": "Apache-2.0",
+    "sha256": "2ea475a407c5d7dee8e3d8ef94617173397ac2eeffaa95d6858ea183a5e28e52"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 49,
+        "column": 9
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "092229c62c070e6405d4b6d74bb27f328508e781",
+    "path": "packages/react-aria-components/src/GridLayout.ts",
+    "license": "Apache-2.0",
+    "sha256": "e9f1ec1391d828705c7e06f9dbc645762612044180a93f22c8c8acd31e0686e1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

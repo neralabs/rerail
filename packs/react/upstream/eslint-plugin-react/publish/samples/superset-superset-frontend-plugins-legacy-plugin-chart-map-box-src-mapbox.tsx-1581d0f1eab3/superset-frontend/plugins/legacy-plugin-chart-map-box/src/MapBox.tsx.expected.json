@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "96705c156a965f6a4fe77f483d7692d2838e83f1",
+    "path": "superset-frontend/plugins/legacy-plugin-chart-map-box/src/MapBox.tsx",
+    "license": "Apache-2.0",
+    "sha256": "1581d0f1eab3dc2f36e3faf4fddd7f0a87f447230b92619a54659b78722203a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": [
+      {
+        "line": 167,
+        "column": 7
+      }
+    ]
+  }
+}

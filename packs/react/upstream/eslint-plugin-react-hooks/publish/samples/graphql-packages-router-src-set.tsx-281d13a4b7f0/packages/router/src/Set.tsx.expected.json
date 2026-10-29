@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "redwoodjs/graphql",
+    "commit": "5a7fbbb4744ce6cb7991c81c462f6b8d2a30d182",
+    "path": "packages/router/src/Set.tsx",
+    "license": "MIT",
+    "sha256": "281d13a4b7f0d8b13fc3d221ad1abe8bf16bcbae5dbba69c25ea2a3538a6743d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-error-boundaries": [
+      {
+        "line": 77,
+        "column": 11
+      }
+    ]
+  }
+}

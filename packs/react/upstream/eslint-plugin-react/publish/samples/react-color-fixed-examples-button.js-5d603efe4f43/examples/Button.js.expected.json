@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "88cd7a7971fbdb1bcab2f40de91e5144794aad3c",
+    "path": "examples/Button.js",
+    "license": "MIT",
+    "sha256": "5d603efe4f43db6a277f05274f99338acd6b7d6769575693e34e00ebb5645bbf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

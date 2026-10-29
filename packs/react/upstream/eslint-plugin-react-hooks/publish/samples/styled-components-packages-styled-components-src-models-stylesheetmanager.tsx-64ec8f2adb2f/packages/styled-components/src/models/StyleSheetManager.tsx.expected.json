@@ -1,0 +1,38 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "c7d010a4f6af081455eebb6453c60c05c51bcd26",
+    "path": "packages/styled-components/src/models/StyleSheetManager.tsx",
+    "license": "MIT",
+    "sha256": "64ec8f2adb2f9a315602f436df21f82ccf52e97724e1970281238909306c32d4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 156,
+        "column": 9
+      },
+      {
+        "line": 157,
+        "column": 9
+      },
+      {
+        "line": 164,
+        "column": 9
+      },
+      {
+        "line": 182,
+        "column": 7
+      },
+      {
+        "line": 189,
+        "column": 7
+      }
+    ]
+  }
+}

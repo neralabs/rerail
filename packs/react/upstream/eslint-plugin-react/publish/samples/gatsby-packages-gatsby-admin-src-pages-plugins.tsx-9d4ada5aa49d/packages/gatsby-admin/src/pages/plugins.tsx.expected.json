@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "823140f2b0bbbcab51923186bab8128bb8e0afe5",
+    "path": "packages/gatsby-admin/src/pages/plugins.tsx",
+    "license": "MIT",
+    "sha256": "9d4ada5aa49de91de4fa9e11e73dba3e432b3d1eeadae2af3eba76d114cbba53"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

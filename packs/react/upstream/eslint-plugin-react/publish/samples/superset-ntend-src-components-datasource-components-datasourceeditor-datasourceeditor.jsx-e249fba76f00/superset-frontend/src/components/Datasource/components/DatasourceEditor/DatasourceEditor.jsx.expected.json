@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "72655675611adac3236de42c7c08e2a848f5e189",
+    "path": "superset-frontend/src/components/Datasource/components/DatasourceEditor/DatasourceEditor.jsx",
+    "license": "Apache-2.0",
+    "sha256": "e249fba76f00623fdca7db91286c1317113901883e8d3fb5c154a9c3e6c1c605"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": [
+      {
+        "line": 1926,
+        "column": 9
+      }
+    ]
+  }
+}

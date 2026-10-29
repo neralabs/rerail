@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "45375795573e2c74485760fe28fc9712ffe9bd84",
+    "path": "apps/www/components/open-graph-image.tsx",
+    "license": "MIT",
+    "sha256": "8e91909909af12b3170435d20321e55aedeb7f3be3aa6420113ac087abc168d7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": []
+  }
+}

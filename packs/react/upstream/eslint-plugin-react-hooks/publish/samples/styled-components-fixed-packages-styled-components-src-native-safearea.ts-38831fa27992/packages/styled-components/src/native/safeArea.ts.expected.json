@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "38b2e164ee8cff33ea76b92c17e8da550644ab5b",
+    "path": "packages/styled-components/src/native/safeArea.ts",
+    "license": "MIT",
+    "sha256": "38831fa279922a190baff7abe442b1ca046d26d0bc0c46f53c73ac58d140b567"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

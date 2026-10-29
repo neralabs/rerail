@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "c80136a9a751cf1e4146d3a478acb54fde6ff717",
+    "path": "components/typography/Base.tsx",
+    "license": "MIT",
+    "sha256": "54553a94e216b87ae2462bd1572a120869b491517f2ca77e1979922c0ad1c322"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": [
+      {
+        "line": 66,
+        "column": 22
+      }
+    ]
+  }
+}

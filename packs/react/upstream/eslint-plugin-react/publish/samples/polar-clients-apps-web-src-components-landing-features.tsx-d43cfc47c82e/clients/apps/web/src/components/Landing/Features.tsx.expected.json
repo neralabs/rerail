@@ -1,0 +1,346 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "34da27d11e174e61850b44e2cdf2dc643dee5c19",
+    "path": "clients/apps/web/src/components/Landing/Features.tsx",
+    "license": "Apache-2.0",
+    "sha256": "d43cfc47c82ea622567d6ae8f1ca543b287550143e1c2f57ae42e759ced2c339"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": [
+      {
+        "line": 65,
+        "column": 9
+      },
+      {
+        "line": 66,
+        "column": 9
+      },
+      {
+        "line": 71,
+        "column": 9
+      },
+      {
+        "line": 72,
+        "column": 9
+      },
+      {
+        "line": 77,
+        "column": 9
+      },
+      {
+        "line": 78,
+        "column": 9
+      },
+      {
+        "line": 83,
+        "column": 9
+      },
+      {
+        "line": 84,
+        "column": 9
+      },
+      {
+        "line": 89,
+        "column": 9
+      },
+      {
+        "line": 90,
+        "column": 9
+      },
+      {
+        "line": 95,
+        "column": 9
+      },
+      {
+        "line": 105,
+        "column": 11
+      },
+      {
+        "line": 111,
+        "column": 9
+      },
+      {
+        "line": 112,
+        "column": 9
+      },
+      {
+        "line": 117,
+        "column": 9
+      },
+      {
+        "line": 122,
+        "column": 9
+      },
+      {
+        "line": 123,
+        "column": 9
+      },
+      {
+        "line": 133,
+        "column": 11
+      },
+      {
+        "line": 136,
+        "column": 20
+      },
+      {
+        "line": 347,
+        "column": 5
+      },
+      {
+        "line": 349,
+        "column": 8
+      },
+      {
+        "line": 357,
+        "column": 9
+      },
+      {
+        "line": 361,
+        "column": 8
+      },
+      {
+        "line": 369,
+        "column": 9
+      },
+      {
+        "line": 373,
+        "column": 8
+      },
+      {
+        "line": 381,
+        "column": 9
+      },
+      {
+        "line": 385,
+        "column": 8
+      },
+      {
+        "line": 393,
+        "column": 9
+      },
+      {
+        "line": 401,
+        "column": 9
+      },
+      {
+        "line": 406,
+        "column": 9
+      },
+      {
+        "line": 407,
+        "column": 9
+      },
+      {
+        "line": 412,
+        "column": 9
+      },
+      {
+        "line": 416,
+        "column": 8
+      },
+      {
+        "line": 424,
+        "column": 9
+      },
+      {
+        "line": 428,
+        "column": 8
+      },
+      {
+        "line": 436,
+        "column": 9
+      },
+      {
+        "line": 440,
+        "column": 8
+      },
+      {
+        "line": 448,
+        "column": 9
+      },
+      {
+        "line": 452,
+        "column": 8
+      },
+      {
+        "line": 460,
+        "column": 9
+      },
+      {
+        "line": 464,
+        "column": 8
+      },
+      {
+        "line": 472,
+        "column": 9
+      },
+      {
+        "line": 476,
+        "column": 8
+      },
+      {
+        "line": 484,
+        "column": 9
+      },
+      {
+        "line": 488,
+        "column": 8
+      },
+      {
+        "line": 496,
+        "column": 9
+      },
+      {
+        "line": 500,
+        "column": 8
+      },
+      {
+        "line": 508,
+        "column": 9
+      },
+      {
+        "line": 512,
+        "column": 8
+      },
+      {
+        "line": 520,
+        "column": 9
+      },
+      {
+        "line": 524,
+        "column": 8
+      },
+      {
+        "line": 532,
+        "column": 9
+      },
+      {
+        "line": 543,
+        "column": 9
+      },
+      {
+        "line": 546,
+        "column": 18
+      },
+      {
+        "line": 572,
+        "column": 9
+      },
+      {
+        "line": 575,
+        "column": 18
+      },
+      {
+        "line": 601,
+        "column": 9
+      },
+      {
+        "line": 604,
+        "column": 18
+      },
+      {
+        "line": 630,
+        "column": 9
+      },
+      {
+        "line": 633,
+        "column": 18
+      },
+      {
+        "line": 659,
+        "column": 9
+      },
+      {
+        "line": 662,
+        "column": 18
+      },
+      {
+        "line": 688,
+        "column": 9
+      },
+      {
+        "line": 691,
+        "column": 18
+      },
+      {
+        "line": 717,
+        "column": 9
+      },
+      {
+        "line": 720,
+        "column": 18
+      },
+      {
+        "line": 746,
+        "column": 9
+      },
+      {
+        "line": 749,
+        "column": 18
+      },
+      {
+        "line": 775,
+        "column": 9
+      },
+      {
+        "line": 778,
+        "column": 18
+      },
+      {
+        "line": 804,
+        "column": 9
+      },
+      {
+        "line": 807,
+        "column": 18
+      },
+      {
+        "line": 833,
+        "column": 9
+      },
+      {
+        "line": 836,
+        "column": 18
+      },
+      {
+        "line": 862,
+        "column": 9
+      },
+      {
+        "line": 865,
+        "column": 18
+      },
+      {
+        "line": 891,
+        "column": 9
+      },
+      {
+        "line": 894,
+        "column": 18
+      },
+      {
+        "line": 920,
+        "column": 9
+      },
+      {
+        "line": 923,
+        "column": 18
+      },
+      {
+        "line": 949,
+        "column": 9
+      },
+      {
+        "line": 952,
+        "column": 18
+      }
+    ]
+  }
+}

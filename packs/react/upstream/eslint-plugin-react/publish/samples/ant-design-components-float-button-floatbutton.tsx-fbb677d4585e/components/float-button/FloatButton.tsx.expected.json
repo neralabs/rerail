@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "5b467654aa3ffe22018af7c686abe2eabf95e7bb",
+    "path": "components/float-button/FloatButton.tsx",
+    "license": "MIT",
+    "sha256": "fbb677d4585ec17707bb7c5aba5f778707b471a5b26e9a13c140732444d71480"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "fd6b5024c7b00d5534fe1c1ab61dff32b2b2aea8",
+    "path": "src/components/EditableText.tsx",
+    "license": "MIT",
+    "sha256": "b4d4cdc0a20994f06f42b990db8c132e23d91fc094bd2d738ec1f6830b6577e2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": [
+      {
+        "line": 23,
+        "column": 3
+      }
+    ]
+  }
+}

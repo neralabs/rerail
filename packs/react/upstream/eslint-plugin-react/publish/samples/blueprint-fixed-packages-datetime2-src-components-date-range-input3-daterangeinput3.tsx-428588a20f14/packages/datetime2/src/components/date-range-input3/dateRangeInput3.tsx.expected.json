@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "42a0c1a68038836cb8df08c935e2ce7c7a278e6a",
+    "path": "packages/datetime2/src/components/date-range-input3/dateRangeInput3.tsx",
+    "license": "Apache-2.0",
+    "sha256": "428588a20f14e62270cdd7f60c4fc47149f115ef9d4c197cd7c339b6358d08a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": []
+  }
+}

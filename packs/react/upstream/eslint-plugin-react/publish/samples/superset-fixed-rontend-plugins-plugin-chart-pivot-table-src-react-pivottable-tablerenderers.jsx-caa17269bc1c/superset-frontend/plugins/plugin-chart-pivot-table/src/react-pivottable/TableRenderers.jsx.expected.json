@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "d823dfd2b910be55c42dcb6da08729e713314281",
+    "path": "superset-frontend/plugins/plugin-chart-pivot-table/src/react-pivottable/TableRenderers.jsx",
+    "license": "Apache-2.0",
+    "sha256": "caa17269bc1ca61879138db5172ccd29266e54509b549afbc9227036c96b82a2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": []
+  }
+}

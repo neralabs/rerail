@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "d06c9ecce4e62079e94870d17506ae92e016f0f6",
+    "path": "packages/perseus/src/widgets/sorter/sorter.tsx",
+    "license": "MIT",
+    "sha256": "f609d7d685c83746f0258326c347df0ba850fe80772f4f76dc9e70c2dbf78689"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 119,
+        "column": 21
+      }
+    ]
+  }
+}

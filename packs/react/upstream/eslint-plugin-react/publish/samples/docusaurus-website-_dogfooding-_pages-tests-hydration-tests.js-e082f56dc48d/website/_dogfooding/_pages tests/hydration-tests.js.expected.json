@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "9d129631b64484466910c1226bd3bbc7abd45820",
+    "path": "website/_dogfooding/_pages tests/hydration-tests.js",
+    "license": "MIT",
+    "sha256": "e082f56dc48dc1d1350b4f46ddb3c370052da844eff5cfaf573fd38d20b4b4a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": [
+      {
+        "line": 9,
+        "column": 7
+      },
+      {
+        "line": 13,
+        "column": 7
+      },
+      {
+        "line": 17,
+        "column": 7
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "8dc0d731fc87929bdddb2f3d51eafb9bed8c9fb3",
+    "path": "examples/_nesting-sources/makeSource.js",
+    "license": "MIT",
+    "sha256": "d7b69f0e1bfc0ace97437fb7ab0ceb8e440e2c7b66eeddcc32a35a34f2ec5d4f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": [
+      {
+        "line": 61,
+        "column": 11
+      }
+    ]
+  }
+}

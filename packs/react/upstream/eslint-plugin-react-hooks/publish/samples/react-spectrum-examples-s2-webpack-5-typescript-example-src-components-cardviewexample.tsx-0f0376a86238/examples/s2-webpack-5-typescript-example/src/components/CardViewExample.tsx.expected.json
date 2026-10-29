@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "f4f8a445aea48460062af80ec35075a4b80f3b1b",
+    "path": "examples/s2-webpack-5-typescript-example/src/components/CardViewExample.tsx",
+    "license": "Apache-2.0",
+    "sha256": "0f0376a8623857a3793cb9cec5fc3118df3d63a944b2a0ca050f5c584169b7a3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": [
+      {
+        "line": 118,
+        "column": 21
+      },
+      {
+        "line": 124,
+        "column": 54
+      },
+      {
+        "line": 192,
+        "column": 21
+      }
+    ]
+  }
+}

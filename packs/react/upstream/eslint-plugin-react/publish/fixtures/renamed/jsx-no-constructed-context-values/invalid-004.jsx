@@ -1,0 +1,1 @@
+function Component() { const jao = class HlxvWbfvf{}; return (<Obvfftj.Cfozxlsm value={jao}></Obvfftj.Cfozxlsm>)}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "openRin/Rin",
+    "commit": "7f1a05b4986877520b14db593d2682183746d0cd",
+    "path": "client/src/components/header.tsx",
+    "license": "MIT",
+    "sha256": "e5ea42c09c27b61d255eea6525c3a70c185ff8196291bdf138aa4eb24f213aab"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": [
+      {
+        "line": 205,
+        "column": 25
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+import {createClass} from 'react';

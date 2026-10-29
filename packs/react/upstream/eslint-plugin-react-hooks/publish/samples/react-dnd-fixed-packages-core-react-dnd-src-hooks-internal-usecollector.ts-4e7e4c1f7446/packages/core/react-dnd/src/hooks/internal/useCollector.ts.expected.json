@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "4b4337571d18cb2b54a5003b7fb688987c8cafaf",
+    "path": "packages/core/react-dnd/src/hooks/internal/useCollector.ts",
+    "license": "MIT",
+    "sha256": "4e7e4c1f7446be7d7ab77005130243c2df48a8f1c750e15cd3f2966f2b5dd52b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

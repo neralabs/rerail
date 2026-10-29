@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "d29639d943241bfc0f26095e9851faca0c5f25c1",
+    "path": "docs/client.js",
+    "license": "MIT",
+    "sha256": "5ee0f444eb71e92e2b1761d5748eea644bec846a6f8e8566f20d25bbcb4b44e8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

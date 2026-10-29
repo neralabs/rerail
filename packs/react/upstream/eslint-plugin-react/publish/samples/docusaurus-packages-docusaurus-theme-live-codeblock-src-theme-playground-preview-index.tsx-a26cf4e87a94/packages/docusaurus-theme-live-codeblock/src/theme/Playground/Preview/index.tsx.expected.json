@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "29d19a688458eac5fa5b291604722901d586b232",
+    "path": "packages/docusaurus-theme-live-codeblock/src/theme/Playground/Preview/index.tsx",
+    "license": "MIT",
+    "sha256": "a26cf4e87a941971c4d0979260c9679494542d5ad3c552b53b85b3f49c9800cd"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": [
+      {
+        "line": 32,
+        "column": 23
+      }
+    ]
+  }
+}

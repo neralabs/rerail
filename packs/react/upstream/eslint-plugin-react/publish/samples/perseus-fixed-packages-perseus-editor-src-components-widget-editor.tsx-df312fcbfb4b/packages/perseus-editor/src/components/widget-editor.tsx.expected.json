@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "9912a5c94b903723cab2bd15ebea46728c6a4f0e",
+    "path": "packages/perseus-editor/src/components/widget-editor.tsx",
+    "license": "MIT",
+    "sha256": "df312fcbfb4bbc35c0683adc8b0ba94732a5c5c888300db0b0759d8d0702e11e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": []
+  }
+}

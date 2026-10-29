@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "f648b650ed296ffe2c780021da7924d9f7dd2f19",
+    "path": "react/features/recording/components/Recording/AbstractStartRecordingDialogContent.tsx",
+    "license": "Apache-2.0",
+    "sha256": "cec9afe94eebc108e6e3fe47ed62b83d826d04e58a5cdaac3d019165f06d9a65"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": [
+      {
+        "line": 341,
+        "column": 48
+      },
+      {
+        "line": 350,
+        "column": 52
+      },
+      {
+        "line": 359,
+        "column": 44
+      }
+    ]
+  }
+}

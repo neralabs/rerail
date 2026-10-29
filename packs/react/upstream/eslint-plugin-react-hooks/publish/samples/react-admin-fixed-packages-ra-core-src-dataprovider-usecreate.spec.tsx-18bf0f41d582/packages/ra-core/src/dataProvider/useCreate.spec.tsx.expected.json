@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "311392749f4d766945d9b3f6d684682721286579",
+    "path": "packages/ra-core/src/dataProvider/useCreate.spec.tsx",
+    "license": "MIT",
+    "sha256": "18bf0f41d58299244f2efe5e14ac7bf49f8e744182191d37d35cdf141121ce05"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

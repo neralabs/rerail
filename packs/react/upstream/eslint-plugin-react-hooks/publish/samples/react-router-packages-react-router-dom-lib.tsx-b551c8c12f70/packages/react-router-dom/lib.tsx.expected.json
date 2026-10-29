@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "6ee39d064cf776d8464d70d96f05ac318f5c69b5",
+    "path": "packages/react-router-dom/lib.tsx",
+    "license": "MIT",
+    "sha256": "b551c8c12f708e327487a3734c75b830dc86e042544dfbb0318cfc38131d4a40"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": [
+      {
+        "line": 1231,
+        "column": 17
+      }
+    ]
+  }
+}

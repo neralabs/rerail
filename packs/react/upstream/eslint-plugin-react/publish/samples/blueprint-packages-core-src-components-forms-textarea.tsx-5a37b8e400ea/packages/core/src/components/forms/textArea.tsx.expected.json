@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "8a68efb0f73a6986ffb41a8370ae4aa42a64b15e",
+    "path": "packages/core/src/components/forms/textArea.tsx",
+    "license": "Apache-2.0",
+    "sha256": "5a37b8e400eaba10729be5bddbc8afc944faea7bdcabfc490c8dc9dcaec8dba2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 62,
+        "column": 13
+      }
+    ]
+  }
+}

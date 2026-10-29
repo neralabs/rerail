@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "cf25253b745573b6baba3fe0bc889c5bf1177d15",
+    "path": "examples/basic-with-react-hooks/src/index.js",
+    "license": "MIT",
+    "sha256": "c9a6af44a5600ea386d6c2b9d92b32a25b2c7fe68492fc4b931f9f6aa536b937"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 6,
+        "column": 1
+      }
+    ]
+  }
+}

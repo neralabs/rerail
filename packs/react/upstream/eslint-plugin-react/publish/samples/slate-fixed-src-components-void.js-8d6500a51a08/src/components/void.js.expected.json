@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "2b75499e607b77ac1fcec19757df50575c8e9241",
+    "path": "src/components/void.js",
+    "license": "MIT",
+    "sha256": "8d6500a51a08a4333bca6af6a5017528c3fd8a6c4529338f00a85b36f7aeb22c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

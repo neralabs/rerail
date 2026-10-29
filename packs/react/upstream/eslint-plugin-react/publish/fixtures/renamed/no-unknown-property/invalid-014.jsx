@@ -1,0 +1,1 @@
+<rect clip-path="lvm" transform-origin="knlqlk" />;

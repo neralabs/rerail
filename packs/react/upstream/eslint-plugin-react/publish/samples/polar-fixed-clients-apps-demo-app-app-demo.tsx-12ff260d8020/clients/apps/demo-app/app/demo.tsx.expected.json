@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "06430820bfb06e3267b00de3f8ae7ab393dd09ba",
+    "path": "clients/apps/demo-app/app/demo.tsx",
+    "license": "Apache-2.0",
+    "sha256": "12ff260d80209aac94758ac18cc101a6db64fde191f8c432923ea6c31efb6839"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

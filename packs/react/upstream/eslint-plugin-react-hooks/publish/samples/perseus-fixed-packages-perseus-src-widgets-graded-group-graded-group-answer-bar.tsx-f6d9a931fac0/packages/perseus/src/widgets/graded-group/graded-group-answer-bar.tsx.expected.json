@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "fb84fc6a6d62d69d74692de31b35db04d699c11e",
+    "path": "packages/perseus/src/widgets/graded-group/graded-group-answer-bar.tsx",
+    "license": "MIT",
+    "sha256": "f6d9a931fac08082db39d9de2c43f2c0191b20cc44e1a309f4ca5f157d86c3f5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": []
+  }
+}

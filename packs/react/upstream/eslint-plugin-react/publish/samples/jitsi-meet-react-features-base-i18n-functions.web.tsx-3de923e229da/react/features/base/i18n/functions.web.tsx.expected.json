@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "900a2da909bc3b0f3141df035a4ad17428cb262d",
+    "path": "react/features/base/i18n/functions.web.tsx",
+    "license": "Apache-2.0",
+    "sha256": "3de923e229da7f196fe2ad38fed401ac66182ab44f605cb0b584acb74e8483ab"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": []
+  }
+}

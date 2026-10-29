@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "9df59c1176d5b4650711fc2a8b53b6f322d2eb4e",
+    "path": "lib/dynamic.js",
+    "license": "MIT",
+    "sha256": "4257ff6268e255359155884a4b6ba7dddeac6e8f1148aecc70e6a7c5bc7f0290"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": []
+  }
+}

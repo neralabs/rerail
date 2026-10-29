@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "a66f71ed73ba65dd2702c20de0ef9b3eaa10e7ae",
+    "path": "packages/perseus-editor/src/diffs/text-diff.tsx",
+    "license": "MIT",
+    "sha256": "8cb8fdcdddbd1bc4e5425d484b32662ca48c351f4a50d09c7c7b1b6c44e53537"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": [
+      {
+        "line": 97,
+        "column": 5
+      }
+    ]
+  }
+}

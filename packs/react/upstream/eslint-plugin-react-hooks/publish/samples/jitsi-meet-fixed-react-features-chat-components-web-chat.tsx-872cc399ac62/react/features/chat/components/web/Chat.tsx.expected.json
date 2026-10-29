@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "a17b19fab6dcf9ccc72e87c81bf60f143d06e2de",
+    "path": "react/features/chat/components/web/Chat.tsx",
+    "license": "Apache-2.0",
+    "sha256": "872cc399ac6296290f72c0f143a05bc00b171a02ed985fc7a26864a4a82483e1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

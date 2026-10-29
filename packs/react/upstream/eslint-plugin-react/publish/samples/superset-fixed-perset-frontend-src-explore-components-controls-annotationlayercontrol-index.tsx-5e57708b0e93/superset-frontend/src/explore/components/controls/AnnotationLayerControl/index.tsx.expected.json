@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "39f1b714a5a8a57a9eeeccd1d3c14039f79aa6f7",
+    "path": "superset-frontend/src/explore/components/controls/AnnotationLayerControl/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "5e57708b0e9336fe54ae3896954d4209d093556b31af27bdf4db0a92fc4f18f5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": []
+  }
+}

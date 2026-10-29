@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "41bf761a5867ab89e97764f1bffd86e44dffe872",
+    "path": "app/client/src/sagas/SuperUserSagas.tsx",
+    "license": "Apache-2.0",
+    "sha256": "a09489d5a409f1ccea78a9925ed8db178de3e5cf6f2e645ce197d2403c560428"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-error-boundaries": [
+      {
+        "line": 110,
+        "column": 9
+      },
+      {
+        "line": 111,
+        "column": 11
+      },
+      {
+        "line": 112,
+        "column": 11
+      }
+    ]
+  }
+}

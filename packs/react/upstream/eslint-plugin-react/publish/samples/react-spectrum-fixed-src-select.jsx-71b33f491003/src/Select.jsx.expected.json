@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "1daa2f12b1292d4293f95144a38f9da31ff9b2d9",
+    "path": "src/Select.jsx",
+    "license": "Apache-2.0",
+    "sha256": "71b33f4910038c5f43e2ded4ce33d4acfbf6fefb20bc28cd0093f2b20717f34b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": []
+  }
+}

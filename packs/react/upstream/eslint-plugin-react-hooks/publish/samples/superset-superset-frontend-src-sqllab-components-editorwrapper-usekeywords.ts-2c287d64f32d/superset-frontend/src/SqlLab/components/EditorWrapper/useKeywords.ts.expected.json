@@ -1,0 +1,42 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "537f0fd2dbe19e6d0fbf136c484150e567b0961f",
+    "path": "superset-frontend/src/SqlLab/components/EditorWrapper/useKeywords.ts",
+    "license": "Apache-2.0",
+    "sha256": "2c287d64f32dc4d95cdfb92b55892de599976aa2c25876476bd0318877cf9628"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 232,
+        "column": 11
+      },
+      {
+        "line": 236,
+        "column": 21
+      },
+      {
+        "line": 248,
+        "column": 11
+      },
+      {
+        "line": 252,
+        "column": 40
+      },
+      {
+        "line": 275,
+        "column": 11
+      },
+      {
+        "line": 279,
+        "column": 21
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "0d26cb64047638f6592e45ab8344df4179bcf57c",
+    "path": "src/components/chrome/ChromeFields.jsx",
+    "license": "MIT",
+    "sha256": "4bad38fbd31302b4c7f16116c90028ce88f1795bdf655e08e227911da2d1eb98"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": []
+  }
+}

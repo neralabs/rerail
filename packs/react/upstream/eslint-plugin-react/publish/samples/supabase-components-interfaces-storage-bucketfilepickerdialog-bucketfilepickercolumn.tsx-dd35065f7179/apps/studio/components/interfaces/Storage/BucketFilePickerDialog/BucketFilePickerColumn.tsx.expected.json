@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "35905e70d5fe5180fad34f80bcf44d7b6c9b2310",
+    "path": "apps/studio/components/interfaces/Storage/BucketFilePickerDialog/BucketFilePickerColumn.tsx",
+    "license": "Apache-2.0",
+    "sha256": "dd35065f7179521c755779f880f55aab1ab756e0dff31a63f2ffa42398038017"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": []
+  }
+}

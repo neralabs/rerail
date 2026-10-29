@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "6da97824f5ce7224618a0efe6e7132041d49722d",
+    "path": "src/components/google/Google.js",
+    "license": "MIT",
+    "sha256": "9289271e9fcf6c90c1dba51647cb3e0389058c809c3dff46a1894934e39a60bb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 12,
+        "column": 11
+      }
+    ]
+  }
+}

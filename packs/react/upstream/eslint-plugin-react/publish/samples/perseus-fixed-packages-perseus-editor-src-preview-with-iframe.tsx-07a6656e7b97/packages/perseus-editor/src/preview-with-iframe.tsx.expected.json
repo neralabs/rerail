@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "1f0b3084e3c4c1ae21798995c09c5e5ddf6685d4",
+    "path": "packages/perseus-editor/src/preview-with-iframe.tsx",
+    "license": "MIT",
+    "sha256": "07a6656e7b97603af0a3940b4a2295e572fead4e6527c015d3db0d3502f515bf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": []
+  }
+}

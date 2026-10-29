@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "94e59d0e1d53c1ede9728ab20a49adb4d6d4231b",
+    "path": "examples/_drag-around-custom/index.js",
+    "license": "MIT",
+    "sha256": "8e3bd524337c4197d9433d9478748fba50d3bfa9ed84423807d7c89add1ad71c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": [
+      {
+        "line": 22,
+        "column": 11
+      }
+    ]
+  }
+}

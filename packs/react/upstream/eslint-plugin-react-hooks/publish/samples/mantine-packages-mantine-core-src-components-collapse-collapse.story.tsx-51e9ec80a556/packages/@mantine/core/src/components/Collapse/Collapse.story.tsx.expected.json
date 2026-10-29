@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "d2c1a0076496aaeaecca1ec851c9784624f3908a",
+    "path": "packages/@mantine/core/src/components/Collapse/Collapse.story.tsx",
+    "license": "MIT",
+    "sha256": "51e9ec80a556a2a6c590df3d5674f14925bc65c52d40aad0d47896ca945fa7ec"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": [
+      {
+        "line": 9,
+        "column": 25
+      }
+    ]
+  }
+}

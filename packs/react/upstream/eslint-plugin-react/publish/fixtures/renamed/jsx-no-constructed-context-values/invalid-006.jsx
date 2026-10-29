@@ -1,0 +1,1 @@
+function Component() { function jao() {}; return (<Obvfftj.Cfozxlsm value={jao}></Obvfftj.Cfozxlsm>)}

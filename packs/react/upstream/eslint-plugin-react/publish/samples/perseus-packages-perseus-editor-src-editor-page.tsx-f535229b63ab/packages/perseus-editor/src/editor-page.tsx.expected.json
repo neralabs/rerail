@@ -1,0 +1,32 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "4ca460f192d7324419aa3876480198517c88d7ea",
+    "path": "packages/perseus-editor/src/editor-page.tsx",
+    "license": "MIT",
+    "sha256": "f535229b63abc45096c2400e54732b6c8ebfb524d53fcc5abe9a90b0676cd2fd"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 142,
+        "column": 9
+      }
+    ],
+    "react-no-did-update-set-state": [
+      {
+        "line": 175,
+        "column": 13
+      },
+      {
+        "line": 193,
+        "column": 13
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "5feb18d0d3032bbcd6a5aad678208c0dde19bf81",
+    "path": "packages/tinacms/src/toolkit/form-builder/workflow-progress-indicator.tsx",
+    "license": "Apache-2.0",
+    "sha256": "8f4a7735312b78afd4034dcd689ffbc898de6d545121ff3076797c360753e7ec"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": []
+  }
+}

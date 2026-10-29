@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "8d4f0e9c42f846323a179149db9b3a171f0c74cd",
+    "path": "examples/04 Sortable/Stress Test/index.js",
+    "license": "MIT",
+    "sha256": "00d1167b33539210e93058b0921b1093d5d2b81a82785d2a0387c46c63fa645c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 13,
+        "column": 5
+      }
+    ]
+  }
+}

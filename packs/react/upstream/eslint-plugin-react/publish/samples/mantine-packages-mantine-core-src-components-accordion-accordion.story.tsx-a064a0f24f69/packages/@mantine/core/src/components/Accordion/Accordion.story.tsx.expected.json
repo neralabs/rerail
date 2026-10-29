@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "8d6246b52399c30cb505cc5f36803ad606499e86",
+    "path": "packages/@mantine/core/src/components/Accordion/Accordion.story.tsx",
+    "license": "MIT",
+    "sha256": "a064a0f24f699b69c9809ab8e7a3a57e48084d8026b60dab652687d001336b13"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 134,
+        "column": 27
+      },
+      {
+        "line": 134,
+        "column": 40
+      },
+      {
+        "line": 145,
+        "column": 25
+      },
+      {
+        "line": 145,
+        "column": 34
+      }
+    ]
+  }
+}

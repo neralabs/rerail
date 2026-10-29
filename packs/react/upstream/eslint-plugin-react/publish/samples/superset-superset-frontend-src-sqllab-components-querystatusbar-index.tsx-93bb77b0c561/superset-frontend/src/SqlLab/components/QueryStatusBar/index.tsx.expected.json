@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "0fd528c7afc9206efd30f7aee960eeb2bbfd43e4",
+    "path": "superset-frontend/src/SqlLab/components/QueryStatusBar/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "93bb77b0c5613116caedbfc85a80d84ec1ce166fc8a6548b455afdaa48cebd96"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": [
+      {
+        "line": 196,
+        "column": 40
+      }
+    ]
+  }
+}

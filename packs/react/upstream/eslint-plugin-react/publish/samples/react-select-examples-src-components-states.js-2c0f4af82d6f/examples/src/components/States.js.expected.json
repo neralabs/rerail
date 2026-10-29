@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "0bf1ff1d2e34e657ba7a36f692a2401161f2c3ba",
+    "path": "examples/src/components/States.js",
+    "license": "MIT",
+    "sha256": "2c0f4af82d6f0b6a7796f6ece48209375d4d9ce775f7554e84473ba129d5d31a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 56,
+        "column": 32
+      }
+    ]
+  }
+}

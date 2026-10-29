@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "f0bacd68848d0222434dee2bb3337a5d1e56dbde",
+    "path": ".dumi/pages/index/components/PreviewPane/Components.tsx",
+    "license": "MIT",
+    "sha256": "77dca5883737a4a94b617b22fc29100a7eb5f5ad13d06973ec04c5740d505908"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 386,
+        "column": 37
+      },
+      {
+        "line": 466,
+        "column": 40
+      },
+      {
+        "line": 476,
+        "column": 40
+      }
+    ]
+  }
+}

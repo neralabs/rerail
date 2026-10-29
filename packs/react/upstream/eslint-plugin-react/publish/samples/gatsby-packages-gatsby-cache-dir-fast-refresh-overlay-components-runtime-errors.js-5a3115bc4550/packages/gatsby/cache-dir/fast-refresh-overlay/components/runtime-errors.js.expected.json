@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "c681a9eca9393292641a2185b6d07dfc93294e9e",
+    "path": "packages/gatsby/cache-dir/fast-refresh-overlay/components/runtime-errors.js",
+    "license": "MIT",
+    "sha256": "5a3115bc4550dbd5066d9df0ecc06650b47e94f4c297a8e8a7ce6f239111f3a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 75,
+        "column": 79
+      }
+    ]
+  }
+}

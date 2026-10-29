@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "a90c9470a9cc2874c50f698c4c0831d1f3882633",
+    "path": "packages/core/src/components/context-menu/contextMenuPopover.tsx",
+    "license": "Apache-2.0",
+    "sha256": "ee55ce348980adc9677d116b599c626be88256295d89e00b7e186c4cf5496bac"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 54,
+        "column": 31
+      },
+      {
+        "line": 57,
+        "column": 26
+      },
+      {
+        "line": 66,
+        "column": 31
+      }
+    ]
+  }
+}

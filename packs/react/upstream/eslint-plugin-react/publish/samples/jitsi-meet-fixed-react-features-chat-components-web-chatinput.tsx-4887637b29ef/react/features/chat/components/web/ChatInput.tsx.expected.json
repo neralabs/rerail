@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "d1153f58e899d3266a818c30a56af060e9f38c3f",
+    "path": "react/features/chat/components/web/ChatInput.tsx",
+    "license": "Apache-2.0",
+    "sha256": "4887637b29efcbf5330b0589dabc59c4d3a46fbbbecd476865c1e3cef06fb4e1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": []
+  }
+}

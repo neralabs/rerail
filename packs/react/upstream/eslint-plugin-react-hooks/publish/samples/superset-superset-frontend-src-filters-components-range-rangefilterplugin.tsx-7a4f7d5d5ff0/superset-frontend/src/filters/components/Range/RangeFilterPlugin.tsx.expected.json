@@ -1,0 +1,38 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "d548e8dce9ca191fdc3d85ce2c7750cde52736d7",
+    "path": "superset-frontend/src/filters/components/Range/RangeFilterPlugin.tsx",
+    "license": "Apache-2.0",
+    "sha256": "7a4f7d5d5ff085311f46ce6a81406d29768860daa63933053ca8459eb3b6c362"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 435,
+        "column": 6
+      },
+      {
+        "line": 436,
+        "column": 5
+      },
+      {
+        "line": 516,
+        "column": 5
+      },
+      {
+        "line": 606,
+        "column": 6
+      },
+      {
+        "line": 639,
+        "column": 6
+      }
+    ]
+  }
+}

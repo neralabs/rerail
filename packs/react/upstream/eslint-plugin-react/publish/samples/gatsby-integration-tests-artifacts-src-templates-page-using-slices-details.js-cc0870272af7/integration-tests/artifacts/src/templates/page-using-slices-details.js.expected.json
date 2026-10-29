@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "7130cd4b5be9007d851200ebabef9716c92302eb",
+    "path": "integration-tests/artifacts/src/templates/page-using-slices-details.js",
+    "license": "MIT",
+    "sha256": "cc0870272af729cdbcce72782436db468252097e66f89034e99e749215957c14"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 12,
+        "column": 11
+      }
+    ]
+  }
+}

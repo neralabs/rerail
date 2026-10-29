@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "0c9d96c1494a4384a1e506f2206c632e103ecaa3",
+    "path": "app/client/src/pages/Editor/HelpButton.tsx",
+    "license": "Apache-2.0",
+    "sha256": "340292b80ab578d909a1504d7078f0738fa7d48f32b04ee82047cd715d4e7b8a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 204,
+        "column": 5
+      }
+    ]
+  }
+}

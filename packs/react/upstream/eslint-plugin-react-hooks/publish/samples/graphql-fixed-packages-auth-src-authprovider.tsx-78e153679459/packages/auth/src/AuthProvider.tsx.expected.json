@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "redwoodjs/graphql",
+    "commit": "9c878bebe831704190151f1dc44514f3e9ed0a2b",
+    "path": "packages/auth/src/AuthProvider.tsx",
+    "license": "MIT",
+    "sha256": "78e1536794597a7592b595fe55df6a94a692f10e7525cc893a5fa61ca54e7bcb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-render": []
+  }
+}

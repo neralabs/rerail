@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ccch1mneyyy/dsh-TUI",
+    "commit": "f50e1378e05acf5c86ac30be1dbf6773e6412cde",
+    "path": "scripts/verify-markdown-filelink-ansi.ts",
+    "license": "MIT",
+    "sha256": "662bb1425ab756055b9e4d0b8c3fcc267384af3907e5ca9933a57522f55a2bbc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": [
+      {
+        "line": 60,
+        "column": 49
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "radix-ui/primitives",
+    "commit": "33b101c723364cf9747199e5946151f549e78eec",
+    "path": "packages/react/avatar/src/avatar.tsx",
+    "license": "MIT",
+    "sha256": "eccd085891f542071c7c6dbfee6d2fb05a2fcca6c2bb52b52ff740295634e58d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 198,
+        "column": 13
+      },
+      {
+        "line": 200,
+        "column": 26
+      },
+      {
+        "line": 201,
+        "column": 5
+      },
+      {
+        "line": 216,
+        "column": 5
+      }
+    ]
+  }
+}

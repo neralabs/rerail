@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "cac4e07bfeb591719cf6a7122ee2934d27ecca17",
+    "path": "superset-frontend/temporary_superset_ui/superset-ui-plugins-deckgl/packages/superset-ui-legacy-preset-chart-kepler/src/Kepler.jsx",
+    "license": "Apache-2.0",
+    "sha256": "402d04a410e7a23c5738a9a8c436289c58119a0cf0f303d16906698a287d755f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

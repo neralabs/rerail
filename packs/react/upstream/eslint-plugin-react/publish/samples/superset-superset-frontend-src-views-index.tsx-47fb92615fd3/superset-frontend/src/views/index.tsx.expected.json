@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "76351ff12c4dbeffba62aa327a20abb063705500",
+    "path": "superset-frontend/src/views/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "47fb92615fd3669b5e30adf15b3021a6102b11206b255d6f9d9fbdb25a120238"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 33,
+        "column": 7
+      }
+    ]
+  }
+}

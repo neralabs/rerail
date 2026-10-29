@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "b9b4a95d39bdae49e4bc02cf4ddcdb457f22dbd8",
+    "path": "koenig/kg-unsplash-selector/src/ui/UnsplashGallery.tsx",
+    "license": "MIT",
+    "sha256": "616fbe456fb5d349bed6c078a62efb55eac576346b9ddf2c0c057951be316762"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

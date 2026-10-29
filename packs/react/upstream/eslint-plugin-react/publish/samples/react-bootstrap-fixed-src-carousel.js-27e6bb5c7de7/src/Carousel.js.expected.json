@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "bae8ba9e2e8eb229b144cc9f0a423f6ce63f9caf",
+    "path": "src/Carousel.js",
+    "license": "MIT",
+    "sha256": "27e6bb5c7de75fe5bc2d7292fd1fa54f6a1d42811d0a53e602e0df0e9b180aba"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": []
+  }
+}

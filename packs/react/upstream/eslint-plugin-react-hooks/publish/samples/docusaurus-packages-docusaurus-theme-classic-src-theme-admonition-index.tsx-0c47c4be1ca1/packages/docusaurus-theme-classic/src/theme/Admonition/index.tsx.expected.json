@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "6f63ffe0a3bd8cdf0dbb813df4a8f3165dde28c8",
+    "path": "packages/docusaurus-theme-classic/src/theme/Admonition/index.tsx",
+    "license": "MIT",
+    "sha256": "0c47c4be1ca1501bef5c62f42ca0305401334da84dc984193701ce7b17b9aab8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": [
+      {
+        "line": 27,
+        "column": 11
+      }
+    ]
+  }
+}

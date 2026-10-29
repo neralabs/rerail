@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "6b3696051009d9787ab6516cb9e2e68a8367f966",
+    "path": "packages/@mantine/carousel/src/Carousel.test.tsx",
+    "license": "MIT",
+    "sha256": "77d8048c76337d22c35b4b9e77bae218de0f46915b1fd9f656a6c500131b7594"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

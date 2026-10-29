@@ -1,0 +1,78 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "e53c6953ab8cfad47fdf73b0996f2b8dadacb8a4",
+    "path": "packages/ra-router-tanstack/src/tanStackRouterProvider.stories.tsx",
+    "license": "MIT",
+    "sha256": "f1b1c3d9dc94d05beb538268217554f7d25d8ed8a4be65406b0e961cb7bba232"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 483,
+        "column": 62
+      },
+      {
+        "line": 1023,
+        "column": 46
+      },
+      {
+        "line": 1023,
+        "column": 64
+      },
+      {
+        "line": 1026,
+        "column": 44
+      },
+      {
+        "line": 1026,
+        "column": 60
+      },
+      {
+        "line": 1596,
+        "column": 31
+      },
+      {
+        "line": 1596,
+        "column": 33
+      },
+      {
+        "line": 1596,
+        "column": 59
+      },
+      {
+        "line": 1596,
+        "column": 60
+      },
+      {
+        "line": 1597,
+        "column": 50
+      },
+      {
+        "line": 1597,
+        "column": 51
+      },
+      {
+        "line": 1627,
+        "column": 52
+      },
+      {
+        "line": 1627,
+        "column": 53
+      },
+      {
+        "line": 1646,
+        "column": 53
+      },
+      {
+        "line": 1646,
+        "column": 54
+      }
+    ]
+  }
+}

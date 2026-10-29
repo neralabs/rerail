@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "2f6eef1fbff33c05ea3655fa4e6fa54ef5456aad",
+    "path": "www/src/theme/Playground/index.tsx",
+    "license": "MIT",
+    "sha256": "f54e11fabb5b575135b0c7736e924a980358ed61ab386359bf8d44c0c15e8b41"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": []
+  }
+}

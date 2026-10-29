@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "19434360d6da7c8e41fb884bd3c502c717f0cb4e",
+    "path": "packages/@mantine/core/src/components/Tour/use-tour-state.ts",
+    "license": "MIT",
+    "sha256": "a67ce43c152f2dfa66864eb9696b8e90a21d4eeeb71240bb0947a65bac8acdd4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": [
+      {
+        "line": 135,
+        "column": 23
+      },
+      {
+        "line": 140,
+        "column": 23
+      }
+    ]
+  }
+}

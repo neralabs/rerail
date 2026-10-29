@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "5005588c92101d8be19c23d9404bdd952ac3ed73",
+    "path": "packages/gatsby/src/internal-plugins/dev-404-page/raw_dev-404-page.js",
+    "license": "MIT",
+    "sha256": "ecb08cd531a061d1511725b390810bb696e4d9fa444ea7e2ae0917c95d7ad328"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 37,
+        "column": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "058de2792e5538873f7a2fb2e9cef01b3e0d80fc",
+    "path": "test/e2e/app-dir/use-cache-hanging/app/runtime/page.tsx",
+    "license": "MIT",
+    "sha256": "6907ab16cdecf70adf23dd34bc9ca48bbb5199fb9b60c682a3d9c6dc29048903"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-error-boundaries": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "18296d1c468fa068d769abf785d1c2e219228102",
+    "path": "components/typography/Base.tsx",
+    "license": "MIT",
+    "sha256": "f9616963cb128314417486cbde68c7184d198b987512c7cf2c7374ecac77c3fa"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": []
+  }
+}

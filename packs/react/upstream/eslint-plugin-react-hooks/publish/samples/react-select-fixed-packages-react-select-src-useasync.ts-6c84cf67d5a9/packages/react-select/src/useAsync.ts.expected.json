@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "06b44f4cf9450d337895086af9fd5c1f85cf2c81",
+    "path": "packages/react-select/src/useAsync.ts",
+    "license": "MIT",
+    "sha256": "6c84cf67d5a986371d5dbb40e663ad3951e8e897967581316935a9d20f326f6c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

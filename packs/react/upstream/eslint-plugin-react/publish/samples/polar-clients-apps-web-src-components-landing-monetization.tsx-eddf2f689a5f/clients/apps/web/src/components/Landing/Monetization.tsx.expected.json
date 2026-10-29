@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "d39295cd56fc73aab0a4b4b09f408c3c90b99a99",
+    "path": "clients/apps/web/src/components/Landing/Monetization.tsx",
+    "license": "Apache-2.0",
+    "sha256": "eddf2f689a5f970537afd02cabf7b1c6313a81163d9ca07324efbc5d63930b47"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-comment-textnodes": []
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "096454e9cff12c85f66b14fdbf2144079c28db10",
+    "path": "superset-frontend/temporary_superset_ui/superset-ui-plugins-deckgl/packages/superset-ui-preset-chart-deckgl/src/Multi/Multi.jsx",
+    "license": "Apache-2.0",
+    "sha256": "08271c534676f6be0d33d59145bfa23f36cb1335f04afad80f9c2584e28833e4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": [],
+    "react-no-unsafe": []
+  }
+}

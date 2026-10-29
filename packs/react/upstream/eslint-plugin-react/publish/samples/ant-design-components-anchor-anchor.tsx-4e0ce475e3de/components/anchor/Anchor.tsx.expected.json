@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "f2d4d0a9e4a26e43bab10b2b376146fa3c934564",
+    "path": "components/anchor/Anchor.tsx",
+    "license": "MIT",
+    "sha256": "4e0ce475e3de47c6da62d90ca6d85148b225988008d224b83582d431d1f90458"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 231,
+        "column": 40
+      }
+    ]
+  }
+}

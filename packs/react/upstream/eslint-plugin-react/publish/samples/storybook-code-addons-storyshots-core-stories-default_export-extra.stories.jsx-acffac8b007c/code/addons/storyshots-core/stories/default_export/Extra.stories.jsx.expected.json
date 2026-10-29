@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "storybookjs/storybook",
+    "commit": "55c8f245a2e10868033204c753d52c8a75e38f1f",
+    "path": "code/addons/storyshots-core/stories/default_export/Extra.stories.jsx",
+    "license": "MIT",
+    "sha256": "acffac8b007c41dcc7df216aaf43b8c3eb530022b4f89e11d2c707d33c7570cb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "c3faa4031d56918a1c9da9ebc3e687446ddcfa7a",
+    "path": "docs/examples/MenuPortal.tsx",
+    "license": "MIT",
+    "sha256": "b68916f4f167dae42a4dac587d5b5dd255274e8bf6c4de110789389703b6b276"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": []
+  }
+}

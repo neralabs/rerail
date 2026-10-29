@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "5431a8b15044439dc62b4de5e1be62cd549f5362",
+    "path": "packages/benchmarks/src/app/App.js",
+    "license": "MIT",
+    "sha256": "d9eceb36973f384e00990f0844cca3d5facace5822f341a2ed005c6fd137034a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

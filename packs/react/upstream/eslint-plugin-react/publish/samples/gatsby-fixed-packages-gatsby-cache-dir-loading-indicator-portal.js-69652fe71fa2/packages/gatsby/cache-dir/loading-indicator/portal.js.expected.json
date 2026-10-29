@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "1b97f5f44b715704ebaff2a714bc81116189aec3",
+    "path": "packages/gatsby/cache-dir/loading-indicator/portal.js",
+    "license": "MIT",
+    "sha256": "69652fe71fa2569d3f6699b59464b5450f54aadb286e979b1ec6d39956a1ed9e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": []
+  }
+}

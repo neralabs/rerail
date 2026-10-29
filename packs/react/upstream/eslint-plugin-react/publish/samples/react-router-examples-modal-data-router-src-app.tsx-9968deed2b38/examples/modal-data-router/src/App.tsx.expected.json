@@ -1,0 +1,38 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "2994019035579a06a27d80c1a154602813e9ed0e",
+    "path": "examples/modal-data-router/src/App.tsx",
+    "license": "MIT",
+    "sha256": "9968deed2b38102e8f1d68512b116f00ef7165bd89f9f7120679502ee01a4b32"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 73,
+        "column": 27
+      },
+      {
+        "line": 73,
+        "column": 34
+      },
+      {
+        "line": 76,
+        "column": 73
+      },
+      {
+        "line": 91,
+        "column": 56
+      },
+      {
+        "line": 92,
+        "column": 51
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "929197cb7fdcc573f85aa0990a82b21aa4541625",
+    "path": "packages/perseus-editor/src/components/text-list-editor.tsx",
+    "license": "MIT",
+    "sha256": "41b77d32a6ea08b9cf1598ae9050b74f8f9d58ec4e2cc78dab816ec29c9f3f64"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": []
+  }
+}

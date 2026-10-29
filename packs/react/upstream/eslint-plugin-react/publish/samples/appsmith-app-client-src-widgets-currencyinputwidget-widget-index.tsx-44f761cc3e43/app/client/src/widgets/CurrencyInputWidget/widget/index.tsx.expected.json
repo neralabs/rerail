@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "fde8d013aa5857ad3df79b9c14fe2a3ad61a2c82",
+    "path": "app/client/src/widgets/CurrencyInputWidget/widget/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "44f761cc3e434556393770821c19f84f7419618c7d09bc409940c487fa67f807"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": [
+      {
+        "line": 473,
+        "column": 7
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "284e068b8e3bfb1f9ab49d84d209c5f9ef2d93c1",
+    "path": "packages/perseus-editor/src/widgets/expression-editor.tsx",
+    "license": "MIT",
+    "sha256": "ab323e9abaa5f74d465a81207b0207858718133fce2a4221292aa07e9c0b5691"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "066daab0ea8463e8b2a5381e90ed8392ea20a5bf",
+    "path": "packages/perseus-editor/src/widgets/dropdown-editor.tsx",
+    "license": "MIT",
+    "sha256": "a87691521caaa65f2077b7e3c60987de98e690fc574fa625906f724a4e418ccb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": []
+  }
+}

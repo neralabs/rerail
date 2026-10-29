@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "da5b514a54e32b3afaadc74796361c83f39f4109",
+    "path": "packages/mui-utils/src/useRovingTabIndex/useRovingTabIndex.test.tsx",
+    "license": "MIT",
+    "sha256": "5e8993316bbb816761cf9b80923f6ba2d4868e3075ec862ec15789bc43fa22a6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 19,
+        "column": 3
+      }
+    ]
+  }
+}

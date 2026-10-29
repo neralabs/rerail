@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "redwoodjs/graphql",
+    "commit": "5c146f7044b89708179c2bce9f61a4957f6c53b1",
+    "path": "packages/router/src/__tests__/redirect.test.tsx",
+    "license": "MIT",
+    "sha256": "6af8f2efac89f74f36f97f9be48dd0a49562fd1b0d4c9ec8d9ba2371249782d8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": [
+      {
+        "line": 9,
+        "column": 22
+      },
+      {
+        "line": 10,
+        "column": 21
+      },
+      {
+        "line": 11,
+        "column": 22
+      }
+    ]
+  }
+}

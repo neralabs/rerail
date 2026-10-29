@@ -1,0 +1,28 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "1ef580069c1a6c0cc3dd03f6edab52d98dac14b2",
+    "path": "apps/compositions/src/ui/floating-panel.tsx",
+    "license": "MIT",
+    "sha256": "cfe513c07bdb5f613273cd5af9881f30cb757f149a1d276eb01368b3bb49e635"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 31,
+        "column": 6
+      }
+    ],
+    "react-hooks-immutability": [
+      {
+        "line": 30,
+        "column": 5
+      }
+    ]
+  }
+}

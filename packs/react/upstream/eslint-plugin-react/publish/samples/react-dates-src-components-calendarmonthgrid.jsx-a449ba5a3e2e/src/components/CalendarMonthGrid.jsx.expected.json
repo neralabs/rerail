@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dates/react-dates",
+    "commit": "e6c67002436d460831ae3d49fadf1b6b10e29342",
+    "path": "src/components/CalendarMonthGrid.jsx",
+    "license": "MIT",
+    "sha256": "a449ba5a3e2e5c1beace12bfe94145714fad192e3625ed5c920160673507bb64"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 172,
+        "column": 20
+      }
+    ]
+  }
+}

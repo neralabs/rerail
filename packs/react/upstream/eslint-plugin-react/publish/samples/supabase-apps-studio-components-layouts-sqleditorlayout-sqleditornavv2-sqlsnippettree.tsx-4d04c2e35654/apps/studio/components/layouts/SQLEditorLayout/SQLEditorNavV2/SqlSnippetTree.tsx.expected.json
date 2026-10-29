@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "b3c5c9fc049051ca656d732872497f41521e7364",
+    "path": "apps/studio/components/layouts/SQLEditorLayout/SQLEditorNavV2/SqlSnippetTree.tsx",
+    "license": "Apache-2.0",
+    "sha256": "4d04c2e356541b86fd554b91b42105114372d3b163ba8e3953515e28a96ab7b1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": [
+      {
+        "line": 68,
+        "column": 21
+      }
+    ]
+  }
+}

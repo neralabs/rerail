@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "042f4d544016265010c1ffebed6e00da3e043105",
+    "path": "packages/@react-spectrum/ai/src/useVoiceInput.ts",
+    "license": "Apache-2.0",
+    "sha256": "3e3cd64f94d4cd3d52bac01003c62261597cfb3dac5526a6eefd2796e1c076ca"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "pubkey/rxdb",
+    "commit": "73016a2f42bff0760621b91930fb60f523a46ed9",
+    "path": "docs-src/src/pages/sem/gadxie2.tsx",
+    "license": "Apache-2.0",
+    "sha256": "6f2a5748d31003bf645023a1c9d6e841fa498bca74a353e5551c7e71866e485b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 73,
+        "column": 163
+      }
+    ]
+  }
+}

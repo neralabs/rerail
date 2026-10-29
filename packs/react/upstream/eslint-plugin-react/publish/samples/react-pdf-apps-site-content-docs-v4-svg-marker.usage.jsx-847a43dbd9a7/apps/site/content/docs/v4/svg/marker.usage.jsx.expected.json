@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "diegomura/react-pdf",
+    "commit": "13dc838c26bc7ab79dcfa1595a886c251d2dabcd",
+    "path": "apps/site/content/docs/v4/svg/marker.usage.jsx",
+    "license": "MIT",
+    "sha256": "847a43dbd9a742b0e691c8002447320043a39aa229e2dcc05fd1d11c415a7572"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": [
+      {
+        "line": 58,
+        "column": 4
+      },
+      {
+        "line": 59,
+        "column": 6
+      }
+    ]
+  }
+}

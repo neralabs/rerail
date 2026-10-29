@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "086507f53a15fdb39438fb16681b3b418e5f4c03",
+    "path": "apps/admin/src/migrate/migrate.tsx",
+    "license": "MIT",
+    "sha256": "a84624c46cb4a5a8f92727f688cc5ccbef4830807556508a88b17b1552177e72"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 114,
+        "column": 9
+      }
+    ]
+  }
+}

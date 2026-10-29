@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "e04377c3ea9bc087f2129af37d2e8f4a1e6c1d7a",
+    "path": "packages/react-aria/test/overlays/useOverlayPosition.browser.test.tsx",
+    "license": "Apache-2.0",
+    "sha256": "3eb643c5452978f99b27cc1f7d4087636cea292520c1867cce356551d92e69a7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

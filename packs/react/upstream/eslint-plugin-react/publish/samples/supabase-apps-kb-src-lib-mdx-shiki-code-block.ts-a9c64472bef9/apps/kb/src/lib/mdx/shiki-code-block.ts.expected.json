@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "8bcbe3dcc705994889cb0667b8a6bdd1f766f08f",
+    "path": "apps/kb/src/lib/mdx/shiki-code-block.ts",
+    "license": "Apache-2.0",
+    "sha256": "a9c64472bef961773dfcbdf373d40b54ce5434cc5436b1206d5da6deeb2abb40"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": [
+      {
+        "line": 29,
+        "column": 7
+      }
+    ]
+  }
+}

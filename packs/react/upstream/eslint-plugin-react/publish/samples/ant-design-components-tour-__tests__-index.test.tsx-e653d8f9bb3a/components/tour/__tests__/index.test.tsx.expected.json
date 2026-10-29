@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "47d5fd5c93ac6cecd3baf176f120525bf787f0f3",
+    "path": "components/tour/__tests__/index.test.tsx",
+    "license": "MIT",
+    "sha256": "e653d8f9bb3a281f87ffa33335dd62a6dbba7aa0718ad74ae365797c107d1980"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": []
+  }
+}

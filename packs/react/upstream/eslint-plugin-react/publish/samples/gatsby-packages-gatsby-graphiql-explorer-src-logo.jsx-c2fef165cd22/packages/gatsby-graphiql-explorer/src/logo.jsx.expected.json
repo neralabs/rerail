@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "55a601d759589286fb99e97db0ba095a1e6ed894",
+    "path": "packages/gatsby-graphiql-explorer/src/logo.jsx",
+    "license": "MIT",
+    "sha256": "c2fef165cd225d327b4a47c8800d97e6271e82e8989edfac8500167f8a7a670f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": [
+      {
+        "line": 19,
+        "column": 9
+      },
+      {
+        "line": 24,
+        "column": 11
+      },
+      {
+        "line": 25,
+        "column": 11
+      }
+    ]
+  }
+}

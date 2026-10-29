@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "6da97824f5ce7224618a0efe6e7132041d49722d",
+    "path": "src/components/google/GoogleFields.js",
+    "license": "MIT",
+    "sha256": "e4b7a9690534b2f8d2ffff91e027756f912c6ebd92d186d785baef47dd4722b0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": []
+  }
+}

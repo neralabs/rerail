@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "cd44669c4aad31cab8bd810977347614d613054c",
+    "path": "packages/mui-codemod/src/v5.0.0/styled-engine-provider.test/mui-theme-provider.expected.js",
+    "license": "MIT",
+    "sha256": "de8ef1a904f841f854fd8457ac94217bc2a6ecd9f435267071e57b420a4aae60"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": [
+      {
+        "line": 8,
+        "column": 6
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "18f19277a4185cfdeacdff4a43dac09a4c01269a",
+    "path": "packages/slate-react/src/hooks/use-native-format-dom.ts",
+    "license": "MIT",
+    "sha256": "6430de585c406991b42c8a5241a4b96980f46387bbe3bdae9f1d1c7b38190e29"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "95180bd6b9b58da6e06c95ec3753d0e2bddc5b8f",
+    "path": "packages/@react-aria/interactions/stories/useFocusRing.stories.tsx",
+    "license": "Apache-2.0",
+    "sha256": "a8520feb26a1c19722efad0a6e9f12d14fb194211a62288c133c933d30b743c7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 135,
+        "column": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "openRin/Rin",
+    "commit": "a01c05fa048e77099a3cf3497f4f89198ad4a040",
+    "path": "client/src/components/markdown.tsx",
+    "license": "MIT",
+    "sha256": "5340bc55a3b68748d75396c1c3225c4420f7f34a956e0cd7e8ddfcc14941d12e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "8ec39b187a871cfcecb8bdd1b6a5340111d2641d",
+    "path": "www/src/examples/AsPropComponent.js",
+    "license": "MIT",
+    "sha256": "b1cf2dd84572cd789586821f98e1db084ab8ac8b2f1d82509ecb29002859e353"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": [
+      {
+        "line": 4,
+        "column": 6
+      }
+    ]
+  }
+}

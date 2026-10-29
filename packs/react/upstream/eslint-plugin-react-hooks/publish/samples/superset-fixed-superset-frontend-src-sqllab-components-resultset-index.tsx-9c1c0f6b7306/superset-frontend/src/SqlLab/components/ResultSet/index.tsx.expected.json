@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "d4ba44fce200cb21f0e3a2bb11e754e5fb0e0a6f",
+    "path": "superset-frontend/src/SqlLab/components/ResultSet/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "9c1c0f6b730668bd01284976cbb21405943b376c464ea3952c6caf93b0a74891"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": []
+  }
+}

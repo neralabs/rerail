@@ -1,0 +1,1 @@
+function Component() { const jao = useMemo(() => { return {} }, []); return (<Obvfftj.Cfozxlsm value={jao}></Obvfftj.Cfozxlsm>)}

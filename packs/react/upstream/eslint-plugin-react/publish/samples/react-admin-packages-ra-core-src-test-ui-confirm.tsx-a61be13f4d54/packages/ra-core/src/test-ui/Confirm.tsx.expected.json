@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "ff63ccbddac33374f3e1cfc53101aaa131b1bbe7",
+    "path": "packages/ra-core/src/test-ui/Confirm.tsx",
+    "license": "MIT",
+    "sha256": "a61be13f4d54298b85db8e81d47e02d0f4596ba1169ee040c6288dcff252fb97"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 10,
+        "column": 5
+      }
+    ]
+  }
+}

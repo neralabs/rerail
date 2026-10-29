@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "509510ab54fad32b8e1e864b13789ed968dee307",
+    "path": "src/NavbarToggle.js",
+    "license": "MIT",
+    "sha256": "0890ca19d12d2b503dcd3143d97cde9fac1c440beb23b4e46bb4b05209fd904d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": [
+      {
+        "line": 38,
+        "column": 9
+      },
+      {
+        "line": 45,
+        "column": 7
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "b61c8e24ee7bacf1a2df28e6f9580029678d2a86",
+    "path": "test/development/dev-indicator/app/app/static-indicator/gated-client/client.tsx",
+    "license": "MIT",
+    "sha256": "3054095fa7faaddde2802f5c4d3052e20d4831e2106b596915f63e57f8014fee"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 13,
+        "column": 7
+      }
+    ]
+  }
+}

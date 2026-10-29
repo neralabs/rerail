@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "0e6fff6760ece94ea19caff367f81605ec7a2249",
+    "path": "packages/ui/src/components/shadcn/ui/toggle-group.tsx",
+    "license": "Apache-2.0",
+    "sha256": "e507dca3ffb2387b7dcc63c98ccb485955c81306cd678466e87e3c818c416433"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

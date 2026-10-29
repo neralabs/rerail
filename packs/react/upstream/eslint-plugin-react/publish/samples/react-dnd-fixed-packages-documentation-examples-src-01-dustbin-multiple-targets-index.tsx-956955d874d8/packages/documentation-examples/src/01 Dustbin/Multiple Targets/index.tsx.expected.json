@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "659bef204c6b0d185d0396a313beaeb44b5f0752",
+    "path": "packages/documentation-examples/src/01 Dustbin/Multiple Targets/index.tsx",
+    "license": "MIT",
+    "sha256": "956955d874d8fb42f2859883d90b7bead562bcd8c91b56666367a221a96e975c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "yikart/AiToEarn",
+    "commit": "c6ae491113d47d6eb352a41e7ddc066c25051299",
+    "path": "project/web/src/app/[lng]/uptime/page.tsx",
+    "license": "MIT",
+    "sha256": "4b610611817a8f69595fa7199d81b893d92d17d326d8109df7f87cdc6b0adc6d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "816c81c12e41537373193140c1858fc10a871dae",
+    "path": "packages/excalidraw/components/IconPicker.tsx",
+    "license": "MIT",
+    "sha256": "415cd035a56fab5244b291714202ec070c80c5b5c8e3750daafc0f24ff64d86c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 69,
+        "column": 3
+      }
+    ]
+  }
+}

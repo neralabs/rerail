@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "ce8aba446cf9085813acc3bf09c07945ed67fc18",
+    "path": "frontend/app/src/components/Navigation/SidebarNav.tsx",
+    "license": "Apache-2.0",
+    "sha256": "6adab740ca39560a7b888e69eaf2277e86efbdb99a124c8839c68beb23600a44"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

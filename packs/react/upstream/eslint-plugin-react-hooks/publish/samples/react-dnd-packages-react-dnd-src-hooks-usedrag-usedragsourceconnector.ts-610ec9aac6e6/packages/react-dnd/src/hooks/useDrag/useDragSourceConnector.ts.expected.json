@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "f78b6b91f85dc8a4b2aa1bf696c1f837c855a347",
+    "path": "packages/react-dnd/src/hooks/useDrag/useDragSourceConnector.ts",
+    "license": "MIT",
+    "sha256": "610ec9aac6e69b503ce70c6f40267d905ca51b211836a8b421f3c3ef60d7c082"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 16,
+        "column": 3
+      },
+      {
+        "line": 20,
+        "column": 3
+      }
+    ]
+  }
+}

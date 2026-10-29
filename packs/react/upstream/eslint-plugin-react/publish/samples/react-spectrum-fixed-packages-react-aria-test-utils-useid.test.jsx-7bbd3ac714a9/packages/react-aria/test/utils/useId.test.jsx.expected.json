@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "ada64615aed239bfdaf48742fb3789ddb71307c5",
+    "path": "packages/react-aria/test/utils/useId.test.jsx",
+    "license": "Apache-2.0",
+    "sha256": "7bbd3ac714a9d5f8f813ca41d0af2ea12f2d15a561381cb574a11c32af7a28de"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-render-return-value": []
+  }
+}

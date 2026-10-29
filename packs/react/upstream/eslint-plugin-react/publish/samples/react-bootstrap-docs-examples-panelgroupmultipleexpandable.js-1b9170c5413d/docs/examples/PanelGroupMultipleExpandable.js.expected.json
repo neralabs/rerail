@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "fe3e946123d162bafc07553270927507089cd2e5",
+    "path": "docs/examples/PanelGroupMultipleExpandable.js",
+    "license": "MIT",
+    "sha256": "1b9170c5413dee21dbeb2a1f02fc87f043cc8758c2287797caef3c3e004f3cd5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 9,
+        "column": 1
+      }
+    ]
+  }
+}

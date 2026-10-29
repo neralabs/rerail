@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "558107dfbfef24fb3520cc0f9528366010fca8aa",
+    "path": "app/client/src/widgets/TableWidgetV2/component/cellComponents/HeaderCell.tsx",
+    "license": "Apache-2.0",
+    "sha256": "3e67a1168a764b9f79ddd9c814eb82b88873e99babd00e15549fbfe73574ae16"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": []
+  }
+}

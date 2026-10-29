@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "9e2fb95aeef9be528b48d7870bb2faab411b574a",
+    "path": "app/client/packages/icons/src/components/Icons/ComboboxSelectIcon.tsx",
+    "license": "Apache-2.0",
+    "sha256": "57131590d43bb3812d5c0f6423155108a205aa9a861857a57c12406b247032a9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": [
+      {
+        "line": 2,
+        "column": 136
+      },
+      {
+        "line": 2,
+        "column": 159
+      }
+    ]
+  }
+}

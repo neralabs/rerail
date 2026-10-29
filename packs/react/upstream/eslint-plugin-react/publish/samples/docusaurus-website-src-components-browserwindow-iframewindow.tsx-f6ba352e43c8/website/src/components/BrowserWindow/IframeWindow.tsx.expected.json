@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "97caab16d44fefe3a0a27eb55f3d0535f74b7a85",
+    "path": "website/src/components/BrowserWindow/IframeWindow.tsx",
+    "license": "MIT",
+    "sha256": "f6ba352e43c8cab10cfabce99880b80106a41551ad5f5bfe4730919ef821b44d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 25,
+        "column": 9
+      }
+    ]
+  }
+}

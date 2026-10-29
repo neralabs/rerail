@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "e7cf4557e4ef5499fdba6a5538040efbb7b18b7a",
+    "path": "src/Tab.js",
+    "license": "MIT",
+    "sha256": "bfb4cbfbf9b04d459390930833823801763c8d866ba3a34bdc0533cb51b22c3d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": [
+      {
+        "line": 54,
+        "column": 9
+      },
+      {
+        "line": 62,
+        "column": 9
+      }
+    ]
+  }
+}

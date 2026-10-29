@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "0ac4b32bea3df51e56558c8c55d55cd9c2ed6c32",
+    "path": "packages/datetime/src/components/react-day-picker/datePicker3Caption.tsx",
+    "license": "Apache-2.0",
+    "sha256": "e7292a1216fd3a258fb899ed35c9d146c1da9625fa1d5e20fe0d8c9e9af8ebf2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 101,
+        "column": 9
+      }
+    ]
+  }
+}

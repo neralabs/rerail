@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reactjs/react-modal",
+    "commit": "496bb0b007d6988595c623cdc2f7de210ab56ebc",
+    "path": "lib/components/Modal.js",
+    "license": "MIT",
+    "sha256": "733bb18e29da2c4aa899b54712372650c4d523846b658acc55a9ddd74ed9039f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-render-return-value": []
+  }
+}

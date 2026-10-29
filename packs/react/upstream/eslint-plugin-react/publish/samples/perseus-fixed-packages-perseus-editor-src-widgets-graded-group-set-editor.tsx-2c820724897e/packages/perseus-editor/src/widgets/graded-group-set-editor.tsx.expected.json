@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "6202a5d446bcfec34514d36301b7acb6863d4c39",
+    "path": "packages/perseus-editor/src/widgets/graded-group-set-editor.tsx",
+    "license": "MIT",
+    "sha256": "2c820724897e05a025f786b5c3164dad26b4a4f0ac0c501456ac275d0a77c6ca"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "94fe5d39b709d3aec758e81dd0209a4ee88251e4",
+    "path": "www/src/components/sidebar-body.js",
+    "license": "MIT",
+    "sha256": "a69f10bb19f12834b76bc3d9208e521a65425b14cd15fcc2e71c7b899476d452"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

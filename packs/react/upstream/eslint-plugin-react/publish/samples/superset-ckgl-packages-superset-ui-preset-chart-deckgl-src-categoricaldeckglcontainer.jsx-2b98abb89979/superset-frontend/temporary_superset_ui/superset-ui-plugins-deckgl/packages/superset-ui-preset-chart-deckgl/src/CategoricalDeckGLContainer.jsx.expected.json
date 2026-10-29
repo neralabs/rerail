@@ -1,0 +1,18 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "096454e9cff12c85f66b14fdbf2144079c28db10",
+    "path": "superset-frontend/temporary_superset_ui/superset-ui-plugins-deckgl/packages/superset-ui-preset-chart-deckgl/src/CategoricalDeckGLContainer.jsx",
+    "license": "Apache-2.0",
+    "sha256": "2b98abb8997959c272b60c3fa85ac99e3731525b93719526e8d8339dd86e4b05"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": [],
+    "react-no-unsafe": []
+  }
+}

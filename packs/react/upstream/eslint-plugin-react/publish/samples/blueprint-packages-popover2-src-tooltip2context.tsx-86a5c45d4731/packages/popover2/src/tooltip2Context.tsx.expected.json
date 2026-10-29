@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "5adc1326a053f71c772593133a965068cd38ff1b",
+    "path": "packages/popover2/src/tooltip2Context.tsx",
+    "license": "Apache-2.0",
+    "sha256": "86a5c45d47319766d5a6540dab6e8fd71e746a3280994400fd64477f92b25577"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": [
+      {
+        "line": 59,
+        "column": 42
+      }
+    ]
+  }
+}

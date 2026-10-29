@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "611a0be2b9263242ddaec1e59ad35412af173f69",
+    "path": "apps/admin/src/alerts/rich-text-content.tsx",
+    "license": "MIT",
+    "sha256": "34fe1afda213b595f2fc0fc041647155b8e73828268f77c9dc23748b21cd5071"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 8,
+        "column": 16
+      }
+    ]
+  }
+}

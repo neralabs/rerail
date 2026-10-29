@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "54614613ebd3d3013afffa8cb12bf8be596bac7c",
+    "path": "packages/react-router/lib/dom/ssr/components.tsx",
+    "license": "MIT",
+    "sha256": "a77ee21a4b45d50cf9c5b09ffab5c22a7733a1f217eb738876faeae1432adfac"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": []
+  }
+}

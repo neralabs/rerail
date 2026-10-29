@@ -1,0 +1,42 @@
+{
+  "source": {
+    "repo": "akveo/react-native-ui-kitten",
+    "commit": "9e38cc23a151b5ac8eae1de9115091ca4d9db8c4",
+    "path": "website/stories/tab.stories.tsx",
+    "license": "MIT",
+    "sha256": "da795a1d67ad65027a6c4f3b8dee287afd14518d38a34b20bb8e0bff3cbacaa6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 17,
+        "column": 47
+      },
+      {
+        "line": 31,
+        "column": 47
+      },
+      {
+        "line": 61,
+        "column": 47
+      },
+      {
+        "line": 90,
+        "column": 47
+      },
+      {
+        "line": 91,
+        "column": 33
+      },
+      {
+        "line": 92,
+        "column": 35
+      }
+    ]
+  }
+}

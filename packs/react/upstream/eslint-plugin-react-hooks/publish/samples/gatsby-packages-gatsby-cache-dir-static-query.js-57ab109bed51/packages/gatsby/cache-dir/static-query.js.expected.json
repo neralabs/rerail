@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "eb8cf8d37976162ef4afc919c002f698a1305642",
+    "path": "packages/gatsby/cache-dir/static-query.js",
+    "license": "MIT",
+    "sha256": "57ab109bed516f6e5a031987c98720116c1a1b5388afd8b7981ba096c0475816"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 30,
+        "column": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "fa50f65466e8be771ec44e02168cdef39c69c12e",
+    "path": "packages/ra-router-tanstack/src/tanStackRouterProvider.tsx",
+    "license": "MIT",
+    "sha256": "d514087dc9135b6d11b8795a2a56f92d93a8057d91950e0c454f0ae69205201a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 610,
+        "column": 11
+      },
+      {
+        "line": 639,
+        "column": 11
+      }
+    ]
+  }
+}

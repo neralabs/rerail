@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "694772d80f3a8b014c56820d3312f18b5fc49442",
+    "path": "site/components/StaticHTMLBlock.js",
+    "license": "MIT",
+    "sha256": "19fda033cd4c94a690700210f6bc76ff1d05cb168792d9f255932b7c32a5bcbb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 30,
+        "column": 16
+      }
+    ]
+  }
+}

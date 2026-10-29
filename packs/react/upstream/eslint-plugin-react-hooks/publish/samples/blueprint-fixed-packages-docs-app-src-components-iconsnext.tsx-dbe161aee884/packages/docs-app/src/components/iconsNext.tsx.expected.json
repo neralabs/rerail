@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "5a868f6fe1c842ee06c9dca48d6a41e8106bf728",
+    "path": "packages/docs-app/src/components/iconsNext.tsx",
+    "license": "Apache-2.0",
+    "sha256": "dbe161aee884872f11a2ef4763be35fffbe86c1a75e0bd09574a5124288daaf4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": []
+  }
+}

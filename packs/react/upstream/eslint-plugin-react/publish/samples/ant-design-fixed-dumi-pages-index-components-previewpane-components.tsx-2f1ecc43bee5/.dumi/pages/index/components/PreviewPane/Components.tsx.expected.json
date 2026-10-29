@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "1b8439eeb88a797de2c4c69eaa5512c9f0f570fb",
+    "path": ".dumi/pages/index/components/PreviewPane/Components.tsx",
+    "license": "MIT",
+    "sha256": "2f1ecc43bee5ff1929f649c422df9b0a47549648c4ccfe34360df422426ef9c3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": []
+  }
+}

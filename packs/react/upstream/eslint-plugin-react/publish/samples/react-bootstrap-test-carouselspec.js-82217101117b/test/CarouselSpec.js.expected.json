@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "16d26881722760207e66170e74c7f4fd1ec34f6d",
+    "path": "test/CarouselSpec.js",
+    "license": "MIT",
+    "sha256": "82217101117b37591d6096fd136ef0a4259ec6463203593250f4dfe08b900dd6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-render-return-value": [
+      {
+        "line": 284,
+        "column": 20
+      },
+      {
+        "line": 303,
+        "column": 16
+      },
+      {
+        "line": 327,
+        "column": 20
+      },
+      {
+        "line": 346,
+        "column": 16
+      }
+    ]
+  }
+}

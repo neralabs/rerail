@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "84a00d661a6860a16455859a8c0c3d925e845977",
+    "path": "packages/gatsby-plugin-styletron/src/gatsby-ssr.js",
+    "license": "MIT",
+    "sha256": "56d851f4c9d45ffe2eebf3fd08d71618389d5287d1b85ad8949d4b269394106d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 27,
+        "column": 14
+      }
+    ]
+  }
+}

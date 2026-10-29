@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "446eb2b602dbf524620bb6d37c68bc54c8e30820",
+    "path": "app/client/src/components/editorComponents/Debugger/LogItem/LogItem.tsx",
+    "license": "Apache-2.0",
+    "sha256": "3ceef7cd72062261f8a008320a485579772ecb1374053091cac0de24db338f00"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

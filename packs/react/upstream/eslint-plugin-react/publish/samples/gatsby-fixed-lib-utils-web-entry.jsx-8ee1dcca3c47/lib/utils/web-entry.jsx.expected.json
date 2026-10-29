@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "809f17c3e6cbb3e29eb8ecd1a76ad97a7e2425a2",
+    "path": "lib/utils/web-entry.jsx",
+    "license": "MIT",
+    "sha256": "8ee1dcca3c47b6313c431cfdbf2c200fba20370d539c4e52886552fb6ee6a4be"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-render-return-value": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "17e86980518d672d1bffca59163bd934be4decb2",
+    "path": "packages/gatsby-plugin-gatsby-cloud/src/utils/useCookie.js",
+    "license": "MIT",
+    "sha256": "0c05bb3b2a873386aa8f5470468832df1785d6574a52651b0257a05c8dac8721"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 27,
+        "column": 14
+      }
+    ]
+  }
+}

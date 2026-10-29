@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "3cb82f9ca6cf4d4518c94ba8ab86b6eb4e114da4",
+    "path": "test/e2e/app-dir/segment-cache/prefetch-fallback-static/app/page.tsx",
+    "license": "MIT",
+    "sha256": "94f18ba959b9e512a6bdd523a0698630d7622d71293b2881f0a74f87816d87ce"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

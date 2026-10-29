@@ -1,0 +1,1 @@
+function Component() { const jao = function lvm(){}; return (<Obvfftj.Cfozxlsm value={jao}></Obvfftj.Cfozxlsm>)}

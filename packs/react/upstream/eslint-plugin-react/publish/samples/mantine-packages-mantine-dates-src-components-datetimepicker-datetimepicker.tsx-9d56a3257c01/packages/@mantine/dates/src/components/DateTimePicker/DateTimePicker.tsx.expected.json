@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "2c435899a7fcfd33de8e765ec0e0557e7635b26e",
+    "path": "packages/@mantine/dates/src/components/DateTimePicker/DateTimePicker.tsx",
+    "license": "MIT",
+    "sha256": "9d56a3257c0162c83fdc3d72181280142dee535ed330c809dc455f96b1775666"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "f553f268966ee2459986657457b38e8d23c9668c",
+    "path": "packages-internal/core-docs/src/AppLayout/components/AppSearch.tsx",
+    "license": "MIT",
+    "sha256": "8c8597cc1e7a4a9313a0197c06c95a1b6d09b4795f5d5b43a470c7d286fa5a51"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": [
+      {
+        "line": 288,
+        "column": 7
+      }
+    ]
+  }
+}

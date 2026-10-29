@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "449400a9d0ffce4d632febd23c38ea212433db2f",
+    "path": "packages/@mantine/core/src/components/Tour/TourTooltip/TourTooltip.tsx",
+    "license": "MIT",
+    "sha256": "11aaab5a8a8cf9550b11a49d1f102fe71df18587301f7f36e9540dcfc937e287"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 124,
+        "column": 14
+      }
+    ]
+  }
+}

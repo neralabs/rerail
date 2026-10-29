@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "ac90efaa40fc3ab62b93b4b08dd755b2c2e86bdd",
+    "path": "superset-frontend/temporary_superset_ui/superset-ui/packages/superset-ui-control-utils/src/MetricOption.tsx",
+    "license": "Apache-2.0",
+    "sha256": "bab165c2b7afe6b465d494d8c151cc3031e83c2b670eb3b7d26f8dc20a2b284c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": [
+      {
+        "line": 50,
+        "column": 5
+      }
+    ]
+  }
+}

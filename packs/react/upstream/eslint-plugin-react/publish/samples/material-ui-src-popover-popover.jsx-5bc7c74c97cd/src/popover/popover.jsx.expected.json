@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "4f0946e222394ab890133710f5f4c8844154c14d",
+    "path": "src/popover/popover.jsx",
+    "license": "MIT",
+    "sha256": "5bc7c74c97cdadb258e7c43e5a7d0efe66268039a52e7ea5c96d55df38d63d53"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": [
+      {
+        "line": 99,
+        "column": 17
+      }
+    ]
+  }
+}

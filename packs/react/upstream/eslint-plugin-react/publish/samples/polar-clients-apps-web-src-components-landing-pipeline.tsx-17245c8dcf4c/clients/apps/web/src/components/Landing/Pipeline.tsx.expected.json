@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "10fc4889db1f97e52bf67b74df567dbdea299267",
+    "path": "clients/apps/web/src/components/Landing/Pipeline.tsx",
+    "license": "Apache-2.0",
+    "sha256": "17245c8dcf4cd7e07e89e25645fb9284bb4a56450eba1c02314033accefbebaa"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 194,
+        "column": 24
+      }
+    ]
+  }
+}

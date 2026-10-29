@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reactjs/react-modal",
+    "commit": "9a3542a8808c463988581a510697b83edb225a28",
+    "path": "examples/basic/nested_modals/index.js",
+    "license": "MIT",
+    "sha256": "67a7ce39f9b3f0778e7f0c972ac898a7d78fa9ee2dc83a4df1672cb0a72325c4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

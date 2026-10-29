@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "f5c710d162547e9258750714b145c911487cfcf7",
+    "path": "superset-frontend/src/explore/components/ControlHeader.tsx",
+    "license": "Apache-2.0",
+    "sha256": "37a0080ff420fe13acaa9679af7dbfb012646f902dcf70c9efa2659a32e38c31"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": [
+      {
+        "line": 90,
+        "column": 9
+      },
+      {
+        "line": 118,
+        "column": 17
+      },
+      {
+        "line": 151,
+        "column": 9
+      },
+      {
+        "line": 208,
+        "column": 15
+      }
+    ]
+  }
+}

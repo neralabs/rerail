@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "egovernments/DIGIT-Frontend",
+    "commit": "25a3ddba77f93a0a230d3a53ec05cbbccb39a3e3",
+    "path": "health/micro-ui/web/micro-ui-internals/packages/modules/health-dss/src/utils/PDFDownload.js",
+    "license": "MIT",
+    "sha256": "8a78661e32ba0af37f2a7d1ce5f45af4175978f46b78d96ad5e40350f805a22b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": [
+      {
+        "line": 25,
+        "column": 21
+      }
+    ]
+  }
+}

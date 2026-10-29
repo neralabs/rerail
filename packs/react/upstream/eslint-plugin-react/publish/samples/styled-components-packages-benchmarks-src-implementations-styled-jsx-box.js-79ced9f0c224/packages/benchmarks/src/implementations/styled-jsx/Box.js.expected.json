@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "44e565bf5d775da06f1356373384b80f7cc1c17f",
+    "path": "packages/benchmarks/src/implementations/styled-jsx/Box.js",
+    "license": "MIT",
+    "sha256": "79ced9f0c2246cb730411e2294d2759f507b060bec0d8c93b49add0ab99cc481"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": [
+      {
+        "line": 29,
+        "column": 12
+      },
+      {
+        "line": 31,
+        "column": 12
+      },
+      {
+        "line": 44,
+        "column": 12
+      }
+    ]
+  }
+}

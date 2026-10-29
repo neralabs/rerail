@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reactjs/react-modal",
+    "commit": "9a3542a8808c463988581a510697b83edb225a28",
+    "path": "examples/basic/nested_modals/index.js",
+    "license": "MIT",
+    "sha256": "1a0bdd984b466b2253209d37101b2c57ed1326e470ab7ea7d165202dbf3bacfc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-script-url": []
+  }
+}

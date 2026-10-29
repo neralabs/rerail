@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "ad9271895caac2976efa27248887aaa1e160766d",
+    "path": "packages/v4/@tinacms/tinacms/src/editor/provider.tsx",
+    "license": "Apache-2.0",
+    "sha256": "8f846fcae5a48ae026f06d90bacc24892f56848e76aed89836291d3c9ddeee4a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 159,
+        "column": 6
+      },
+      {
+        "line": 468,
+        "column": 5
+      },
+      {
+        "line": 475,
+        "column": 5
+      },
+      {
+        "line": 501,
+        "column": 5
+      }
+    ]
+  }
+}

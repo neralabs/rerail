@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "e1de229a7298ee0dd6704d2bf15ce0d37a1cfc1b",
+    "path": ".dumi/theme/common/VersionUpgrade/index.tsx",
+    "license": "MIT",
+    "sha256": "cc8c89ba6b0534b44258d33be7d79bcf9aff4a4307b6948b2f7b4b687e479600"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": []
+  }
+}

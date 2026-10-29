@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "1b8439eeb88a797de2c4c69eaa5512c9f0f570fb",
+    "path": ".dumi/pages/index/components/ThemePreview/index.tsx",
+    "license": "MIT",
+    "sha256": "c028fef6b92bbf2a6d29906ca31ea8fe0b1f714afe7ca8ba4073a3859674959a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

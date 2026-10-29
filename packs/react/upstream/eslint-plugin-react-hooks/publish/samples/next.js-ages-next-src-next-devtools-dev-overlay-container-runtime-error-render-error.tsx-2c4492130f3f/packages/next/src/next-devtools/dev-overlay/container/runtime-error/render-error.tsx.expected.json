@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "379ba00c76754b09e607c730a89df886967f8e18",
+    "path": "packages/next/src/next-devtools/dev-overlay/container/runtime-error/render-error.tsx",
+    "license": "MIT",
+    "sha256": "2c4492130f3fffb79d6eb301c826aac9d300c57f5d12506ba9acfc6854f5ccd3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

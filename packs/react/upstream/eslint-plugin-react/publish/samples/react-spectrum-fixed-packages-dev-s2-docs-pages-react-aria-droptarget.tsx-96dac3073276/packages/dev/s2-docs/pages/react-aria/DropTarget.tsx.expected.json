@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "65e644e3598a5beafc57ecf648a73693a081c036",
+    "path": "packages/dev/s2-docs/pages/react-aria/DropTarget.tsx",
+    "license": "Apache-2.0",
+    "sha256": "96dac307327657c2973bf910fea6f2a24e4b99600e74f70fae91c22ada4f6f19"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "e6bca73d8763b8312a1cf1a1e36defb175d3fe02",
+    "path": "packages/next/src/client/components/layout-router.tsx",
+    "license": "MIT",
+    "sha256": "2dca40a2a28b713bbee4ed8661474fcee2cfb1775602fcf2bc5135520515c50d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": [
+      {
+        "line": 101,
+        "column": 14
+      },
+      {
+        "line": 106,
+        "column": 10
+      },
+      {
+        "line": 158,
+        "column": 19
+      }
+    ]
+  }
+}

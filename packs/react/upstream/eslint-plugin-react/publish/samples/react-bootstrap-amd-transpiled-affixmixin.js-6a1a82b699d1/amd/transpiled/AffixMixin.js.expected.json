@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "00ef4cefd0a73fefe43bd4e6dd9721edc28b9f37",
+    "path": "amd/transpiled/AffixMixin.js",
+    "license": "MIT",
+    "sha256": "6a1a82b699d1b816c69e4e6640a31c454388e7532fcfbb27c38fd29f67ba054f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": [
+      {
+        "line": 41,
+        "column": 14
+      }
+    ]
+  }
+}

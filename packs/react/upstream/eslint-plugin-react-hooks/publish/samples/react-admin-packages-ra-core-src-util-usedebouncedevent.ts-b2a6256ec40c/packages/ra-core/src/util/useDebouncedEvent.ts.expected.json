@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "0f9c0bce4971d17d11aabd9d4be91c56139c62dc",
+    "path": "packages/ra-core/src/util/useDebouncedEvent.ts",
+    "license": "MIT",
+    "sha256": "b2a6256ec40cbff706e1bf4be4b306e3d56ba214cfe5923fa677101c124e015e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": [
+      {
+        "line": 51,
+        "column": 17
+      },
+      {
+        "line": 52,
+        "column": 17
+      }
+    ]
+  }
+}

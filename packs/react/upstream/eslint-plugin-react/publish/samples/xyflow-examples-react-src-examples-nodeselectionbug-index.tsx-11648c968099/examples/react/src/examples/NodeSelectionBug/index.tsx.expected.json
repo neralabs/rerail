@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "xyflow/xyflow",
+    "commit": "ee53f8baf7090a8e000eb28e97a6fd7bcceb7087",
+    "path": "examples/react/src/examples/NodeSelectionBug/index.tsx",
+    "license": "MIT",
+    "sha256": "11648c968099721bb5f5de31945e4963331c93f742c60109bc4d5c02d1982bce"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": [
+      {
+        "line": 38,
+        "column": 7
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "b0ee125313f84dc42cf450df14eeb8f95f70342b",
+    "path": "dist-modules/mixins/DragLayerMixin.js",
+    "license": "MIT",
+    "sha256": "92da1b7126b5939732d581a00d42a0a6409e23ff41e97f272851899e6805ec80"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": []
+  }
+}

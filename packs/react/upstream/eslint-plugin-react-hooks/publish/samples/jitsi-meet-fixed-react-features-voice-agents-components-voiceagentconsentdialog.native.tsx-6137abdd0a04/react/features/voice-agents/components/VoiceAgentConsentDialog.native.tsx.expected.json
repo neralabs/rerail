@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "d613213aab3204e55b1468f2351f1f16237a83d7",
+    "path": "react/features/voice-agents/components/VoiceAgentConsentDialog.native.tsx",
+    "license": "Apache-2.0",
+    "sha256": "6137abdd0a046f79fe6a777e6981dfca22ad1eaaed0883b028338db8087cea5e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

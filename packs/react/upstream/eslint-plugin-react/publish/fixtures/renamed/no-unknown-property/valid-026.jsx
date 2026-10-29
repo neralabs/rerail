@@ -1,0 +1,1 @@
+<meta property="lq:type" content="tnvnbck" />

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "079f26124138a43e0215857eb7ba36badf30931a",
+    "path": "packages/perseus-editor/src/components/json-editor.tsx",
+    "license": "MIT",
+    "sha256": "0931076d14b15363edb67c6a03190afafa6b921a358f0fbe8ac5026688642d89"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": []
+  }
+}

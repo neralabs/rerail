@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "c7d010a4f6af081455eebb6453c60c05c51bcd26",
+    "path": "packages/styled-components/src/models/StyleSheetManager.tsx",
+    "license": "MIT",
+    "sha256": "71247f1becb5c405d42341e7a40d1304dbf5779f54a950f7ca094ab483c92161"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": []
+  }
+}

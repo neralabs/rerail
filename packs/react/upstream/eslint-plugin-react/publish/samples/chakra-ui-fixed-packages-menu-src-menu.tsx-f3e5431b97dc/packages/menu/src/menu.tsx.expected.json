@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "f9cec03970d5e085296ec6f7032a87c6090fc6ca",
+    "path": "packages/menu/src/menu.tsx",
+    "license": "MIT",
+    "sha256": "f3e5431b97dc30f1a00218a8bc1d788fc1f4efdcb9bebbfd463a2d8db928de35"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

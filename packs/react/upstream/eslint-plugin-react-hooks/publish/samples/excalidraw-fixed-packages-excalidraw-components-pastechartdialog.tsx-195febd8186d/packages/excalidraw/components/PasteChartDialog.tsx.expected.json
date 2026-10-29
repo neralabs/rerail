@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "60b275880da7d1eb7dff3782e8d491188790597a",
+    "path": "packages/excalidraw/components/PasteChartDialog.tsx",
+    "license": "MIT",
+    "sha256": "195febd8186d621557cb0a5e8d89676acf9595bbb9f1170750089e2cd2f1f4db"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

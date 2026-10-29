@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "1b7fa75f2f8ac370c0e6231ec7af54388a1dcb00",
+    "path": "packages/docs-app/src/examples/core-examples/overlayExample.tsx",
+    "license": "Apache-2.0",
+    "sha256": "90b35a92e9613b97d14d361f3791e7920cccc2ab2f170dbaa51c4cc5771c5849"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

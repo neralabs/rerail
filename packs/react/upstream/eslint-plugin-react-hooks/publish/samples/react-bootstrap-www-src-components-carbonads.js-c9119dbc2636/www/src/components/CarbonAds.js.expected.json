@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "5fc649e52cb1ac846e59e776a8a5bf9a55b6da42",
+    "path": "www/src/components/CarbonAds.js",
+    "license": "MIT",
+    "sha256": "c9119dbc263615f1aa8ba4622e4812650a7f0dd126f093d0bfc600f40596398b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 20,
+        "column": 37
+      }
+    ]
+  }
+}

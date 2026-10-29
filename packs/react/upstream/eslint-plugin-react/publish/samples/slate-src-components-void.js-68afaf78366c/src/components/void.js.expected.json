@@ -1,0 +1,46 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "2b75499e607b77ac1fcec19757df50575c8e9241",
+    "path": "src/components/void.js",
+    "license": "MIT",
+    "sha256": "68afaf78366cfadceca0e21530e81156fbd90430cadd152e065a4c98931ccae3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 32,
+        "column": 12
+      },
+      {
+        "line": 33,
+        "column": 15
+      },
+      {
+        "line": 34,
+        "column": 13
+      },
+      {
+        "line": 35,
+        "column": 11
+      },
+      {
+        "line": 36,
+        "column": 13
+      },
+      {
+        "line": 37,
+        "column": 13
+      },
+      {
+        "line": 38,
+        "column": 12
+      }
+    ]
+  }
+}

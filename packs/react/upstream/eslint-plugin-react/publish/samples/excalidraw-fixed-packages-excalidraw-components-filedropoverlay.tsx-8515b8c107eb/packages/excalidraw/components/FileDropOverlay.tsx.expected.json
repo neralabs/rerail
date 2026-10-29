@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "d29d864884782305950122439f54f8dbb5c1bcb0",
+    "path": "packages/excalidraw/components/FileDropOverlay.tsx",
+    "license": "MIT",
+    "sha256": "8515b8c107eb088253bee045eda3e1a6a77a1239a2bfee411a65990fda9af43c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": []
+  }
+}

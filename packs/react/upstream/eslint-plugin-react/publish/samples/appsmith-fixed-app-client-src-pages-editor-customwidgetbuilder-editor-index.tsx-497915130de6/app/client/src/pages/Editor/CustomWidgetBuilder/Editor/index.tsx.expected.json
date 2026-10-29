@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "94d83298f69af9d56d2cc7dcb7886f34d054481d",
+    "path": "app/client/src/pages/Editor/CustomWidgetBuilder/Editor/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "497915130de65eb9e5e3b300007c1bc027f4f7a7ac34101b80305e9bc2d10b05"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": []
+  }
+}

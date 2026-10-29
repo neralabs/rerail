@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "89a74dee54bcbe03dcf84ad6a5cb3da9b856d486",
+    "path": "packages/slate-react/src/components/slate.tsx",
+    "license": "MIT",
+    "sha256": "72e02dc13087fed7fe0570a972b1e45fc3708279aa9f6e019c003df63d8df4bd"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": [
+      {
+        "line": 69,
+        "column": 7
+      },
+      {
+        "line": 109,
+        "column": 5
+      },
+      {
+        "line": 110,
+        "column": 5
+      },
+      {
+        "line": 111,
+        "column": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "68e5ff95d9807a8f809f6b64ce851fd1dd2fa145",
+    "path": "examples/app.js",
+    "license": "MIT",
+    "sha256": "c7371af209484f54448220a6459384bfb036d0d158bf47beee604f7e2fbc06eb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": [
+      {
+        "line": 285,
+        "column": 34
+      }
+    ]
+  }
+}

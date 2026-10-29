@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "7941afa6b60cfc9753cbeefd7b9ddcbe349aed68",
+    "path": "packages/@mantine/hooks/src/use-splitter/use-splitter.test.tsx",
+    "license": "MIT",
+    "sha256": "0a0a264094c2cb9338039ce4d17f42f733b8dc2229104ec89f19d96469311060"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 844,
+        "column": 9
+      }
+    ]
+  }
+}

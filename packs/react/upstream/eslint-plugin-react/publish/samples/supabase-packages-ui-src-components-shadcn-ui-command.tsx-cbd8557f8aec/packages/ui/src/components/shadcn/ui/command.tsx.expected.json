@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "e7f0d3c04f7bed6c8eae0f933a3cd6699d2a477a",
+    "path": "packages/ui/src/components/shadcn/ui/command.tsx",
+    "license": "Apache-2.0",
+    "sha256": "cbd8557f8aecea9148b43fd01d2a1ad638fb876e2655b4889e46aadf506b7fc8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": [
+      {
+        "line": 60,
+        "column": 78
+      }
+    ]
+  }
+}

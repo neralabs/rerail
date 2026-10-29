@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "f2d3b1f196901adb5b1e12cc473bc544f5dc3393",
+    "path": "packages/examples-hooks/src/06-other/native-html/Container.tsx",
+    "license": "MIT",
+    "sha256": "5aa7b26f4c4439a405e5ee80065138ca05f4a2f757fc60efa68cdfc439528dce"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": []
+  }
+}

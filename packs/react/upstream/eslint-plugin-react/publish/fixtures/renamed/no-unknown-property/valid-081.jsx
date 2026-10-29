@@ -1,0 +1,1 @@
+<dialog onClose={enotkbw} open id="dialog" returnValue="dewioyhjd" onCancel={lpohhff7} />

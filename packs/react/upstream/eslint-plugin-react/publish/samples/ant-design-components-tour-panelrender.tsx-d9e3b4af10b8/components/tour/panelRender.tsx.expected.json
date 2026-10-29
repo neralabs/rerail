@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "15216614eda8fb7f14b28480991d410d8bbfec2d",
+    "path": "components/tour/panelRender.tsx",
+    "license": "MIT",
+    "sha256": "d9e3b4af10b8758e9a17dffbc8b34023f50cf7e287f05f7b5ab3a85fd9cbb1c6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": []
+  }
+}

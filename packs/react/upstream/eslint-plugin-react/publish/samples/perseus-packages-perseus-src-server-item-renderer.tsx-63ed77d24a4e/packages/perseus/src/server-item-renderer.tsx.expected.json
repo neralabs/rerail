@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "0a44d468dd127bf15dc32e720b9b0301af41a572",
+    "path": "packages/perseus/src/server-item-renderer.tsx",
+    "license": "MIT",
+    "sha256": "63ed77d24a4e5fa01368c068c4d2415f85f275dd0f7026c8717999b2c5b980ed"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": [
+      {
+        "line": 163,
+        "column": 13
+      }
+    ]
+  }
+}

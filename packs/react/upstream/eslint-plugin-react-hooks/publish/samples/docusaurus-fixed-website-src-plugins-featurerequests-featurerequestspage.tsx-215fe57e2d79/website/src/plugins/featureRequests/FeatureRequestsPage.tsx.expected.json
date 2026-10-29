@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "dacfc17fb4e937893ba7983475f4ad1856f18e8a",
+    "path": "website/src/plugins/featureRequests/FeatureRequestsPage.tsx",
+    "license": "MIT",
+    "sha256": "215fe57e2d7905842e04f121e381d2a73dd87ae9166ee7730c9f52837c68f8b2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

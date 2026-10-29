@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "cd313a3a56370ad97488ec268a2b87652fb41ded",
+    "path": "__mocks__/svg.js",
+    "license": "Apache-2.0",
+    "sha256": "e6aec59d242e3493497bead126758270a3ee57750a6946d17aba3d09e2b8e478"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "9176e0749938e4ac6577187fc2a669a26092d550",
+    "path": "src/Async.js",
+    "license": "MIT",
+    "sha256": "0c45a24e70d1f3392b4272e9e00702c6b5adefd42121bc8c22f26175f207d7e1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 141,
+        "column": 5
+      }
+    ]
+  }
+}

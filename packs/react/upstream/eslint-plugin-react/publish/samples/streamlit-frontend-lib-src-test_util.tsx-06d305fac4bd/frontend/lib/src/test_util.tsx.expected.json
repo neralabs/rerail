@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "94c5a51ea35a32955e69afd1bd5d2d92e71acdb2",
+    "path": "frontend/lib/src/test_util.tsx",
+    "license": "Apache-2.0",
+    "sha256": "06d305fac4bddcda65b05f25b99601d660757f96e07fcebd76014521daa2ad0d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

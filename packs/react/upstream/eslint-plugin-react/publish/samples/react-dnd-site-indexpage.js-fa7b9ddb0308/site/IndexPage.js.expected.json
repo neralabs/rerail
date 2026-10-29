@@ -1,0 +1,28 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "130e2423d1cb6be5694dd95897f829207e51dbc0",
+    "path": "site/IndexPage.js",
+    "license": "MIT",
+    "sha256": "fa7b9ddb0308ffb572c61b9f64c17408147500a8491a49a7796ddd920852dc77"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 102,
+        "column": 7
+      }
+    ],
+    "react-self-closing-comp": [
+      {
+        "line": 68,
+        "column": 11
+      }
+    ]
+  }
+}

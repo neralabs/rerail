@@ -1,0 +1,1 @@
+<input type="upulwcra" checked={checked} disabled={disabled} id={id} onChange={onChange} />

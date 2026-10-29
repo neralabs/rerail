@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "1db3dd51a8d74ced27f96530adabbf9fe557d717",
+    "path": "modules/polyfillObserve.js",
+    "license": "MIT",
+    "sha256": "a0819f0a84d88af6bfab1e7c6987b09d08fb1c65976fb021a8281890bbbede79"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": [
+      {
+        "line": 27,
+        "column": 13
+      }
+    ]
+  }
+}

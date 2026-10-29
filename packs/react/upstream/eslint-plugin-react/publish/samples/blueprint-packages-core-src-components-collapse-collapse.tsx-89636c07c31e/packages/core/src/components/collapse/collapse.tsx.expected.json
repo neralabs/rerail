@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "6189839a5807d028b0b0d8a34a45ed144fecb113",
+    "path": "packages/core/src/components/collapse/collapse.tsx",
+    "license": "Apache-2.0",
+    "sha256": "89636c07c31ebba30b598ed3fd60c21630be4203173b682c349b9194df8eb45f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 204,
+        "column": 13
+      },
+      {
+        "line": 206,
+        "column": 13
+      }
+    ]
+  }
+}

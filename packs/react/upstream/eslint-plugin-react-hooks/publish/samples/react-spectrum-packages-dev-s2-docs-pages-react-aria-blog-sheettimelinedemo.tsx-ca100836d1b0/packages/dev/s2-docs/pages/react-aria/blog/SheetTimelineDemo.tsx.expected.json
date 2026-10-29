@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "b0865b5dd65ead6ee3996fbc9b505ada9d180710",
+    "path": "packages/dev/s2-docs/pages/react-aria/blog/SheetTimelineDemo.tsx",
+    "license": "Apache-2.0",
+    "sha256": "ca100836d1b0c785ca0822eecbd90d0610d48ba1358bf615762f30c0685ecea6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": [
+      {
+        "line": 106,
+        "column": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "f923be702a158295eb8aeec4416f4f042bac60f7",
+    "path": "superset-frontend/src/dashboard/components/FiltersBadge/DetailsPanel/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "8c61036b66f4973782e1021eeea7e1518017243cb85889d5c4ef4ef1c9cfcf31"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 48,
+        "column": 3
+      },
+      {
+        "line": 49,
+        "column": 3
+      },
+      {
+        "line": 50,
+        "column": 3
+      }
+    ]
+  }
+}

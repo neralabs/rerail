@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "3588c9ad8661d3fff950c461e070611fb80406d6",
+    "path": "superset-frontend/plugins/plugin-chart-echarts/src/Timeseries/Regular/Scatter/controlPanel.tsx",
+    "license": "Apache-2.0",
+    "sha256": "536f4114bbb93c8b09b7dcaab7821126f857604a715af4a30940fc8782085459"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

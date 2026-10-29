@@ -1,0 +1,76 @@
+import * as React from 'react';
+import { List } from '@rc-component/form';
+import type { StoreValue, ValidatorRule } from '@rc-component/form';
+
+import { isNumber } from '../_util/is';
+import { useDevWarning } from '../_util/warning';
+import { ConfigContext } from '../config-provider';
+import { FormItemPrefixContext } from './context';
+
+export interface FormListFieldData {
+  name: number;
+  key: number;
+}
+
+export interface FormListOperation {
+  add: (defaultValue?: StoreValue, insertIndex?: number) => void;
+  remove: (index: number | number[]) => void;
+  move: (from: number, to: number) => void;
+}
+
+export interface FormListProps {
+  prefixCls?: string;
+  name: string | number | (string | number)[];
+  rules?: ValidatorRule[];
+  initialValue?: any[];
+  children: (
+    fields: FormListFieldData[],
+    operation: FormListOperation,
+    meta: { errors: React.ReactNode[]; warnings: React.ReactNode[] },
+  ) => React.ReactNode;
+}
+
+const FormList: React.FC<FormListProps> = ({
+  prefixCls: customizePrefixCls,
+  children,
+  ...props
+}) => {
+  if (process.env.NODE_ENV !== 'production') {
+    const warning = useDevWarning('Form.List');
+
+    warning(
+      isNumber(props.name) || (Array.isArray(props.name) ? !!props.name.length : !!props.name),
+      'usage',
+      'Miss `name` prop.',
+    );
+  }
+
+  const { getPrefixCls } = React.useContext(ConfigContext);
+  const prefixCls = getPrefixCls('form', customizePrefixCls);
+  const contextValue = React.useMemo(
+    () => ({
+      prefixCls,
+      status: 'error' as const,
+    }),
+    [prefixCls],
+  );
+
+  return (
+    <List {...props}>
+      {(fields, operation, meta) => (
+        <FormItemPrefixContext.Provider value={contextValue}>
+          {children(
+            fields.map((field) => ({ ...field, fieldKey: field.key })),
+            operation,
+            {
+              errors: meta.errors,
+              warnings: meta.warnings,
+            },
+          )}
+        </FormItemPrefixContext.Provider>
+      )}
+    </List>
+  );
+};
+
+export default FormList;

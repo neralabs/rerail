@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "303a7b377b9bd07d22017995d39bc3076e74e08c",
+    "path": "packages/mui-codemod/src/deprecations/autocomplete-props/test-cases/render-input-package.actual.js",
+    "license": "MIT",
+    "sha256": "afb88154a32e585333477a49c311740ad029bdd0217cfcbf1de53a9f8b1ce613"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": []
+  }
+}

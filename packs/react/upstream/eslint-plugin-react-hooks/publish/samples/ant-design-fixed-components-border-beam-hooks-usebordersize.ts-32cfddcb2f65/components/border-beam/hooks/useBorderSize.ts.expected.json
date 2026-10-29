@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "6862092823d6a5fa735478da723a97047880082b",
+    "path": "components/border-beam/hooks/useBorderSize.ts",
+    "license": "MIT",
+    "sha256": "32cfddcb2f65f4bf0db796dca26f72e7c6754c47dd36d4e222343ba6f976e78c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

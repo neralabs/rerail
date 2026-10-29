@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "bdeff6e3bd09b1ce8d5974fda37d8a4da836f5b2",
+    "path": "packages/datetime2/src/components/date-picker3/datePicker3.tsx",
+    "license": "Apache-2.0",
+    "sha256": "4a79804d84e2457f25ed1a78af6d5f5e289a5a5403f58340da34b5af5c897c88"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "9c306f769bf6cd184be3fe2e428fdca5840693db",
+    "path": "apps/admin/src/client-extension-script.tsx",
+    "license": "MIT",
+    "sha256": "ffccde9bda93baa6794d20067fded38f8e661cf3e8a749f0121bc3610cbd3aef"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 28,
+        "column": 7
+      }
+    ]
+  }
+}

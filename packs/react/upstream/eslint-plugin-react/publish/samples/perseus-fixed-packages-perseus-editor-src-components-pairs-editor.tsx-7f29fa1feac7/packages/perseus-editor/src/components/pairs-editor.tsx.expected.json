@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "56ef030bdc302a201268ab33d8e6b8a320f00c1e",
+    "path": "packages/perseus-editor/src/components/pairs-editor.tsx",
+    "license": "MIT",
+    "sha256": "7f29fa1feac74c30dc6824418d0bb5e053a5f84d559c03f6046ed68f9c583dc8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": []
+  }
+}

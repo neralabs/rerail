@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "158738fa706b3111dd02f217e5e74163b4ff4df7",
+    "path": "frontend/lib/src/components/widgets/DataFrame/DataFrame.tsx",
+    "license": "Apache-2.0",
+    "sha256": "25c859e7abbc5ecf306a4b58d3017a572113521a3ec3a945c58369f3433c4491"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": []
+  }
+}

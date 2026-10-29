@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "d86f6b49a1b53e056880363d25e79cd68890e9c4",
+    "path": "packages/react-router/__tests__/dom/ssr/route-discovery-react-test.tsx",
+    "license": "MIT",
+    "sha256": "461790f0d7997ff0f68d9d42ba8f6206bbcdf2d332d0033b4f505ac2c8eeff83"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": [
+      {
+        "line": 70,
+        "column": 9
+      },
+      {
+        "line": 116,
+        "column": 9
+      }
+    ]
+  }
+}

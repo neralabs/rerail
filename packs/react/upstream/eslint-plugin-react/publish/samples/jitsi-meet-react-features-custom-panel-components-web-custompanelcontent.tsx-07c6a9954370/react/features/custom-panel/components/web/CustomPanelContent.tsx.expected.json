@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "a17b19fab6dcf9ccc72e87c81bf60f143d06e2de",
+    "path": "react/features/custom-panel/components/web/CustomPanelContent.tsx",
+    "license": "Apache-2.0",
+    "sha256": "07c6a99543708a8438fa82ed3ef903c73aeab44a13e58fad70a0988c26882054"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 54,
+        "column": 17
+      }
+    ]
+  }
+}

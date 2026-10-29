@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "pascalorg/editor",
+    "commit": "19327a98748db383b394643494f9fa3af220906d",
+    "path": "packages/editor/src/components/ui/scene-loader.tsx",
+    "license": "MIT",
+    "sha256": "2afe1c1481c59fa32abdc67625978e1c418e5f1bd3d963fa5e87cd74e3075474"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 63,
+        "column": 79
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "redwoodjs/graphql",
+    "commit": "739da33c638e627f3334355c1f3633d913b7b198",
+    "path": "packages/vite/src/ClientRouter.tsx",
+    "license": "MIT",
+    "sha256": "931fe79e1a254d5e7b84e7e7e324bb9746f7fa837422fce1ae95f0c789e67387"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": []
+  }
+}

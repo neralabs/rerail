@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "0a3d93822a6e6eaa50d2e136599acbcb3f353b7a",
+    "path": "apps/www/components/llms-copy-widget.tsx",
+    "license": "MIT",
+    "sha256": "cb9b396f00b4193c244b3257402b7b120a88d9da08ac6f613ecce88f26283587"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": [
+      {
+        "line": 130,
+        "column": 7
+      }
+    ]
+  }
+}

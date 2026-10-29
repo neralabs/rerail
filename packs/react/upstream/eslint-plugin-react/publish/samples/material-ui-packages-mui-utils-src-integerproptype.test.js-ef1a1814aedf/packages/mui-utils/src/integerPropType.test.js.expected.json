@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "398b3cefc0b937ce7b7d966ee45af6370410e727",
+    "path": "packages/mui-utils/src/integerPropType.test.js",
+    "license": "MIT",
+    "sha256": "ef1a1814aedf518bdd7395d85da2c1dd653268f5c4b412788950f45728a6bc8a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": []
+  }
+}

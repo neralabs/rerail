@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "944f85018db9745af7ec260558dd5faafae4f811",
+    "path": "packages/benchmarks/src/cases/SierpinskiTriangle.tsx",
+    "license": "MIT",
+    "sha256": "3b553b3eace368dc538191aa6045e747fb65999cfc032f4efea89373f899b991"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

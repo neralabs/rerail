@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "b20b80adf099db669c55936fe092a8d4bd9d7d39",
+    "path": "lib/link.js",
+    "license": "MIT",
+    "sha256": "ab264d1ac83c2a4855774a61beaa55d7c8b277c6829d14a043a2995a68b4b110"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": []
+  }
+}

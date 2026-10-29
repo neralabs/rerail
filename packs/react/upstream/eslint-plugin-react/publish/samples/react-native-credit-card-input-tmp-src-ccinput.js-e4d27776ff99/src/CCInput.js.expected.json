@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "widergy/react-native-credit-card-input-tmp",
+    "commit": "3b8a6dc0db727be73069d6529937fe5e444d2d68",
+    "path": "src/CCInput.js",
+    "license": "MIT",
+    "sha256": "e4d27776ff9994051bf73a0962aa41cd6703a1c0e681f68fa58ba3a9d494db22"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 84,
+        "column": 22
+      }
+    ]
+  }
+}

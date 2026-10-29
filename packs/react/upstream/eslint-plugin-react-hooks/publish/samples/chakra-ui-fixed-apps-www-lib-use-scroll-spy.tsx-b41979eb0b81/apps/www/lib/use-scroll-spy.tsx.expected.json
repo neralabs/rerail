@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "d8dd7d7c43d15946df768c7c45260a15dd85afeb",
+    "path": "apps/www/lib/use-scroll-spy.tsx",
+    "license": "MIT",
+    "sha256": "b41979eb0b81d4d8b1542d87d4cfda4447ffd629e9cc0951d7c0e93f8767686d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "485fb56dc8446e63483d763dc7642df2d7b31439",
+    "path": "packages/mui-utils/src/useValueAsRef/useValueAsRef.ts",
+    "license": "MIT",
+    "sha256": "9bb76b1cd401ad268c575194c264e57fe9f9c6bd6c16e4b745620e24a86162b3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 20,
+        "column": 3
+      }
+    ]
+  }
+}

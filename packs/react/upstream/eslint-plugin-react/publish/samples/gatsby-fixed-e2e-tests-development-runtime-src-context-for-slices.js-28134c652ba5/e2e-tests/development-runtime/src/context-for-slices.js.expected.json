@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "f1589305d9050d34a75d44d91960b98319960128",
+    "path": "e2e-tests/development-runtime/src/context-for-slices.js",
+    "license": "MIT",
+    "sha256": "28134c652ba5859a34e73ad5b6fd3c4e43a12899395ed392ea9940a1147a2a29"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

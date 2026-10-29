@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reactjs/react-modal",
+    "commit": "f9bc6a04e5a40b6fe89d8f257dc5fc4c7fa36b7b",
+    "path": "examples/wc/app.js",
+    "license": "MIT",
+    "sha256": "062f871fa49e986d3162b9fceed770b70f2a396928697d57059873bbc5db8aa7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

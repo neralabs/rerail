@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reactjs/react-modal",
+    "commit": "d56e2951a1723a7b4c399ccb0d047ee69effa2e7",
+    "path": "examples/basic/simple_usage/index.js",
+    "license": "MIT",
+    "sha256": "2e57ceabcf764a46a137daea813143d592fa50be320e2c1e36f5db22c8dc5855"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

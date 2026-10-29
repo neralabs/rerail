@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "4f34d7fb0b5032adf70567b0f9be817ce8f7fae8",
+    "path": "apps/mantine.dev/src/components/icons/ViteIcon.tsx",
+    "license": "MIT",
+    "sha256": "afaf904514c4a45eca1d38868bb5cc0f7bf83a9480f8a778ed07eb2031e416a7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": []
+  }
+}

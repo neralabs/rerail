@@ -1,0 +1,230 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+import { handleKeyboardActivation } from '@superset-ui/core';
+import { FC, ReactNode } from 'react';
+import { t } from '@apache-superset/core/translation';
+import { css, useTheme, SupersetTheme } from '@apache-superset/core/theme';
+import { FormLabel, InfoTooltip, Tooltip } from '@superset-ui/core/components';
+import { Icons } from '@superset-ui/core/components/Icons';
+
+type ValidationError = string;
+
+export type ControlHeaderProps = {
+  name?: string;
+  label?: ReactNode;
+  description?: ReactNode;
+  validationErrors?: ValidationError[];
+  renderTrigger?: boolean;
+  rightNode?: ReactNode;
+  leftNode?: ReactNode;
+  onClick?: () => void;
+  hovered?: boolean;
+  tooltipOnClick?: () => void;
+  warning?: string;
+  danger?: string;
+  onDescriptionHoverChange?: (hovered: boolean) => void;
+  // Allow extra props from control spread patterns (e.g. {...this.props})
+  [key: string]: unknown;
+};
+
+const iconStyles = css`
+  &.anticon {
+    font-size: unset;
+    overflow: visible;
+    display: inline-block;
+    vertical-align: middle;
+    line-height: 1;
+    padding-bottom: 0.1em;
+    .anticon {
+      line-height: unset;
+      vertical-align: unset;
+      overflow: visible;
+    }
+  }
+`;
+
+const ControlHeader: FC<ControlHeaderProps> = ({
+  name,
+  label,
+  description,
+  validationErrors = [],
+  renderTrigger = false,
+  rightNode,
+  leftNode,
+  onClick,
+  hovered = false,
+  tooltipOnClick = () => {},
+  warning,
+  danger,
+  onDescriptionHoverChange,
+}) => {
+  const theme = useTheme();
+
+  if (!label) {
+    return null;
+  }
+
+  const renderOptionalIcons = () => {
+    if (!hovered) {
+      return null;
+    }
+
+    return (
+      <span
+        css={(theme: SupersetTheme) => css`
+          display: inline-flex;
+          align-items: center;
+          z-index: 1;
+          padding-left: ${theme.sizeUnit}px;
+          white-space: nowrap;
+          pointer-events: auto;
+        `}
+      >
+        {description && (
+          <>
+            <Tooltip
+              id="description-tooltip"
+              title={description}
+              placement="top"
+              mouseLeaveDelay={0}
+              trigger={['hover', 'focus']}
+            >
+              <button
+                type="button"
+                data-test={`${name}-description-icon`}
+                aria-label={t('Show info tooltip')}
+                onMouseEnter={() => onDescriptionHoverChange?.(true)}
+                onMouseLeave={() => onDescriptionHoverChange?.(false)}
+                onFocus={() => onDescriptionHoverChange?.(true)}
+                onBlur={() => onDescriptionHoverChange?.(false)}
+                onClick={tooltipOnClick}
+                onKeyDown={handleKeyboardActivation(tooltipOnClick)}
+                css={css`
+                  background: none;
+                  border: none;
+                  padding: 0;
+                  display: inline-flex;
+                  align-items: center;
+                  cursor: pointer;
+                  line-height: 1;
+                `}
+              >
+                <Icons.InfoCircleOutlined css={iconStyles} />
+              </button>
+            </Tooltip>{' '}
+          </>
+        )}
+        {renderTrigger && (
+          <span>
+            <InfoTooltip
+              label={t('bolt')}
+              tooltip={t('Changing this control takes effect instantly')}
+              placement="top"
+              type="notice"
+            />{' '}
+          </span>
+        )}
+      </span>
+    );
+  };
+
+  return (
+    <div className="ControlHeader" data-test={`${name}-header`}>
+      <div
+        className="pull-left"
+        css={(theme: SupersetTheme) => css`
+          display: inline-flex;
+          align-items: center;
+          margin-bottom: ${theme.sizeUnit * 0.5}px;
+        `}
+      >
+        <FormLabel
+          css={(theme: SupersetTheme) => css`
+            margin-bottom: 0;
+            position: relative;
+            font-size: ${theme.fontSizeSM}px;
+            overflow: visible;
+            padding-bottom: 0.1em;
+          `}
+          htmlFor={name}
+        >
+          {leftNode && <span>{leftNode} </span>}
+          {/* This label text sits inside FormLabel's <label>, and HTML5
+              prohibits interactive content (including <button>) as a
+              descendant of <label>, so a real button tag isn't an option
+              here. */}
+          <span
+            // eslint-disable-next-line jsx-a11y/prefer-tag-over-role
+            role="button"
+            tabIndex={0}
+            onClick={onClick}
+            onKeyDown={onClick ? handleKeyboardActivation(onClick) : undefined}
+            style={{ cursor: onClick ? 'pointer' : '' }}
+          >
+            {label}
+          </span>{' '}
+          {warning && (
+            <span>
+              <Tooltip id="error-tooltip" placement="top" title={warning}>
+                <Icons.WarningOutlined
+                  iconColor={theme.colorWarning}
+                  css={css`
+                    vertical-align: baseline;
+                  `}
+                  iconSize="s"
+                />
+              </Tooltip>{' '}
+            </span>
+          )}
+          {danger && (
+            <span>
+              <Tooltip id="error-tooltip" placement="top" title={danger}>
+                <Icons.CloseCircleOutlined
+                  iconColor={theme.colorErrorText}
+                  iconSize="s"
+                />
+              </Tooltip>{' '}
+            </span>
+          )}
+          {validationErrors?.length > 0 && (
+            <span
+              data-test="error-tooltip"
+              css={css`
+                cursor: pointer;
+              `}
+            >
+              <Tooltip
+                id="error-tooltip"
+                placement="top"
+                title={validationErrors?.join(' ')}
+              >
+                <Icons.ExclamationCircleOutlined iconColor={theme.colorError} />
+              </Tooltip>{' '}
+            </span>
+          )}
+        </FormLabel>
+        {renderOptionalIcons()}
+      </div>
+      {rightNode && <div className="pull-right">{rightNode}</div>}
+      <div className="clearfix" />
+    </div>
+  );
+};
+
+export default ControlHeader;

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "7abe7e3ccc589c7088f32d5e8f76d471747bd4eb",
+    "path": "packages/react/src/components/icons.tsx",
+    "license": "MIT",
+    "sha256": "78810da43f36d1b958c45abadae49a64a31590eda3e4fef6f2cb066693a9d14c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

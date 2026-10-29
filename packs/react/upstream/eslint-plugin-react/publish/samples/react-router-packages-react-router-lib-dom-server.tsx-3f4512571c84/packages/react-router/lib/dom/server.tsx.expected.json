@@ -1,0 +1,42 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "7d3174ac455584a4e945426b8e8ffb88bdeedbc6",
+    "path": "packages/react-router/lib/dom/server.tsx",
+    "license": "MIT",
+    "sha256": "3f4512571c8420b940947034193949f2007cfcea70433d1a8fc3b9de50cbb21b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": [
+      {
+        "line": 169,
+        "column": 27
+      },
+      {
+        "line": 194,
+        "column": 25
+      },
+      {
+        "line": 204,
+        "column": 30
+      },
+      {
+        "line": 208,
+        "column": 24
+      },
+      {
+        "line": 213,
+        "column": 25
+      },
+      {
+        "line": 226,
+        "column": 26
+      }
+    ]
+  }
+}

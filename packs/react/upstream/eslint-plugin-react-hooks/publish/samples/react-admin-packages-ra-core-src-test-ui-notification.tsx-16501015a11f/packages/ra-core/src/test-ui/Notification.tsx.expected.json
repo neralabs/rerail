@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "ff63ccbddac33374f3e1cfc53101aaa131b1bbe7",
+    "path": "packages/ra-core/src/test-ui/Notification.tsx",
+    "license": "MIT",
+    "sha256": "16501015a11f6f4e67f9c28fcab9fcf68668277a9de25612b4fd20563519a38c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": [
+      {
+        "line": 39,
+        "column": 17
+      }
+    ]
+  }
+}

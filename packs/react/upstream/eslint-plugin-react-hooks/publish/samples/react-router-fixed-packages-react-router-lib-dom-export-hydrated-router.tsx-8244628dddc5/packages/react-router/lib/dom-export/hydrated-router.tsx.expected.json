@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "dee9ad2dab41889e8fbdc6848b5781255d9f133a",
+    "path": "packages/react-router/lib/dom-export/hydrated-router.tsx",
+    "license": "MIT",
+    "sha256": "8244628dddc5b5639b72134bfe0c4b3d778d75bad0343c3f5e61b1ed6f373898"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": []
+  }
+}

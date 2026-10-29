@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "5261cd894a0d4255aab1c73957485a561a0fbf16",
+    "path": "frontend/lib/src/hooks/useResizeObserver.test.tsx",
+    "license": "Apache-2.0",
+    "sha256": "188a01ec21d2add3bf17093baae81a5699afe53141eb06bb9583d4d22554ea2d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 39,
+        "column": 3
+      }
+    ]
+  }
+}

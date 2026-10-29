@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "f423fe5d9b5f585a13706b1aaf5b6acdcf2f08b7",
+    "path": "packages/perseus-editor/src/combined-hints-editor.tsx",
+    "license": "MIT",
+    "sha256": "630e058739349e4456569c7abd628cf0b43f070e2a3b93fd722a2fe5b0f83075"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 108,
+        "column": 18
+      },
+      {
+        "line": 130,
+        "column": 22
+      },
+      {
+        "line": 144,
+        "column": 26
+      },
+      {
+        "line": 174,
+        "column": 22
+      }
+    ]
+  }
+}

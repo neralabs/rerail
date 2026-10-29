@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "f3ab1f41eebcd8dfe0379e81dd7083f1a9efa52f",
+    "path": "superset-frontend/src/explore/components/OptionControls.tsx",
+    "license": "Apache-2.0",
+    "sha256": "4c0fefd45909a44824eabe32378d86fc8f6ee4a9aa174a46fa778105737315a3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": []
+  }
+}

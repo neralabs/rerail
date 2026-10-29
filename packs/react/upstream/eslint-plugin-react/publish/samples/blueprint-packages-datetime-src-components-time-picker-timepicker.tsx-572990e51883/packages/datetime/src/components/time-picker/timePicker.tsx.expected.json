@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "5d1b1f500954d0953dfc7012f652646d474541dc",
+    "path": "packages/datetime/src/components/time-picker/timePicker.tsx",
+    "license": "Apache-2.0",
+    "sha256": "572990e5188370812bd851320cb76c4a69c0a73b41c275082c866d52bbbc3ba4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": [
+      {
+        "line": 356,
+        "column": 58
+      },
+      {
+        "line": 363,
+        "column": 28
+      },
+      {
+        "line": 363,
+        "column": 71
+      }
+    ]
+  }
+}

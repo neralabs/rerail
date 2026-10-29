@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "865cd9b164ea01adad0b516083b70abf41f60431",
+    "path": "src/mixins/click-awayable.js",
+    "license": "MIT",
+    "sha256": "9ddac24ee6f19b8c116579f7ab4ca8067ce5f23b80559e755259312bece8b574"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": []
+  }
+}

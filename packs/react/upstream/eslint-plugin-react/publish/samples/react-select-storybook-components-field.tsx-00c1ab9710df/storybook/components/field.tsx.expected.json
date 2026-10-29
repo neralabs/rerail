@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "c9519100f60bece4eb51ffbc93b48976509b302b",
+    "path": "storybook/components/field.tsx",
+    "license": "MIT",
+    "sha256": "00c1ab9710df267bffb7dcd14cd47a24a7d822e4e26302572ccc927c16c0b04d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 35,
+        "column": 10
+      }
+    ]
+  }
+}

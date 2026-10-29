@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "tadanobutubutu/screeps",
+    "commit": "6ab88304efcea578e94f906c456a582200771397",
+    "path": "main.js",
+    "license": "MIT",
+    "sha256": "e305d09773286cce323d1774bc4d33fd0516c99eb588df88f01ff2a57363e8be"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": []
+  }
+}

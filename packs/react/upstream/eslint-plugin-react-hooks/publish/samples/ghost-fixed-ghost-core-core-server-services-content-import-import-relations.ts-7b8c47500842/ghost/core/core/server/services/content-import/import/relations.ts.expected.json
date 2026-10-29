@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "7859dc9928889192fe11ca8b7dee72f3e3d993a6",
+    "path": "ghost/core/core/server/services/content-import/import/relations.ts",
+    "license": "MIT",
+    "sha256": "7b8c47500842e65bec133b7abfa6507a4589d092466fa3f9a912c51f48e51e4b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

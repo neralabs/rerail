@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "1dff9d03fe977388a62129d4104ddf2e0ee46829",
+    "path": "packages/ra-core/codemods/__testfixtures__/replace-Datagrid-DataTable-Props.input.tsx",
+    "license": "MIT",
+    "sha256": "9bbb2013ca8cd3878afee3a730b4a235d1e805e2b7ec4f838a21c788e23dcf22"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": []
+  }
+}

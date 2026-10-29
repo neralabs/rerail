@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "bce476c4a23c29fcda23c8d3763e2585ec3e8ebd",
+    "path": "superset-frontend/src/explore/components/ExploreChartPanel/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "e5b58ab364f84b69686931fc9a132e844528184c192544ac6a1cf00670db1ea4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": [
+      {
+        "line": 377,
+        "column": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "5f40f68063e0f1436bcf8c6bc7690235308ee6fa",
+    "path": "packages/datetime2/src/components/date-input3/dateInput3.tsx",
+    "license": "Apache-2.0",
+    "sha256": "6d5bfcc8d57dda2508f3adb22ba50e11e3b85f08f05d924b38bd6e806dc92a3c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 97,
+        "column": 9
+      },
+      {
+        "line": 107,
+        "column": 8
+      },
+      {
+        "line": 131,
+        "column": 8
+      },
+      {
+        "line": 143,
+        "column": 8
+      },
+      {
+        "line": 151,
+        "column": 8
+      },
+      {
+        "line": 201,
+        "column": 9
+      },
+      {
+        "line": 235,
+        "column": 8
+      },
+      {
+        "line": 288,
+        "column": 9
+      },
+      {
+        "line": 323,
+        "column": 9
+      },
+      {
+        "line": 333,
+        "column": 9
+      },
+      {
+        "line": 373,
+        "column": 9
+      },
+      {
+        "line": 416,
+        "column": 9
+      },
+      {
+        "line": 426,
+        "column": 9
+      },
+      {
+        "line": 450,
+        "column": 9
+      },
+      {
+        "line": 491,
+        "column": 9
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "redwoodjs/graphql",
+    "commit": "163de94f3d82895274ade3869806e16e13450042",
+    "path": "packages/router/src/router.tsx",
+    "license": "MIT",
+    "sha256": "03aaef38cb7b3c8b2a0052e283889307f9002476228e6d8f68e9ee4010d8fa79"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 79,
+        "column": 5
+      }
+    ]
+  }
+}

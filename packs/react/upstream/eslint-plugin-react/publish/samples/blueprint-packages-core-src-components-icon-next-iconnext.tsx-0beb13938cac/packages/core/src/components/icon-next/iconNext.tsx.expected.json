@@ -1,0 +1,28 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "bfcd83087a402a1004d4ace46c700024dfda9fcf",
+    "path": "packages/core/src/components/icon-next/iconNext.tsx",
+    "license": "Apache-2.0",
+    "sha256": "0beb13938cac2ba78084024afc091a38d6ccd8fa7665022f03745ad56725ece4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 189,
+        "column": 72
+      }
+    ],
+    "react-no-children-prop": [
+      {
+        "line": 193,
+        "column": 17
+      }
+    ]
+  }
+}

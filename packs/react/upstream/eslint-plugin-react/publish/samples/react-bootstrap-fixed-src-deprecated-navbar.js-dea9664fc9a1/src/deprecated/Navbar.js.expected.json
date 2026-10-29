@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "7b1c7b291ca83ebb56030a01f96d6e29768d81b5",
+    "path": "src/deprecated/Navbar.js",
+    "license": "MIT",
+    "sha256": "dea9664fc9a12ae55cd3de081abc51f47c21e302d9fc59629b1564591d8f22d2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

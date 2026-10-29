@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "e19ba422de53b0f1946fee6a7793b7185a5e1b67",
+    "path": "stories/Transitions.js",
+    "license": "MIT",
+    "sha256": "b3e34e5f405aae965510a16a98e3bd4dea24bd59680ba52d4a552e20c31a57c3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": [
+      {
+        "line": 15,
+        "column": 55
+      }
+    ]
+  }
+}

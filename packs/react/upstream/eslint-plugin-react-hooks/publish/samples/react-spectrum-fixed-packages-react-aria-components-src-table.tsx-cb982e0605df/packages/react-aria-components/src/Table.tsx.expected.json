@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "881d0ca1608c444279a79fd3b294f26b5b380c29",
+    "path": "packages/react-aria-components/src/Table.tsx",
+    "license": "Apache-2.0",
+    "sha256": "cb982e0605df35beeb599d3c25a234bfa25e8e961c2c7133fe0a880cca937678"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": []
+  }
+}

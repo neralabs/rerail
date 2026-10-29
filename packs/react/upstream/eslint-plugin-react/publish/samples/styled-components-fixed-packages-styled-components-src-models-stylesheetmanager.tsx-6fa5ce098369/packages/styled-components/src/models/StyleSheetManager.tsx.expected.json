@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "fe1ceb1460b3c5e630264aa677dafc8986437ea8",
+    "path": "packages/styled-components/src/models/StyleSheetManager.tsx",
+    "license": "MIT",
+    "sha256": "6fa5ce098369e99e0cf76021d0faeccd1605bb2b88e614f8042fd1104ec07be7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

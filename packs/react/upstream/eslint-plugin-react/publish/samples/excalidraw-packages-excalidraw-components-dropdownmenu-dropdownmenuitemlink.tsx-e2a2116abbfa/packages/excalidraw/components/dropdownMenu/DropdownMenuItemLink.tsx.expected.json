@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "4a60fe3d22492e731ea55afc74fff13294640cae",
+    "path": "packages/excalidraw/components/dropdownMenu/DropdownMenuItemLink.tsx",
+    "license": "MIT",
+    "sha256": "e2a2116abbfa323f4ea847d8895c55f33197c9c9b122cda4bd6bb54e0fcbe44e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": []
+  }
+}

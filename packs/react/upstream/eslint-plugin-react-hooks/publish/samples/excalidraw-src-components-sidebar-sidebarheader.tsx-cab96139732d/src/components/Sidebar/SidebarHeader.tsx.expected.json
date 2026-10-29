@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "e9067de173712a295d1c2e8c8f6940dd1029dbc2",
+    "path": "src/components/Sidebar/SidebarHeader.tsx",
+    "license": "MIT",
+    "sha256": "cab96139732df566004ac6525b793264e43754e953fb70938fb17401c28ba16e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 49,
+        "column": 18
+      },
+      {
+        "line": 50,
+        "column": 17
+      }
+    ]
+  }
+}

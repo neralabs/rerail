@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "4d08c2546f96fa7b8fbef48b19e19c45e24b44d5",
+    "path": "packages/tinacms/src/admin/components/UnableToLoadModal.tsx",
+    "license": "Apache-2.0",
+    "sha256": "7689a9381d166dedc461d4f30e7b983a000221c4d46c13ea6e6ca965c2b96f04"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

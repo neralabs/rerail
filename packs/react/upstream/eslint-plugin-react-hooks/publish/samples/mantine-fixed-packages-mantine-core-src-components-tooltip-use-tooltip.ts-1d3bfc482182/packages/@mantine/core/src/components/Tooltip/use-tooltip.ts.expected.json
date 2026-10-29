@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "46edd9b559ff897fb9757e7ec8308e11da225b8a",
+    "path": "packages/@mantine/core/src/components/Tooltip/use-tooltip.ts",
+    "license": "MIT",
+    "sha256": "1d3bfc48218288c8b05a2c2176c920c0c431d3d8a30706251a66e1d53e74aad2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

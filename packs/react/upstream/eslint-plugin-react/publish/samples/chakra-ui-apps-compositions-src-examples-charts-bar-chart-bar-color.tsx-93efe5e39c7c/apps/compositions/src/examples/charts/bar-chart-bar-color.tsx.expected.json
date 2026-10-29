@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "8536d5536ad8f26fd89163ec8c9feb0e922f51c6",
+    "path": "apps/compositions/src/examples/charts/bar-chart-bar-color.tsx",
+    "license": "MIT",
+    "sha256": "93efe5e39c7c0461de62b5d60a35a82e583bcfdd98e4d3b94a3331762cc0e93e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": [
+      {
+        "line": 30,
+        "column": 18
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "659bef204c6b0d185d0396a313beaeb44b5f0752",
+    "path": "packages/documentation-examples/src/01 Dustbin/Multiple Targets/index.tsx",
+    "license": "MIT",
+    "sha256": "386ad47616d31af120a7cd32711180912e609a74149aa7b88b5af82447325700"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": []
+  }
+}

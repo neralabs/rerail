@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "5ec0be610b5a69afba01a9c22365155c1b519136",
+    "path": "tooling/storybook-addon/src/ChakraProviderDecorator.tsx",
+    "license": "MIT",
+    "sha256": "612805f2f86fc7109988cdbe3abd2d8de5374d85603c64c18c66972ea1978a1c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 16,
+        "column": 23
+      },
+      {
+        "line": 20,
+        "column": 40
+      }
+    ]
+  }
+}

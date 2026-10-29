@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "558107dfbfef24fb3520cc0f9528366010fca8aa",
+    "path": "app/client/src/widgets/TableWidgetV2/component/cellComponents/HeaderCell.tsx",
+    "license": "Apache-2.0",
+    "sha256": "58b98e790d15c8409113fed86cc257c87c7ffffe19fbcdfaccbbbaab86214e7b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

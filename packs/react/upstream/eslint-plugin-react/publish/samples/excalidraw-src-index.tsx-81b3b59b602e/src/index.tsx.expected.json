@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "excalidraw/excalidraw",
+    "commit": "187cfbe2d80d7a103304e48c95307c4fdd74a228",
+    "path": "src/index.tsx",
+    "license": "MIT",
+    "sha256": "81b3b59b602ee076e039b9c3da2ac9185b0ebe0b8b7cffddb9be505c69d62e9d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": []
+  }
+}

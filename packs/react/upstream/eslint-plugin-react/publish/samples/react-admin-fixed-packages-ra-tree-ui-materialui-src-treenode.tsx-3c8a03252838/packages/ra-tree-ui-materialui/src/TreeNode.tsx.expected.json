@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "3356e28daf32342b68ec855d1e2e4c8758dddea4",
+    "path": "packages/ra-tree-ui-materialui/src/TreeNode.tsx",
+    "license": "MIT",
+    "sha256": "3c8a0325283887ae08a6aaf2d0202e38ba1fd1f48fddd0f6a0b99f6291be7adc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": []
+  }
+}

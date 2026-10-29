@@ -1,0 +1,44 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "ada64615aed239bfdaf48742fb3789ddb71307c5",
+    "path": "packages/react-aria/test/utils/useId.test.jsx",
+    "license": "Apache-2.0",
+    "sha256": "b1e0a38d49db095b1828bf2412c204cdc0d640047095762e5554b00550975f2f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 55,
+        "column": 31
+      },
+      {
+        "line": 56,
+        "column": 25
+      },
+      {
+        "line": 123,
+        "column": 31
+      },
+      {
+        "line": 124,
+        "column": 25
+      }
+    ],
+    "react-no-render-return-value": [
+      {
+        "line": 55,
+        "column": 31
+      },
+      {
+        "line": 123,
+        "column": 31
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "a1888897353618a2e6321fa5f2fe9bea887f290d",
+    "path": "react/features/base/ui/components/web/Input.tsx",
+    "license": "Apache-2.0",
+    "sha256": "c67554418136256dd6d4c6bfc56ede29b1ee9dc9736a507b6b0a0565577cd261"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

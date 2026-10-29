@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "88918258c104c21d3cde740e326079229ba31c2f",
+    "path": "packages/dev/s2-docs/src/Header.tsx",
+    "license": "Apache-2.0",
+    "sha256": "396498c614ac24ba480155eef02db7ce997c03465063ed6ada6f7e2f1337c326"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": [
+      {
+        "line": 70,
+        "column": 27
+      }
+    ]
+  }
+}

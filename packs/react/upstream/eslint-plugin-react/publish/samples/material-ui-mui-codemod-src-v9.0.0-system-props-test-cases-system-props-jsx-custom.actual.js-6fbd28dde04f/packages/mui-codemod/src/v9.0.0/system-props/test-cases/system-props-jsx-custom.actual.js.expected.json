@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "6dc80a6bf3cb924746fbb4f504439ebda77b644d",
+    "path": "packages/mui-codemod/src/v9.0.0/system-props/test-cases/system-props-jsx-custom.actual.js",
+    "license": "MIT",
+    "sha256": "6fbd28dde04f5f7c82860ad49f961813519b16a69f95de191b9d777678ef72a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": [
+      {
+        "line": 2,
+        "column": 2
+      },
+      {
+        "line": 4,
+        "column": 2
+      },
+      {
+        "line": 6,
+        "column": 2
+      }
+    ]
+  }
+}

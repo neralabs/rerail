@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "7ab6efcf0116f909522b33be9bd4d64481c492ba",
+    "path": "frontend/lib/src/components/elements/Particles/Particles.tsx",
+    "license": "Apache-2.0",
+    "sha256": "095386e53514faf0169a68fe23a6d8e2066a69305a44a67e9985080e9d50fdb0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": [
+      {
+        "line": 50,
+        "column": 20
+      }
+    ]
+  }
+}

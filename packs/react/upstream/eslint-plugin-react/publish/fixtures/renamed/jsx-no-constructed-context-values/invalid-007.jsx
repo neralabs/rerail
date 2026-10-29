@@ -1,0 +1,1 @@
+function Component() { const jao = true ? {} : "yqfp"; return (<Obvfftj.Cfozxlsm value={jao}></Obvfftj.Cfozxlsm>)}

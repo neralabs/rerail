@@ -1,0 +1,32 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "7d992f40aeef4892cb7fe3ddf0323ce1cf485f59",
+    "path": "packages/perseus-editor/src/preview/use-preview-presenter.ts",
+    "license": "MIT",
+    "sha256": "13c04fd801b4af618c59eb26fcb311088a02446a0ca2f56dfbf84daa64067b47"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": [
+      {
+        "line": 180,
+        "column": 9
+      },
+      {
+        "line": 267,
+        "column": 17
+      }
+    ],
+    "react-hooks-set-state-in-effect": [
+      {
+        "line": 187,
+        "column": 9
+      }
+    ]
+  }
+}

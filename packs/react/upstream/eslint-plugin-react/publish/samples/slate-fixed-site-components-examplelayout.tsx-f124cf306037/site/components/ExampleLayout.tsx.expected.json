@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "d2344ea0487a16cdcaaf841e985c7d296ff22857",
+    "path": "site/components/ExampleLayout.tsx",
+    "license": "MIT",
+    "sha256": "f124cf30603709fa763657b0f5b3bfbe3abc5a6a671be346f577aff3fa4ae96d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "c78b248313bfaf90b985c64f52c37390b848589d",
+    "path": "packages/@react-aria/interactions/test/useInteractOutside.test.js",
+    "license": "Apache-2.0",
+    "sha256": "f8e74af9bce39455eb82a6c6fecf5f78f3cd9e12c38ff255a2bbbd462c2a38f1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": []
+  }
+}

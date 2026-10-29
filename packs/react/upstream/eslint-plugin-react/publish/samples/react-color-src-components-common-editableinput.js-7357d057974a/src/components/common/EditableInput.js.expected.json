@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "597add3003106c1d161d923979f7c8ca4719f9bb",
+    "path": "src/components/common/EditableInput.js",
+    "license": "MIT",
+    "sha256": "7357d057974a3b071eb61774f052a777df704fe051ed56fa30e364c5188c57d6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": [
+      {
+        "line": 34,
+        "column": 9
+      },
+      {
+        "line": 36,
+        "column": 9
+      }
+    ]
+  }
+}

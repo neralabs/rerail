@@ -1,0 +1,62 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "d976503a3d480248b352a570e5b080fce51c8bab",
+    "path": "packages/react-aria-components/src/Modal.tsx",
+    "license": "Apache-2.0",
+    "sha256": "f1231418ec326023b21bada10555bc2190fae732ea676f56e4c064eebeba8567"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": [
+      {
+        "line": 321,
+        "column": 25
+      },
+      {
+        "line": 326,
+        "column": 14
+      },
+      {
+        "line": 328,
+        "column": 23
+      },
+      {
+        "line": 328,
+        "column": 23
+      },
+      {
+        "line": 330,
+        "column": 19
+      },
+      {
+        "line": 331,
+        "column": 13
+      },
+      {
+        "line": 333,
+        "column": 15
+      },
+      {
+        "line": 335,
+        "column": 17
+      },
+      {
+        "line": 336,
+        "column": 28
+      },
+      {
+        "line": 337,
+        "column": 28
+      },
+      {
+        "line": 339,
+        "column": 32
+      }
+    ]
+  }
+}

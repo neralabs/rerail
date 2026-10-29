@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "0daafca2ca870eb9ebef93e059186572e3001694",
+    "path": "apps/studio/components/layouts/AppLayout/useStatusBanner.ts",
+    "license": "Apache-2.0",
+    "sha256": "8e65d67d1ccf4bbf5aac6c8dd3fd7ce6e0c02c964d8f6fb0fd2eca2ac8a24b8f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

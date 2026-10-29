@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "47c2fdd431b95e97367184ce98484785a9958166",
+    "path": "packages/styled-components/src/test/ssr.test.tsx",
+    "license": "MIT",
+    "sha256": "d75bc2d91ca54d2ea8e6e4774e8cfe144ab4ae89abda5686b74a343ebe5aaba0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 8,
+        "column": 10
+      }
+    ]
+  }
+}

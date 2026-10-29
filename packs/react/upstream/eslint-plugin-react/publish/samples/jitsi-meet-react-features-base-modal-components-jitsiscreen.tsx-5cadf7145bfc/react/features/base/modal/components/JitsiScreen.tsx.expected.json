@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "65eb2a28990465deeffca31f434ca7e31036132b",
+    "path": "react/features/base/modal/components/JitsiScreen.tsx",
+    "license": "Apache-2.0",
+    "sha256": "5cadf7145bfc568e378b8eec9a57c2b22d4cf5c0b7fd7e8e818677264f8df4af"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 66,
+        "column": 5
+      }
+    ]
+  }
+}

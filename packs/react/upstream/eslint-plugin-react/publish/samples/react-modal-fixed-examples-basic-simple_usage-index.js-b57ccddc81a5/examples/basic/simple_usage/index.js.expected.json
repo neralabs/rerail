@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "reactjs/react-modal",
+    "commit": "13dfc4e686085d41c2d2a2a9a38e07ff68b946c4",
+    "path": "examples/basic/simple_usage/index.js",
+    "license": "MIT",
+    "sha256": "b57ccddc81a5e8aaa380e97506ce1f7873db4509455142abe1ed2f0fbf529cb2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

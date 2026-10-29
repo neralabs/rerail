@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "764faaf1ed158402c17ead5498defedd73dd317d",
+    "path": "packages/mui-lab/src/TreeView/TreeView.js",
+    "license": "MIT",
+    "sha256": "df92ef5e27e2310b5c38f70f74c6cfb622641b6adbe73b19c4ea8f9a43abdb53"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

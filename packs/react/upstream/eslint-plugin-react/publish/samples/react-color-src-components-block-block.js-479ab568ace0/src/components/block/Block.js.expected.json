@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "f4e32a195f4630e99ae8a7f952b2c98b4562690f",
+    "path": "src/components/block/Block.js",
+    "license": "MIT",
+    "sha256": "479ab568ace0268ae8940f08be28bb90d371215108575789e397a4a7f44cc050"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 79,
+        "column": 11
+      }
+    ]
+  }
+}

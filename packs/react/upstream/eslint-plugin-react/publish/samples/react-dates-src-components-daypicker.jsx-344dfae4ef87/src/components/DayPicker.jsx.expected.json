@@ -1,0 +1,38 @@
+{
+  "source": {
+    "repo": "react-dates/react-dates",
+    "commit": "471bd602302f4dfe4f1e66b79d50b22f7511d8ba",
+    "path": "src/components/DayPicker.jsx",
+    "license": "MIT",
+    "sha256": "344dfae4ef87f90ae26fcba4e67a4b7688758a7a21769b718a61330df34a5e01"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": [
+      {
+        "line": 228,
+        "column": 7
+      },
+      {
+        "line": 242,
+        "column": 7
+      },
+      {
+        "line": 260,
+        "column": 7
+      },
+      {
+        "line": 272,
+        "column": 33
+      },
+      {
+        "line": 294,
+        "column": 7
+      }
+    ]
+  }
+}

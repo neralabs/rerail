@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "7e7c7cd146c00995cb6f43c63c744844c4af5dd7",
+    "path": "frontend/lib/src/components/widgets/MenuButton/MenuButton.tsx",
+    "license": "Apache-2.0",
+    "sha256": "591013cbb6f707c2ae0521fbf000c31abd8e21d168b35aa1876c4b3857b738aa"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": [
+      {
+        "line": 172,
+        "column": 18
+      }
+    ]
+  }
+}

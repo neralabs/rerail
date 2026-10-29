@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "08e1bbc04a0722e7fe79c194f42f9a890f56ee31",
+    "path": "www/src/examples/Modal/FullScreen.js",
+    "license": "MIT",
+    "sha256": "f7c55ab4d75ab44c10623f7add080541b8d6b1d2d3e65b72ba38fa9896b69ad2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 14,
+        "column": 22
+      }
+    ]
+  }
+}

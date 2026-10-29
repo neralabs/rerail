@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "OpenStackweb/osf-website",
+    "commit": "6a9a5b22ba1e9252f03aac952ef96cf3f91736c8",
+    "path": "src/components/MoreEventsSection/index.jsx",
+    "license": "MIT",
+    "sha256": "8720cf0c2b98f9a41c898493b187a40a1067872d5883232d8d7fe600d23d699b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

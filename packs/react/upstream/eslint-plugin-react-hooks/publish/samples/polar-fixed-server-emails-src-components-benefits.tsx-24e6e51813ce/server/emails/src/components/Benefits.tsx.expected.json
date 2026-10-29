@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "a2fa06755ded10d22500e629f1a4ec2bbbaa5e4f",
+    "path": "server/emails/src/components/Benefits.tsx",
+    "license": "Apache-2.0",
+    "sha256": "24e6e51813ce901ce6d52d735e3729c1fcfe60cbbbf0867ba5f6e980f32cd415"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-error-boundaries": []
+  }
+}

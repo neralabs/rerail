@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "1987f19d0a511eb8a7f27ab216df3eb20b4e5a1a",
+    "path": "apps/studio/components/layouts/Tabs/SortableTab.tsx",
+    "license": "Apache-2.0",
+    "sha256": "a52990ffbd92acfaf1d17a2651b491dda473f2d12994ae46e96b78e5ff961fe8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": [
+      {
+        "line": 114,
+        "column": 16
+      }
+    ]
+  }
+}

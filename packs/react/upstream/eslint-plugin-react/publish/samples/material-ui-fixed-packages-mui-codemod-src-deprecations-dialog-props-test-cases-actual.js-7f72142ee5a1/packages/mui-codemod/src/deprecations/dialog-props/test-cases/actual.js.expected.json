@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "29efc5bbdfe28d944c754d5be4a1c2761ec34f7a",
+    "path": "packages/mui-codemod/src/deprecations/dialog-props/test-cases/actual.js",
+    "license": "MIT",
+    "sha256": "7f72142ee5a1a966ddbc3750ca528ccea37ad89c5de2158d8f1fe779c3bacaca"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-undef": []
+  }
+}

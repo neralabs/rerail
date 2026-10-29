@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "2f6eef1fbff33c05ea3655fa4e6fa54ef5456aad",
+    "path": "www/src/theme/Playground/index.tsx",
+    "license": "MIT",
+    "sha256": "ce628158b3bb03f13ab3a15fcae70438d0280f7f162507f64732df9c03d370f6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 120,
+        "column": 10
+      },
+      {
+        "line": 134,
+        "column": 12
+      }
+    ]
+  }
+}

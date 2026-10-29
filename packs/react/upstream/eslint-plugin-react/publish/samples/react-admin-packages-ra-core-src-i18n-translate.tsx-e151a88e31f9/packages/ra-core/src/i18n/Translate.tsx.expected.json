@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "4930c17310b05285dca8e3667043b22619736659",
+    "path": "packages/ra-core/src/i18n/Translate.tsx",
+    "license": "MIT",
+    "sha256": "e151a88e31f96291947ad5d3043c503480a8643379c29c1e4f3e6d106bebf5ff"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 50,
+        "column": 42
+      },
+      {
+        "line": 54,
+        "column": 42
+      }
+    ]
+  }
+}

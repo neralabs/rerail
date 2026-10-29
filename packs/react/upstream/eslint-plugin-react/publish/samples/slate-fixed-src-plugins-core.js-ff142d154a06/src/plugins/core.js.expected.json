@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "2a5d3ee55611853e9a8e7339eabc84513ed53e3e",
+    "path": "src/plugins/core.js",
+    "license": "MIT",
+    "sha256": "ff142d154a06310d9f7d70fcee3be92293455775aa08654bb6bf8e6ec39c6e5e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

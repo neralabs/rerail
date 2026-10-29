@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "0b857f875f4e89a04cf44b191bc1b200a6bcd7ce",
+    "path": "packages/docs-theme/src/components/banner.tsx",
+    "license": "Apache-2.0",
+    "sha256": "5951573ae3a6377f77626850323e702ee42c5aea5f4d8b2f113bd3d75df11dae"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": []
+  }
+}

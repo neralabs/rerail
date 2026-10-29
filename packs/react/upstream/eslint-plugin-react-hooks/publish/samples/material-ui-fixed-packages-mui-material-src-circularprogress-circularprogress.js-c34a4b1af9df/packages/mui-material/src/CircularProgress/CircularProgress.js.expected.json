@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "85f22f528ff6946257e7fd013e0d6d29e4ca1e90",
+    "path": "packages/mui-material/src/CircularProgress/CircularProgress.js",
+    "license": "MIT",
+    "sha256": "c34a4b1af9df06f1f4198f255da47a5488ee7d3088a6df88486661df8fa2abda"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": []
+  }
+}

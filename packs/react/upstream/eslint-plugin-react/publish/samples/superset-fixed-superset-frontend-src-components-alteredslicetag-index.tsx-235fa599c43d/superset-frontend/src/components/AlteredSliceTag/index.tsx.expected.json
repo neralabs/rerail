@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "827864b939dc69d88e6f3284deb170cafd3dcdf5",
+    "path": "superset-frontend/src/components/AlteredSliceTag/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "235fa599c43d38825b3a21441c8621c5f8980c3daf37818516e877715893ecc1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unsafe": []
+  }
+}

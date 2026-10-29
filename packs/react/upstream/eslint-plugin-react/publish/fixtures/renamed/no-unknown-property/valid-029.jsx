@@ -1,0 +1,1 @@
+<img onError={jao} onLoad={lvm} />

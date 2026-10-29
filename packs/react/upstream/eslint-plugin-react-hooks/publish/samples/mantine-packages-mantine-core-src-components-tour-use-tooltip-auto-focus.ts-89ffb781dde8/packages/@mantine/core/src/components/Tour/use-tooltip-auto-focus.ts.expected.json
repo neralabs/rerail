@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "19434360d6da7c8e41fb884bd3c502c717f0cb4e",
+    "path": "packages/@mantine/core/src/components/Tour/use-tooltip-auto-focus.ts",
+    "license": "MIT",
+    "sha256": "89ffb781dde85c069c7aa062808272dc5e7e34216ee91379ee8bbf41f1f22159"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": [
+      {
+        "line": 27,
+        "column": 6
+      }
+    ]
+  }
+}

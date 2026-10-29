@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "b99c420f9ff421c8448b9b38c0845f2375cd6566",
+    "path": "packages/@react-aria/combobox/src/useComboBox.ts",
+    "license": "Apache-2.0",
+    "sha256": "11a34a9752e4c6fa354c79847c7aa4c5ac8ad8934963ee99eace288df73ea24e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "cc1fe5800950d592c186ac484e4921013a710d8a",
+    "path": "frontend/src/elements/Text.tsx",
+    "license": "Apache-2.0",
+    "sha256": "2e553bfccfae89f7cd2adf37fbc35a414a6ff1b0a88cb29861739482ca8f5ff0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": [
+      {
+        "line": 33,
+        "column": 3
+      }
+    ]
+  }
+}

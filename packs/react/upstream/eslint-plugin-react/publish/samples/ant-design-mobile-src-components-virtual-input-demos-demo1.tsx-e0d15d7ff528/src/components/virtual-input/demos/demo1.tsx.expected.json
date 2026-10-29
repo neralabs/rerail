@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design-mobile",
+    "commit": "5e063e87d8cd06ce047d0be5bfd9a6922dc805e5",
+    "path": "src/components/virtual-input/demos/demo1.tsx",
+    "license": "MIT",
+    "sha256": "e0d15d7ff528adb9d13e9f1960dce24e56114df533e435e898b9d252d4ea23ff"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": [
+      {
+        "line": 68,
+        "column": 7
+      }
+    ]
+  }
+}

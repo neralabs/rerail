@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "5ffd60e7b07b19cde6fab36a911503276c83715f",
+    "path": "packages/tinacms/src/rich-text/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "eb2a06e9d6f8465a5239c492f782f62515625c4830714a497190da5f33ecf09f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": [
+      {
+        "line": 256,
+        "column": 14
+      },
+      {
+        "line": 284,
+        "column": 14
+      }
+    ]
+  }
+}

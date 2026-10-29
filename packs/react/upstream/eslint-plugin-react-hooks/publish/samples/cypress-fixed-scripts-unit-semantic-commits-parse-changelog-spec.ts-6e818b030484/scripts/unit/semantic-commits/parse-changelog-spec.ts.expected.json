@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "cypress-io/cypress",
+    "commit": "c6bb9189bc7ff75f9cb0b408e89e5721c15b6a26",
+    "path": "scripts/unit/semantic-commits/parse-changelog-spec.ts",
+    "license": "MIT",
+    "sha256": "6e818b030484a6e0b2bc6cc581ef7e46c67d901e2c6b3e13044d0c01ce33ca85"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}

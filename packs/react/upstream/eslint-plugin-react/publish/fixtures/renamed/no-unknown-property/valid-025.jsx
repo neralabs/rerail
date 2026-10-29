@@ -1,0 +1,1 @@
+<symbol fill="#6B26X2"></symbol>

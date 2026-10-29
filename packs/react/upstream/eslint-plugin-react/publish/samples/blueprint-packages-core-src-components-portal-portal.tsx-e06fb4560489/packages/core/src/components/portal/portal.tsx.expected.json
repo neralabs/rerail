@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "a1e8ddb238cd9f378d713bac8dea8f6ae227eeae",
+    "path": "packages/core/src/components/portal/portal.tsx",
+    "license": "Apache-2.0",
+    "sha256": "e06fb4560489e4f1bb42c716ad39caf42fe08825b5e3bdc5d42820c151ad18d2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 67,
+        "column": 9
+      }
+    ]
+  }
+}

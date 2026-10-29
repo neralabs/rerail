@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "a17bde42bc19f2c787dc4fc6680946850a07fe88",
+    "path": "src/components/common/Checkboard.jsx",
+    "license": "MIT",
+    "sha256": "45208a06e13f107530c36fe2f5e2b02b2e736e4f6f3736911b0a98286cdc0d04"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": [
+      {
+        "line": 64,
+        "column": 5
+      }
+    ]
+  }
+}

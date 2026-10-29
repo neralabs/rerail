@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "d92e8e0aa2d36410d186899afc76fcf06e4cfda6",
+    "path": "packages/ra-core/src/util/useDebouncedEvent.spec.tsx",
+    "license": "MIT",
+    "sha256": "a8d96696a79d80f748a3cf02e06a77f60cac3b9837d76c6c68da054d672039f9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": [
+      {
+        "line": 15,
+        "column": 13
+      },
+      {
+        "line": 16,
+        "column": 13
+      },
+      {
+        "line": 17,
+        "column": 13
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "6855a5328b9349f6b4f8bdb45cbde960586543f5",
+    "path": "packages/react-aria-components/stories/index.stories.tsx",
+    "license": "Apache-2.0",
+    "sha256": "25e0545006c2aef29b9951f7a66584e638ed463eed4e3121492a82171592d929"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": [
+      {
+        "line": 1243,
+        "column": 7
+      }
+    ]
+  }
+}

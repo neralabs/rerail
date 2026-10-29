@@ -1,0 +1,1 @@
+<img onError={foo} onLoad={bar} />

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "26476e287da466721a4e353009794ae895d98893",
+    "path": "components/form/FormList.tsx",
+    "license": "MIT",
+    "sha256": "b767652d5fa30d036d2be1eef20e5a60c4711125f003dda60f85a4a85e5753df"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 39,
+        "column": 21
+      }
+    ]
+  }
+}

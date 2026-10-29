@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "85327d3b86c911d06ad2b6ea0648ec82a5c7a2c9",
+    "path": "www/plugins/gatsby-plugin-sorted-assets/gatsby-ssr.js",
+    "license": "MIT",
+    "sha256": "0e0a387c08b913647e690b52930e38308cbe1c43cf24c6c4ffd596269b69fd58"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 37,
+        "column": 13
+      }
+    ]
+  }
+}

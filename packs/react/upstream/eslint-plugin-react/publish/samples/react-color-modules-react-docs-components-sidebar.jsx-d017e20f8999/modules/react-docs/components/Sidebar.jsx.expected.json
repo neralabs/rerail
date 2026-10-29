@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "75f6356d0546d55f553a1564c04adf5cb5202d57",
+    "path": "modules/react-docs/components/Sidebar.jsx",
+    "license": "MIT",
+    "sha256": "d017e20f899906964b055c273c99a8ca0504649456a04e5f30b01d3f6d1e577a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 72,
+        "column": 11
+      }
+    ]
+  }
+}

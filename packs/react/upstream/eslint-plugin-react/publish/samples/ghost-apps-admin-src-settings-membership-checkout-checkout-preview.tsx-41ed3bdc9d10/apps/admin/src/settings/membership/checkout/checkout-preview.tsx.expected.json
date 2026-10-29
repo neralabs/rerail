@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "ae92668205e9769391bf5f4299e8c23dd7e47de4",
+    "path": "apps/admin/src/settings/membership/checkout/checkout-preview.tsx",
+    "license": "MIT",
+    "sha256": "41ed3bdc9d10d2de6f448c67a7180636333a19f167504c811c4837b75daa878c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 132,
+        "column": 30
+      }
+    ]
+  }
+}

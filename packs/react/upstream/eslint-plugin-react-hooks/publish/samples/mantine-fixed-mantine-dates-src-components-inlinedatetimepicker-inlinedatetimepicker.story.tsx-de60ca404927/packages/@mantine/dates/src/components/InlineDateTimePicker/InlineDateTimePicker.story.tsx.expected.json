@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "bdc86b3d3dcbe5e6cc945b94065659e0f922a56c",
+    "path": "packages/@mantine/dates/src/components/InlineDateTimePicker/InlineDateTimePicker.story.tsx",
+    "license": "MIT",
+    "sha256": "de60ca404927c32cb8baad6c728ea46cffd1d952f68ea20bfae8fb7432125e9f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

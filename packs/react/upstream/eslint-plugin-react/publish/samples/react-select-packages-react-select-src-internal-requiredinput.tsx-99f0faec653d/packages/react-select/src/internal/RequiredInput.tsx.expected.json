@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "c37e86d8eaa3f6eba83696453a58d525cce6c7c6",
+    "path": "packages/react-select/src/internal/RequiredInput.tsx",
+    "license": "MIT",
+    "sha256": "99f0faec653d59200597498096429d2932cd11411e9323788b939092b5483680"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": [
+      {
+        "line": 14,
+        "column": 5
+      }
+    ]
+  }
+}

@@ -1,0 +1,1752 @@
+# Licensing of the staged samples only; never archived (scripts/samples/pack.ts).
+version = 1
+
+[[annotations]]
+path = "LICENSES.md"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "ant-design-components-border-beam-hooks-usebordersize.ts-1811eadf5ac2/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-components-form-form.tsx-7cd6fcbf8c1b/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-components-form-formlist.tsx-b767652d5fa3/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-components-message-usemessage.tsx-04296c5510e5/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-components-transfer-section.tsx-da3e9c20a823/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-components-upload-upload.tsx-1d3544614a11/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-dumi-pages-index-components-previewpane-components.tsx-734a9d8f21f0/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-dumi-theme-common-codepreview.tsx-8bbf84eb2f8f/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-fixed-components-border-beam-hooks-usebordersize.ts-32cfddcb2f65/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-fixed-components-form-formlist.tsx-b652b2abc8eb/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-fixed-components-transfer-section.tsx-14deff33fa9e/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ant-design-fixed-dumi-pages-index-components-previewpane-components.tsx-695711b21dcb/**"
+SPDX-FileCopyrightText = "ant-design/ant-design contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "appsmith-app-client-src-components-editorcomponents-debugger-logitem-logitem.tsx-ffd4fab3b36b/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-app-client-src-pages-editor-canvas.tsx-6f06122313b1/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-app-client-src-pages-editor-helpbutton.tsx-340292b80ab5/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-app-client-src-sagas-superusersagas.tsx-a09489d5a409/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-app-client-src-widgets-tablewidgetv2-component-cellcomponents-headercell.tsx-9adcda3fc020/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-components-editorcomponents-debugger-logitem-logitem.tsx-3ceef7cd7206/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-pages-editor-canvas.tsx-4ea5282ff28e/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-pages-editor-helpbutton.tsx-9e391c53f28a/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-sagas-superusersagas.tsx-d2d5b2960998/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-widgets-tablewidgetv2-component-cellcomponents-headercell.tsx-384a4d052ebc/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-widgets-tablewidgetv2-component-cellcomponents-headercell.tsx-58b98e790d15/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-app-client-src-widgets-tablewidgetv2-component-cellcomponents-headercell.tsx-66c015332274/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-fixed-idgetv2-component-virtualtable-inifinitescrollbody-useinfinitevirtualization.tsx-f5fbb8d3d949/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "appsmith-idgetv2-component-virtualtable-inifinitescrollbody-useinfinitevirtualization.tsx-d9698831ac0d/**"
+SPDX-FileCopyrightText = "appsmithorg/appsmith contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-core-src-components-collapse-collapse.tsx-1bd15cf13dda/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-core-src-components-collapse-collapse.tsx-e1a5057ac9e5/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-core-src-components-context-menu-contextmenupopover.tsx-9332bf6501de/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-core-src-components-panel-stack2-panelview2.tsx-769e86db6cf8/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-datetime-src-components-react-day-picker-datepicker3caption.tsx-abc82e6e1719/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-datetime2-src-components-date-input3-dateinput3.tsx-8db934d06123/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-fixed-packages-docs-app-src-components-iconsnext.tsx-dbe161aee884/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-packages-core-src-components-collapse-collapse.tsx-6a61ba86991f/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-packages-core-src-components-context-menu-contextmenupopover.tsx-ee55ce348980/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-packages-core-src-components-panel-stack2-panelview2.tsx-2348627702c0/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-packages-datetime-src-components-react-day-picker-datepicker3caption.tsx-e7292a1216fd/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-packages-datetime2-src-components-date-input3-dateinput3.tsx-6d5bfcc8d57d/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "blueprint-packages-docs-app-src-components-iconsnext.tsx-80221145a274/**"
+SPDX-FileCopyrightText = "palantir/blueprint contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "chakra-ui-apps-compositions-src-ui-floating-panel.tsx-cfe513c07bdb/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-apps-www-components-component-preview.tsx-0fc6d00f58e5/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-apps-www-components-mdx-content.tsx-6820dde3e61a/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-apps-www-lib-use-scroll-spy.tsx-29d7c560d39b/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-apps-compositions-src-ui-floating-panel.tsx-a60e84ec55d0/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-apps-compositions-src-ui-floating-panel.tsx-f2ea64857532/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-apps-www-components-component-preview.tsx-eb13dddab60f/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-apps-www-components-mdx-content.tsx-62a6cfe3903d/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-apps-www-lib-use-scroll-spy.tsx-b41979eb0b81/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-sandbox-shadow-dom-src-components-ui-provider.tsx-1fb624f64299/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-fixed-tooling-storybook-addon-src-chakraproviderdecorator.tsx-31f52836fa9a/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-sandbox-shadow-dom-src-components-ui-provider.tsx-3055756e7658/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "chakra-ui-tooling-storybook-addon-src-chakraproviderdecorator.tsx-612805f2f86f/**"
+SPDX-FileCopyrightText = "chakra-ui/chakra-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-fixed-scripts-unit-semantic-commits-parse-changelog-spec.ts-6e818b030484/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "cypress-scripts-unit-semantic-commits-parse-changelog-spec.ts-0082cc301389/**"
+SPDX-FileCopyrightText = "cypress-io/cypress contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-fixed-packages-docusaurus-theme-classic-src-theme-admonition-index.tsx-752b82649786/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-fixed-packages-docusaurus-theme-classic-src-theme-codeblock-line-index.tsx-12ecbcf05438/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-fixed-packages-docusaurus-theme-classic-src-theme-navbaritem-index.tsx-8a2645b80994/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-fixed-packages-docusaurus-theme-mermaid-src-client-index.ts-87d2efce2155/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-fixed-packages-docusaurus-theme-mermaid-src-client-index.ts-94232cb93678/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-fixed-website-src-plugins-featurerequests-featurerequestspage.tsx-215fe57e2d79/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-packages-docusaurus-theme-classic-src-theme-admonition-index.tsx-0c47c4be1ca1/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-packages-docusaurus-theme-classic-src-theme-codeblock-line-index.tsx-7f331a84cd9b/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-packages-docusaurus-theme-classic-src-theme-navbaritem-index.tsx-9d9126f203c8/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-packages-docusaurus-theme-mermaid-src-client-index.ts-15ccdb425709/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-packages-docusaurus-theme-mermaid-src-client-index.ts-b7480eeef47a/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "docusaurus-website-src-plugins-featurerequests-featurerequestspage.tsx-8acb49ba5663/**"
+SPDX-FileCopyrightText = "facebook/docusaurus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-fixed-packages-excalidraw-components-colorpicker-toppicksdnd.tsx-1f4d24f2b7a2/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-fixed-packages-excalidraw-components-colorpicker-toppicksdnd.tsx-be21fedc2bb4/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-fixed-packages-excalidraw-components-pastechartdialog.tsx-195febd8186d/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-fixed-packages-excalidraw-components-ttddialog-hooks-usetextgeneration.ts-b1b017391f05/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-fixed-packages-excalidraw-components-ttddialog-hooks-usetextgeneration.ts-c236068d1191/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-fixed-src-components-sidebar-sidebarheader.tsx-d40556917148/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-colorpicker-toppicksdnd.tsx-0bd0bcca25ac/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-pastechartdialog.tsx-cad7a57701c1/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-packages-excalidraw-components-ttddialog-hooks-usetextgeneration.ts-08819d468d6c/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "excalidraw-src-components-sidebar-sidebarheader.tsx-cab96139732d/**"
+SPDX-FileCopyrightText = "excalidraw/excalidraw contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-e2e-tests-production-runtime-src-pages-query-params.js-77d6c56e2dff/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-e2e-tests-production-runtime-src-pages-query-params.js-c5eec43c4f56/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-e2e-tests-production-runtime-src-pages-query-params.js-ca320a1c98ce/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-packages-gatsby-cache-dir-fast-refresh-overlay-components-runtime-errors.js-6587d4d02fd2/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-packages-gatsby-cache-dir-head-components-head-components.js-28537b807f77/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-packages-gatsby-cache-dir-static-query.js-e50aa7b2fde6/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-packages-gatsby-graphiql-explorer-src-code-exporter-plugin.jsx-3cb7ea243f9a/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-fixed-packages-gatsby-plugin-gatsby-cloud-src-utils-usecookie.js-13f5b45c6154/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-packages-gatsby-cache-dir-fast-refresh-overlay-components-runtime-errors.js-393157c84847/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-packages-gatsby-cache-dir-head-components-head-components.js-b1313869ef07/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-packages-gatsby-cache-dir-static-query.js-57ab109bed51/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-packages-gatsby-graphiql-explorer-src-code-exporter-plugin.jsx-8cba381cff03/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "gatsby-packages-gatsby-plugin-gatsby-cloud-src-utils-usecookie.js-0c05bb3b2a87/**"
+SPDX-FileCopyrightText = "gatsbyjs/gatsby contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-apps-components-app-icon.tsx-968d61fbdc1c/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-automations-components-canvas-editable-email-card.tsx-1d5af0807a5e/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-editor-settings-meta-data-tabs-section.tsx-f7f39ee468ab/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-editor-settings-publish-date-section.tsx-bd94f671f37a/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-hooks-use-unsaved-changes-guard.test.tsx-465fd151c487/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-settings-general-ghost-updates-ghost-updates.tsx-0bc8a3da656d/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-admin-src-settings-layout-app.tsx-d887081685a9/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-portal-src-components-common-member-custom-fields.tsx-d887c6546597/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-shade-src-components-ui-floating-sidebar.tsx-64b92b14c4e4/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-apps-shade-src-components-ui-icon.stories.tsx-4135068094a7/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-apps-components-app-icon.tsx-20432f27ec09/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-automations-components-canvas-editable-email-card.tsx-3bd8aaa353e4/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-editor-settings-meta-data-tabs-section.tsx-ae79058031c2/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-editor-settings-publish-date-section.tsx-39da809761ba/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-hooks-use-unsaved-changes-guard.test.tsx-87027f72a6e5/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-settings-general-ghost-updates-ghost-updates.tsx-cb5364e385a7/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-admin-src-settings-layout-app.tsx-3c7fa972b413/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-portal-src-components-common-member-custom-fields.tsx-0f3428538367/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-shade-src-components-ui-floating-sidebar.tsx-6a2233daa7dc/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-apps-shade-src-components-ui-floating-sidebar.tsx-af56306b92b7/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-fixed-ghost-core-core-server-services-content-import-import-relations.ts-7b8c47500842/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-ghost-core-core-server-services-content-import-import-relations.ts-125fbc1f8f25/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ghost-koenig-koenig-lexical-src-components-ui-cards-embedcard.tsx-5bdd0bef707c/**"
+SPDX-FileCopyrightText = "TryGhost/Ghost contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-fixed-packages-auth-src-authprovider.tsx-78e153679459/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-fixed-packages-router-src-router.tsx-d0fde0301313/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-fixed-packages-router-src-set.tsx-38a4142a3847/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-fixed-packages-vite-src-clientrouter.tsx-931fe79e1a25/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-packages-auth-src-authprovider.tsx-c14f893904fd/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-packages-router-src-router.tsx-03aaef38cb7b/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-packages-router-src-set.tsx-281d13a4b7f0/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "graphql-packages-vite-src-clientrouter.tsx-6bae2638d31c/**"
+SPDX-FileCopyrightText = "redwoodjs/graphql contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "jitsi-meet-fixed-react-features-chat-components-web-chat.tsx-872cc399ac62/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-fixed-react-features-chat-components-web-chatheader.tsx-fb489c36c5c6/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-fixed-react-features-settings-components-native-moderatorsection.tsx-28d67f98fadc/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-fixed-react-features-voice-agents-components-voiceagentconsentdialog.native.tsx-6137abdd0a04/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-react-features-chat-components-web-chat.tsx-a4331d457b17/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-react-features-chat-components-web-chatheader.tsx-118375f39bee/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-react-features-settings-components-native-moderatorsection.tsx-77e4d3969089/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "jitsi-meet-react-features-voice-agents-components-voiceagentconsentdialog.native.tsx-2616cc867ade/**"
+SPDX-FileCopyrightText = "jitsi/jitsi-meet contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "legend-list-fixed-src-state.tsx-3a2b86565200/**"
+SPDX-FileCopyrightText = "LegendApp/legend-list contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "legend-list-src-state.tsx-d56c37a0ae60/**"
+SPDX-FileCopyrightText = "LegendApp/legend-list contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "lepton-app-utilities-markdown-index.js-38538a07e157/**"
+SPDX-FileCopyrightText = "hackjutsu/Lepton contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "lepton-fixed-app-utilities-markdown-index.js-851d27754c5b/**"
+SPDX-FileCopyrightText = "hackjutsu/Lepton contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-mantine-dates-src-components-inlinedatetimepicker-inlinedatetimepicker.story.tsx-de60ca404927/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-core-src-components-collapse-collapse.story.tsx-7c2660eca331/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-core-src-components-tooltip-use-tooltip.ts-1d3bfc482182/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-core-src-components-tour-use-tooltip-auto-focus.ts-9ae807f24577/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-core-src-components-tour-use-tour-state.ts-6e7b19efc4ee/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-hooks-src-use-map-use-map.ts-55a9f1ff7535/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-hooks-src-use-splitter-use-splitter.test.tsx-b5636daf85b3/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-fixed-packages-mantine-schedule-src-hooks-use-drag-drop-handlers.ts-bc1e2aa1abe9/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-mantine-dates-src-components-inlinedatetimepicker-inlinedatetimepicker.story.tsx-cf32014e9773/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-core-src-components-collapse-collapse.story.tsx-51e9ec80a556/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-core-src-components-tooltip-use-tooltip.ts-ace950c94fc5/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-core-src-components-tour-use-tooltip-auto-focus.ts-89ffb781dde8/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-core-src-components-tour-use-tour-state.ts-a67ce43c152f/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-hooks-src-use-map-use-map.ts-649711bdf560/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-hooks-src-use-splitter-use-splitter.test.tsx-0a0a264094c2/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "mantine-packages-mantine-schedule-src-hooks-use-drag-drop-handlers.ts-9d0743176528/**"
+SPDX-FileCopyrightText = "mantinedev/mantine contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-internal-core-docs-src-applayout-components-appsearch.tsx-f2a45f9fd4a8/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-codemod-src-deprecations-autocomplete-props-test-cases-actual.js-d3729d0a1053/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-docs-src-ad-ad.tsx-9f402f2a0b1f/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-material-src-autocomplete-autocomplete.js-0fb08838d483/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-material-src-circularprogress-circularprogress.js-c34a4b1af9df/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-material-src-styles-cssvarsprovider.tsx-34cc4de82bb1/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-material-src-useautocomplete-useautocomplete.spec.ts-0f642f8b44f0/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-system-src-themeprovider-themeprovider.test.js-4e4e254642f0/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-utils-src-userovingtabindex-userovingtabindex.test.tsx-01ba4af9496d/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-fixed-packages-mui-utils-src-usevalueasref-usevalueasref.ts-6edf2fc7abbb/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-internal-core-docs-src-applayout-components-appframebanner.tsx-aad9cfa623b6/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-internal-core-docs-src-applayout-components-appsearch.tsx-8c8597cc1e7a/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-codemod-src-deprecations-autocomplete-props-test-cases-actual.js-a5599cf85025/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-docs-src-ad-ad.tsx-7b6b94ea1d02/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-material-src-autocomplete-autocomplete.js-0f69b0158406/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-material-src-circularprogress-circularprogress.js-895c79b483f6/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-material-src-styles-cssvarsprovider.tsx-52ba46b6dd2b/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-material-src-useautocomplete-useautocomplete.spec.ts-68373ce6bca4/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-system-src-themeprovider-themeprovider.test.js-fb916627f223/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-utils-src-userovingtabindex-userovingtabindex.test.tsx-5e8993316bbb/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "material-ui-packages-mui-utils-src-usevalueasref-usevalueasref.ts-9bb76b1cd401/**"
+SPDX-FileCopyrightText = "mui/material-ui contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-ages-next-src-next-devtools-dev-overlay-container-runtime-error-render-error.tsx-2c4492130f3f/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-fixed-test-development-dev-indicator-app-app-static-indicator-gated-client-client.tsx-7fda63da52e9/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-fixed-test-e2e-app-dir-segment-cache-prefetch-fallback-static-app-page.tsx-94f18ba959b9/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-fixed-test-e2e-app-dir-use-cache-deadlock-probe-app-also-hangs-page.tsx-dbb40ddbd476/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-fixed-test-e2e-app-dir-use-cache-hanging-app-runtime-page.tsx-6907ab16cdec/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-fixed-test-production-app-dir-use-cache-non-deterministic-args-app-slug-page.tsx-737973473070/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-test-development-dev-indicator-app-app-static-indicator-gated-client-client.tsx-3054095fa7fa/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-test-e2e-app-dir-segment-cache-prefetch-fallback-static-app-page.tsx-f2e663a8b2b4/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-test-e2e-app-dir-use-cache-deadlock-probe-app-also-hangs-page.tsx-e001d5264167/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-test-e2e-app-dir-use-cache-hanging-app-runtime-page.tsx-ffce9b31a654/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "next.js-test-production-app-dir-use-cache-non-deterministic-args-app-slug-page.tsx-2d86ef70e287/**"
+SPDX-FileCopyrightText = "vercel/next.js contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-fixed-packages-perseus-editor-src-preview-use-preview-presenter.ts-8a2198ade0d5/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-fixed-packages-perseus-editor-src-preview-use-preview-presenter.ts-bc0b81a28887/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-fixed-packages-perseus-src-components-drag-and-drop-answer-tile-answer-tile.test.tsx-747d647630fb/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-fixed-packages-perseus-src-widgets-graded-group-graded-group-answer-bar.tsx-f6d9a931fac0/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-fixed-testing-debug-accordion-ui.tsx-4870a80da84d/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-packages-perseus-editor-src-preview-use-preview-presenter.ts-13c04fd801b4/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-packages-perseus-src-components-drag-and-drop-answer-tile-answer-tile.test.tsx-c40384d07d2d/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-packages-perseus-src-widgets-expression-expression.tsx-521666cf3aaa/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-packages-perseus-src-widgets-graded-group-graded-group-answer-bar.tsx-3027248a4f54/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-packages-perseus-src-widgets-interactive-graphs-locked-line.tsx-e77efa6d94b6/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "perseus-testing-debug-accordion-ui.tsx-818c6077337f/**"
+SPDX-FileCopyrightText = "Khan/perseus contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "polar-clients-apps-app-app-authenticated-notifications-index.tsx-c3d0fc91b48d/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-e2e-utils-test.ts-e9cb20398534/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-src-app-main-auth-backup-codes-verifypage.tsx-4e995abe762d/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-src-app-main-docs-og-route.tsx-71cf3f772910/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-src-components-benefit-benefitgrant.tsx-47f93513c55e/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-src-components-organization-aivalidationresult.tsx-074e381844f2/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-src-components-products-benefits-benefitsearchcomplex.tsx-2f5a9204276c/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-clients-apps-web-src-components-products-productform-unitamountinput.tsx-239eb04c442e/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-clients-apps-app-app-authenticated-notifications-index.tsx-4004200b0c62/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-clients-apps-web-e2e-utils-test.ts-942e427d8e30/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-clients-apps-web-src-app-main-auth-backup-codes-verifypage.tsx-f62fa585a65d/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-clients-apps-web-src-app-main-docs-og-route.tsx-73a1616f8daf/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-clients-apps-web-src-components-benefit-benefitgrant.tsx-2a7fba9fe387/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-clients-apps-web-src-components-organization-aivalidationresult.tsx-649e052b9298/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-fixed-server-emails-src-components-benefits.tsx-24e6e51813ce/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "polar-server-emails-src-components-benefits.tsx-f7fc2f1a680e/**"
+SPDX-FileCopyrightText = "polarsource/polar contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "primitives-fixed-packages-react-avatar-src-avatar.tsx-ff7f404ed99a/**"
+SPDX-FileCopyrightText = "radix-ui/primitives contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "primitives-packages-react-avatar-src-avatar.tsx-eccd085891f5/**"
+SPDX-FileCopyrightText = "radix-ui/primitives contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-core-src-dataprovider-usecreate.spec.tsx-18bf0f41d582/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-core-src-routing-adapters-tanstackrouterprovider.stories.tsx-55218a57bfa3/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-core-src-test-ui-notification.tsx-9f0eb791b4a0/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-core-src-util-usedebouncedevent.ts-fb9260f81dcd/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-router-tanstack-src-tanstackrouterprovider.stories.tsx-4ee3f14d9141/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-router-tanstack-src-tanstackrouterprovider.tsx-06aa65cd37dd/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-fixed-packages-ra-router-tanstack-src-tanstackrouterprovider.tsx-6924e0e883e6/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-core-src-dataprovider-usecreate.spec.tsx-1925de3978af/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-core-src-routing-adapters-tanstackrouterprovider.stories.tsx-fe4260823c60/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-core-src-test-ui-notification.tsx-16501015a11f/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-core-src-util-usedebouncedevent.ts-b2a6256ec40c/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-router-tanstack-src-tanstackrouterprovider.stories.tsx-b01e6e5f6102/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-router-tanstack-src-tanstackrouterprovider.tsx-0b13519bd941/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-admin-packages-ra-router-tanstack-src-tanstackrouterprovider.tsx-d514087dc913/**"
+SPDX-FileCopyrightText = "marmelab/react-admin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-fixed-src-offcanvas.tsx-d882a28e569b/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-fixed-src-usecol.ts-a1c4a7a94b04/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-fixed-www-src-components-carbonads.js-6eed768245d5/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-fixed-www-src-theme-playground-index.tsx-d4af8cf37991/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-src-offcanvas.tsx-8dda6025b726/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-src-usecol.ts-a0135036773b/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-www-src-components-carbonads.js-c9119dbc2636/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-bootstrap-www-src-theme-playground-index.tsx-e3e86c768d50/**"
+SPDX-FileCopyrightText = "react-bootstrap/react-bootstrap contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-color-fixed-src-components-google-googlefields.js-e4b7a9690534/**"
+SPDX-FileCopyrightText = "casesandberg/react-color contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-color-src-components-google-googlefields.js-4404bd30ce89/**"
+SPDX-FileCopyrightText = "casesandberg/react-color contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-fixed-packages-core-react-dnd-src-hooks-internal-usecollector.ts-4e7e4c1f7446/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-fixed-packages-react-dnd-src-hooks-usedrag-usedragsource.ts-7e3a63dadb44/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-fixed-packages-react-dnd-src-hooks-usedrag.ts-bd64479f65de/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-packages-core-react-dnd-src-hooks-internal-usecollector.ts-052eb3120fac/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-packages-react-dnd-src-hooks-usedrag-usedragsource.ts-e42d109e8fd3/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-packages-react-dnd-src-hooks-usedrag-usedragsourceconnector.ts-610ec9aac6e6/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-dnd-packages-react-dnd-src-hooks-usedrag.ts-88b6d3a24018/**"
+SPDX-FileCopyrightText = "react-dnd/react-dnd contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-native-ui-kitten-fixed-src-components-theme-style-style.service.tsx-69bc36d11eac/**"
+SPDX-FileCopyrightText = "akveo/react-native-ui-kitten contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-native-ui-kitten-fixed-website-stories-tab.stories.tsx-5683f9250417/**"
+SPDX-FileCopyrightText = "akveo/react-native-ui-kitten contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-native-ui-kitten-src-components-theme-style-style.service.tsx-a09a6091fbb4/**"
+SPDX-FileCopyrightText = "akveo/react-native-ui-kitten contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-native-ui-kitten-website-stories-tab.stories.tsx-da795a1d67ad/**"
+SPDX-FileCopyrightText = "akveo/react-native-ui-kitten contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-fixed-packages-react-router-dom-lib.tsx-30682f95981d/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-fixed-packages-react-router-dom-ssr-browser.tsx-a16fcd0694e7/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-fixed-packages-react-router-dom-ssr-scroll-restoration.tsx-88ad1589e02e/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-fixed-packages-react-router-lib-components.tsx-0610706b6112/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-fixed-packages-react-router-lib-dom-export-hydrated-router.tsx-8244628dddc5/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-fixed-packages-react-router-lib-dom-ssr-route-discovery.ts-57c61c640aac/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-packages-react-router-dom-lib.tsx-b551c8c12f70/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-packages-react-router-dom-ssr-browser.tsx-f4ff00eb735f/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-packages-react-router-dom-ssr-scroll-restoration.tsx-30ca2b638121/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-packages-react-router-lib-components.tsx-afb99fce21c7/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-packages-react-router-lib-dom-export-hydrated-router.tsx-cb0b3fd024dd/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-router-packages-react-router-lib-dom-ssr-route-discovery.ts-328b12c9ac33/**"
+SPDX-FileCopyrightText = "remix-run/react-router contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-fixed-packages-react-select-src-animated-valuecontainer.tsx-68e96dd89637/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-fixed-packages-react-select-src-components-menu.tsx-6180f79e0d69/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-fixed-packages-react-select-src-useasync.ts-6c84cf67d5a9/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-packages-react-select-src-animated-valuecontainer.tsx-51986925be46/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-packages-react-select-src-components-menu.tsx-821a49885bc3/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-packages-react-select-src-useasync.ts-9d53f0ede8f6/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-select-packages-react-select-src-useasync.ts-cb8d253045eb/**"
+SPDX-FileCopyrightText = "JedWatson/react-select contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "react-spectrum-examples-s2-webpack-5-typescript-example-src-components-cardviewexample.tsx-0f0376a86238/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-examples-s2-webpack-5-typescript-example-src-components-cardviewexample.tsx-885d847c72f9/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-dev-s2-docs-pages-react-aria-blog-sheettimelinedemo.tsx-252bcd19246a/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-dev-s2-docs-src-componentcard.tsx-3239243fba5d/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-dev-s2-docs-src-header.tsx-ce33e2540214/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-react-aria-components-src-modal.tsx-9fc769403db7/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-react-aria-components-src-table.tsx-cb982e0605df/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-react-spectrum-ai-src-usevoiceinput.ts-06f612981f87/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-react-spectrum-ai-src-usevoiceinput.ts-3e3cd64f94d4/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-fixed-packages-react-spectrum-s2-stories-shadowdom.stories.tsx-81d7a4f2549f/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-adobe-react-spectrum-src-card-cardbase.tsx-1a92cbd253a6/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-dev-s2-docs-pages-react-aria-blog-sheettimelinedemo.tsx-ca100836d1b0/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-dev-s2-docs-src-componentcard.tsx-5eedba5c861f/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-dev-s2-docs-src-header.tsx-396498c614ac/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-react-aria-combobox-src-usecombobox.ts-11a34a9752e4/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-react-aria-components-src-gridlayout.ts-e9f1ec1391d8/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-react-aria-components-src-modal.tsx-f1231418ec32/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-react-aria-components-src-table.tsx-00de78be65d8/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-react-spectrum-ai-src-usevoiceinput.ts-91549941c384/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "react-spectrum-packages-react-spectrum-s2-stories-shadowdom.stories.tsx-63892992dca1/**"
+SPDX-FileCopyrightText = "adobe/react-spectrum contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "rin-client-src-components-markdown.tsx-1817c95b0e0f/**"
+SPDX-FileCopyrightText = "openRin/Rin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "rin-fixed-client-src-components-markdown.tsx-5340bc55a3b6/**"
+SPDX-FileCopyrightText = "openRin/Rin contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "saas-boilerplate-app-libs-webapp-api-client-src-hooks-usepaginatedquery-usepaginatedquery.hook.ts-128cfdb34f43/**"
+SPDX-FileCopyrightText = "apptension/saas-boilerplate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "saas-boilerplate-fixed-app-libs-webapp-api-client-src-hooks-usepaginatedquery-usepaginatedquery.hook.ts-976ed6ac9308/**"
+SPDX-FileCopyrightText = "apptension/saas-boilerplate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-ackages-slate-react-src-hooks-android-input-manager-use-android-input-manager.ts-eaa3bf1a884f/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-fixed-ackages-slate-react-src-hooks-android-input-manager-use-android-input-manager.ts-83a2db8be919/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-fixed-packages-slate-react-src-components-editable.tsx-0f62af71e2b6/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-fixed-packages-slate-react-src-components-leaf.tsx-6fa084c369ec/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-fixed-packages-slate-react-src-components-slate.tsx-27404c54500d/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-fixed-packages-slate-react-src-hooks-use-native-format-dom.ts-6430de585c40/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-packages-slate-react-src-components-editable.tsx-d08103e408cf/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-packages-slate-react-src-components-leaf.tsx-37d2429b5e90/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-packages-slate-react-src-components-slate.tsx-72e02dc13087/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "slate-packages-slate-react-src-hooks-use-native-format-dom.ts-2b7f8378d755/**"
+SPDX-FileCopyrightText = "ianstormtaylor/slate contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "streamlit-fixed-frontend-lib-src-components-elements-particles-particles.tsx-0b4fdde9e77c/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "streamlit-frontend-app-src-components-navigation-sidebarnav.tsx-6adab740ca39/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "streamlit-frontend-lib-src-components-core-maybe-maybe.test.tsx-d30aaaafdef7/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "streamlit-frontend-lib-src-components-elements-particles-particles.tsx-095386e53514/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "streamlit-frontend-lib-src-components-elements-particles-particles.tsx-8daa7059ca73/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "streamlit-frontend-lib-src-components-shared-tooltip-usetooltipmeasurementsideeffect.ts-fe2a43535657/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "streamlit-frontend-lib-src-components-widgets-dataframe-dataframe.tsx-25c859e7abbc/**"
+SPDX-FileCopyrightText = "streamlit/streamlit contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "styled-components-fixed-packages-benchmarks-src-cases-sierpinskitriangle.tsx-3b553b3eace3/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-fixed-packages-styled-components-src-models-stylesheetmanager.tsx-71247f1becb5/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-fixed-packages-styled-components-src-native-safearea.ts-38831fa27992/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-fixed-packages-styled-components-src-native-test-commit-order.test.tsx-57a66141acca/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-fixed-packages-styled-components-src-test-memo-tree.test.tsx-0fd7db4aed99/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-packages-benchmarks-src-cases-sierpinskitriangle.tsx-a56e859896d0/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-packages-styled-components-src-models-stylesheetmanager.tsx-64ec8f2adb2f/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-packages-styled-components-src-native-safearea.ts-7eb7b1e68eee/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-packages-styled-components-src-native-test-commit-order.test.tsx-aaa752787f15/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "styled-components-packages-styled-components-src-test-memo-tree.test.tsx-19474934ac38/**"
+SPDX-FileCopyrightText = "styled-components/styled-components contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "supabase-apps-studio-components-grid-hooks-usefilterlifecycle.navigation.test.tsx-b3008c444639/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-apps-studio-components-layouts-applayout-usestatusbanner.ts-d936918b49a5/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-apps-studio-components-layouts-tabs-sortabletab.tsx-a52990ffbd92/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-apps-www-components-contribute-unansweredthreads.tsx-151133526f08/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-fixed-apps-studio-components-grid-hooks-usefilterlifecycle.navigation.test.tsx-16de5ace6f39/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-fixed-apps-studio-components-layouts-applayout-usestatusbanner.ts-8e65d67d1ccf/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-fixed-apps-studio-components-layouts-tabs-sortabletab.tsx-4cc6765b3e8e/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-fixed-apps-www-components-contribute-unansweredthreads.tsx-44305f59abed/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-fixed-packages-ui-patterns-src-commandmenu-internal-commandmenuempty.tsx-068707a5ac87/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "supabase-packages-ui-patterns-src-commandmenu-internal-commandmenuempty.tsx-7d3927f57d3a/**"
+SPDX-FileCopyrightText = "supabase/supabase contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-d-plugins-plugin-chart-handlebars-src-components-handlebars-handlebarsviewer.tsx-73411a38f14d/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-d-plugins-plugin-chart-handlebars-src-components-handlebars-handlebarsviewer.tsx-5f77909eaeac/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-superset-frontend-src-components-datasource-components-collectiontable-index.tsx-019498c9fb5c/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-superset-frontend-src-components-datasource-components-collectiontable-index.tsx-12075b89354f/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-superset-frontend-src-explore-components-explorechartpanel-index.tsx-8dc9eb84f025/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-superset-frontend-src-filters-components-range-rangefilterplugin.tsx-9e921ce9756e/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-superset-frontend-src-sqllab-components-editorwrapper-usekeywords.ts-6dda0e1d996d/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-fixed-superset-frontend-src-sqllab-components-resultset-index.tsx-9c1c0f6b7306/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-set-frontend-plugins-plugin-chart-echarts-src-candlestick-echartscandlestick.tsx-04968f48f2d5/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-superset-frontend-packages-superset-core-src-theme-theme.tsx-32e0201ff5b3/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-superset-frontend-src-components-datasource-components-collectiontable-index.tsx-e556c297c61f/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-superset-frontend-src-explore-components-explorechartpanel-index.tsx-e5b58ab364f8/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-superset-frontend-src-filters-components-range-rangefilterplugin.tsx-7a4f7d5d5ff0/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-superset-frontend-src-sqllab-components-editorwrapper-usekeywords.ts-2c287d64f32d/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "superset-superset-frontend-src-sqllab-components-resultset-index.tsx-b8207da6b2e8/**"
+SPDX-FileCopyrightText = "apache/superset contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-fixed-packages-tinacms-src-admin-components-getcms.tsx-9514bab89edd/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-fixed-packages-tinacms-src-rich-text-index.tsx-3c7e05e4d4ef/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-fixed-packages-tinacms-src-rich-text-static.tsx-76909878c4be/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-fixed-packages-tinacms-src-toolkit-plugin-screens-global-form-plugin.test.tsx-3d872574c388/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-fixed-packages-v4-tinacms-tinacms-src-editor-provider.tsx-92856c9a3ca7/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-packages-tinacms-src-admin-components-getcms.tsx-928abfd7d03f/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-packages-tinacms-src-rich-text-index.tsx-cbbc715b0500/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-packages-tinacms-src-rich-text-static.tsx-01f10a41573e/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-packages-tinacms-src-toolkit-plugin-screens-global-form-plugin.test.tsx-724f9feff960/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "tinacms-packages-v4-tinacms-tinacms-src-editor-provider.tsx-8f846fcae5a4/**"
+SPDX-FileCopyrightText = "tinacms/tinacms contributors"
+SPDX-License-Identifier = "Apache-2.0"

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "e10aaa40fa522ef2b4ec8f8522e2d967d57561b4",
+    "path": "apps/admin/src/editor/settings/publish-date-section.tsx",
+    "license": "MIT",
+    "sha256": "bd94f671f37a9176ab42ebed7738387387e968d964cffcd555c9ffd200f88941"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": [
+      {
+        "line": 44,
+        "column": 85
+      }
+    ]
+  }
+}

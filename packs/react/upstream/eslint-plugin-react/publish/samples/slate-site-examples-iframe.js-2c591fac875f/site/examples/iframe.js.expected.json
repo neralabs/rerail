@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "513771c82ad3c464bee3c7e3b73bbce189c6cf6e",
+    "path": "site/examples/iframe.js",
+    "license": "MIT",
+    "sha256": "2c591fac875f81209557d20c259f5d0897ed7f141bd3d04cb1fdfbf52e89b7cf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 114,
+        "column": 5
+      }
+    ]
+  }
+}

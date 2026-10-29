@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "b328ca6d5a9b4ea45edd36ce80d72efe4bbdc252",
+    "path": "apps/studio/components/grid/hooks/useFilterLifeCycle.navigation.test.tsx",
+    "license": "Apache-2.0",
+    "sha256": "b3008c4446398eca2c77cb9229aa80432011b0bd1aac3593bf7018b359f5731d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": [
+      {
+        "line": 45,
+        "column": 3
+      },
+      {
+        "line": 53,
+        "column": 3
+      }
+    ]
+  }
+}

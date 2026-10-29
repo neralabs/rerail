@@ -1,0 +1,1 @@
+React.createElement("iframe", { sandbox: "allow-forms" })

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "33eaa81e20d081e28b453b2b36bdca0aea456f3a",
+    "path": "packages/tinacms/src/toolkit/fields/components/reference/reference-select.tsx",
+    "license": "Apache-2.0",
+    "sha256": "f8fc039ce9b225777b37049e6273c6ef32ce3316072a07d04354940fe0519523"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": [
+      {
+        "line": 184,
+        "column": 27
+      }
+    ]
+  }
+}

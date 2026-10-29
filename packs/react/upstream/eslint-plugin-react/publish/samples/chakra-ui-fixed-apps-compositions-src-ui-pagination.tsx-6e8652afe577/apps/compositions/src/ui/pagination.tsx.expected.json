@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "9ea90e6bc9e8c3e8066d8355c499b768e4948661",
+    "path": "apps/compositions/src/ui/pagination.tsx",
+    "license": "MIT",
+    "sha256": "6e8652afe577e37749125888d7a10b286a876f69c3a013ff8d6d8db4cfc5036f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "47fd80c8ad79de559c6d5dbb11f0066837aac7b6",
+    "path": "components/drawer/index.tsx",
+    "license": "MIT",
+    "sha256": "9f2f0d9fbdd1e980a65ee3ba63c2273445705c821533a877eb39745597041023"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

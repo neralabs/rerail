@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "2daa07163326b8555488dab523c5479cf92821cf",
+    "path": "superset-frontend/plugins/plugin-chart-echarts/src/BigNumber/BigNumberWithTrendline/controlPanel.tsx",
+    "license": "Apache-2.0",
+    "sha256": "fc200e37c98025802b2f2c4a2f7c552e616fcab0e1cf5c2eb87b8b11180eeb46"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

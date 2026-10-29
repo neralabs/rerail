@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "8aaa70a6258818df8f804d8bc5b1e996f32d6574",
+    "path": "packages/dev/s2-docs/src/CodeBlock.tsx",
+    "license": "Apache-2.0",
+    "sha256": "a8cd9a24bf5d6f5ab027428d5f3a79e02d17f9946bcc1c9485538ae626989219"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "7e0e7c89ba8c9384d0db4cf945e0a978910c3b18",
+    "path": "superset/assets/src/explore/components/controls/FilterBoxItemControl.jsx",
+    "license": "Apache-2.0",
+    "sha256": "2153d6f51203d3e33c6a36b228da235958e46c1ba8abe671210d5065bca5872a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": []
+  }
+}

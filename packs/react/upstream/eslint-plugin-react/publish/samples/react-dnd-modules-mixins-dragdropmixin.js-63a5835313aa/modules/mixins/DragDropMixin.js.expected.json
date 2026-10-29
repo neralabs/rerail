@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "2404d35c77a8cb0ac92294182030a79302110692",
+    "path": "modules/mixins/DragDropMixin.js",
+    "license": "MIT",
+    "sha256": "63a5835313aa0ec8c5e8deefcb9152853cb9c55b3fa9054d2b20427beccb0647"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": [
+      {
+        "line": 251,
+        "column": 9
+      },
+      {
+        "line": 302,
+        "column": 11
+      },
+      {
+        "line": 315,
+        "column": 19
+      }
+    ]
+  }
+}

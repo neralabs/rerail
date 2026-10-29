@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "casesandberg/react-color",
+    "commit": "75f6356d0546d55f553a1564c04adf5cb5202d57",
+    "path": "modules/react-docs/components/Docs.jsx",
+    "license": "MIT",
+    "sha256": "931ac7844319b653909ab9bd4c39209064b6a75a788af137050ca0a9cba54257"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": []
+  }
+}

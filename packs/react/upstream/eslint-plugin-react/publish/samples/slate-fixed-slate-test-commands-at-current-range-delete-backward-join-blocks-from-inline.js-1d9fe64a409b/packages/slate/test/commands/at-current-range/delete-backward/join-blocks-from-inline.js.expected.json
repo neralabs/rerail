@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "da2cf833100050121430c1b1b40657268fe57a33",
+    "path": "packages/slate/test/commands/at-current-range/delete-backward/join-blocks-from-inline.js",
+    "license": "MIT",
+    "sha256": "1d9fe64a409b606abda30af3ccecd852235bee468f6e053fc5d3a81d40a8f57e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": []
+  }
+}

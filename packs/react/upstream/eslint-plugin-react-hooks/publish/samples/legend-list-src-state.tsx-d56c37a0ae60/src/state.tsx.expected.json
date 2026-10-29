@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "LegendApp/legend-list",
+    "commit": "a78fd173f8ec63fb3f9693f5324e300c6a195b1a",
+    "path": "src/state.tsx",
+    "license": "MIT",
+    "sha256": "d56c37a0ae601793d7f38441e9105f541b901afdc9148b4fbe75a02372dddf50"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 66,
+        "column": 17
+      },
+      {
+        "line": 67,
+        "column": 32
+      },
+      {
+        "line": 68,
+        "column": 19
+      }
+    ]
+  }
+}

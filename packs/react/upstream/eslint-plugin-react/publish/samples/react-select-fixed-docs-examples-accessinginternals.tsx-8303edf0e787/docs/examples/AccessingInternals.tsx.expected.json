@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "2e835e9bf02842b3c56218df11c0e387d8595394",
+    "path": "docs/examples/AccessingInternals.tsx",
+    "license": "MIT",
+    "sha256": "8303edf0e78768a4bc6f37ff89c92c59287919749b065565a709b2dbc8cd76f5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

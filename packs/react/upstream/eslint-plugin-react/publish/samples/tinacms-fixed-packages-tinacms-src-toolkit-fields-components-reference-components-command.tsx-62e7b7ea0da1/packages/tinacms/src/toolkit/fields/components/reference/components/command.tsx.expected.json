@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "d9b23fc72338d8a1ceebde2857ce33776ee27a78",
+    "path": "packages/tinacms/src/toolkit/fields/components/reference/components/command.tsx",
+    "license": "Apache-2.0",
+    "sha256": "62e7b7ea0da14fc94a3b63f91347c786f4d48ff4548cd3eb10b1d26753c11181"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": []
+  }
+}

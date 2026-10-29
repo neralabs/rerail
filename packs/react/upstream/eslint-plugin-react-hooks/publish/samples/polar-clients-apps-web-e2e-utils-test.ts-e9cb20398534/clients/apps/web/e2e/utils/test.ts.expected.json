@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "d9adec15f94606831eb45d10ce3282ebdcd9498c",
+    "path": "clients/apps/web/e2e/utils/test.ts",
+    "license": "Apache-2.0",
+    "sha256": "e9cb203985347538db1f5e82eac5f003e8257621328b8b8b6baf8f71026b2c76"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 48,
+        "column": 13
+      },
+      {
+        "line": 48,
+        "column": 13
+      },
+      {
+        "line": 54,
+        "column": 11
+      },
+      {
+        "line": 57,
+        "column": 11
+      }
+    ]
+  }
+}

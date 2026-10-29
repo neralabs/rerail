@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "2d2a520fbd61620966dd3064ee2a628a9600a740",
+    "path": "site/pages/playwright/keyboard-focus.tsx",
+    "license": "MIT",
+    "sha256": "791e24d8ea371aa2623bc056c763d60e69446aceee803d5498c883d9d93606fb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "c1a6152ee2018e7ebd757b317f8f87813b852f50",
+    "path": "packages/@react-spectrum/s2/stories/ShadowDOM.stories.tsx",
+    "license": "Apache-2.0",
+    "sha256": "81d7a4f2549fb2aa49da3c709b4763bdb8e55ce925cd8a76b3e37b08553cd494"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

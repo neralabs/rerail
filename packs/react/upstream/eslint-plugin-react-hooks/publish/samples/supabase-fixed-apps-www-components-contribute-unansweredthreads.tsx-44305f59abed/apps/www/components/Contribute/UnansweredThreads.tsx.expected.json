@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "0b8db9adc1f0d7673b5dcc08e2bb7a76e0a988bf",
+    "path": "apps/www/components/Contribute/UnansweredThreads.tsx",
+    "license": "Apache-2.0",
+    "sha256": "44305f59abed958c2afe5365eb723331453cd483b67ecd492ef73f9c30fa952a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-error-boundaries": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "36a20c6d626f9c366824acf2382259293778f28c",
+    "path": "packages/ra-ui-materialui/src/field/ReferenceField.tsx",
+    "license": "MIT",
+    "sha256": "0ee8d30a94563065b6c174096863b8fed7ab9a6043e1ddba1956ab0e5955f2b3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

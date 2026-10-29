@@ -1,0 +1,78 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "73a559ee345bc4033c66fc97858163a6a200126d",
+    "path": "www/src/pages/components/modal.js",
+    "license": "MIT",
+    "sha256": "0285b5953e406fda369d605ba37d3a77221c2d266c062a5e48226bd7b8d1d0ae"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": [
+      {
+        "line": 51,
+        "column": 29
+      },
+      {
+        "line": 52,
+        "column": 78
+      },
+      {
+        "line": 56,
+        "column": 16
+      },
+      {
+        "line": 56,
+        "column": 19
+      },
+      {
+        "line": 56,
+        "column": 24
+      },
+      {
+        "line": 84,
+        "column": 24
+      },
+      {
+        "line": 84,
+        "column": 39
+      },
+      {
+        "line": 102,
+        "column": 68
+      },
+      {
+        "line": 102,
+        "column": 78
+      },
+      {
+        "line": 112,
+        "column": 25
+      },
+      {
+        "line": 112,
+        "column": 53
+      },
+      {
+        "line": 118,
+        "column": 59
+      },
+      {
+        "line": 118,
+        "column": 68
+      },
+      {
+        "line": 154,
+        "column": 9
+      },
+      {
+        "line": 154,
+        "column": 25
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "f3cbe030662a5b9907491bba95c26ac98b878b2c",
+    "path": "packages/@react-spectrum/tree/chromatic/TreeView.chromatic.tsx",
+    "license": "Apache-2.0",
+    "sha256": "07e6f9598a23d60b874b4d96b274b444396fd91516a35a2cbbf1d54b770796ee"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

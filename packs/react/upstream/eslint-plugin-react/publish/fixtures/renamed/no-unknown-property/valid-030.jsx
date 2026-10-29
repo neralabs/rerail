@@ -1,0 +1,1 @@
+<picture inert={false} onError={jao} onLoad={lvm} />

@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "0929f42bca0c3849ecd66c7689b5193bc95da3b2",
+    "path": "apps/portal/src/components/common/member-custom-fields.tsx",
+    "license": "MIT",
+    "sha256": "d887c6546597002d777cb6bf24aee0379d6940db080feafa1eb85b997b9e4bd4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": [
+      {
+        "line": 119,
+        "column": 6
+      },
+      {
+        "line": 120,
+        "column": 6
+      },
+      {
+        "line": 121,
+        "column": 6
+      },
+      {
+        "line": 122,
+        "column": 6
+      }
+    ]
+  }
+}

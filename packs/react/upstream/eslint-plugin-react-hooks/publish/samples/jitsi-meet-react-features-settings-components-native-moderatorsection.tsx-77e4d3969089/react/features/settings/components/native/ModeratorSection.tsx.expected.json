@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "c1c5cc0388e62d30430c5699cd48a7bf64859f92",
+    "path": "react/features/settings/components/native/ModeratorSection.tsx",
+    "license": "Apache-2.0",
+    "sha256": "77e4d39690899f6b9cae1bf3417b44d78892d8228b7ff7d6d4aade5d458a3c54"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": [
+      {
+        "line": 153,
+        "column": 16
+      }
+    ]
+  }
+}

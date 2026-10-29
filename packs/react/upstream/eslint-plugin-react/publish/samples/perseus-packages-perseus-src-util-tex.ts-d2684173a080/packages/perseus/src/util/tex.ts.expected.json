@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "3cdabf1a39b4ef3e1f6b8a76f53669f64818e407",
+    "path": "packages/perseus/src/util/tex.ts",
+    "license": "MIT",
+    "sha256": "d2684173a080d0a70190ab5299600f69cc0257dccc35cb1e42a1cd3d18dc56e9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

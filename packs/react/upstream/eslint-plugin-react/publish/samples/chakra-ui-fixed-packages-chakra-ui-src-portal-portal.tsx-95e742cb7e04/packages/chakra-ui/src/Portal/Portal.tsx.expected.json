@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "d55cc47b74165a32197808b38bade2498c4a0742",
+    "path": "packages/chakra-ui/src/Portal/Portal.tsx",
+    "license": "MIT",
+    "sha256": "95e742cb7e04fa90613e53a2e5070f70a1909d595210964fa8792fbb74965041"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": []
+  }
+}

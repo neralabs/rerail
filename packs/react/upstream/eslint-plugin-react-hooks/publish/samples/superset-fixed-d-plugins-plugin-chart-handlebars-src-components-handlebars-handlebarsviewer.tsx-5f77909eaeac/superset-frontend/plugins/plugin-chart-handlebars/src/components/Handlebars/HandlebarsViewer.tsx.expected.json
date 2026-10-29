@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "b4325e2ce3458b3834206b4149883233c9efcb69",
+    "path": "superset-frontend/plugins/plugin-chart-handlebars/src/components/Handlebars/HandlebarsViewer.tsx",
+    "license": "Apache-2.0",
+    "sha256": "5f77909eaeac1a6227f3bf9a3edfeba745cd8490431bd4826c31540bf89b7e0f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-render": []
+  }
+}

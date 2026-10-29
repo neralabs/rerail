@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "29aad62ada8205abfb210eb1ad89b5c27d592063",
+    "path": "packages/mui-codemod/src/v5.0.0/base-remove-component-prop.test/actual.jsx",
+    "license": "MIT",
+    "sha256": "dcca3d17be89a0526120c03ee3ad56d81f0ed8c85199e7d0c0fd2779b09082f1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-self-closing-comp": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "96119ffefce6165efa4a655dd4674ec697b819d1",
+    "path": "superset-frontend/plugins/plugin-chart-echarts/src/Butterfly/controlPanel.tsx",
+    "license": "Apache-2.0",
+    "sha256": "1f7cbf403246119ff8f67bc81df323c506d5213f617d6af6354fb1e7aad9935f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

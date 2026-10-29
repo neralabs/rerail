@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "6c9be9d67bc73893055f989915ec4a43e7e848c1",
+    "path": "superset/assets/src/explore/components/controls/DateFilterControl.jsx",
+    "license": "Apache-2.0",
+    "sha256": "c57090a50df976f160fb1f6dedc4464b7fe668ca643a04201b75815499c6274d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": []
+  }
+}

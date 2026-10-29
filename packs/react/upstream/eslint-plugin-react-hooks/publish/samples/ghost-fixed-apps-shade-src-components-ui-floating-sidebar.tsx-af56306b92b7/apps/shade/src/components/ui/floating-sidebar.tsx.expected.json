@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "bb36f826ee161e23cfa69357287e79049b7bcc41",
+    "path": "apps/shade/src/components/ui/floating-sidebar.tsx",
+    "license": "MIT",
+    "sha256": "af56306b92b7e6f86b2b78fceb3396f197883cb00a1bef82492d79b22fba4de8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

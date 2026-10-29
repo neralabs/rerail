@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "55ac824f8d42f934cc7a69f8abc52880a6ad39ef",
+    "path": "app/client/src/git/components/ConnectModal/ConnectInitialize/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "1403a9614c80b1a65797dce70137eb39474a17dd523126c80ae370f48f3484a9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": []
+  }
+}

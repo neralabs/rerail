@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "vercel/next.js",
+    "commit": "581e3386148798442496225e967c30c5961f9782",
+    "path": "examples/with-graphql-faunadb/components/Footer.js",
+    "license": "MIT",
+    "sha256": "c7788691f427223e003835e3c0fb07c16fee8d64b79db7fde64084fd291aaca6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": []
+  }
+}

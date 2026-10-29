@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "1a06aad62bc5fe6cec1de0dc6d91ff9413848c6b",
+    "path": "packages/perseus/src/renderer.new.tsx",
+    "license": "MIT",
+    "sha256": "63dcf291bb19aaf2c925dad528580228584dd4b98ac2fd12c51186d529b470b6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": []
+  }
+}

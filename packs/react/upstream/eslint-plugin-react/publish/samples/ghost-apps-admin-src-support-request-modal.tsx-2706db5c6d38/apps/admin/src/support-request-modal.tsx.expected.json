@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "980e36882c7c7a091eabf6e6c8bb6644504e81c5",
+    "path": "apps/admin/src/support-request-modal.tsx",
+    "license": "MIT",
+    "sha256": "2706db5c6d3865c84accda7587d026b24ed7e6dc44d9c4073e54e3c394ff2848"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 148,
+        "column": 14
+      },
+      {
+        "line": 163,
+        "column": 14
+      },
+      {
+        "line": 166,
+        "column": 14
+      }
+    ]
+  }
+}

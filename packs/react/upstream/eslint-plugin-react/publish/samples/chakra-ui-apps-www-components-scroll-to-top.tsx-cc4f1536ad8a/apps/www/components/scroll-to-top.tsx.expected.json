@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "b069d018d40409b8d8a04e7a05a8af1be897ae67",
+    "path": "apps/www/components/scroll-to-top.tsx",
+    "license": "MIT",
+    "sha256": "cc4f1536ad8abc2bec472839c4c41af21cb37a74c41be8c56a4fee441a706e1c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": [
+      {
+        "line": 29,
+        "column": 7
+      }
+    ]
+  }
+}

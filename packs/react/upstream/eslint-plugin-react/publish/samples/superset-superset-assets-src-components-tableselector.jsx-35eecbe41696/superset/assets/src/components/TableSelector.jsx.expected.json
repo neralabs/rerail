@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "da813b7ee38fde9b908bb2143e9094dc4a312d23",
+    "path": "superset/assets/src/components/TableSelector.jsx",
+    "license": "Apache-2.0",
+    "sha256": "35eecbe41696a10217a9b985542ef55747fa37ae0d338578848aded0ac061878"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 254,
+        "column": 17
+      },
+      {
+        "line": 267,
+        "column": 17
+      }
+    ]
+  }
+}

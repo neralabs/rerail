@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "globocom/megadraft",
+    "commit": "12c47c56d72ec45ada678c769bd12ea592a2e2f3",
+    "path": "src/components/Toolbar.js",
+    "license": "MIT",
+    "sha256": "59c064585ac20029478d648931d7121b1064a962bba725d56d117bcdaa589481"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": []
+  }
+}

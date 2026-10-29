@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "e1de229a7298ee0dd6704d2bf15ce0d37a1cfc1b",
+    "path": ".dumi/theme/builtins/Sandpack/Sandpack.tsx",
+    "license": "MIT",
+    "sha256": "824c9b74a476a9b298a74d5c30105c4077ba418b4a8526d1af6163ac98bcf893"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": []
+  }
+}

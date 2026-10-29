@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "19f67400feaa168d97a667720c746eca1afab494",
+    "path": "src/DragLayer.js",
+    "license": "MIT",
+    "sha256": "39b9007fa770b256268f839597f1bf5bfdaefe73f3b4170df6727604eaaf618c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 93,
+        "column": 31
+      }
+    ]
+  }
+}

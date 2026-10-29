@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "13e946bf62c6d73e37e89f28bc62e5134f775b0c",
+    "path": "clients/apps/web/src/app/(main)/dashboard/[organization]/(header)/settings/billing/change-plan/ChangePlanPage.tsx",
+    "license": "Apache-2.0",
+    "sha256": "1e6bf4d7b4c96fc72e584fc7e328578c2ff61a44dd49a6ee8de45afd12343397"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-leaked-render": [
+      {
+        "line": 359,
+        "column": 16
+      },
+      {
+        "line": 427,
+        "column": 10
+      },
+      {
+        "line": 455,
+        "column": 10
+      }
+    ]
+  }
+}

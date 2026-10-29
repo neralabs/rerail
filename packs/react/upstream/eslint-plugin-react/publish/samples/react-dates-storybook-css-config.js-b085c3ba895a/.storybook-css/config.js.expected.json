@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-dates/react-dates",
+    "commit": "177bf03c8f880b73755badd71d6f6d30099d8526",
+    "path": ".storybook-css/config.js",
+    "license": "MIT",
+    "sha256": "b085c3ba895a168deb58784433047bd003be166cca99a7e82561716818aa5813"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 44,
+        "column": 7
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "remix-run/react-router",
+    "commit": "43708971e1cbe862626c37acf9c33d01e6351fa1",
+    "path": "packages/react-router-dom/ssr/scroll-restoration.tsx",
+    "license": "MIT",
+    "sha256": "88ad1589e02ebc842b1323a23dc19823f8b3a1ba06c1f453f167ef05f1ec32a1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": []
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "928150bbb6276dc84042d5bd98b8fba2ff13a682",
+    "path": "packages/core/src/components/context-menu/contextMenuSingleton.tsx",
+    "license": "Apache-2.0",
+    "sha256": "b3f61f94465437b44cfbdc0ce00c50918a8967d8d050ad2cce74a71f511e891f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-deprecated": [
+      {
+        "line": 119,
+        "column": 51
+      },
+      {
+        "line": 126,
+        "column": 57
+      },
+      {
+        "line": 144,
+        "column": 28
+      }
+    ]
+  }
+}

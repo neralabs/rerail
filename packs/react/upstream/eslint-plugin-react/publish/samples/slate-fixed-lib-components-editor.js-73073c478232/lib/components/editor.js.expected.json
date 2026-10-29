@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "f25c5d9a64e483bdadd8f35aa683cc666b99ae65",
+    "path": "lib/components/editor.js",
+    "license": "MIT",
+    "sha256": "73073c47823265e9198bc2b6f82261a3f3b930ee1f04e8c02ad37f107f6a6f97"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-direct-mutation-state": []
+  }
+}

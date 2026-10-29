@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "7d4fa340538a58a2ff25a6817f794c509072b7a9",
+    "path": "clients/apps/web/src/components/Products/ProductForm/UnitAmountInput.tsx",
+    "license": "Apache-2.0",
+    "sha256": "239eb04c442e3eb10f7098dfc347202bc6f23d1ab332c3315c0226355eb96654"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": []
+  }
+}

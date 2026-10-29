@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "supabase/supabase",
+    "commit": "21934397cae64d2fb58524407189f934841f502a",
+    "path": "apps/www/pages/changelog.tsx",
+    "license": "Apache-2.0",
+    "sha256": "df94063599c8c9c0f763f3065f99aaba3607a0cf3ae51cd5c57fbfabd685071e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": []
+  }
+}

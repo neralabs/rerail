@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "06430820bfb06e3267b00de3f8ae7ab393dd09ba",
+    "path": "clients/apps/demo-app/app/demo.tsx",
+    "license": "Apache-2.0",
+    "sha256": "e9fb18b4dd6a2fe3fd590ea0bba9409f3141f66374b5c0b8ad8133d6efe6739b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": []
+  }
+}

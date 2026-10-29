@@ -1,0 +1,1 @@
+const Component = () => <Obvfftj.Cfozxlsm value="Kwdk string"></Obvfftj.Cfozxlsm>

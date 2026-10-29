@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "polarsource/polar",
+    "commit": "b3d633d7c279ca72f16543011b7c3d3cd1fb6565",
+    "path": "clients/apps/web/src/src/components/Dither/Dither.tsx",
+    "license": "Apache-2.0",
+    "sha256": "50daf7e449a45670c929de76b9c64ed4bd3b17d98f1e4901a34e2750005fe76b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unknown-property": []
+  }
+}

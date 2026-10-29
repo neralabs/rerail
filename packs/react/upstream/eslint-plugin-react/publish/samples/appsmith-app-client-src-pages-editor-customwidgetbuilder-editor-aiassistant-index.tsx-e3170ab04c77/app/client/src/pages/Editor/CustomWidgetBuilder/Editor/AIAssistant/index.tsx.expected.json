@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "appsmithorg/appsmith",
+    "commit": "94d83298f69af9d56d2cc7dcb7886f34d054481d",
+    "path": "app/client/src/pages/Editor/CustomWidgetBuilder/Editor/AIAssistant/index.tsx",
+    "license": "Apache-2.0",
+    "sha256": "e3170ab04c779f45ad2354fa512a18ebdafc5d9176e2cedf39ffa637d7a5c7d7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": [
+      {
+        "line": 557,
+        "column": 18
+      }
+    ]
+  }
+}

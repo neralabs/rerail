@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "3f2b321bac19de096eed5296b6bd0dee9dc5d832",
+    "path": ".dumi/pages/index/components/PreviewPane/Components.tsx",
+    "license": "MIT",
+    "sha256": "734a9d8f21f099cb29bb3b2cb7bdc0c5cede711b85c5fa3152c206b9a4eaa0c8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-purity": [
+      {
+        "line": 347,
+        "column": 42
+      }
+    ]
+  }
+}

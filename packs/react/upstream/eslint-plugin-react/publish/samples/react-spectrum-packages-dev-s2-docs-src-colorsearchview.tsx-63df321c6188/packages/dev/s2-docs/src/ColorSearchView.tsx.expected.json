@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "adobe/react-spectrum",
+    "commit": "575fa9d802cdf271a3415b6036feb999333971f0",
+    "path": "packages/dev/s2-docs/src/ColorSearchView.tsx",
+    "license": "Apache-2.0",
+    "sha256": "63df321c6188a45b7c1c35a65ae60654af65a07a8198045ab7eb9ce91f7016f9"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 208,
+        "column": 49
+      },
+      {
+        "line": 208,
+        "column": 75
+      }
+    ]
+  }
+}

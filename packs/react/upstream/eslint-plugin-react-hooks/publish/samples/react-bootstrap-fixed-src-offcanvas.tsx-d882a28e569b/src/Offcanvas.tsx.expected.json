@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "a3e188a6ebafc20e6354dd8b4a05820c33bdd282",
+    "path": "src/Offcanvas.tsx",
+    "license": "MIT",
+    "sha256": "d882a28e569b090458e9570e3c5bc80a5631d072025db269bf9356500597309d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

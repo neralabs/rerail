@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "718a78ef8bfc533a1a7acdbf86ccff72ff0f0b5b",
+    "path": "packages/styled-components/src/models/StyledComponent.ts",
+    "license": "MIT",
+    "sha256": "b884bc4f787738f6e6dfd9dd951a981963c397a2c390781f2d785b99d3181a26"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

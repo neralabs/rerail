@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "9e978ac75f0378f8e6bf36b0f2212790dc0b8fd9",
+    "path": "examples/02 Drag Around/Naive/index.js",
+    "license": "MIT",
+    "sha256": "ce2b842694a74b2af3b06794c0e69a076875146d20017126f4eb421e198e3fe7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": []
+  }
+}

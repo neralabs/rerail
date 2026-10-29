@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "aa3df7caf77c1103293c8db2320e9aaa976b20b8",
+    "path": "superset-frontend/src/explore/components/controls/ComparisonRangeLabel.tsx",
+    "license": "Apache-2.0",
+    "sha256": "bc0d4184db333cce0eb955a7d39542f1442aa96c6572005849479f82a28334b5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": []
+  }
+}

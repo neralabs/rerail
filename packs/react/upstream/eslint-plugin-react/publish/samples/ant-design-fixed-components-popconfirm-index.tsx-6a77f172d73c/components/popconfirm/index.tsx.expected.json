@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "69b5acb45f3481d1cd7e05da659ea2c41e28c308",
+    "path": "components/popconfirm/index.tsx",
+    "license": "MIT",
+    "sha256": "6a77f172d73cbf33791524985c4acb68e4fab61a3ee50b50deb3d7c6cfebd0bb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": []
+  }
+}

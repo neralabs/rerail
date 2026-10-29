@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "c0209ea20ac3745861118b5ca8bd47ef2d2ede06",
+    "path": "examples/_nesting-sources/Source.js",
+    "license": "MIT",
+    "sha256": "091851cbe830a78b27e907ffcc9f13c4d802be0f1fab6fea9a8ed1cfa20bb980"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": []
+  }
+}

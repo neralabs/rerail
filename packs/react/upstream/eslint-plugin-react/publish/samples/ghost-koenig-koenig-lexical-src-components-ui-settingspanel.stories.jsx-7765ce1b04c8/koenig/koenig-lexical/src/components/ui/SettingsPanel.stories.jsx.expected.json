@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "385a49b4b4231b90acfc0bc0eaca85d8065937d0",
+    "path": "koenig/koenig-lexical/src/components/ui/SettingsPanel.stories.jsx",
+    "license": "MIT",
+    "sha256": "7765ce1b04c8582a730a01f9cc20eefe549ee0c560572c583095d1aef1c63d95"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": []
+  }
+}

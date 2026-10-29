@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "fcee060f40668afd1ca4274dcc5c2081f20d4d7a",
+    "path": "packages/docusaurus-plugin-ideal-image/src/theme/IdealImageLegacy/components/IdealImage/index.js",
+    "license": "MIT",
+    "sha256": "ad603ba9ec3843f2336fd3398ee73fd505f289406a1914b65b54f4bb1b2a5b0d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-access-state-in-setstate": []
+  }
+}

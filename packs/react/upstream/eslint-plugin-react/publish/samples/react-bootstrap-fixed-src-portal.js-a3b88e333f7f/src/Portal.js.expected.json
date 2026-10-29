@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "4fb7e0d64b4ef3d2c97157213736ea7a5aa76d47",
+    "path": "src/Portal.js",
+    "license": "MIT",
+    "sha256": "a3b88e333f7f8c9832672e4d84c60c92d2b15bde057e352eaabd426f27af9158"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": []
+  }
+}

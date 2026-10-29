@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "0f7552accb8f1986f48f788a310c1d4e308d7ebd",
+    "path": "website/_dogfooding/_pages tests/embeds.tsx",
+    "license": "MIT",
+    "sha256": "760567b5b100e4bae40d53949c4b28699831609f0a253a00d2aa8bb8249e7050"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 20,
+        "column": 9
+      }
+    ]
+  }
+}

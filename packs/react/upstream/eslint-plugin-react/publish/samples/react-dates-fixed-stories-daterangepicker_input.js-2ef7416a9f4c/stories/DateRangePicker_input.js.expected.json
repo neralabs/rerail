@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dates/react-dates",
+    "commit": "6d45150a0c9fec6a29dcf99f2cc2e24423971ee2",
+    "path": "stories/DateRangePicker_input.js",
+    "license": "MIT",
+    "sha256": "2ef7416a9f4c3cc5efdb9d360af3456c3ea2cc883434ca9bdcd58d451fa119c4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unescaped-entities": []
+  }
+}

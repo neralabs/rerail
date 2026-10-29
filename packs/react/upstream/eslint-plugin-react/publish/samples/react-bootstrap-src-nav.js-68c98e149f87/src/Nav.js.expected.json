@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "react-bootstrap/react-bootstrap",
+    "commit": "59c9571415a36dcff2d4ab5fd37ab3af744322cf",
+    "path": "src/Nav.js",
+    "license": "MIT",
+    "sha256": "68c98e149f87e91d97eac1620ebaf1d1871f4d40da653184b7eca8b2a01ada15"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": [
+      {
+        "line": 28,
+        "column": 11
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "1d83221e785e8c4c73cf00d23023d48b88b81073",
+    "path": "src/DragDropContext.js",
+    "license": "MIT",
+    "sha256": "99500baabfee75665b48644aa8a4f28a064d1de2cdbe73c6e63ea6e3070d34b6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-string-refs": []
+  }
+}

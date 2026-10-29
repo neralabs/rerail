@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "PelleNybe/Crypto-MCP-Server---by-Corax-CoLAB",
+    "commit": "d718c33cc4bfdea96648901ab781f841daae03ae",
+    "path": "gui/frontend/src/components/features/FlashCrashMatrix.tsx",
+    "license": "MIT",
+    "sha256": "075fa6af7760568a283948062ef1bd8902ae938fea507f1ea737f3a29e44ab97"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-duplicate-props": []
+  }
+}

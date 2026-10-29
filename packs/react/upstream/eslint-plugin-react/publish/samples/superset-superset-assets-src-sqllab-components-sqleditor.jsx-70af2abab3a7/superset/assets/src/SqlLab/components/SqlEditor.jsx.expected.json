@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "apache/superset",
+    "commit": "ec6657ab2d07d6982a454e20745445ab673a6a0f",
+    "path": "superset/assets/src/SqlLab/components/SqlEditor.jsx",
+    "license": "Apache-2.0",
+    "sha256": "70af2abab3a78986a947b37d89b259c8aa5f5b82304cd6ab2647196a5db088b7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-mount-set-state": []
+  }
+}

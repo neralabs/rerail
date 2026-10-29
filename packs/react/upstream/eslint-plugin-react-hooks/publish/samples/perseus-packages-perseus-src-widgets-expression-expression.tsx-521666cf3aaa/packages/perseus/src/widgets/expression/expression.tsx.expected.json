@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Khan/perseus",
+    "commit": "8db9d5ff9bd5b36259be5c35149b784f564346fa",
+    "path": "packages/perseus/src/widgets/expression/expression.tsx",
+    "license": "MIT",
+    "sha256": "521666cf3aaa0e1be9f3127dcd0aa70726f90355dcc601d8f436b7449bd96afd"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "ae1f4be08ab834fc0c0c20678d598edf2ed6efcd",
+    "path": "examples/_dustbin-stress/Container.js",
+    "license": "MIT",
+    "sha256": "41376198e916c93dfc45c559c46636db203dd727871ad0e67baf1c19c07f228e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": [
+      {
+        "line": 56,
+        "column": 13
+      },
+      {
+        "line": 64,
+        "column": 13
+      }
+    ]
+  }
+}

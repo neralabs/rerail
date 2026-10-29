@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "react-dnd/react-dnd",
+    "commit": "c10492f03fb89797fbc59aa24875b40bda2697e5",
+    "path": "modules/mixins/ImagePreloaderMixin.js",
+    "license": "MIT",
+    "sha256": "8efd4559dbf0bdffc893d9aa4df2115e2cf3294481fe25d9a21c217fd64b9f0b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-is-mounted": []
+  }
+}

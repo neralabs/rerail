@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jitsi/jitsi-meet",
+    "commit": "a112d389436f374b06458a67cec1d5a641fff38d",
+    "path": "react/features/base/util/getUnsafeRoomText.native.ts",
+    "license": "Apache-2.0",
+    "sha256": "086e25781db26570ffd73300f4f25bb8a7b28b51db433d5620d1b9e7063b8b5a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

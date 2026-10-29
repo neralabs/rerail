@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "preactjs/signals",
+    "commit": "86575b41ec097c3ecdefc7b54a4cabfbe23f7984",
+    "path": "packages/react/utils/src/index.tsx",
+    "license": "MIT",
+    "sha256": "8a1e0c3b6547eb26f27d24971dee7d2a9019ffca41f1a2d0351bddd2b8367e61"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-key": [
+      {
+        "line": 53,
+        "column": 11
+      }
+    ]
+  }
+}

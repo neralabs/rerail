@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "6a75c738aaeecd4b26dc163b8fea2d40e3264b91",
+    "path": "packages/ra-core/src/routing/adapters/tanStackRouterProvider.stories.tsx",
+    "license": "MIT",
+    "sha256": "55218a57bfa30170b0b65d90387026fc50365155a508f213e735e471e169d3ff"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": []
+  }
+}

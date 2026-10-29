@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "codastic/react-positioning-portal",
+    "commit": "d8becba853ae3d9ecad96282ac816e75cac0de9f",
+    "path": "lib/index.js",
+    "license": "MIT",
+    "sha256": "3753a6e47616746c931f156311a3ccbc4290321a39d8c286485f67827f5ce477"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": [
+      {
+        "line": 184,
+        "column": 29
+      },
+      {
+        "line": 232,
+        "column": 33
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "9dc53c5d82840a6021a1dc02cdf1662aee27fa74",
+    "path": "benchmark/slate/changes/normalize-with-problems.js",
+    "license": "MIT",
+    "sha256": "4111ba332777c5f42621132db712197d962243027279f88052c7a1022c976407"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": []
+  }
+}

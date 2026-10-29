@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "streamlit/streamlit",
+    "commit": "2c4c8afda010d26543ab82f031573bbe3b434d6b",
+    "path": "frontend/lib/src/components/widgets/DateInput/ReorderedSegments.tsx",
+    "license": "Apache-2.0",
+    "sha256": "8de8d0cf82e518d00c89a49738016959219179a7aedecd755192dc69d904fb4d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": []
+  }
+}

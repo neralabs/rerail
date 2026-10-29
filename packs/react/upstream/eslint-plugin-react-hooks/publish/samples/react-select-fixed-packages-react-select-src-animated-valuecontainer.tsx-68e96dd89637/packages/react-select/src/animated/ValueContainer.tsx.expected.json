@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "f6cd50ee914d5cde461e97dfb2244dd8d0411a53",
+    "path": "packages/react-select/src/animated/ValueContainer.tsx",
+    "license": "MIT",
+    "sha256": "68e96dd8963718bf87b4a4cdb76386fa7014df796a30d6b270bc1a2bbf669078"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-set-state-in-effect": []
+  }
+}

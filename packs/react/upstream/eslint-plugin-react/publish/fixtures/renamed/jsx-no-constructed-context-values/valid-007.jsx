@@ -1,0 +1,9 @@
+
+        // Passes because the lint rule doesn't handle JSX spread attributes
+        function bhkkzKkpcgrx() {
+          const jao = {value: 'dewioyhjd'}
+          return (
+            <Obvfftj.Cfozxlsm {...jao}></Obvfftj.Cfozxlsm>
+          )
+        }
+      

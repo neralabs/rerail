@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "tinacms/tinacms",
+    "commit": "42760d8f5afd201107e27e274308af37f96ba8d0",
+    "path": "packages/tinacms/src/toolkit/plugin-screens/global-form-plugin.test.tsx",
+    "license": "Apache-2.0",
+    "sha256": "3d872574c388f165faec86f482b87dd20c341e8ca34dfd7285a4cc81f79df11b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-globals": []
+  }
+}

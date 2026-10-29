@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "3c3eb2486fe9e067a7ad4f3b26011ea4ef23f4d9",
+    "path": "apps/sodo-search/src/app.tsx",
+    "license": "MIT",
+    "sha256": "07ea5489f4e27b22e86b26bcaec209ac10dadbc1fb350c9e66bfd95ad73fafaf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": []
+  }
+}

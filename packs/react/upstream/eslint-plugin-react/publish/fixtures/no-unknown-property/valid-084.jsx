@@ -1,0 +1,1 @@
+<fbs desc="foo" doNotExtract />;

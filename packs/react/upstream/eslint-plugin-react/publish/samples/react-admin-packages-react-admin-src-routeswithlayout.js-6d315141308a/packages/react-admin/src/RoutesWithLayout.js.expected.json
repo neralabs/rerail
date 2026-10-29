@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "207b7b18b62315ed08f916ad1b8a466a74ea63cf",
+    "path": "packages/react-admin/src/RoutesWithLayout.js",
+    "license": "MIT",
+    "sha256": "6d315141308a0f5eed6b8b1195c3c1637056f00506349274b6f6e0db4486e995"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-children-prop": []
+  }
+}

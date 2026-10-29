@@ -1,0 +1,34 @@
+{
+  "source": {
+    "repo": "ianstormtaylor/slate",
+    "commit": "6e18719f3d705a403905526ec9b10eb5a9518c5c",
+    "path": "packages/slate/test/commands/at-current-range/delete/across-blocks-inlines.js",
+    "license": "MIT",
+    "sha256": "499bbae45ef152d60fc36c8c38a7632f6009418390227fae1c70847e5d19dbd6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-void-dom-elements-no-children": [
+      {
+        "line": 14,
+        "column": 9
+      },
+      {
+        "line": 21,
+        "column": 9
+      },
+      {
+        "line": 35,
+        "column": 9
+      },
+      {
+        "line": 37,
+        "column": 9
+      }
+    ]
+  }
+}

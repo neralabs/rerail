@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "facebook/docusaurus",
+    "commit": "be3d259ac8558d191821482e13807540e1d38bca",
+    "path": "website/components/Todo/TodoItem.js",
+    "license": "MIT",
+    "sha256": "fe6909a294fec3a33ba491325908bda7df5d8d50481cd7caeefe11505e9fed4b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-find-dom-node": []
+  }
+}

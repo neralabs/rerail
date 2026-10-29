@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "20baf7cf40ad8b567c25a547c354a0b1a49d50aa",
+    "path": "packages/gatsby/cache-dir/head/components/head-components.js",
+    "license": "MIT",
+    "sha256": "b1313869ef072e8ba45b51b30f59db9a6578fe02ecc6018288fb0ac8c4efc9e3"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": [
+      {
+        "line": 28,
+        "column": 37
+      }
+    ]
+  }
+}

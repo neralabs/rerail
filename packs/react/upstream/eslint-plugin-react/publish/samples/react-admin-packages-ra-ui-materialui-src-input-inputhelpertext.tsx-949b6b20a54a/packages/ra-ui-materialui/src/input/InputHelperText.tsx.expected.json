@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "marmelab/react-admin",
+    "commit": "73b87b1411d5a345572c86c94986e364751304b2",
+    "path": "packages/ra-ui-materialui/src/input/InputHelperText.tsx",
+    "license": "MIT",
+    "sha256": "949b6b20a54affa390378a8a9cc5bcf86a4b0b51756bf9c6d5afedba7c18c8a6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": []
+  }
+}

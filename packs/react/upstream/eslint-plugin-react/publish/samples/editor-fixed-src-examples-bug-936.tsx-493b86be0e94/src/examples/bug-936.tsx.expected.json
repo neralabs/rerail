@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mdx-editor/editor",
+    "commit": "0886ac93d9cb82d12ba32a8739a598482b0ba6c3",
+    "path": "src/examples/bug-936.tsx",
+    "license": "MIT",
+    "sha256": "493b86be0e948f257ba88c612ae2c83babc8c95b67280c4a9f9d278146aee80b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

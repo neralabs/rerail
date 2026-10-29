@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "4f3d7d08b66913d2ed1bb556b365f3837cba67cc",
+    "path": "packages/@mantine/hooks/src/use-map/use-map.ts",
+    "license": "MIT",
+    "sha256": "55a9f1ff753519a56d7b1b84845e0152169c3fb9a1c3d2bcadaf1c9d22b22848"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-immutability": []
+  }
+}

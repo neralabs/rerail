@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "9c2659440fc6a476a06037f6e7d1d71540d42a40",
+    "path": "docs/src/pages/utils/no-ssr/FrameDeferring.js",
+    "license": "MIT",
+    "sha256": "197c30d443dd233049d42dee3a214c8dac79c405bd4ff361c3d24c0167656a9b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-array-index-key": []
+  }
+}

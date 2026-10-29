@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "styled-components/styled-components",
+    "commit": "5431a8b15044439dc62b4de5e1be62cd549f5362",
+    "path": "packages/sandbox/app/lib/registry.tsx",
+    "license": "MIT",
+    "sha256": "40e865755b644c9048a25e50c39a0db0c71bb06a393385725debb0e3b494a830"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-danger": [
+      {
+        "line": 19,
+        "column": 37
+      }
+    ]
+  }
+}

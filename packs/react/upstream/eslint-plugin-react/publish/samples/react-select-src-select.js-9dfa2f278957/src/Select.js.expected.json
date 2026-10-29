@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "024ce6685446771d7f8152620a92646bc332c5a1",
+    "path": "src/Select.js",
+    "license": "MIT",
+    "sha256": "9dfa2f2789578e5b3adbfa128572de9d65679aa778532bf3cf2774bec24ae7d8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-did-update-set-state": []
+  }
+}

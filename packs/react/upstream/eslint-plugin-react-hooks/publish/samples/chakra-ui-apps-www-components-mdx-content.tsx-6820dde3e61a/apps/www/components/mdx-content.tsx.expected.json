@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "chakra-ui/chakra-ui",
+    "commit": "9cf137f62f1addce062591161b3c755feffc1015",
+    "path": "apps/www/components/mdx-content.tsx",
+    "license": "MIT",
+    "sha256": "6820dde3e61a5ed694c99958fa6ab051c19f42294346eff499ac31383abd68d0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-static-components": [
+      {
+        "line": 91,
+        "column": 11
+      }
+    ]
+  }
+}

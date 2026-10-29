@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "7d48aa1e67dd7a2694b215996d272ca47f6ba841",
+    "path": "apps/admin/src/automations/components/canvas/editable-email-card.tsx",
+    "license": "MIT",
+    "sha256": "3bd8aaa353e413c5c8c898bad7eb94ff7bc64cd8d07724082711784626b9c3dc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-refs": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "palantir/blueprint",
+    "commit": "166d3dbda85dc19d14f6fe6d1be93084a19fe435",
+    "path": "packages/docs-app/src/examples/core-examples/contextMenuExample.tsx",
+    "license": "Apache-2.0",
+    "sha256": "691b147593ec3c4ca0a2c8eedba037e5b671acfe9daee9566fbc612e0b83bd7a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-unstable-nested-components": []
+  }
+}

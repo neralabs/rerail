@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mui/material-ui",
+    "commit": "8bdcff4a75e0e77137bc3df44560413f2c4241a7",
+    "path": "packages/mui-docs/src/i18n/i18n.tsx",
+    "license": "MIT",
+    "sha256": "60befdf589004f91415e37882e29c09ed8bb23d2a4edd1e5af514ab3ab7236fc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-no-object-type-as-default-prop": [
+      {
+        "line": 13,
+        "column": 33
+      }
+    ]
+  }
+}

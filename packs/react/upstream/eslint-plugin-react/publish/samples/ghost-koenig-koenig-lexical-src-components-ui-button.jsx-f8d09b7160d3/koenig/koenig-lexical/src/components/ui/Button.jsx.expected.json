@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "43280b7d75409c2c6ff5b5b1434a5577b97f6240",
+    "path": "koenig/koenig-lexical/src/components/ui/Button.jsx",
+    "license": "MIT",
+    "sha256": "f8d09b7160d358c407f85ec888598b179dc8b0408ac8473de29e84d66121b7be"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-button-has-type": []
+  }
+}

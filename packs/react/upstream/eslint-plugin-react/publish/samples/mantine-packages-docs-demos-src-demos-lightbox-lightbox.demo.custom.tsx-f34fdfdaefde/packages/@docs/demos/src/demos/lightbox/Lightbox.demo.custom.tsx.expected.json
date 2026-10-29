@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "4abd3cd82abf17db44377260da8ccca4c076d8f2",
+    "path": "packages/@docs/demos/src/demos/lightbox/Lightbox.demo.custom.tsx",
+    "license": "MIT",
+    "sha256": "f34fdfdaefde1042114ae3571e242fcc28f65f5add2e6d54474840a07b977e33"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-iframe-missing-sandbox": [
+      {
+        "line": 96,
+        "column": 7
+      }
+    ]
+  }
+}

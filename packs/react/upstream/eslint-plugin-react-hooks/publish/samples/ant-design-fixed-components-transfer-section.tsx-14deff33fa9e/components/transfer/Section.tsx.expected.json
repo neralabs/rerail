@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ant-design/ant-design",
+    "commit": "25d2f2922947822d020f4ad70f9bac9f8b0db4ad",
+    "path": "components/transfer/Section.tsx",
+    "license": "MIT",
+    "sha256": "14deff33fa9e35942ba9ed69378293150a2973b3e30545a83f58faae00221237"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-exhaustive-deps": []
+  }
+}

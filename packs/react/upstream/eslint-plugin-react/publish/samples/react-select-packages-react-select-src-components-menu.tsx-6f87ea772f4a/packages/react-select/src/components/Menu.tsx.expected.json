@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "JedWatson/react-select",
+    "commit": "61f8ee986b8ac4466a5844577b244d0158751aa7",
+    "path": "packages/react-select/src/components/Menu.tsx",
+    "license": "MIT",
+    "sha256": "6f87ea772f4ab1e1227d443761ffa8a15e6971bb744dee61d60cbc0cad0182d2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-constructed-context-values": [
+      {
+        "line": 687,
+        "column": 45
+      }
+    ]
+  }
+}

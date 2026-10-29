@@ -1,0 +1,61 @@
+import type { GatsbyImageProps } from "gatsby-plugin-image"
+import * as React from "react"
+import { hydrateRoot } from "react-dom/client"
+
+let hydrateRef
+let isFirstHydration = true
+export function onRouteUpdate(): void {
+  if (isFirstHydration) {
+    isFirstHydration = false
+    return
+  }
+
+  if (`requestIdleCallback` in window) {
+    if (hydrateRef) {
+      // @ts-ignore cancelIdleCallback is on window object
+      cancelIdleCallback(hydrateRef)
+    }
+
+    // @ts-ignore requestIdleCallback is on window object
+    hydrateRef = requestIdleCallback(hydrateImages)
+  } else {
+    if (hydrateRef) {
+      clearTimeout(hydrateRef)
+    }
+    hydrateRef = setTimeout(hydrateImages)
+  }
+}
+
+function hydrateImages(): void {
+  const doc = document
+  const inlineWPimages: Array<HTMLElement> = Array.from(
+    doc.querySelectorAll(`[data-wp-inline-image]`)
+  )
+
+  import(
+    /* webpackChunkName: "gatsby-plugin-image" */ `gatsby-plugin-image`
+  ).then(mod => {
+    inlineWPimages.forEach(image => {
+      if (
+        image.dataset &&
+        image.dataset.wpInlineImage &&
+        image.parentNode.parentNode
+      ) {
+        const hydrationData = doc.querySelector(
+          `script[data-wp-inline-image-hydration="${image.dataset.wpInlineImage}"]`
+        )
+
+        if (hydrationData) {
+          const imageProps: GatsbyImageProps = JSON.parse(
+            hydrationData.innerHTML
+          )
+
+          hydrateRoot(
+            image.parentNode.parentNode as Element,
+            React.createElement(mod.GatsbyImage, imageProps)
+          )
+        }
+      }
+    })
+  })
+}

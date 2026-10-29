@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "mantinedev/mantine",
+    "commit": "8b7b07afff1248b9735dc64a53ff621b3d6e1be3",
+    "path": "docs/components/VersionsList/VersionsList.tsx",
+    "license": "MIT",
+    "sha256": "32a7dc99b0c4b9c5962f096df5ba7b1e02a0c3ed512d29e29eaa8dcfd2f3f751"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-target-blank": [
+      {
+        "line": 18,
+        "column": 11
+      },
+      {
+        "line": 32,
+        "column": 11
+      }
+    ]
+  }
+}

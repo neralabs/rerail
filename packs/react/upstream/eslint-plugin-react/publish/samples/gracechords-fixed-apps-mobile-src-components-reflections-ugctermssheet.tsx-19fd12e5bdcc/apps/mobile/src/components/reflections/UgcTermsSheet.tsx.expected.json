@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "rwm6857/GraceChords",
+    "commit": "ebc1301129881c1bab3ef600238a305312d481d5",
+    "path": "apps/mobile/src/components/reflections/UgcTermsSheet.tsx",
+    "license": "Apache-2.0",
+    "sha256": "19fd12e5bdcc8f231838ca1c5a6549e615d911ca0f75abd0ee1b0fa849b8c40d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react",
+    "version": "7.37.5",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-jsx-no-duplicate-props": []
+  }
+}

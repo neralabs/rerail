@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "2f671eca695f00e39778b80758937902dd4e2b26",
+    "path": "apps/shade/src/components/ui/icon.stories.tsx",
+    "license": "MIT",
+    "sha256": "4135068094a765e2849fda043df2904798e1fd43a8b1cb0692bc73f4240cc998"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-react-hooks",
+    "version": "7.1.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "react-hooks-rules-of-hooks": []
+  }
+}
