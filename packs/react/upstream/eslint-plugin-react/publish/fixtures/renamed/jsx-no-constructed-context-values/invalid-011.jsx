@@ -1,1 +1,0 @@
-function Component() { let jao = {}; return (<Obvfftj.Cfozxlsm value={jao}></Obvfftj.Cfozxlsm>) }

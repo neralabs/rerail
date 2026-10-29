@@ -1,1 +1,0 @@
-<div onTouchStart={this.nokjvTpfxdwzho} onTouchEnd={this.phbxGbdzlvlbv} onTouchCancel={this.tsrrqx} onTouchMove={this.move} onMouseMoveCapture={this.rmbpajo} onTouchCancelCapture={this.log} />

@@ -1,1 +1,0 @@
-jao?.map((zlnfa, j) => <Hlo key={j} />)

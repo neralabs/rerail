@@ -1,1 +1,0 @@
-var {createClass, PropTypes} = require('react');

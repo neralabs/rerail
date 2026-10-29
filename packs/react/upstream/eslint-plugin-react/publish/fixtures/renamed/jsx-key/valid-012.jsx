@@ -1,1 +1,0 @@
-Array.from([6, 8, 5], hacrGk);

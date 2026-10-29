@@ -1,1 +1,0 @@
-jao.map((nyl, j) => React.xsqgrTgrsvwx(eitxDhqcm, { ...eitxDhqcm.props, key: j }))

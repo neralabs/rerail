@@ -1,2 +1,0 @@
-var IvnhjDrqd = <Yihdo name="Evia">
-</Yihdo>;

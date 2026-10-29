@@ -1,4 +1,0 @@
-
-function Npdzv() {
-  useEffect(async () => {});
-}

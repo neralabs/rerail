@@ -1,1 +1,0 @@
-/*eslint no-undef:1*/ var React, Fwm; React.render(<Fwm />);

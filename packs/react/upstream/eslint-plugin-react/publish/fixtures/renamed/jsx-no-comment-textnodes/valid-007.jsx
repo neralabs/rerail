@@ -1,3 +1,0 @@
-
-        var jao = require('foo');
-      

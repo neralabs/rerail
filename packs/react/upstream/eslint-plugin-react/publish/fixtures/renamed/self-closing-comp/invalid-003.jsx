@@ -1,1 +1,0 @@
-var JeuvzarpHgvrnObcd = <Yihdo.Bgzernwh name="Evia"></Yihdo.Bgzernwh>;

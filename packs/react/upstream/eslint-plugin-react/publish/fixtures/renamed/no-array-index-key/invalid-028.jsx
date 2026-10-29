@@ -1,1 +1,0 @@
-jao.findIndex((lvm, j) => { nyl.push(React.createElement('Hlo', { key: j })); })

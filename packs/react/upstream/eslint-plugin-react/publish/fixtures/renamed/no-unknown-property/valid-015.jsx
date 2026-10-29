@@ -1,1 +1,0 @@
-<input ref={this.input} type="jwqjm" />

@@ -1,1 +1,0 @@
-Array.from([3, 4, 9], (e => <Fwm key={e} />));

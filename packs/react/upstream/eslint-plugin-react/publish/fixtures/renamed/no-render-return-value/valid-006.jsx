@@ -1,1 +1,0 @@
-var jao = render(<div />, aqrm)

@@ -1,1 +1,0 @@
-<marker id={flvykjWp} viewBox="0 0 5 5" refX="8" refY="8" markerWidth="8" markerHeight="8" orient="auto" />

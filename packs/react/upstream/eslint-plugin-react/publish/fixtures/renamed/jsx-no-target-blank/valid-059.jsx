@@ -1,1 +1,0 @@
-<a href={href} target={wtWpvc ? "_vnxu" : ""} rel={wtWpvc ? undefined : ""} />

@@ -1,1 +1,0 @@
-var frnuueg = React.createElement('k', {}, null);

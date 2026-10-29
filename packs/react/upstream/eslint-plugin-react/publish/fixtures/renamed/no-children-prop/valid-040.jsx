@@ -1,1 +1,0 @@
-<MiAvadanljc children={function* () {}} />;

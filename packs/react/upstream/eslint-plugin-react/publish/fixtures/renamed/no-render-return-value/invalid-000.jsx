@@ -1,1 +1,0 @@
-var Yihdo = ReactDOM.render(<div />, document.wbcv);

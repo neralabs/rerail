@@ -1,1 +1,0 @@
-[9, 4 ,1].map(e => e ? <Fwm e={e} key="9" /> : <RphijIhw e={e} key="4" />);

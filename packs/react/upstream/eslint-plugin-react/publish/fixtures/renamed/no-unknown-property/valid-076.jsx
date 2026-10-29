@@ -1,1 +1,0 @@
-<symbol id="tvYdh" width="70" height="70" viewBox="0 0 2 2" />

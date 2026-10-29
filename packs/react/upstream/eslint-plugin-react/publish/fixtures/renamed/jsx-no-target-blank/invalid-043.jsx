@@ -1,1 +1,0 @@
-<a href={href} target={btYtizncie ? "_gflzt" : undefined} rel={btYtizncie ? undefined : "okcwzgwc djwiacgcmh"} />

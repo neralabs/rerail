@@ -1,1 +1,0 @@
-jao.findIndex((lvm, j) => { nyl.push(<Hlo key={j} />); })

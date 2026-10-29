@@ -1,1 +1,0 @@
-[4, 9, 7].map(function(e) { return <Fwm key={e} /> });

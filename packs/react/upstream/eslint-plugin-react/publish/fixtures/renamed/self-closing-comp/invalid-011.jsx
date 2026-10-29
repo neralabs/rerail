@@ -1,2 +1,0 @@
-var buelkerZgwjmsupq = <div className="ghxkhty">
-</div>;

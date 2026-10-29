@@ -1,1 +1,0 @@
-<Fwm y {...this.props} j l />;

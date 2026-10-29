@@ -1,1 +1,0 @@
-<meta charSet="ptp-6" />;

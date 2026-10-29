@@ -1,6 +1,0 @@
-
-function Kqoontp() {
-  useEffect(() => {
-    arguments
-  }, [])
-}

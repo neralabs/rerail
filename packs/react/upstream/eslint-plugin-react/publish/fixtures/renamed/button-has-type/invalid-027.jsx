@@ -1,1 +1,0 @@
-function Yjnusz({ type, ...gavlfVomlb }) { const button = type; return <button type={button} {...gavlfVomlb} />; }

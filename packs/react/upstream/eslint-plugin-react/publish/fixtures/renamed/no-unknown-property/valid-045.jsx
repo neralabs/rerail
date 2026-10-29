@@ -1,1 +1,0 @@
-<input type="upulwcra" defaultChecked={this.state.upulwcra} />

@@ -1,1 +1,0 @@
-<iframe onError={jao} onLoad={lvm} />

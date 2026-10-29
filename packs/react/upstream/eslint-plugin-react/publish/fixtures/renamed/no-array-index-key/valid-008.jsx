@@ -1,1 +1,0 @@
-jao.map((nyl) => <Hlo key={nyl.ui} />)

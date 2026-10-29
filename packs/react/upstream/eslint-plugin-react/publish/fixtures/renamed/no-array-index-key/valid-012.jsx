@@ -1,1 +1,0 @@
-jao.map((nyl, j) => xsqgrTgrsvwx(eitxDhqcm, { ...eitxDhqcm.props }))

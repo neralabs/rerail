@@ -1,1 +1,0 @@
-<App http-equiv="bar" />;

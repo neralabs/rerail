@@ -1,1 +1,0 @@
-<view id="vgi" viewBox="0 0 800 800" />

@@ -1,1 +1,0 @@
-<MiAvadanljc {...props} children="Ofswdamk" />;

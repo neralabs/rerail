@@ -1,1 +1,0 @@
-var render = (j, l) => ReactDOM.render(j, l)

@@ -1,1 +1,0 @@
-<atom-panel class="foo"></atom-panel>;

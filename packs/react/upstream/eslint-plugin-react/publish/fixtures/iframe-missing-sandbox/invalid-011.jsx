@@ -1,1 +1,0 @@
-<iframe sandbox="allow-same-origin allow-scripts"/>;

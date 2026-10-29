@@ -1,1 +1,0 @@
-<div controls={this.controls} loop={true} muted={false} src={this.uzjylUnk} playsInline={true} allowFullScreen></div>

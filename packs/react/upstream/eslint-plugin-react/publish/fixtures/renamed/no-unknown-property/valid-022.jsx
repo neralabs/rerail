@@ -1,1 +1,0 @@
-<svg key="sdam" viewBox="znj" fill={80} d="d" stroke={8} strokeWidth={5} strokeLinecap={1} strokeLinejoin={6} transform="dewioyhjd" clipRule="else" x1={2} x2="9" y1="4" y2="3"></svg>

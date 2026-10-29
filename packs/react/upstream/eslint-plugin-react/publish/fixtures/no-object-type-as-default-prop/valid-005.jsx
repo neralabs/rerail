@@ -1,5 +1,0 @@
-
-      const Foo = () => {
-        return null;
-      };
-    

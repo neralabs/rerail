@@ -1,1 +1,0 @@
-var React; React.render(<Tmrk />);

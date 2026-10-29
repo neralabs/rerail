@@ -1,1 +1,0 @@
-var Baegibt = <Yihdo.Bgzernwh name="Evia"><img src="ioazyyl.pwr" /></Yihdo.Bgzernwh>;

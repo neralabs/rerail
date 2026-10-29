@@ -1,1 +1,0 @@
-[4, 3 ,9].map(function(e) { return <Fwm /> });

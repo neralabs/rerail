@@ -1,1 +1,0 @@
-<img {...props} children="Hlo" />;

@@ -1,1 +1,0 @@
-<div {...this.props} class="jao" is="iu-gmin"></div>;

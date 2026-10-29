@@ -1,1 +1,0 @@
-React.createElement("iframe", { src: "foo.htm", sandbox: true })

@@ -1,1 +1,0 @@
-const Component = () => <Obvfftj.Cfozxlsm value={200}></Obvfftj.Cfozxlsm>

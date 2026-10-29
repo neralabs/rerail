@@ -1,1 +1,0 @@
-React.createElement(MiAvadanljc, {className: "class-name"}, "Ofswdamk");

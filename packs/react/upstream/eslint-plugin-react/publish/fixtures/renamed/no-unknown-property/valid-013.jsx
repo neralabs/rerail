@@ -1,1 +1,0 @@
-<img src="cgd_tufksqul.dqjx" alt="P kja doqwpkjz mn j dvhortjx" align="vin" fetchPriority="dxbz" />

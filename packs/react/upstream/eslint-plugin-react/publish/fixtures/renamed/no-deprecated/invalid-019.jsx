@@ -1,1 +1,0 @@
-import {pcdhxKJC} from 'react-addons-perf';

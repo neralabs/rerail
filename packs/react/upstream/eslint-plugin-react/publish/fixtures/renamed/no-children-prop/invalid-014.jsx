@@ -1,1 +1,0 @@
-React.createElement(MiAvadanljc, {...props, children: "Ofswdamk"})

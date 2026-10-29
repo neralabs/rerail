@@ -1,1 +1,0 @@
-<iframe src="foo.htm" sandbox sandbox></iframe>

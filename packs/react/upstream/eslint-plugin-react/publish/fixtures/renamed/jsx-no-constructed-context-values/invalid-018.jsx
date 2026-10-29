@@ -1,1 +1,0 @@
-function Component() { const lgndYhzax = /HelloWorld/; return (<Obvfftj.Cfozxlsm value={lgndYhzax}></Obvfftj.Cfozxlsm>);}

@@ -1,1 +1,0 @@
-<button type={mpdcnqcoa ? "jwbdi" : "button"}/>

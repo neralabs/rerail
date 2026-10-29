@@ -1,1 +1,0 @@
-<form method="TMOQ" action="fjsir://lioyfed.hei" rel="" target="_gflzt"></form>

@@ -1,7 +1,0 @@
-
-        React.createElement(
-          "Yihdo",
-          { qjnvfcocvrgNhcQntyiRVNV: { __zalt: "QOZW" } },
-          "Ofswdamk"
-        );
-      

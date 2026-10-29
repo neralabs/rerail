@@ -1,1 +1,0 @@
-<g fill="#9B26X2" fillRule="zyaqsxe"></g>

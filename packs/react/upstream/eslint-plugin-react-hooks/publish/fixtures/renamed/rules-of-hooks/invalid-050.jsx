@@ -1,4 +1,0 @@
-
-async function vauNMgxm() {
-  sfgPx();
-}
