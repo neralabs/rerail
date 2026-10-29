@@ -259,7 +259,7 @@ impl Checks {
 }
 
 pub fn rss() -> (u64, u64) {
-    crate::replay::rss()
+    super::rss()
 }
 
 #[repr(C)]
@@ -271,7 +271,7 @@ struct MallocStats {
     size_allocated: usize,
 }
 
-extern "C" {
+unsafe extern "C" {
     fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: usize) -> usize;
     fn malloc_zone_statistics(zone: *mut libc::c_void, stats: *mut MallocStats);
 }

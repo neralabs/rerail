@@ -23,6 +23,9 @@ pub(crate) mod propagate;
 pub(crate) mod runs;
 #[allow(dead_code)]
 pub(crate) mod vtab;
+/// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
+#[allow(dead_code, unused_imports, clippy::all)]
+pub(crate) mod ygraph;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).

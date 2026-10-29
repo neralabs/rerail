@@ -123,3 +123,11 @@ fn parity(args: &[String]) {
         std::process::exit(1);
     }
 }
+
+/// facts-b's `replay::rss`: resident and footprint bytes of this process (macOS).
+pub fn rss() -> (u64, u64) {
+    let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
+    let r = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V2, &mut info as *mut _ as *mut libc::rusage_info_t) };
+    assert_eq!(r, 0);
+    (info.ri_resident_size, info.ri_phys_footprint)
+}
