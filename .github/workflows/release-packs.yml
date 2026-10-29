@@ -239,8 +239,8 @@ jobs:
           if-no-files-found: error
 
   # npm trusted publishing: npmjs lists this repository, `release-packs.yml` and the `release` environment as each
-  # pack's trusted publisher, so no npm token exists anywhere. Provenance needs a public repository; until this one
-  # is public, packs publish without it.
+  # pack's trusted publisher, so no npm token exists anywhere. packs-publish.mjs passes `--provenance` here, so a pack
+  # that npm cannot attach a provenance attestation to fails to publish instead of going out without one.
   publish:
     name: Publish to npmjs
     needs: [plan, pack]
