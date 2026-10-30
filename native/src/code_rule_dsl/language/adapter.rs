@@ -33,7 +33,7 @@ pub(crate) use vue::Vue;
 use super::{
     Family, GrammarDialect, PackageType, SourceType, is_declaration_file, language_not_supported,
 };
-use crate::code_rule_dsl::identifier::python_name;
+use crate::code_rule_dsl::identifier::{ecma_name, python_name};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{
@@ -92,7 +92,8 @@ pub(crate) trait Adapter: 'static {
     type Arguments: ArgumentRules;
     type Calls: CallRules;
     type FormatArgs: FormatArgRules;
-    /// An identifier's text as the family compares names (Python: NFKC; others: as written).
+    /// An identifier's text as the family compares names (Python: NFKC; ECMAScript: escapes
+    /// decoded; others: as written).
     fn name(text: Cow<'_, str>) -> Cow<'_, str>;
     /// The bytes tree-sitter parses for a file of the family, as long as `source` and with its
     /// character boundaries and line ends: `source` itself, but for PHP's view of a template
@@ -187,7 +188,7 @@ impl Adapter for Ecma {
     type FormatArgs = Refused;
 
     fn name(text: Cow<'_, str>) -> Cow<'_, str> {
-        text
+        ecma_name(text)
     }
 
     fn parse_input(source: &str) -> Cow<'_, str> {

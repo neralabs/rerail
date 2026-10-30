@@ -325,16 +325,19 @@ pub(super) fn evaluate_file(
         if file.failures.contains_key(&id) {
             continue;
         }
-        let haystack: &str = match source {
-            RegexSource::Content => &file.input.source,
-            RegexSource::Path => &file.input.path,
+        let (haystack, offset): (&str, usize) = match source {
+            RegexSource::Content => {
+                let start = query::content_start(&file.input.source, file_language(&file.input));
+                (&file.input.source[start..], start)
+            }
+            RegexSource::Path => (&file.input.path, 0),
         };
         let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
-        let span = |start, end| match source {
+        let span = |start: usize, end: usize| match source {
             RegexSource::Content => lines
                 .as_ref()
                 .expect("eligible content has line table")
-                .span(start, end),
+                .span(start + offset, end + offset),
             RegexSource::Path => path_lines.span(start, end),
         };
         // Each clause scans under its own allowance, so one clause's matches spend none of

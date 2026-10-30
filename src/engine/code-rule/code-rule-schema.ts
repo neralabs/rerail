@@ -402,6 +402,18 @@ export const codeRuleTransformationSchema = z.union([
     .strict(),
   z.object({ lines: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
   z.object({ count: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
+  z
+    .object({
+      toPrecision: z
+        .object({
+          source: transformSource,
+          default: z.string().optional(),
+          value: z.boolean().optional(),
+          digits: z.union([z.number().int().min(1).max(100), z.string().regex(/^\$[A-Z0-9_]+$/, "toPrecision digits are a number from 1 to 100 or a $NAME variable.")]),
+        })
+        .strict(),
+    })
+    .strict(),
 ]) as unknown as z.ZodType<CodeRuleDslTransformation>;
 
 /** The transformation's body: its source and settings. */
@@ -411,6 +423,7 @@ function transformBody(transformation: CodeRuleDslTransformation): { source: str
   if ("convert" in transformation) return transformation.convert;
   if ("line" in transformation) return transformation.line;
   if ("lines" in transformation) return transformation.lines;
+  if ("toPrecision" in transformation) return transformation.toPrecision;
   return transformation.count;
 }
 
@@ -437,9 +450,14 @@ export const codeRuleValueTestSchema = z
     le: z.number().optional(),
     truthy: z.boolean().optional(),
     follow: z.boolean().optional(),
+    name: z.boolean().optional(),
   })
   .strict()
-  .refine(value => Object.keys(value).some(key => key !== "follow"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.") as unknown as z.ZodType<CodeRuleDslValueTest>;
+  .refine(value => Object.keys(value).some(key => key !== "follow" && key !== "name"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.")
+  .refine(
+    value => value.name !== true || Object.keys(value).every(key => ["eq", "startsWith", "regex", "name"].includes(key)),
+    "name: true reads a name, a string, which only eq, startsWith and regex test.",
+  ) as unknown as z.ZodType<CodeRuleDslValueTest>;
 
 /** A signature entry: a slot name (an identifier), `/` or `*`. */
 const signatureEntry = z.string().max(256).regex(/^(?:[A-Za-z_$][A-Za-z0-9_$]*|\/|\*)$/, "Must be a slot name (an identifier), / or *.");

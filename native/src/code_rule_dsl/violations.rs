@@ -433,10 +433,11 @@ pub(super) fn bind(
                 .first()
                 .and_then(|grammar| grammar.transform.as_ref())
                 .filter(|transform| {
-                    transform
-                        .steps
-                        .iter()
-                        .any(|(_, trans)| node_groups.contains(trans.source_name()))
+                    transform.steps.iter().any(|(_, trans)| {
+                        trans
+                            .source_names()
+                            .any(|source| node_groups.contains(source))
+                    })
                 })
                 .cloned();
             names.extend(node_groups.iter().copied());

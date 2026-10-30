@@ -591,6 +591,41 @@ fn javascript_using_declarations_are_block_scoped() {
             ("sub", 2, Global),
         ],
     );
+    // A `for … of` head's `using` and `await using` bind in the loop, as `const` does.
+    check(
+        GrammarDialect::JavaScript,
+        "async function f(rs) {\n  for (await using resource of rs) { resource; }\n  resource;\n  for (using r of rs) r;\n  r;\n}\n",
+        &[
+            ("resource", 1, Local),
+            ("resource", 2, Global),
+            ("r", 1, Local),
+            ("r", 2, Global),
+        ],
+    );
+}
+
+#[test]
+fn javascript_escaped_names_resolve_by_their_decoded_names() {
+    // espree decodes `\uXXXX` and `\u{X}` escapes into `Identifier.name`, which eslint-scope
+    // binds and resolves by: `\u0061b`, `ab` and `\u{61}b` are one variable.
+    let source = "var \\u0061b = 1;\nab;\n\\u{61}b;\nlet 𠮷 = 2;\n\\u{20BB7};\nc\\u0064;\n";
+    let table = table(GrammarDialect::JavaScript, source);
+    let read = |text: &str| {
+        let start = source.find(&format!("\n{text};")).expect("read") + 1;
+        let reference = table
+            .reference(&(start..start + text.len()))
+            .expect("a reference");
+        let name = table
+            .reference_name(reference, source, 0)
+            .expect("a name")
+            .into_owned();
+        let bound = table.resolve(reference, &name).is_some();
+        (name, bound)
+    };
+    assert_eq!(read("ab"), ("ab".to_owned(), true));
+    assert_eq!(read("\\u{61}b"), ("ab".to_owned(), true));
+    assert_eq!(read("\\u{20BB7}"), ("𠮷".to_owned(), true));
+    assert_eq!(read("c\\u0064"), ("cd".to_owned(), false));
 }
 
 #[test]

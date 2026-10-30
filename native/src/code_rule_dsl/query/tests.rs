@@ -157,3 +157,35 @@ fn f841_work_grows_linearly_with_assignments() {
         );
     }
 }
+
+/// ESLint's `SourceCode` strips a leading byte order mark before any rule reads the text: a
+/// `file.content` regex reads an ECMAScript file from past it, its spans still over the file's
+/// bytes. Other families' files keep it.
+#[test]
+fn content_regexes_skip_a_leading_byte_order_mark_where_eslint_strips_it() {
+    use crate::code_rule_dsl::test_support::{clause_document, compile_document_with, violation};
+    let run = |pattern: &str, language: &str, path: &str| {
+        let document = clause_document(json!({
+            "id": "bom",
+            "forbid": { "regex": { "source": "file.content", "pattern": pattern } },
+            "violation": violation(),
+        }));
+        let compiled = compile_document_with(
+            document,
+            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, language, path, "\u{feff}x = 1\n");
+        result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|found| found["span"]["startByte"].as_u64().expect("start"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(run("\\x{FEFF}", "javascript", "a.js"), Vec::<u64>::new());
+    assert_eq!(run("\\x{FEFF}", "typescript", "a.ts"), Vec::<u64>::new());
+    assert_eq!(run("\\Ax", "javascript", "a.js"), [3]);
+    assert_eq!(run("\\x{FEFF}", "python", "a.py"), [0]);
+    assert_eq!(run("\\Ax", "python", "a.py"), Vec::<u64>::new());
+}

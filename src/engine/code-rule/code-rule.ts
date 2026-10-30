@@ -280,7 +280,8 @@ export type CodeRuleDslTransformation =
     }
   | { line: { source: string; default?: string; edge?: "start" | "end" } }
   | { lines: { source: string; default?: string } }
-  | { count: { source: string; default?: string } };
+  | { count: { source: string; default?: string } }
+  | { toPrecision: { source: string; default?: string; value?: boolean; digits: number | string } };
 
 /** A text condition: `regex` (unanchored) must match, `notRegex` must not; at least one. */
 export interface CodeRuleDslTextCondition {
@@ -871,6 +872,12 @@ export interface CodeRuleDslValueTest {
    * by default. Rules that follow are not evaluated in files with syntax errors (`source-incomplete`).
    */
   follow?: boolean;
+  /**
+   * `true`: `eq`, `startsWith` and `regex` test what the node names rather than its value: ESTree's name (an identifier's,
+   * `\u` escapes decoded; a private name's without `#`) or a string literal's value; PHP's symbol name. A node without a
+   * name fails. Only those three predicates stand beside it; Python and Rust refuse it.
+   */
+  name?: boolean;
 }
 
 /**

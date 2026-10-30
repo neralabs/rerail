@@ -76,7 +76,7 @@ pub(super) use semantic::Semantic;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-pub(super) use transform::{Separator, Source, StringCase, Trans, Transform};
+pub(super) use transform::{Digits, Separator, Source, StringCase, Trans, Transform};
 
 #[cfg(test)]
 pub(crate) use transform::{

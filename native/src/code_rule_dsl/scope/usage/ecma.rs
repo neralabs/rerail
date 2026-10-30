@@ -782,7 +782,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                     break;
                 }
                 "for_in_statement" => {
-                    let declared = has_token(ancestor, &["var", "let", "const"]);
+                    let declared = has_token(ancestor, &["var", "let", "const", "using"]);
                     writes += usize::from(is_field("left") && declared);
                     break;
                 }

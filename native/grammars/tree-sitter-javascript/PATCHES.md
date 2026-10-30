@@ -11,7 +11,7 @@ so Rerail carries its fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `src/scanner.c` | upstream, with Patches 2, 8, 9, 11, 13, 14 and 15 |
+| `src/scanner.c` | upstream, with Patches 2, 8, 9, 11, 13, 14, 15 and 16 |
 | `src/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 |
 | `src/grammar.json` | regenerated from the patched `grammar.js` |
 
@@ -1235,6 +1235,89 @@ the scanner always inserts a semicolon. `a⏎++b` was already `a; ++b`. `throw�
 
 Node kinds and field names are unchanged. The generated parser has 26 more states (2,233).
 
+## Patch 16: `static`, `get` and `set` stay tokens of their own before a name on the next line
+
+Upstream issue: none open. Present at tag `v0.25.0` and at HEAD.
+
+Why: ECMAScript reads `static`, `get` and `set` before a class element's name as modifiers whatever line the name
+is on (no line terminator restriction, unlike `async`): `static get⏎a() {}` is a static getter `a`, `get⏎a() {}` a
+getter. Upstream's scanner inserts a semicolon at a line break before an identifier, which would end a field named
+`get` there, so upstream lexes `static`, its whitespace, `get` and the line break as one token,
+`token(seq('static', /\s+/, 'get', /\s*\n/))` aliased `"static get"`. Rules see no `static` and no `get` token in
+that method (three ESLint candidates failed on `grouped-accessor-pairs/125`, `class A { … static get ⏎ a(){} }`),
+`get⏎a() {}` and `set⏎a(v) {}` without `static` still read as a field and a method, and `static get⏎= 2` (a static
+field named `get`) was a parse error. A never-returned external token, `_member_name_here`, now marks the places
+after a method's `static`, `get` and `set`; after a line break there, the scanner inserts no semicolon before a
+token that starts a property name (an identifier character, `\`, `#`, a quote or a non-ASCII character), so the
+name on the next line is the method's. `[` and `*` already went on through their own symbols; any other token (`=`,
+`(`, `;`, `}`) goes on as before, so `static get⏎= 2` is a field.
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -36,6 +36,9 @@
+     // Never returned: marks where ECMAScript allows no line terminator before an operand, after `return` and
+     // `yield`, so that the scanner ends the statement at a line break there (`return⏎[a]` is `return; [a];`).
+     $._no_line_terminator_here,
++    // Never returned: valid after a class member's `static`, `get` or `set`, so that the scanner inserts no semicolon
++    // at a line break before the member's name (`static get⏎a() {}` is a static getter `a`).
++    $._member_name_here,
+   ],
+ 
+   extras: $ => [
+@@ -1291,12 +1294,12 @@
+ 
+     method_definition: $ => seq(
+       repeat(field('decorator', $.decorator)),
++      optional(seq('static', optional($._member_name_here))),
++      optional('async'),
+       optional(choice(
+-        'static',
+-        alias(token(seq('static', /\s+/, 'get', /\s*\n/)), 'static get'),
++        seq(choice('get', 'set'), optional($._member_name_here)),
++        '*',
+       )),
+-      optional('async'),
+-      optional(choice('get', 'set', '*')),
+       field('name', $._property_name),
+       field('parameters', $.formal_parameters),
+       field('body', $.statement_block),
+--- a/src/scanner.c
++++ b/src/scanner.c
+@@ -25,6 +25,9 @@
+     // Never returned: valid right after `return` and `yield`, where ECMAScript allows no line terminator before the
+     // operand (see scan_after_line_terminator).
+     NO_LINE_TERMINATOR_HERE,
++    // Never returned: valid after a class member's `static`, `get` or `set`, where a name on the next line is the
++    // member's (see scan_after_line_terminator).
++    MEMBER_NAME_HERE,
+ };
+ 
+ void *tree_sitter_javascript_external_scanner_create() { return NULL; }
+@@ -228,6 +231,15 @@
+     // would continue it.
+     if (valid_symbols[ARROW_BODY_END]) {
+         return lexer->lookahead != ',' && lexer->lookahead != ':' && lexer->lookahead != ';';
++    }
++
++    // After a class member's `static`, `get` or `set`, a property name on the next line is the member's, as ECMAScript
++    // reads a class element (`static get⏎a() {}` is a static getter `a`, `get⏎a() {}` a getter): no semicolon there.
++    // `[` and `*` say so through their own symbols; any other token (`=`, `(`, `;`, `}`) goes on as before.
++    if (valid_symbols[MEMBER_NAME_HERE] &&
++        (is_identifier_char(lexer->lookahead) || lexer->lookahead == '\\' || lexer->lookahead == '#' ||
++         lexer->lookahead == '"' || lexer->lookahead == '\'' || lexer->lookahead > 0x7f)) {
++        return false;
+     }
+ 
+     switch (lexer->lookahead) {
+```
+
+The anonymous `"static get"` node is gone: such a method holds a `static` and a `get` token, as one on a single line
+does. Other node kinds and field names are unchanged. An object literal's method is unaffected (no semicolon is
+valid there). espree 11.2.0 and TypeScript 5.9 read `static get⏎a(){}`, `static⏎get⏎b(){}`, `get⏎c(){}`, `static
+get = 1`, `static get⏎= 2` and `static async⏎d(){}` (a field `async` and a method `d`: `async` keeps its restriction)
+as the patched grammar does. The generated parser has 115 more states (2,348); the symbol count is unchanged (267).
+
 ## Corpus and tree comparison
 
 With all fifteen patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
@@ -1251,3 +1334,10 @@ they fix: `no-irregular-whitespace/192` and `193`, `test.jsx`, `jsx-no-undef/val
 locale, as the engine does (Python sets a UTF-8 locale, under which the scanner's old `iswspace` hid Patch 11's
 failures). The files that still fail to parse are invalid JavaScript: Flow annotations, a Babel `do` expression,
 and truncated or deliberately broken fixtures.
+
+With Patch 16, upstream's corpus parses as before (115 of 116, the `Objects` case aside; its `static get⏎baz()` case
+compares named nodes only, so the `"static get"` token's split does not show). Over the 22,354 `.js`, `.jsx`, `.mjs`
+and `.cjs` files of every pack's fixtures and samples, compared with Patches 1 to 15 alone, no named tree changes and
+no file gains or loses an error: the patch changes only the anonymous tokens of a method whose `static get` meets a
+line break (such as `grouped-accessor-pairs/125`), and the trees of code that puts a member's name on the line after
+`get`, `set` or `static`, which none of them does.
