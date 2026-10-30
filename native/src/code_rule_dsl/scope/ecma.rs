@@ -829,8 +829,9 @@ impl Visitor<'_, '_> {
         let fields = self.fields();
         self.builder.push(ScopeKind::Block, node.range());
         let left = field(node, fields.left);
+        // `using` and `await using` bind in the loop head as `let` and `const` do.
         let declared = node.children().find(|child| {
-            !child.is_named() && matches!(child.kind().as_ref(), "var" | "let" | "const")
+            !child.is_named() && matches!(child.kind().as_ref(), "var" | "let" | "const" | "using")
         });
         if let Some(left) = &left {
             let site = site(Form::For, node);

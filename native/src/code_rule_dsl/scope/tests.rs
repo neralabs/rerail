@@ -591,6 +591,17 @@ fn javascript_using_declarations_are_block_scoped() {
             ("sub", 2, Global),
         ],
     );
+    // A `for … of` head's `using` and `await using` bind in the loop, as `const` does.
+    check(
+        GrammarDialect::JavaScript,
+        "async function f(rs) {\n  for (await using resource of rs) { resource; }\n  resource;\n  for (using r of rs) r;\n  r;\n}\n",
+        &[
+            ("resource", 1, Local),
+            ("resource", 2, Global),
+            ("r", 1, Local),
+            ("r", 2, Global),
+        ],
+    );
 }
 
 #[test]

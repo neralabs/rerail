@@ -534,9 +534,10 @@ impl Resolves {
                 }
                 "for_in_statement" => {
                     blocks
-                        && ancestor
-                            .field("kind")
-                            .is_some_and(|kind| matches!(kind.kind().as_ref(), "let" | "const"))
+                        && ancestor.field("kind").is_some_and(|kind| {
+                            // `await using`'s kind starts with `await`.
+                            matches!(kind.kind().as_ref(), "let" | "const" | "using" | "await")
+                        })
                 }
                 _ => false,
             })
