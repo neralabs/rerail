@@ -155,9 +155,11 @@ interpreter.
     lower, all exact. That is 10 more; the other 15 `count` clauses are refused for semantic
     leaves inside them.
   - `lowered_clauses_find_the_same_roots_on_metal` (`metal-tests`): 87 of 87 clauses give the
-    CPU's root sets on Metal. On 8 fixtures (164 matched nodes) that took 2,349 launches and 330
-    command buffers over 87 evaluations, about 27 launches each. Metal 20 s, CPU 14.6 s (test
-    wall time, debug build, load 14).
+    CPU's root sets on Metal, on the default sample of 60 fixtures (1,177 matched nodes).
+  - That took 2,457 launches and 341 command buffers over 87 evaluations, about 28 launches
+    each.
+  - Metal took 39.9 s against the CPU's 37.0 s (test wall time, debug build). The run used
+    122 s user and 10 s sys CPU at load 15–18.
   - Both gates take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
     fixtures) for targeted checks. The default sample is every eighth fixture.
 - **Left for later (O23):**
