@@ -11,16 +11,48 @@
         "dependencies": {
           "ecosystem": "npm",
           "names": [
-            "@types/node"
+            "express",
+            "koa",
+            "fastify",
+            "@hapi/hapi",
+            "@nestjs/core",
+            "restify",
+            "@adonisjs/core",
+            "sails",
+            "@feathersjs/feathers",
+            "moleculer",
+            "electron"
           ]
         }
       },
       {
         "files": [
+          "**/*.cjs",
           "**/*.mjs",
-          "**/*.cjs"
+          "**/*.cts",
+          "**/*.mts"
         ],
-        "label": "*.mjs and *.cjs files"
+        "exclude": [
+          "**/*.d.mts",
+          "**/*.d.cts",
+          "**/test/**",
+          "**/tests/**",
+          "**/__tests__/**",
+          "**/__mocks__/**",
+          "**/spec/**",
+          "**/e2e/**",
+          "**/fixtures/**",
+          "**/*.test.*",
+          "**/*.spec.*",
+          "**/scripts/**",
+          "**/*.config.*",
+          "**/.*rc.*",
+          "**/.*/**",
+          "**/gulpfile.*",
+          "**/Gulpfile.*",
+          "**/Gruntfile.*"
+        ],
+        "label": "Node.js module files (*.cjs, *.mjs)"
       }
     ]
   },
@@ -54,11 +86,23 @@
       "on": false
     },
     {
+      "id": "n-hashbang",
+      "document": "rules/n-hashbang.json",
+      "title": "eslint-plugin-n hashbang: Require correct usage of hashbang",
+      "group": "eslint-plugin-n"
+    },
+    {
       "id": "n-no-callback-literal",
       "document": "rules/n-no-callback-literal.json",
       "title": "eslint-plugin-n no-callback-literal: Enforce Node.js-style error-first callback pattern is followed",
       "group": "eslint-plugin-n",
       "on": false
+    },
+    {
+      "id": "n-no-deprecated-api",
+      "document": "rules/n-no-deprecated-api.json",
+      "title": "eslint-plugin-n no-deprecated-api: Disallow deprecated APIs",
+      "group": "eslint-plugin-n"
     },
     {
       "id": "n-no-exports-assign",
@@ -164,9 +208,70 @@
       "on": false
     },
     {
+      "id": "n-prefer-promises-dns",
+      "document": "rules/n-prefer-promises-dns.json",
+      "title": "eslint-plugin-n prefer-promises/dns: Enforce `require(\"dns\").promises`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
       "id": "n-prefer-promises-fs",
       "document": "rules/n-prefer-promises-fs.json",
       "title": "eslint-plugin-n prefer-promises/fs: Enforce `require(\"fs\").promises`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-crypto",
+      "document": "rules/n-prefer-global-crypto.json",
+      "title": "eslint-plugin-n prefer-global/crypto: enforce either `crypto` or `require(\"crypto\").webcrypto`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-global-timers",
+      "document": "rules/n-prefer-global-timers.json",
+      "title": "eslint-plugin-n prefer-global/timers: enforce either global timer functions or `require(\"timers\")`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-import-assert-strict",
+      "document": "rules/n-prefer-import-assert-strict.json",
+      "title": "eslint-plugin-n prefer-import/assert-strict: enforce using `node:assert/strict` instead of `node:assert`",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-prefer-process-get-builtin-module",
+      "document": "rules/n-prefer-process-get-builtin-module.json",
+      "title": "eslint-plugin-n prefer-process-get-builtin-module: enforce using `process.getBuiltinModule()` to load Node.js built-in modules",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-unsupported-features-node-builtins",
+      "document": "rules/n-no-unsupported-features-node-builtins.json",
+      "title": "eslint-plugin-n no-unsupported-features/node-builtins: disallow unsupported Node.js built-in APIs on the specified version",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-unsupported-features-es-builtins",
+      "document": "rules/n-no-unsupported-features-es-builtins.json",
+      "title": "eslint-plugin-n no-unsupported-features/es-builtins: disallow unsupported ECMAScript built-ins on the specified version",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-top-level-await",
+      "document": "rules/n-no-top-level-await.json",
+      "title": "eslint-plugin-n no-top-level-await: disallow top-level `await` in published modules",
+      "group": "eslint-plugin-n",
+      "on": false
+    },
+    {
+      "id": "n-no-unpublished-bin",
+      "document": "rules/n-no-unpublished-bin.json",
+      "title": "eslint-plugin-n no-unpublished-bin: disallow `bin` files that npm ignores",
       "group": "eslint-plugin-n",
       "on": false
     }

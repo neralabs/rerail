@@ -225,11 +225,15 @@ const evaluationSchema = z.object({
 });
 type Evaluation = z.infer<typeof evaluationSchema>["evaluation"];
 
-/** Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. */
-async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, files: readonly SourceFile[]): Promise<Evaluation> {
+/**
+ * Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. Import
+ * targets resolve against the files below `root` the workspace does not hold, as in the daemon.
+ */
+async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, root: string, files: readonly SourceFile[]): Promise<Evaluation> {
   const workspace = new binding.CodeRuleDslWorkspace();
   try {
     workspace.addCodeRule(compiled);
+    workspace.setRoot(resolve(root));
     const accepted = files.filter(file => workspace.acceptsPath(file.path));
     if (accepted.length === 0) return { violations: [], failures: [] };
     const result = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 1, files: accepted, removed: [] }));
@@ -270,7 +274,7 @@ async function policyCaseResult(
     // The graph reads the sample in place of the repository's file at its path.
     const facts = await sourceFileFacts(root, sample.path, language, undefined, compiled.readsServerGraph(), { path: sample.path, source: sample.content });
     const file = { path: sample.path, language, source: sample.content, ...facts };
-    const evaluation = await evaluate(binding, compiled, [file]);
+    const evaluation = await evaluate(binding, compiled, root, [file]);
     caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
     // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
     const unchecked = caught ? undefined : uncheckedPlaces(evaluation.failures);
@@ -415,7 +419,7 @@ async function repositoryPass(
 ): Promise<NonNullable<RuleDraftReport["repository"]>> {
   const { files, leftOut } = await repositoryFiles(binding, compiled, root);
   const sources = new Map(files.map(file => [file.path, file.source]));
-  const evaluation = await evaluate(binding, compiled, files);
+  const evaluation = await evaluate(binding, compiled, root, files);
   const located = evaluation.violations
     .map(violation => ({
       path: violation.path ?? "",

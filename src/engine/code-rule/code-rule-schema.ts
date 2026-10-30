@@ -30,6 +30,7 @@ import type {
   CodeRuleDslCalls,
   CodeRuleDslFileCondition,
   CodeRuleDslFormatArgs,
+  CodeRuleDslImportTarget,
   CodeRuleDslLanguageOptions,
   CodeRuleDslLayout,
   CodeRuleDslParse,
@@ -146,7 +147,7 @@ export const codeRuleViolationSpecSchema = z
 export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
-const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "embedded", "calls"] as const;
+const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "host", "embedded", "calls", "importTarget"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
 export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
@@ -708,13 +709,20 @@ const moduleRegex = z
 const packageConditionSchema = z
   .object({
     bin: z.boolean().optional(),
-    nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
+    nodeVersion: z
+      .union([z.object({ subsetOf: nonEmptyString }).strict(), z.object({ notSubsetOf: nonEmptyString }).strict()])
+      .optional(),
     dependsOn: z.array(nonEmptyString).min(1).optional(),
     path: moduleRegex.optional(),
     serverGraph: z.boolean().optional(),
+    private: z.boolean().optional(),
+    published: z.boolean().optional(),
   })
   .strict()
-  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
+  .refine(
+    condition => Object.values(condition).some(value => value !== undefined),
+    "Set bin, nodeVersion, dependsOn, path, serverGraph, private or published.",
+  );
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
@@ -724,11 +732,12 @@ export const codeRuleFileConditionSchema = z
     package: z.union([moduleRegex, packageConditionSchema]).optional(),
     inPackage: z.boolean().optional(),
     jsxRuntime: z.array(z.enum(["react", "other", "unknown"])).min(1).optional(),
+    byteOrderMark: z.boolean().optional(),
   })
   .strict()
   .refine(
     file => Object.values(file).some(value => value !== undefined),
-    "Set path, declaration, module, moduleName, package, inPackage or jsxRuntime.",
+    "Set path, declaration, module, moduleName, package, inPackage, jsxRuntime or byteOrderMark.",
   ) as unknown as z.ZodType<CodeRuleDslFileCondition>;
 export const codeRuleLanguageOptionsSchema = z
   .object({
@@ -736,6 +745,7 @@ export const codeRuleLanguageOptionsSchema = z
       .union([z.literal("latest"), z.number().int().refine(isEcmaVersion, `ecmaVersion must be "latest", 3, 5, 6 to ${CODE_RULE_LATEST_ECMA_VERSION - 2009}, or 2015 to ${CODE_RULE_LATEST_ECMA_VERSION}.`)])
       .optional(),
     sourceType: z.enum(CODE_RULE_SOURCE_TYPES).optional(),
+    moduleSystem: z.enum(["file", "package-type"]).optional(),
     globals: z
       .record(resolveIdentifier, z.union([z.enum(CODE_RULE_GLOBAL_SETTINGS), z.boolean(), z.null()]))
       .refine(globals => Object.keys(globals).length <= CODE_RULE_MAX_LANGUAGE_GLOBALS, `At most ${CODE_RULE_MAX_LANGUAGE_GLOBALS} globals.`)
@@ -756,6 +766,10 @@ export const codeRuleLanguageOptionsSchema = z
   .refine(
     options => (options.sourceType ?? "module") !== "module" || options.ecmaVersion === undefined || options.ecmaVersion === "latest" || options.ecmaVersion >= 6,
     'sourceType "module" (the default) needs ecmaVersion 2015 or later; ESLint refuses it.',
+  )
+  .refine(
+    options => options.sourceType === undefined || options.moduleSystem === undefined || options.moduleSystem === "file",
+    "moduleSystem decides a file's module system only where sourceType does not; set one of them.",
   ) as unknown as z.ZodType<CodeRuleDslLanguageOptions>;
 
 const lineCountValue = z.number().int().nonnegative();
@@ -782,6 +796,25 @@ export const codeRuleLayoutSchema = z
   .object({ span: lineCount.optional(), start: lineCount.optional(), before: layoutGap.optional(), after: layoutGap.optional() })
   .strict()
   .refine(layout => Object.values(layout).some(value => value !== undefined), "layout must hold span, start, before or after.") as unknown as z.ZodType<CodeRuleDslLayout>;
+
+/** `importTarget`'s module types, as eslint-plugin-n's `ImportTarget` names them (the engine's `ModuleType`). */
+const CODE_RULE_IMPORT_TARGET_MODULE_TYPES = ["unknown", "relative", "absolute", "node", "npm", "http", "data"] as const;
+const importTargetModuleType = z.enum(CODE_RULE_IMPORT_TARGET_MODULE_TYPES);
+/** `importTarget`: `via` and each fact listed; the engine refuses it outside JavaScript and TypeScript. */
+export const codeRuleImportTargetSchema = z
+  .object({
+    via: z.enum(["import", "require"]),
+    moduleType: z.union([importTargetModuleType, z.array(importTargetModuleType).min(1)]).optional(),
+    builtin: z.boolean().optional(),
+    resolved: z.boolean().optional(),
+    failed: z.boolean().optional(),
+    extensionSpelled: z.boolean().optional(),
+    published: z.boolean().optional(),
+    devDependency: z.boolean().optional(),
+    declared: z.boolean().optional(),
+    aliased: z.boolean().optional(),
+  })
+  .strict() as unknown as z.ZodType<CodeRuleDslImportTarget>;
 
 export const codeRuleNthChildSchema: z.ZodType<CodeRuleDslNthChild> = z.lazy(() =>
   z.union([
@@ -818,6 +851,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
         host: codeRuleAstRuleSchema,
         embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
+        importTarget: codeRuleImportTargetSchema,
       }),
     })
     .strict()
@@ -854,6 +888,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
         host: codeRuleAstRuleSchema,
         embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
+        importTarget: codeRuleImportTargetSchema,
       }),
     })
     .strict()
@@ -915,6 +950,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
         host: codeRuleAstRuleSchema,
         embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
+        importTarget: codeRuleImportTargetSchema,
       }),
     })
     .strict()

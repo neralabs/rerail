@@ -52,12 +52,21 @@ policy for trimming a set: a `SAMPLES.md` says how its set was trimmed, where it
 A sample is a whole file of another repository, so its licence comes from a recorded table, not from the sample's own
 labels. `RECORDED_LICENCES` in `scripts/samples/licences.ts` names every repository samples may be taken from
 (`owner/name`) with its SPDX licence: the repositories whose licence files the builders read at the samples' commits
-(`SOURCE_LICENCES`, checked against the text on every build), and the ESLint test set's sources, with the licence the
-test set recorded. `COPYLEFT_SOURCES` lists the repositories found copyleft, with the evidence.
+(`SOURCE_LICENCES`, checked against the text on every build), and the ESLint and React test sets' sources, with the
+licence the test set recorded. `COPYLEFT_SOURCES` lists the repositories found copyleft, with the evidence.
+
+A licence is the one in force at the sample's commit, for the sample's file: the licence files of the nearest
+directory above the file that has any (a monorepo package's own, else the root's), or, at a commit with none, the
+README's licence section or `package.json`'s `license`. A `SOURCE_LICENCES` entry records the repository's licence and
+files, and under `at` each pinned commit where they differ (jest was BSD-3-Clause with a patent grant until 2018).
+`at` records a commit's licence even where no allowlisted licence covers the file (`NONE` where nothing states one,
+`CC-BY-4.0` for mocha's docs), so a builder drops the sample and a publish that stages it is refused, whatever the
+repository's licence is today.
 
 When samples are published, `publishedSamples` (`scripts/samples/publish.ts`) refuses:
 
-- a sample whose repository has no entry, or whose labels declare a `source.license` other than the entry's;
+- a sample whose repository has no entry, or whose labels declare a `source.license` other than the entry's at the
+  sample's commit;
 - a sample from a copyleft source;
 - a path that is neither `LICENSES.md` nor `<sample-id>/<path>`, or a sample not staged whole: its file beside its
   labels, the file's sha256 equal to the labels' `source.sha256`.

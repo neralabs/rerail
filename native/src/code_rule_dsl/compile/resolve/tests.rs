@@ -1662,7 +1662,7 @@ fn a_file_condition_reads_the_files_module_path() {
         (
             "python",
             json!({}),
-            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `module`, `moduleName`, `package` or `inPackage`",
+            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `module`, `moduleName`, `package`, `inPackage` or `byteOrderMark`",
         ),
         (
             "python",
@@ -1766,7 +1766,7 @@ fn a_file_condition_reads_the_files_path_in_every_language() {
         (
             "typescript",
             json!({}),
-            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `package` or `jsxRuntime`",
+            "/clauses/0/forbid/ast/file must set `path`, `declaration`, `package`, `jsxRuntime` or `byteOrderMark`",
         ),
         (
             "typescript",
@@ -3666,6 +3666,86 @@ fn file_package_bin_reads_the_manifests_bin_targets() {
     assert_eq!(matched(bin(false), &nested), ["sub/cli.js"]);
 }
 
+/// `file.package.published` reads eslint-plugin-n's `getNpmignore`: the manifest's `files`, and
+/// its folder's `.npmignore`, else (without `files`) its `.gitignore`; `private` reads the
+/// manifest's `private`. Without a manifest neither value holds; a host's own facts decide its
+/// files.
+#[test]
+fn file_package_published_and_private_read_the_manifest_and_its_ignore_files() {
+    let published = |value: bool| json!({ "package": { "published": value } });
+    let private = |value: bool| json!({ "package": { "private": value } });
+    let files = [
+        ("package.json", r#"{ "files": ["lib"], "private": true }"#),
+        (".npmignore", "lib/test\n"),
+        ("lib/a.js", ""),
+        ("lib/test/x.js", ""),
+        ("src/b.js", ""),
+        // No `files`: the `.gitignore` decides.
+        ("pkg/package.json", "{}"),
+        ("pkg/.gitignore", "dist\n"),
+        ("pkg/index.js", ""),
+        ("pkg/dist/a.js", ""),
+        // With `files`, the `.gitignore` plays no part.
+        (
+            "other/package.json",
+            r#"{ "files": ["lib"], "private": false }"#,
+        ),
+        ("other/.gitignore", "lib\n"),
+        ("other/lib/a.js", ""),
+        ("other/a.js", ""),
+    ];
+    assert_eq!(
+        matched(published(true), &files),
+        ["lib/a.js", "other/lib/a.js", "pkg/index.js"]
+    );
+    assert_eq!(
+        matched(published(false), &files),
+        ["lib/test/x.js", "other/a.js", "pkg/dist/a.js", "src/b.js"]
+    );
+    assert_eq!(
+        matched(private(true), &files),
+        ["lib/a.js", "lib/test/x.js", "src/b.js"]
+    );
+    assert_eq!(
+        matched(private(false), &files),
+        [
+            "other/a.js",
+            "other/lib/a.js",
+            "pkg/dist/a.js",
+            "pkg/index.js"
+        ]
+    );
+    // Without a manifest neither value holds.
+    let bare = [(".npmignore", "*\n"), ("a.js", "")];
+    for value in [true, false] {
+        assert!(matched(published(value), &bare).is_empty());
+        assert!(matched(private(value), &bare).is_empty());
+    }
+    // A host's facts: the file's own `published`, the manifest's `private`; a host that sends
+    // no `published` gives neither value.
+    let host = |facts: Value| {
+        let mut package = json!({ "folder": "", "type": "unset" });
+        package
+            .as_object_mut()
+            .unwrap()
+            .extend(facts.as_object().unwrap().clone());
+        package
+    };
+    let hosted = [
+        (
+            "a.js",
+            "",
+            Some(host(json!({ "published": true, "private": true }))),
+        ),
+        ("b.js", "", Some(host(json!({ "published": false })))),
+        ("c.js", "", Some(host(json!({})))),
+    ];
+    assert_eq!(matched_paths(published(true), &hosted), ["a.js"]);
+    assert_eq!(matched_paths(published(false), &hosted), ["b.js"]);
+    assert_eq!(matched_paths(private(true), &hosted), ["a.js"]);
+    assert_eq!(matched_paths(private(false), &hosted), ["b.js", "c.js"]);
+}
+
 #[test]
 fn file_package_depends_on_and_path_read_the_nearest_manifest() {
     let files = [
@@ -3743,6 +3823,33 @@ fn file_package_node_version_reads_eslint_plugin_ns_configured_range() {
     }
     assert!(!matched(subset_of(">=16"), &[("a.js", "")]).is_empty());
     assert!(matched(subset_of(">=18"), &[("a.js", "")]).is_empty());
+    // `notSubsetOf` holds exactly where `subsetOf` does not, without a manifest too.
+    let not_subset_of =
+        |range: &str| json!({ "package": { "nodeVersion": { "notSubsetOf": range } } });
+    for (files, range) in [
+        (
+            &[
+                ("package.json", r#"{ "engines": { "node": ">=18.18" } }"#),
+                ("a.js", ""),
+            ][..],
+            ">=20",
+        ),
+        (
+            &[
+                ("package.json", r#"{ "engines": { "node": ">=18.18" } }"#),
+                ("a.js", ""),
+            ][..],
+            ">=18",
+        ),
+        (&[("a.js", "")][..], ">=18"),
+        (&[("a.js", "")][..], ">=16"),
+    ] {
+        assert_ne!(
+            matched(subset_of(range), files).is_empty(),
+            matched(not_subset_of(range), files).is_empty(),
+            "{files:?} {range}"
+        );
+    }
 }
 
 /// A host's `package` must send `nodeVersion` as a valid npm range: one that does not parse is
@@ -3892,6 +3999,59 @@ fn an_editor_edit_of_a_package_json_rederives_the_packages_below_it() {
         assert_eq!(reported(&edited), expected(plain), "{manifest}");
         assert_eq!(reported(&fresh), expected(plain), "{manifest}");
         current = manifest.to_owned();
+    }
+}
+
+/// An editor edit of a `.npmignore` beside a manifest derives its package's publication again,
+/// as a fresh snapshot of the edited files does.
+#[test]
+fn an_editor_edit_of_an_ignore_file_rederives_its_packages_publication() {
+    let compiled = typescript(json!({ "file": { "package": { "published": false } },
+        "rule": { "kind": "program" } }));
+    let snapshot = |npmignore: &str| {
+        json!({ "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0, "files": [
+            { "language": "json", "path": "pkg/package.json", "source": "{}" },
+            { "language": "text", "path": "pkg/.npmignore", "source": npmignore },
+            { "language": "javascript", "path": "pkg/a.js", "source": "export {};\n" },
+            { "language": "javascript", "path": "pkg/b.js", "source": "export {};\n" },
+        ] })
+        .to_string()
+    };
+    let paths = |result: &str| {
+        let result: Value = serde_json::from_str(result).expect("evaluation is JSON");
+        assert_eq!(result["failures"], json!([]), "{result}");
+        let mut paths = result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|violation| violation["path"].as_str().expect("a path").to_owned())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    };
+    let mut current = "a.js\n".to_owned();
+    let mut editor = compiled.open_editor(snapshot(&current)).unwrap();
+    assert_eq!(
+        paths(&editor.evaluate("report".to_owned()).unwrap()),
+        ["pkg/a.js"]
+    );
+    for (revision, (npmignore, expected)) in (1..).zip([
+        ("b.js\n", &["pkg/b.js"][..]),
+        ("*.js\n!a.js\n", &["pkg/b.js"][..]),
+        ("", &[][..]),
+        ("*\n", &["pkg/a.js", "pkg/b.js"][..]),
+    ]) {
+        let edit = json!({ "revision": revision, "path": "pkg/.npmignore", "startByte": 0,
+            "oldEndByte": current.len(), "newText": npmignore });
+        let edited = editor
+            .apply_edit(edit.to_string(), "report".to_owned())
+            .unwrap();
+        let fresh = compiled
+            .evaluate(snapshot(npmignore), "report".to_owned())
+            .unwrap();
+        assert_eq!(paths(&edited), expected, "{npmignore:?}");
+        assert_eq!(paths(&fresh), expected, "{npmignore:?}");
+        current = npmignore.to_owned();
     }
 }
 
@@ -4258,18 +4418,130 @@ fn a_snapshot_derives_package_facts_from_its_package_json_entries_unless_the_hos
 }
 
 #[test]
+fn module_system_package_type_reads_extension_and_package_type_alone() {
+    // `require` is a configured global only where the query reads the file as CommonJS.
+    let read = |module_system: &str, files: Value, path: &str| -> bool {
+        let rule = with_options(&["require"], json!({ "moduleSystem": module_system }));
+        let snapshot = json!({
+            "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0,
+        });
+        let report: Value = serde_json::from_str(
+            &rule
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON");
+        report["violations"]
+            .as_array()
+            .is_some_and(|violations| violations.iter().any(|violation| violation["path"] == path))
+    };
+    let manifest =
+        |source: &str| json!({ "language": "json", "path": "package.json", "source": source });
+    let file = |path: &str, source: &str| {
+        let language = if path.ends_with("ts") {
+            "typescript"
+        } else {
+            "javascript"
+        };
+        json!({ "language": language, "path": path, "source": source })
+    };
+    // A `.ts` file with module syntax under a type-less manifest: Node's syntax detection makes it
+    // a module (the default), its package type CommonJS.
+    let esm = "import x from \"x\";\nrequire;\n";
+    let untyped = json!([manifest("{}"), file("src/a.ts", esm)]);
+    assert!(!read("file", untyped.clone(), "src/a.ts"));
+    assert!(read("package-type", untyped, "src/a.ts"));
+    // Without any manifest: a module by default, CommonJS by package type.
+    let bare = json!([file("legacy.js", "require;\n")]);
+    assert!(!read("file", bare.clone(), "legacy.js"));
+    assert!(read("package-type", bare, "legacy.js"));
+    // `type: module` and the extensions decide the same either way.
+    let typed = json!([
+        manifest("{ \"type\": \"module\" }"),
+        file("a.js", "require;\n"),
+        file("b.cjs", "require;\n"),
+        file("c.mts", "require;\n"),
+    ]);
+    for (path, commonjs) in [("a.js", false), ("b.cjs", true), ("c.mts", false)] {
+        assert_eq!(
+            read("package-type", typed.clone(), path),
+            commonjs,
+            "{path}"
+        );
+        assert_eq!(read("file", typed.clone(), path), commonjs, "{path}");
+    }
+    // `when.sourceType` gates on the module system the query reads.
+    let gated = |module_system: &str| {
+        let rule = typescript(json!({
+            "languageOptions": { "moduleSystem": module_system },
+            "when": { "sourceType": "commonjs" },
+            "rule": { "kind": "program" },
+        }));
+        let snapshot = json!({
+            "facts": [], "files": [manifest("{}"), file("src/a.ts", esm)],
+            "format": "rerail.repository-snapshot/v1", "revision": 0,
+        });
+        let report: Value = serde_json::from_str(
+            &rule
+                .evaluate(snapshot.to_string(), "report".to_owned())
+                .expect("evaluation succeeds"),
+        )
+        .expect("evaluation is JSON");
+        report["violations"].as_array().map_or(0, Vec::len)
+    };
+    assert_eq!(gated("file"), 0);
+    assert_eq!(gated("package-type"), 1);
+}
+
+#[test]
+fn module_system_is_refused_beside_a_source_type_and_for_other_values() {
+    for (options, expected) in [
+        (
+            json!({ "moduleSystem": "package-type", "sourceType": "commonjs" }),
+            "moduleSystem decides a file's module system only where sourceType does not",
+        ),
+        (
+            json!({ "moduleSystem": "node" }),
+            "moduleSystem must be \"file\" or \"package-type\"",
+        ),
+    ] {
+        let error = compile(
+            "typescript",
+            json!({ "languageOptions": options, "rule": { "kind": "identifier" } }),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("{options} compiles"));
+        assert!(
+            error.reason.contains(expected),
+            "{options}: {}",
+            error.reason
+        );
+    }
+}
+
+#[test]
 fn malformed_package_and_jsx_runtime_conditions_are_rejected() {
     let rule = json!({ "kind": "program" });
     for (language, file, expected) in [
         (
             "typescript",
             json!({ "package": {} }),
-            "must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`",
+            "must set `bin`, `nodeVersion`, `dependsOn`, `path`, `serverGraph`, `private` or `published`",
         ),
         (
             "typescript",
             json!({ "package": { "nodeVersion": { "subsetOf": ">=1.2.3.4" } } }),
             "subsetOf must be an npm semver range",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "nodeVersion": { "notSubsetOf": "x y z" } } }),
+            "notSubsetOf must be an npm semver range",
+        ),
+        (
+            "typescript",
+            json!({ "package": { "nodeVersion": { "subsetOf": ">=18", "notSubsetOf": ">=20" } } }),
+            "must set one of `subsetOf` and `notSubsetOf`",
         ),
         (
             "typescript",
