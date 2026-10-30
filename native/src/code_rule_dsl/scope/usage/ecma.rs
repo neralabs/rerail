@@ -921,9 +921,13 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             _ => return false,
         };
         index = statement;
-        // A namespace statement stands in an expression statement.
-        if let Some(parent) = index.checked_sub(1)
-            && self.ancestors[parent].kind() == "expression_statement"
+        // A namespace statement stands in an expression statement, a `declare` member in an
+        // ambient declaration.
+        while let Some(parent) = index.checked_sub(1)
+            && matches!(
+                self.ancestors[parent].kind().as_ref(),
+                "expression_statement" | "ambient_declaration"
+            )
         {
             index = parent;
         }
