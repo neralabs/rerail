@@ -89,17 +89,38 @@ jobs:
                 | ($file | (authored("-"; $record.tool) - authored("+"; $record.tool)) | length) as $lost
                 | select($lost > 0) | {pack: $record.pack, tool: $record.tool, files: 0, testData: 0, samples: 0, provenance: false, lost: $lost}]) as $removed
             | [$publish + $removed | group_by(.pack + "/" + .tool)[]
-                | {pack: .[0].pack, tool: .[0].tool, files: (map(.files) | add), testData: (map(.testData) | add), samples: (map(.samples) | add), provenance: (map(.provenance) | any), lost: (map(.lost) | add)}]
+                | {pack: .[0].pack, tool: .[0].tool, files: (map(.files) | add), testData: (map(.testData) | add), samples: (map(.samples) | add), provenance: (map(.provenance) | any), lost: (map(.lost) | add), locked: {testData: null, samples: null}}]
           ' "$RUNNER_TEMP/files.jsonl")"
+          fork=false
+          bump=false
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            # A fork's pull request is a proposal (CONTRIBUTING.md, "Proposing a change from your fork"): its data is
+            # published from the pull request that ports it to a branch here, never from the fork, so its comment
+            # recommends nothing and its locks are not read.
+            fork=true
+          elif [ "$HEAD_REF" = "auto/bump-upstream" ] || [ "$HEAD_REF" = "auto/resnapshot-upstream" ]; then
+            # An upstream bump or re-snapshot pull request (upstream-bump-publish.yml, from this repository's
+            # auto/bump-upstream or auto/resnapshot-upstream) stages each tool-pack's whole derived set: it publishes
+            # with replace.
+            bump=true
+          fi
           # A lock's `files` count at the pull request's head, read through the API as data (the ids in the path were
-          # validated by the capture above); null without a lock there, or with one that is not a lock.
+          # validated by the capture above): null when the head has no such file (GitHub's plain Not Found; a missing
+          # commit is a 404 naming the ref) or holds no lock there. Any other failure fails the step: a count guessed
+          # at would recommend the wrong value.
           lock_files() {
-            local count
-            count="$(gh api "repos/$GITHUB_REPOSITORY/contents/$1?ref=$HEAD_SHA" --jq .content 2> /dev/null | base64 -d 2> /dev/null \
-              | jq 'if type == "object" and (.files | type) == "number" and .files == (.files | floor) and .files >= 0 then .files else null end' 2> /dev/null)" || count=null
-            echo "${count:-null}"
+            local content
+            if ! content="$(gh api "repos/$GITHUB_REPOSITORY/contents/$1?ref=$HEAD_SHA" --jq .content 2> "$RUNNER_TEMP/lock-error.txt")"; then
+              if grep -qx "gh: Not Found (HTTP 404)" "$RUNNER_TEMP/lock-error.txt"; then
+                echo null
+                return 0
+              fi
+              echo "::error::reading $1 at $HEAD_SHA failed: $(tr '\n' ' ' < "$RUNNER_TEMP/lock-error.txt")"
+              return 1
+            fi
+            base64 -d <<< "$content" 2> /dev/null | jq 'if type == "object" and (.files | type) == "number" and .files == (.files | floor) and .files >= 0 then .files else null end' 2> /dev/null || echo null
           }
-          if [ "$toolpacks" != "[]" ]; then
+          if [ "$toolpacks" != "[]" ] && [ "$fork" = false ]; then
             toolpacks="$(jq -c '.[]' <<< "$toolpacks" | while read -r toolpack; do
               pack="$(jq -r .pack <<< "$toolpack")"
               tool="$(jq -r .tool <<< "$toolpack")"
@@ -122,18 +143,8 @@ jobs:
             exit 0
           fi
 
-          fork=false
-          bump=false
           environment=""
-          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
-            # A fork's pull request is a proposal (CONTRIBUTING.md, "Proposing a change from your fork"): its data is
-            # published from the pull request that ports it to a branch here, never from the fork.
-            fork=true
-          else
-            # An upstream bump or re-snapshot pull request (upstream-bump-publish.yml, from this repository's
-            # auto/bump-upstream or auto/resnapshot-upstream) stages each tool-pack's whole derived set: it publishes
-            # with replace.
-            if [ "$HEAD_REF" = "auto/bump-upstream" ] || [ "$HEAD_REF" = "auto/resnapshot-upstream" ]; then bump=true; fi
+          if [ "$fork" = false ]; then
             environment="$(gh api "repos/$GITHUB_REPOSITORY/environments/test-data-upload" --jq .id)"
           fi
           body="$(REPOSITORY="$GITHUB_REPOSITORY" TOOL_PACKS="$toolpacks" FORK="$fork" BUMP="$bump" ENVIRONMENT="$environment" FILES_CAP="$files_cap" \

@@ -184,7 +184,9 @@ function waitingComment({ repository, pr, toolPacks, fork, bump, environment, fi
     "**With the gh CLI (for agents)**",
     "",
     "```sh",
-    "# 1. Start the publish (-f replace=true for replace on, as step 3 says).",
+    advice.mode === "split"
+      ? "# 1. Start the publish. Step 3 asks to split this pull request first: one run publishes every publish/ the same way."
+      : "# 1. Start the publish (-f replace=true for replace on, as step 3 says).",
     `gh workflow run pack-data-publish.yml -R ${repository} -f pr=${pr}${flag}`,
     "",
     `# 2. Find the run. Its title is "Publish pack data for #${pr}"; wait a few seconds after step 1.`,

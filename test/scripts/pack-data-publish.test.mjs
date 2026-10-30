@@ -106,7 +106,9 @@ describe("the waiting comment", () => {
     expect(off).toContain("Here: **off**, unless a sample set was rebuilt");
     expect(off).toContain("gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=191\n");
     expect(publishComment("waiting", request({ bump: true }))).toContain(" -f pr=191 -f replace=true\n");
-    expect(publishComment("waiting", request({ toolPacks: [testData(100), testData(3, { pack: "q", tool: "u" })] }))).toContain("Here: **the tool-packs disagree**");
+    const split = publishComment("waiting", request({ toolPacks: [testData(100), testData(3, { pack: "q", tool: "u" })] }));
+    expect(split).toContain("Here: **the tool-packs disagree**");
+    expect(split).toContain("# 1. Start the publish. Step 3 asks to split this pull request first: one run publishes every publish/ the same way.\ngh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=191\n");
   });
 
   it("lists a fork's data as a proposal, without the publish steps", () => {
