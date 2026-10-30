@@ -658,7 +658,9 @@ export function changeScope(scope) {
   ui.panel = null;
   ui.backToPack = null;
   ui.removeAsk = null;
+  ui.removedPacks.clear();
   ui.selectedSession = null;
+  ui.sessRule = null;
   Object.assign(data, {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),

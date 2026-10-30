@@ -82,10 +82,10 @@ function renderBanner(root, state) {
 
 /* ---------- tiles ---------- */
 
-/** Each tile and the view it opens; Rules on opens the first rule pack (`rulesOnHash`). */
+/** Each tile lands on the list that produced its number; Rules on opens the first rule pack (`rulesOnHash`). */
 const TILES = [
-  { key: "steered", label: "Violations steered", title: "Open History by rule" },
-  { key: "sessions", label: "Sessions with violations logged", title: "Open History by session" },
+  { key: "steered", label: "Violations steered", title: "Open History by rule, steered only" },
+  { key: "sessions", label: "Sessions with violations logged", title: "Open History by session, with violations" },
   { key: "fired", label: "Rules with violations logged", title: "Open History by rule" },
   { key: "on", label: "Rules on", title: "Open your rule packs" },
 ];
@@ -116,10 +116,10 @@ function renderTiles(tiles, sources, ruleCount, sessionsEver) {
   const rules = rulesArray();
   const on = rules.filter(isRunning).length;
   const { steered, total } = steeredTally(data.activity);
-  setTile(tiles[0], "history", steered, total, total > 0 ? label : ruleCount === 0 ? "nothing to steer yet" : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
+  setTile(tiles[0], "history?outcome=steered", steered, total, total > 0 ? label : ruleCount === 0 ? "nothing to steer yet" : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
 
   const started = data.activitySessions?.started ?? 0;
-  setTile(tiles[1], "sessions", started > 0 ? data.activitySessions.withViolations : 0, started,
+  setTile(tiles[1], "sessions?filter=violations", started > 0 ? data.activitySessions.withViolations : 0, started,
     started > 0 ? label : sessionsEver > 0 ? `no sessions ${label}` : NO_SESSIONS);
 
   const fired = rules.filter(r => fires(r.rule.id) > 0).length;
@@ -130,8 +130,7 @@ function renderTiles(tiles, sources, ruleCount, sessionsEver) {
 
 /* ---------- Most violations logged ---------- */
 
-const colhead = () => h("div.colhead", { "aria-hidden": "true" },
-  h("span", null, "Rule"), h("span", null, h("span.long", null, "Violations logged"), h("span.short", null, "Violations")), h("span", null, "On/off"));
+const colhead = () => h("div.colhead", { "aria-hidden": "true" }, h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "On/off"));
 
 function ruleRow(item) {
   return h("div.row", { "data-act": "detail", "data-i": item.id },
@@ -173,7 +172,7 @@ function whenText(s) {
 
 const sessionRow = s => h("button.sesrow", { "data-act": "session", "data-i": s.sessionId, title: "Open this session" },
   h("span.l", null, h("span.t"), h("span.m", null, h("span.host"), h("span.when"), h("span.sid"))),
-  h("span.n.num.logged", null, h("b")), h("span.n.num.steered", null, h("b")));
+  h("span.n.num", null, h("b")));
 
 function updateSessionRow(row, s) {
   setText(row.querySelector(".t"), data.titles.get(s.sessionId) ?? "Untitled session");
@@ -184,11 +183,10 @@ function updateSessionRow(row, s) {
   setClass(whenEl, "live", when.cls === "live");
   setClass(whenEl, "stale", when.cls === "stale");
   setText(row.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  for (const [cls, n] of [["logged", s.violationCount], ["steered", s.steeredViolations]]) {
-    const cell = row.querySelector(`.n.${cls}`);
-    setClass(cell, "zero", n === 0);
-    setText(cell.querySelector("b"), fmt(n));
-  }
+  const cell = row.querySelector(".n");
+  setClass(cell, "zero", s.violationCount === 0);
+  setText(cell.querySelector("b"), fmt(s.violationCount));
+  setAttr(cell, "title", `${fmt(s.violationCount)} ${plural(s.violationCount, "violation")} logged`);
 }
 
 /* ---------- empty blocks ---------- */
@@ -242,7 +240,7 @@ function build() {
   const recentList = h("div.list");
   const recent = h("section.ovrecent", null,
     h("div.ghead", null, h("h2", null, "Recent sessions"), recentNote, h("div.act", null, recentAll)),
-    h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations logged"), h("span", null, "Steered")),
+    h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
   const root = h("div.ov", null, banner,

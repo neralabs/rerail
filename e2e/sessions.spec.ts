@@ -3,6 +3,8 @@ import { expect, test } from "./dashboard-test.js";
 
 /** The list row for one session. */
 const rowOf = (page: Page, id: string) => page.locator(`#content .srow[data-i="${id}"]`);
+/** The selected session's short id in the header's meta line; its tooltip is the full id. */
+const headerId = (page: Page) => page.locator("#content .shead .l3 .mono");
 
 test.describe("History by session", () => {
   test("mature: the open session is selected first and reads live, with its counts on the row", async ({ page, rerail }) => {
@@ -45,10 +47,10 @@ test.describe("History by session", () => {
 
     await page.goto(url.href);
     await expect(rowOf(page, target)).toHaveAttribute("aria-current", "true");
-    await expect(page.locator("#content .shead [data-act=copyid]")).toHaveAttribute("data-i", target);
+    await expect(headerId(page)).toHaveAttribute("title", target);
 
     await page.reload();
-    await expect(page.locator("#content .shead [data-act=copyid]")).toHaveAttribute("data-i", target);
+    await expect(headerId(page)).toHaveAttribute("title", target);
   });
 
   test("mature: Hide list folds the list into a heading picker that still switches sessions; Show list brings it back", async ({ page, rerail }) => {
@@ -63,7 +65,7 @@ test.describe("History by session", () => {
     const picker = page.locator("#hpick");
     await expect(picker).toBeVisible();
     await picker.selectOption(other);
-    await expect(page.locator("#content .shead [data-act=copyid]")).toHaveAttribute("data-i", other);
+    await expect(headerId(page)).toHaveAttribute("title", other);
 
     await page.locator('#content [data-act="slisttoggle"]').click();
     await expect(aside).toBeVisible();
@@ -71,13 +73,37 @@ test.describe("History by session", () => {
     await expect(rowOf(page, other)).toHaveAttribute("aria-current", "true");
   });
 
-  test("mature: the resume box opens from the header and closes from its close button", async ({ page, rerail }) => {
+  test("mature: the resume box opens from the header, which shows it open, and closes from its close button", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
     const box = page.locator("#content .pask.sresume");
-    await page.locator('#content .shead .acts [data-act="resumetoggle"]').click();
+    const resume = page.locator('#content .shead .acts [data-act="resumetoggle"]');
+    await resume.click();
     await expect(box).toBeVisible();
+    await expect(resume).toHaveClass(/\bopen\b/u);
     await box.locator('button.x[data-act="resumetoggle"]').click();
     await expect(box).toBeHidden();
+    await expect(resume).toHaveClass(/\bsolid\b/u);
+  });
+
+  test("mature: the header counts the violations, and the rule dropdown filters the timeline in both Show all events states", async ({ page, rerail }) => {
+    await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
+    const cards = page.locator("#content .tl .corr");
+    const rule = page.locator("#srule");
+    await expect(cards.first()).toBeVisible();
+    const total = await cards.count();
+    await expect(page.locator("#content .shead .l3")).toContainText(`${total} violation`);
+    await expect(rule.locator("option").first()).toHaveText(`All rules · ${total}`);
+
+    // The first rule listed is the one that logged most here; filtering keeps only its cards.
+    const [id, count] = await rule.locator("option").nth(1).evaluate(o => [(o as HTMLOptionElement).value, Number(o.textContent!.split(" · ").at(-1))] as const);
+    await rule.selectOption(id);
+    await expect(cards).toHaveCount(count);
+    for (const mono of await cards.locator(".ch .mono").allTextContents()) expect(mono).toBe(id);
+    await page.locator("#showAll").check();
+    await expect(rule).toHaveValue(id);
+    await expect(cards).toHaveCount(count);
+    await rule.selectOption("");
+    await expect(cards).toHaveCount(total);
   });
 
   test("no-packs: no sessions shows the empty state and no list or transcript", async ({ page, rerail }) => {

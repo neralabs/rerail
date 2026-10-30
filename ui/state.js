@@ -111,15 +111,20 @@ export const ui = {
   askIntent: "ask",
   /** History: the rule chosen (a `?rule=` link or a click); null shows the top-ranked one. */
   actRule: null,
+  /** History by rule's chip ("all", "steered", "logged"): which violations its list counts (`?outcome=`). */
+  histOutcome: "all",
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
   removeAsk: null,
+  /** Packs removed from the catalog during this visit: their row reads Removed with Undo until the page is left. */
+  removedPacks: new Set(),
   /** Overview's day-one banner, dismissed for this repository. */
   welcomeDismissed: false,
   selectedSession: null,
   sessQuery: "",
   sessFilter: "all",
-  evFilter: "all",
+  /** History by session: the one rule the selected session's timeline is filtered to, or null for every rule. */
+  sessRule: null,
   showAll: false,
   openDays: new Set(["d0"]),
   openEvents: new Set(),
