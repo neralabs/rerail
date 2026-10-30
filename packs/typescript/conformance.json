@@ -402,7 +402,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/class-literal-property-style"
       },
-      "policy": "candidates/rules/typescript-eslint-class-literal-property-style.json",
+      "policy": "rules/typescript-eslint-class-literal-property-style.json",
       "capabilities": [
         "syntax",
         "value",
@@ -417,7 +417,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/class-methods-use-this"
       },
-      "policy": "candidates/rules/typescript-eslint-class-methods-use-this.json",
+      "policy": "rules/typescript-eslint-class-methods-use-this.json",
       "capabilities": [
         "syntax",
         "value",
@@ -431,7 +431,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/consistent-generic-constructors"
       },
-      "policy": "candidates/rules/typescript-eslint-consistent-generic-constructors.json",
+      "policy": "rules/typescript-eslint-consistent-generic-constructors.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -444,7 +444,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/consistent-indexed-object-style"
       },
-      "policy": "candidates/rules/typescript-eslint-consistent-indexed-object-style.json",
+      "policy": "rules/typescript-eslint-consistent-indexed-object-style.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -472,7 +472,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/consistent-type-imports"
       },
-      "policy": "candidates/rules/typescript-eslint-consistent-type-imports.json",
+      "policy": "rules/typescript-eslint-consistent-type-imports.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -485,7 +485,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/explicit-function-return-type"
       },
-      "policy": "candidates/rules/typescript-eslint-explicit-function-return-type.json",
+      "policy": "rules/typescript-eslint-explicit-function-return-type.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -554,7 +554,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/member-ordering"
       },
-      "policy": "candidates/rules/typescript-eslint-member-ordering.json",
+      "policy": "rules/typescript-eslint-member-ordering.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -567,7 +567,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/method-signature-style"
       },
-      "policy": "candidates/rules/typescript-eslint-method-signature-style.json",
+      "policy": "rules/typescript-eslint-method-signature-style.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -593,7 +593,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-explicit-any"
       },
-      "policy": "candidates/rules/typescript-eslint-no-explicit-any.json",
+      "policy": "rules/typescript-eslint-no-explicit-any.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -632,7 +632,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-invalid-this"
       },
-      "policy": "candidates/rules/typescript-eslint-no-invalid-this.json",
+      "policy": "rules/typescript-eslint-no-invalid-this.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -732,7 +732,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-shadow"
       },
-      "policy": "candidates/rules/typescript-eslint-no-shadow.json",
+      "policy": "rules/typescript-eslint-no-shadow.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -790,7 +790,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-unused-vars"
       },
-      "policy": "candidates/rules/typescript-eslint-no-unused-vars.json",
+      "policy": "rules/typescript-eslint-no-unused-vars.json",
       "capabilities": [
         "syntax",
         "value",
@@ -821,7 +821,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/no-useless-constructor"
       },
-      "policy": "candidates/rules/typescript-eslint-no-useless-constructor.json",
+      "policy": "rules/typescript-eslint-no-useless-constructor.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -836,7 +836,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/parameter-properties"
       },
-      "policy": "candidates/rules/typescript-eslint-parameter-properties.json",
+      "policy": "rules/typescript-eslint-parameter-properties.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -865,7 +865,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/prefer-function-type"
       },
-      "policy": "candidates/rules/typescript-eslint-prefer-function-type.json",
+      "policy": "rules/typescript-eslint-prefer-function-type.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -878,7 +878,7 @@
         "tool": "typescript-eslint",
         "rule": "@typescript-eslint/unified-signatures"
       },
-      "policy": "candidates/rules/typescript-eslint-unified-signatures.json",
+      "policy": "rules/typescript-eslint-unified-signatures.json",
       "capabilities": [
         "syntax",
         "value",
