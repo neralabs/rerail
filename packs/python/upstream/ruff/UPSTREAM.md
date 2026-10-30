@@ -1,6 +1,6 @@
 # Ruff 0.16.9: cases Rerail wrote
 
-The fixtures listed below were written by Rerail for the pinned tool to score, beside the tests copied from upstream (`licenses/ruff/UPSTREAM.md`): a case per shipped rule on lines carrying the tool's suppression comments, and inputs the ports once misread. `ruff/generate.py` holds them (`NOQA`, `PROBES`) and records the tool's findings on them in `fixtures.expected.json`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under `licenses/`. Paths are relative to the pack directory.
+The fixtures listed below were written by Rerail for the pinned tool to score, beside the tests copied from upstream (`licenses/ruff/UPSTREAM.md`): a case per ported rule, shipped or candidate, on lines carrying the tool's suppression comments, and inputs the ports once misread. `ruff/generate.py` holds them (`NOQA`, `PROBES`) and records the tool's findings on them in `fixtures.expected.json`. They are Rerail's (Apache-2.0, the pack's licence), so nothing goes under `licenses/`. Paths are relative to the pack directory.
 
 | File | Origin |
 |---|---|

@@ -1,5 +1,5 @@
 /**
- * Three Python ports (B406 and B610 on by default, F722 a candidate since the stable-rules port) must not steer an agent into rewriting idiomatic code. Each reports what
+ * Three Python ports (B406 and B610 on by default, F722 a candidate) must not steer an agent into rewriting idiomatic code. Each reports what
  * its upstream reports, but on these idioms the finding is wrong and the steer harmful:
  *
  * - bandit-b406-import-xml-sax: Bandit reports any import under xml.sax, including the xml.sax.saxutils writing and

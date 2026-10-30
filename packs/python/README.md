@@ -3,7 +3,8 @@
 207 code rules for Python, ported from Ruff 0.16.9 (158 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
-every disagreement declared in `divergences.json` (two today: ASYNC221 on a probe, and B406 on a Django sample, where Bandit is wrong). Every port honours its tool's
+every disagreement declared in `divergences.json` (61 today, across 16 rules, 22 of them on six shipped rules: all but one on Ruff's
+fixtures and Rerail's probes, and B406 on a Django sample, where Bandit is wrong). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`);
 PGH004, which reports `noqa` comments, is the one exception, as in Ruff (`suppressionExemptions` in
 `conformance.json`). 75 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`).
@@ -46,9 +47,9 @@ node --import tsx conformance/languages/cli.ts --pack python --rule ruff-f823-un
 
 ## Not ported
 
-Every stable Ruff 0.16.9 rule has a document here, shipped or candidate, except Pylint's, refurb's and
-flake8-builtins' (whose fixtures, from GPL plugins, are not copied), flake8-bandit's (Bandit's own tests are ported
-instead) and these 66:
+Every stable Ruff 0.16.9 rule has a document here, shipped or candidate, except Pylint's and refurb's (whose
+fixtures, from GPL plugins, are not copied; flake8-builtins' A005 has a candidate document with no fixtures for the
+same reason, and its other five rules have none), flake8-bandit's (Bandit's own tests are ported instead) and these 66:
 
 - **Layout a formatter owns** (Ruff's formatter rewrites it, or Ruff's docs call the rule redundant with the
   formatter): D201, D202, D203, D204, D206, D207, D208, D210, D211, E101, E501, E701, E702, E703, W191, W291, W292,
@@ -75,42 +76,6 @@ instead) and these 66:
 ## Rule details
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
-
-### `bandit-b101-assert-used`
-
-Port of Bandit 1.9.4's B101 assert_used with its default configuration, which skips no file (tests included; scope is every file).
-
-### `bandit-b102-exec-used`
-
-As in Bandit, the callee is a bare name whose qualified name through the file's import aliases is `exec`: `exec` itself unless an import aliases it to another name, or a name imported as the module `exec` (`import exec as x`). `from m import exec as y` does not count.
-
-### `bandit-b307-eval`
-
-Same alias resolution as B102: a bare `eval` unless an import rebinds it, or a name bound by `import eval as x`.
-
-### `bandit-b113-request-without-timeout`
-
-Port of Bandit 1.9.4's B113 request_without_timeout: a `requests.get/options/head/post/put/patch/delete` call without `timeout`, or a `requests`/`httpx` call (httpx also covers `request`, `stream`, `Client`, `AsyncClient`) whose `timeout` keyword is `None`. Bandit reads `timeout` as a keyword only. httpx calls without `timeout` are not flagged (httpx has a default). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/src/code_rule_dsl/value/rules.rs).
-
-### `bandit-b303-md5`
-
-Covers PyCrypto/PyCryptodome `MD2/MD4/MD5/SHA.new` and cryptography `hashes.MD5/SHA1`. `hashlib` is Bandit's B324, which the pack does not ship yet.
-
-### `bandit-b317-xml-bad-sax`
-
-Only matches `xml.sax.parse/parseString/make_parser` calls that are direct children of an expression statement.
-
-### `bandit-b505-weak-cryptographic-key`
-
-Port of Bandit 1.9.4's B505 weak_cryptographic_key with Bandit's medium thresholds: DSA/RSA below 2048 bits or an EC curve below 224 bits (SECP192R1, SECT163K1, SECT163R2), by keyword or position, across cryptography, Crypto and Cryptodome. Port of the kernel test b505_weak_key_sizes_by_keyword_or_position. `# nosec` honoured.
-
-### `bandit-b507-ssh-no-host-key-verification`
-
-Only fires once an import whose name contains "paramiko" has been walked (Bandit's substring test, in Bandit's source-order walk). Flags a call whose function name is set_missing_host_key_policy (attribute name, bare name, or a name aliased by an earlier import to one ending in set_missing_host_key_policy) and whose first positional argument is a name, attribute or call naming AutoAddPolicy or WarningPolicy.
-
-### `bandit-b615-huggingface-unsafe-download`
-
-Requires a transformers, datasets or huggingface_hub-like import before the call. Allowed (not flagged): nonliteral revisions, hexadecimal revisions of at least seven characters, and local-path first arguments; all other unpinned downloads are flagged.
 
 ### `ruff-async100-cancel-scope-no-checkpoint`
 
@@ -488,6 +453,54 @@ Port of Ruff's SIM910 (dict-get-with-none-default): `.get(key, None, ...)` whose
 
 Port of Ruff's T100 (debugger): imports of debugger modules (`is_debugger_import`) and of debugger functions (`from M import n` with `M.n` in `is_debugger_call`), once per imported name, matched by module with `resolves.imported`, relative imports by the module's text (`relative: "text"`: Ruff ignores the level). It also flags calls whose callee resolves to a debugger function (`resolve_qualified_name` through the file's imports, or the builtin `breakpoint`).
 
+### `bandit-b101-assert-used`
+
+Port of Bandit 1.9.4's B101 assert_used with its default configuration, which skips no file (tests included; scope is every file).
+
+### `bandit-b102-exec-used`
+
+As in Bandit, the callee is a bare name whose qualified name through the file's import aliases is `exec`: `exec` itself unless an import aliases it to another name, or a name imported as the module `exec` (`import exec as x`). `from m import exec as y` does not count.
+
+### `bandit-b113-request-without-timeout`
+
+Port of Bandit 1.9.4's B113 request_without_timeout: a `requests.get/options/head/post/put/patch/delete` call without `timeout`, or a `requests`/`httpx` call (httpx also covers `request`, `stream`, `Client`, `AsyncClient`) whose `timeout` keyword is `None`. Bandit reads `timeout` as a keyword only. httpx calls without `timeout` are not flagged (httpx has a default). Port of the kernel test b113_requests_without_a_timeout_or_with_none (rerail/native/src/code_rule_dsl/value/rules.rs).
+
+### `bandit-b303-md5`
+
+Covers PyCrypto/PyCryptodome `MD2/MD4/MD5/SHA.new` and cryptography `hashes.MD5/SHA1`. `hashlib` is Bandit's B324, which the pack does not ship yet.
+
+### `bandit-b307-eval`
+
+Same alias resolution as B102: a bare `eval` unless an import rebinds it, or a name bound by `import eval as x`.
+
+### `bandit-b317-xml-bad-sax`
+
+Only matches `xml.sax.parse/parseString/make_parser` calls that are direct children of an expression statement.
+
+### `bandit-b505-weak-cryptographic-key`
+
+Port of Bandit 1.9.4's B505 weak_cryptographic_key with Bandit's medium thresholds: DSA/RSA below 2048 bits or an EC curve below 224 bits (SECP192R1, SECT163K1, SECT163R2), by keyword or position, across cryptography, Crypto and Cryptodome. Port of the kernel test b505_weak_key_sizes_by_keyword_or_position. `# nosec` honoured.
+
+### `bandit-b507-ssh-no-host-key-verification`
+
+Only fires once an import whose name contains "paramiko" has been walked (Bandit's substring test, in Bandit's source-order walk). Flags a call whose function name is set_missing_host_key_policy (attribute name, bare name, or a name aliased by an earlier import to one ending in set_missing_host_key_policy) and whose first positional argument is a name, attribute or call naming AutoAddPolicy or WarningPolicy.
+
+### `bandit-b615-huggingface-unsafe-download`
+
+Requires a transformers, datasets or huggingface_hub-like import before the call. Allowed (not flagged): nonliteral revisions, hexadecimal revisions of at least seven characters, and local-path first arguments; all other unpinned downloads are flagged.
+
+### `bandit-b103-set-bad-file-permissions`
+
+Any call whose callee name contains `chmod`, with a literal mode. World-write (0o002) is reported by its own clause (higher severity in Bandit); group-write, group-execute or world-execute (0o031 bits) by the other.
+
+### `bandit-b406-import-xml-sax`
+
+Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions.
+
+### `bandit-b610-django-extra-used`
+
+Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported.
+
 ### `ruff-air302-airflow3-moved-to-provider`
 
 Port of Ruff's AIR302 (airflow3-moved-to-provider): reports each read of one of the 182 deprecated Airflow core names that Airflow 3.0 moved into a provider package. Names resolve through plain imports, aliases (including `import a.b.Name as X`), module aliases and attribute chains, as Ruff's qualified-name resolution does. A name is reported at the name, an attribute at its last segment. Attribute stores, deletes and loop targets are reported, as in Ruff. A bare-name store, `del` target or augmented-assignment target is not. Names inside string type annotations (`def f(h: "PostgresHook")`, nested strings, `cast("X", ...)`) are reported at the name inside the string. There are 89 clauses, one per provider, version and replacement name. Each message names the provider package to install and the import to use. A use is not reported when it sits in the except fallback of a try whose body imports or reads the replacement. Name uses need an ImportError or ModuleNotFoundError handler and attribute uses an AttributeError handler, in any handler of the nearest try. As in Ruff, a nested tuple of exception types does not count. The replacement is compared as Ruff compares it: the exact module and name for an import, the exact qualified name for an attribute. The 2 FAB modules that share names are checked against their own module. Divergences: dotted match patterns (`case m.S3Hook():`) are not reported. A guarded name used inside a string annotation is still reported. Very large files can exceed the engine's work budget. The document is about 234 KiB pretty-printed: the 182-name table, 89 clauses each with its own string-annotation reader, and per-replacement guard utilities. The compact gate passes.
@@ -691,18 +704,6 @@ Port of Ruff's PYI054 (numeric-literal-too-long): in `.pyi` stub files, reports 
 ### `ruff-slf001-private-member-access`
 
 Port of Ruff's SLF001 (private-member-access): matches attribute accesses whose attribute starts with an underscore but is not a dunder (`__x__`), a sunder (`_x_`), `_` or `__`, and is not in `flake8-self.ignore-names` (default `_make`, `_asdict`, `_replace`, `_fields`, `_field_defaults`, `_name_`, `_value_`). It skips accesses inside annotations, `os._exit`, and code whose scope is a dunder operator method (`__eq__`, `__add__`, ...). That scope covers the method body plus the defaults and decorators of nested functions and lambdas and a comprehension's first iterable. It does not cover nested function, lambda or class bodies, class bases, or later comprehension clauses. Receivers `self`, `cls`, `mcs` and `super()` calls (also parenthesized, including `(super)()`) are exempt. A class name read inside that same class's body is exempt, except in a comprehension the class body runs itself. Instances of a class are exempt, checked by syntax as Ruff does: the first parameter of an instance method, classmethod or `__new__`; names bound by annotation, typed parameter, return annotation, assignment, walrus or `with ... as` to `C`, `Self`, `C[...]`, `Annotated[C, ...]`, `cls()`, `mcs()`, `C()`, `C[...]()`, `super().__new__()` or a `self` parameter. As in Ruff, a class name only counts when the access is inside the body of a class with that name, wherever the binding is. In `match` patterns it reports dotted value and class patterns: the whole pattern when its last segment is private, else the prefix up to the first private segment. Divergences: at most one finding per dotted `case` pattern (`case a._b._c.d:` gives `a._b` only; `case self._a._b.c:` gives none); no findings inside strings Ruff parses as type definitions outside annotations (`cast("foo._x", y)`, TypeVar bounds, `list["foo._x"]`); a few binding cases that only arise in code that fails at runtime.
-
-### `bandit-b103-set-bad-file-permissions`
-
-Any call whose callee name contains `chmod`, with a literal mode. World-write (0o002) is reported by its own clause (higher severity in Bandit); group-write, group-execute or world-execute (0o031 bits) by the other.
-
-### `bandit-b406-import-xml-sax`
-
-Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sax.saxutils (`from xml.sax.saxutils import ...`, `from xml.sax import saxutils`, aliased or parenthesised) is not reported. saxutils holds XML writing and escaping helpers (escape, quoteattr, unescape, XMLGenerator) and no parser, so defusedxml has nothing to replace it with. `import xml.sax.saxutils` is still reported, since it also binds xml.sax and its parse functions.
-
-### `bandit-b610-django-extra-used`
-
-Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported.
 
 ### `ruff-b015-useless-comparison`
 

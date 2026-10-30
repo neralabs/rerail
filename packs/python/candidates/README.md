@@ -7,6 +7,14 @@ gated and never shipped. This file is not published; the pack's [README](../READ
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
 
+Most Ruff candidates come from the stable-rules port (#191), and most of those wait on one thing. 259 pass every
+conformance check but `stays-silent`, which needs one of the rule's own upstream units where Ruff reports nothing, or a
+real-code sample labelled for the rule that it is silent on; Ruff's test files for these rules all have findings, and
+#363 stages the samples. 39 pass every check but are in Ruff's default selection, so they must start on, which needs the
+`gates.yaml` `rules` entries the new ports do not have yet; their sections say so. Four rules #326 promoted went back
+because they disagree with Ruff on this port's larger fixture set; their sections say where. The rest stop at a per-rule
+check, which a pull request's Conformance comment names.
+
 ### `bandit-b104-hardcoded-bind-all-interfaces`
 
 Matches any Python string constant whose decoded value is exactly `0.0.0.0`, regardless of where it is used.
@@ -1381,7 +1389,7 @@ Port of Ruff's RUF051 (if-key-in-dict-del): matches an `if KEY in DICT:` with no
 
 ### `ruff-ruf053-class-with-mixed-type-vars`
 
-Port of Ruff's RUF053 (class-with-mixed-type-vars): reports the first positional base of a class with a PEP 695 type parameter list that is a subscript `Generic[...]` whose `Generic` resolves to typing, typing_extensions or _typeshed (parentheses around the base or around `Generic` allowed; the reported span is the subscript, parentheses excluded). Keyword, starred and nested uses are ignored, and a type parameter named `Generic` shadows it, as in Ruff. Only applies for target Python 3.12 or newer, as in Ruff. The port-readiness recording lints Ruff's fixture at the CLI default target version, below 3.12, so its fires check has nothing to reproduce; the document was verified separately at 3.12 against live Ruff and Ruff's snapshot.
+Port of Ruff's RUF053 (class-with-mixed-type-vars): reports the first positional base of a class with a PEP 695 type parameter list that is a subscript `Generic[...]` whose `Generic` resolves to typing, typing_extensions or _typeshed (parentheses around the base or around `Generic` allowed; the reported span is the subscript, parentheses excluded). Keyword, starred and nested uses are ignored, and a type parameter named `Generic` shadows it, as in Ruff. Only applies for target Python 3.12 or newer, as in Ruff. Ruff's expected findings are recorded at the CLI default target version, below 3.12, so on its fixture the conformance check has nothing of Ruff's to reproduce; the document was verified separately at 3.12 against live Ruff and Ruff's snapshot.
 
 ### `ruff-ruf057-unnecessary-round`
 
