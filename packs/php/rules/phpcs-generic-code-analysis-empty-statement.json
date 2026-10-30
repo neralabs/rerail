@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "phpcs-generic-code-analysis-empty-statement",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Remove empty PHP control structure bodies, such as an if, loop, switch, try, catch or match block holding only comments; they hide unfinished or swallowed logic.",
   "scope": {
@@ -96,7 +96,19 @@
         "suppress": {
           "phpcs": {
             "sniffs": [
-              "Generic.CodeAnalysis.EmptyStatement"
+              "Generic.CodeAnalysis.EmptyStatement",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedElseif",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedElse",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedFor",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedWhile",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedDo",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedSwitch",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedTry",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedCatch",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedFinally",
+              "Generic.CodeAnalysis.EmptyStatement.DetectedMatch"
             ]
           }
         }

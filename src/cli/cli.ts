@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
-import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot } from "../engine/package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
@@ -32,17 +32,21 @@ import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthChe
 import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
+  accessTokenKept,
+  dashboardAccessLink,
+  dashboardLink,
   lookupDaemon,
   openInBrowser,
   openDashboard,
   startDaemon,
   stopDaemon,
+  DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
-import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
+import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -101,7 +105,7 @@ function printStatus(status: UpdateStatus): void {
 }
 
 /**
- * What an update or rollback did, and, when it changed the active core, the installed rule packs that version leaves
+ * What an update did, and, when it changed the active core, the installed rule packs that version leaves
  * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
  */
 function printUpdateResult(result: UpdateResult, home: string): void {
@@ -114,7 +118,7 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <id>`, or go back with `rerail update rollback`.",
+    "Install a version that fits with `rerail packs add <id>`.",
   ].join("\n") + "\n");
 }
 
@@ -157,7 +161,6 @@ function usage(): string {
     "  rerail update",
     "  rerail update check [--channel <tag>]",
     "  rerail update status",
-    "  rerail update rollback",
     "  rerail update --channel <tag>",
     "",
     internalTesting("Not part of the 0.1.0 release:"),
@@ -201,7 +204,19 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
-  if (flags.has("--open")) openInBrowser(result.daemon.state.url);
+  // The capability is shown to the person at a terminal, starting or finding the daemon; `rerail status` never
+  // prints it, and neither does a start whose output is piped, as a coding agent's shell would be: the link would
+  // land in its transcript and its provider's logs.
+  const link = dashboardLink(result.daemon.state);
+  if (result.daemon.state.accessToken !== undefined) {
+    const lifetime = accessTokenKept(home, result.daemon.state)
+      ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}`
+      : "it changes on every start";
+    process.stdout.write(process.stdout.isTTY
+      ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
+      : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
+  }
+  if (flags.has("--open")) openInBrowser(link);
   return 0;
 }
 
@@ -244,6 +259,10 @@ async function runStatusCommand(home: string): Promise<number> {
     process.stdout.write(`Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.\n`);
     return 4;
   }
+  if (lookup.status === "refused") {
+    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.\n`);
+    return 4;
+  }
   printDaemon({ state: lookup.state, health: lookup.health });
   return 0;
 }
@@ -278,7 +297,11 @@ function runSeedCommand(args: readonly string[]): number {
   return 0;
 }
 
-/** The rules page of the daemon serving this checkout; `--print` only reports the URL. */
+/**
+ * The rules page of the daemon serving this checkout; `--print` only reports the URL. At a terminal the printed URL
+ * carries the daemon's capability, so it opens in any browser of this machine; piped, as a coding agent runs it, the
+ * URL is the plain one.
+ */
 async function runManageCommand(args: readonly string[]): Promise<number> {
   const { flags } = parseArguments(args, { flags: ["--print"], options: [] }, argument => `Unknown manage option: ${argument}\n\n${usage()}`);
   const page = await readRulesDashboard({ cwd: claudeWorkspace(process.cwd()) });
@@ -286,7 +309,7 @@ async function runManageCommand(args: readonly string[]): Promise<number> {
     process.stdout.write(`Rerail is not running for this checkout (${page.reason}). Check rerail status, or start the daemon with rerail daemon start --open.\n`);
     return 3;
   }
-  process.stdout.write(`${page.url}\n`);
+  process.stdout.write(`${process.stdout.isTTY ? await dashboardAccessLink(page.url, defaultRerailHome()) : page.url}\n`);
   if (!flags.has("--print") && await openDashboard(page.url) === "orca-tab") process.stdout.write("Opened in the Orca window.\n");
   return 0;
 }
@@ -296,7 +319,7 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   if (resolve(state.current.packageRoot) === packageRoot) return undefined;
   const managedCli = join(state.current.packageRoot, ENTRY_POINTS.cli);
   if (!existsSync(managedCli)) {
-    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run rerail update rollback.`);
+    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run npx ${RERAIL_PACKAGE_NAME} setup to install Rerail again.`);
   }
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }
@@ -328,10 +351,6 @@ async function runUpdateCommand(
     printStatus(result);
     process.stdout.write(`Available: ${result.availableVersion}\n`);
     process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
-    return 0;
-  }
-  if (action === "rollback") {
-    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)), home);
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
@@ -553,7 +572,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
   if (command === "daemon") return commandArgs[1] === "stop";
-  return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
+  return command === "update" && commandArgs[1] === "status";
 }
 
 /**

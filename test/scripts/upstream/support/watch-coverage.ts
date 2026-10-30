@@ -9,11 +9,19 @@ import { toolPackDirectory, type GatesManifest } from "../../../../conformance/l
 import { expandWatch, watchMatcher } from "../../../../conformance/languages/watch.js";
 import { requirePackFixture } from "../../../../scripts/s3/pack-fixtures.mjs";
 
+/** The tool-pack's pulled provenance.json. */
+function provenance(root: string, pack: string, tool: string): { sources: Record<string, unknown>; files: Record<string, { from?: string }> } {
+  return JSON.parse(readFileSync(requirePackFixture(join(toolPackDirectory(root, pack, tool), "provenance.json")), "utf8")) as { sources: Record<string, unknown>; files: Record<string, { from?: string }> };
+}
+
+/** Whether the tool-pack's provenance.json names any source besides Rerail: an upstream its test data comes from. */
+export function readsUpstream(root: string, pack: string, tool: string): boolean {
+  return Object.keys(provenance(root, pack, tool).sources).some((source) => source !== "rerail");
+}
+
 /** The upstream paths the tool-pack's pulled provenance.json records its files were read from, byte-sorted. */
 export function readFrom(root: string, pack: string, tool: string): string[] {
-  const path = requirePackFixture(join(toolPackDirectory(root, pack, tool), "provenance.json"));
-  const provenance = JSON.parse(readFileSync(path, "utf8")) as { files: Record<string, { from?: string }> };
-  const from = Object.values(provenance.files).flatMap((file) => (file.from === undefined ? [] : [file.from]));
+  const from = Object.values(provenance(root, pack, tool).files).flatMap((file) => (file.from === undefined ? [] : [file.from]));
   return [...new Set(from)].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
 }
 

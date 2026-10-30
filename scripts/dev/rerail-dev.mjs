@@ -261,9 +261,11 @@ export function readDaemonStateFile(home) {
   return undefined;
 }
 
-export async function daemonHealth(url, fetch = globalThis.fetch) {
+/** The health the daemon `state` records reports; every request carries the capability the state file records. */
+export async function daemonHealth(state, fetch = globalThis.fetch) {
   try {
-    const response = await fetch(new URL("/healthz", url), { signal: AbortSignal.timeout(2_000) });
+    const headers = typeof state.accessToken === "string" ? { "x-rerail-access": state.accessToken } : {};
+    const response = await fetch(new URL("/healthz", state.url), { headers, signal: AbortSignal.timeout(2_000) });
     if (!response.ok) return undefined;
     const body = await response.json();
     return body?.status === "ok" ? body : undefined;
@@ -279,7 +281,7 @@ export async function daemonHealth(url, fetch = globalThis.fetch) {
 export async function daemonInHome(home, checkout) {
   const state = readDaemonStateFile(home);
   if (state === undefined || !processAlive(state.pid)) return { status: "stopped" };
-  const health = await daemonHealth(state.url);
+  const health = await daemonHealth(state);
   const owner = typeof state.packageRoot === "string" && canonicalPath(state.packageRoot) === canonicalPath(checkout)
     ? "ours"
     : "foreign";
@@ -487,7 +489,7 @@ async function clearTarget(instance, previousHome) {
   }
   if (!(await loopbackPortFree(instance.port))) {
     // Every daemon of this checkout is stopped by now, so whatever still listens belongs to someone else.
-    const health = await daemonHealth(instance.url);
+    const health = await daemonHealth({ url: instance.url });
     const occupant = health === undefined ? "an unrecognized process" : `Rerail pid ${health.pid} for ${health.workspaceRoot ?? "another workspace"}`;
     throw new Error(
       `${instance.url}, this checkout's reserved port, is already served by ${occupant}; stop it, `

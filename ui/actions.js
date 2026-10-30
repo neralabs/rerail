@@ -70,8 +70,10 @@ export const commonActions = {
   addpack: id => (reviewing() ? keepPack(id, true) : writes.addPacks([id], `${packName(id)} added. ${addedRulesText(id)}`, `Couldn’t add ${packName(id)}`)),
   removepack: id => {
     if (ui.removeAsk !== id) { ui.removeAsk = id; invalidate(); return; }
-    if (reviewing()) keepPack(id, false);
-    else writes.removePack(id, () => removedMessage(id), `Couldn’t remove ${packName(id)}`);
+    if (reviewing()) { keepPack(id, false); return; }
+    // Removed from the catalog: its row reads Removed, with Undo, until the page is left.
+    if (ui.view === "packs") ui.removedPacks.add(id);
+    writes.removePack(id, () => removedMessage(id), `Couldn’t remove ${packName(id)}`);
   },
   cancelremove: () => { ui.removeAsk = null; invalidate(); },
   session: id => { closePanel(); go({ view: "sessions", session: id, jump: true }); },

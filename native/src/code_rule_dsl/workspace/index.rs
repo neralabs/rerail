@@ -66,6 +66,9 @@ pub struct RepositoryIndexOptions {
     /// The file label of each extension the host evaluates (`.py` → `python`, `.md` →
     /// `markdown`), keyed lowercase with its dot; files with other extensions are not indexed.
     pub source_languages: HashMap<String, String>,
+    /// The file label of each file the host evaluates by its whole name (`.npmignore` → `text`),
+    /// keyed lowercase; it wins over `source_languages`.
+    pub source_names: Option<HashMap<String, String>>,
     /// Folders below the workspace root, workspace-relative, that are checkouts judged by their
     /// own rules: the walk neither lists nor reads them, and reports the ones it reached. Any
     /// other folder is walked, whether or not it holds a `.git` entry.
@@ -106,6 +109,7 @@ impl WorkspaceIndexTask {
                 .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
                 .collect(),
                 nested_checkouts: Vec::new(),
+                source_names: None,
                 follow_gitignore: false,
             },
         }
@@ -286,14 +290,23 @@ impl WorkspaceIndexTask {
             .map_err(|_| invalid("policy workspace is unavailable"))
     }
 
-    /// The host's file label for `path`: its longest extension the host lists (`.blade.php`
-    /// before `.php`) with a nonempty name before it, as the host's `languageOfPath` reads it: a
-    /// file named only `.php` has no extension, and `.blade.php` is a `.php` file named `.blade`.
+    /// The host's file label for `path`: its whole name where the host lists it (`.npmignore`),
+    /// else its longest extension the host lists (`.blade.php` before `.php`) with a nonempty
+    /// name before it, as the host's `sourceLanguageOfPath` reads it: a file named only `.php`
+    /// has no extension, and `.blade.php` is a `.php` file named `.blade`.
     pub(super) fn source_language(&self, path: &str) -> Option<String> {
         let name = std::path::Path::new(path)
             .file_name()?
             .to_str()?
             .to_ascii_lowercase();
+        if let Some(label) = self
+            .options
+            .source_names
+            .as_ref()
+            .and_then(|names| names.get(&name))
+        {
+            return Some(label.clone());
+        }
         name.match_indices('.')
             .filter(|&(at, _)| at > 0)
             .find_map(|(at, _)| self.options.source_languages.get(&name[at..]))
@@ -733,8 +746,8 @@ impl Task for WorkspaceIndexTask {
 mod tests {
     use super::*;
 
-    /// The index routes a name as the host's `languageOfPath` does: the longest listed extension
-    /// with a nonempty name before it, case-insensitively.
+    /// The index routes a name as the host's `sourceLanguageOfPath` does: a listed whole name,
+    /// else the longest listed extension with a nonempty name before it, case-insensitively.
     #[test]
     fn source_language_routes_php_and_blade_as_the_host_does() {
         let mut task = WorkspaceIndexTask::for_test(
@@ -746,6 +759,11 @@ mod tests {
             .into_iter()
             .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
             .collect();
+        task.options.source_names = Some(
+            [(".npmignore".to_owned(), "text".to_owned())]
+                .into_iter()
+                .collect(),
+        );
         for (path, expected) in [
             ("a.php", Some("php")),
             ("app/Http/Kernel.php", Some("php")),
@@ -759,6 +777,9 @@ mod tests {
             (".php", None),
             ("dir/.php", None),
             (".blade.php", Some("php")),
+            (".npmignore", Some("text")),
+            ("pkg/.NPMIGNORE", Some("text")),
+            ("a.npmignore", None),
         ] {
             assert_eq!(task.source_language(path).as_deref(), expected, "{path}");
         }

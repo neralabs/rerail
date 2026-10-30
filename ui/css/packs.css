@@ -18,11 +18,16 @@
 .prow2 .pt2 .meta{font-size:12.5px;color:var(--muted-foreground)}
 .prow2 .pend{flex:none;width:250px;align-self:center;display:flex;align-items:center;justify-content:flex-end;gap:22px;min-height:30px}
 .prow2 .pend .btn{white-space:nowrap}
-.prow2 .pend.ask{width:auto;max-width:70%}
 .prow2 .pstatus{font-size:12.5px;color:var(--muted-foreground);white-space:nowrap}
 .prow2 .pact2{flex:none;align-self:center;display:flex;justify-content:flex-end}
 .added{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);background:var(--success-subtle);color:var(--success-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
 .added .ico{color:inherit}
+/* A pack removed during this visit: its row says so, with Undo, until the page is left. */
+.rmtag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:var(--radius-md);background:var(--subtle);color:var(--muted-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
+/* Remove's question takes its own line under the pack's text, in rows and cards. */
+.prow2:has(> .rmline){flex-wrap:wrap;row-gap:10px}
+.prow2 > .rmline{flex:1 1 100%;padding-left:52px}
+.rmline .rmask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 12px;max-width:72ch;font-size:13px;line-height:1.5}
 
 /* The review: why each pack was picked, and its switch with its state beside it. */
 .rv .prow2 .why{font-size:12.5px;color:var(--muted-foreground)}
@@ -32,12 +37,11 @@
 /* Narrow, or beside an open sheet: the row wraps, its text full width, the state and action under it. */
 @media (max-width:1100px){
   .prow2{flex-wrap:wrap;row-gap:10px} .prow2 .pt2{flex:1 1 calc(100% - 52px)}
-  .prow2 .pend{width:100%;min-height:0} .prow2 .pend.ask{max-width:none}
+  .prow2 .pend{width:100%;min-height:0}
 }
 body[data-panel="open"] .prow2{flex-wrap:wrap;row-gap:10px}
 body[data-panel="open"] .prow2 .pt2{flex:1 1 calc(100% - 52px)}
 body[data-panel="open"] .prow2 .pend{width:100%;min-height:0}
-body[data-panel="open"] .prow2 .pend.ask{max-width:none}
 
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px}
 .pcard{display:flex;flex-direction:column;gap:12px;padding:18px;min-height:220px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);cursor:pointer;text-align:left;min-width:0}
@@ -51,8 +55,7 @@ body[data-panel="open"] .prow2 .pend.ask{max-width:none}
 .pcard .sub{font-size:13.5px;line-height:1.5;flex:none}
 .pcard .meta{font-size:12.5px;color:var(--muted-foreground)}
 .pcard .pc-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:14px;margin-top:auto;border-top:1px solid var(--border);min-height:42px}
-.pcard .pc-foot .btn,.pcard .pc-foot .rmask{margin-left:auto;white-space:nowrap}
-.pcard .pc-foot .rmask{white-space:normal}
+.pcard .pc-foot .btn{margin-left:auto;white-space:nowrap}
 
 /* The pack sheet: its rules as one list, a filter box for a large pack, and Remove pack in a footer that pins to the
  * bottom while the list runs past it and rests at the end when it does not. */
@@ -62,6 +65,6 @@ body[data-panel="open"] .prow2 .pend.ask{max-width:none}
 .pwrap.pack .pgrp.flat .prow{padding-left:14px}
 .pwrap.pack .pgrp.flat .prow:first-child{border-top:0}
 .pwrap.pack .pgrp.flat > .pintro{margin:12px 14px}
-.pwrap.pack .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--sheet-bg)}
+.pwrap.pack .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--card)}
 .pwrap.pack .pgrp.flat{margin-bottom:32px}
 .pwrap.pack .pfoot .rmask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 10px;font-size:13px;line-height:1.5}

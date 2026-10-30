@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail",
   "version": "0.1.0",
-  "description": "Local semantic monitor and rule runtime for AI coding harnesses",
+  "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"
@@ -42,12 +42,19 @@
   "pi": {
     "extensions": [
       "./dist/hosts/pi/pi-extension.js"
-    ]
+    ],
+    "image": "https://raw.githubusercontent.com/neralabs/rerail/main/docs/images/session-steer.png"
   },
   "keywords": [
     "pi-package",
-    "semantic-search",
-    "cosine-similarity"
+    "coding-agent",
+    "rules",
+    "linter",
+    "guardrails",
+    "claude-code",
+    "codex",
+    "cursor",
+    "omp"
   ],
   "workspaces": [
     "packs/*"
@@ -62,6 +69,7 @@
     ".claude-plugin",
     ".codex-plugin",
     ".cursor-plugin",
+    "!.cursor-plugin/marketplace.json",
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
@@ -129,7 +137,7 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
-    "@babel/parser": "^7.29.11",
+    "@babel/parser": "^8.0.8",
     "@hono/node-server": "^2.1.5",
     "@hono/zod-openapi": "^1.6.3",
     "@modelcontextprotocol/sdk": "^1.32.1",
@@ -146,7 +154,7 @@
   },
   "devDependencies": {
     "@ast-grep/cli": "0.51.0",
-    "@babel/types": "^7.29.11",
+    "@babel/types": "^8.0.8",
     "@changesets/cli": "3.0.3",
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",

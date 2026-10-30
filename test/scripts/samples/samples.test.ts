@@ -122,6 +122,31 @@ describe("licences", () => {
     expect(() => licenceTexts(cache, "someone/unknown", COMMIT)).toThrow(/no licence is recorded/u);
   });
 
+  it("are read at each commit from the files the table records for it, a package.json's `license` standing in for none", () => {
+    const cache = scratch();
+    const write = (repo: string, commit: string, file: string, text: string) => {
+      const path = join(cache, "licences", repo, commit, file);
+      mkdirSync(join(path, ".."), { recursive: true });
+      writeFileSync(path, text);
+    };
+    const bsdText = "BSD License\n\nRedistribution and use in source and binary forms ... Neither the name Facebook";
+    // jest: BSD-3-Clause with a patent grant at 242fb35 (LICENSE and PATENTS), MIT later (LICENSE alone).
+    const bsd = "242fb35459b387e360f52394b0e30f42101cc51d";
+    write("jestjs/jest", bsd, "LICENSE", bsdText);
+    write("jestjs/jest", bsd, "PATENTS", "Additional Grant of Patent Rights Version 2");
+    expect(licenceTexts(cache, "jestjs/jest", bsd)).toMatchObject({ spdx: "BSD-3-Clause", texts: [{ file: "LICENSE" }, { file: "PATENTS" }] });
+    write("jestjs/jest", COMMIT, "LICENSE", bsdText);
+    expect(() => licenceTexts(cache, "jestjs/jest", COMMIT)).toThrow(/LICENSE do not read as MIT/u);
+    // sails at c39c5e3 has no licence file; its package.json declares MIT.
+    const sails = "c39c5e38970058c7ddd6b43e04ba795856c5ab07";
+    write("balderdashy/sails", sails, "package.json", JSON.stringify({ name: "waterline", license: "MIT" }));
+    expect(licenceTexts(cache, "balderdashy/sails", sails).spdx).toBe("MIT");
+    write("balderdashy/sails", sails, "package.json", JSON.stringify({ name: "waterline", license: "ISC" }));
+    expect(() => licenceTexts(cache, "balderdashy/sails", sails)).toThrow(/package\.json do not read as MIT/u);
+    // sequelize in September 2010: nothing states a licence, which the table records as NONE and reads nothing for.
+    expect(licenceTexts(cache, "sequelize/sequelize", "155381bd5ddfc8d4b7a6f1cd8385bfca60921ada")).toEqual({ spdx: "NONE", texts: [] });
+  });
+
   it("are claimed in SAMPLES.md and LICENSES.md as texts only for the repositories whose texts the archive holds", () => {
     const samples = [sample({ source: { ...sample().source, repo: "a/x" } }), sample({ path: "b.py", source: { ...sample().source, repo: "b/y", path: "b.py" } })];
     const lock = { sha256: "f".repeat(64), files: 4, bytes: 10 };

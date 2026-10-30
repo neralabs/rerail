@@ -1,11 +1,14 @@
+import { existsSync } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { and, asc, gte, inArray } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
+import { followsGitignore, listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
+import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../engine/native/native.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { events, sessions } from "../engine/storage/schema.js";
+import { callNamesDeniedPath } from "../engine/transcript-boundary.js";
 
 /**
  * `rerail rules evidence`: what this repository's own sessions say a rule should catch, for `/rerail-create`
@@ -217,9 +220,13 @@ export function correctionFamilies(text: string): string[] {
   return CORRECTION_FAMILIES.filter(family => family.pattern.test(trimmed)).map(family => family.name);
 }
 
-/** `<tool> <command or path>`: what a call did, in one line. */
+/**
+ * `<tool> <command or path>`: what a call did, in one line. A call that names a hidden or secret-like path (`cat
+ * .env`) is named by its tool alone: the evidence goes to a coding agent, and that path stays out of its conversation.
+ */
 function callSummary(payload: Record<string, unknown>): string {
   const tool = typeof payload.toolName === "string" ? payload.toolName : "tool";
+  if (callNamesDeniedPath(payload.input)) return `${tool} (a hidden or secret-like path, withheld)`;
   const input = typeof payload.input === "object" && payload.input !== null ? payload.input as Record<string, unknown> : {};
   const target = [input.command, input.file_path, input.path, input.filePath, input.pattern].find(value => typeof value === "string");
   return clip(typeof target === "string" ? `${tool} ${target}` : tool, CALL_TEXT_LENGTH);
@@ -229,13 +236,37 @@ async function exists(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);
 }
 
-async function standardsFiles(root: string): Promise<string[]> {
+/**
+ * Whether Git ignores a path under `root`, for a repository that follows `.gitignore`: a standards file Git ignores is
+ * the person's own, not the project's, so the evidence does not send the agent to it. In a Git checkout whose rules
+ * cannot be read, every path counts as ignored rather than guessed at.
+ */
+function gitIgnoredUnder(root: string, follows: boolean): (path: string) => boolean {
+  if (!follows) return () => false;
+  let matcher: NativeGitIgnoreMatcher | null;
+  try {
+    matcher = loadNativeBinding().openGitIgnoreMatcher(root);
+  } catch {
+    return () => true;
+  }
+  if (matcher === null) return () => existsSync(join(root, ".git"));
+  const opened = matcher;
+  return path => {
+    try {
+      return opened.ignored(path, false);
+    } catch {
+      return true;
+    }
+  };
+}
+
+async function standardsFiles(root: string, ignored: (path: string) => boolean): Promise<string[]> {
   const files = await Promise.all(STANDARDS_FILES.map(async file => (await exists(join(root, file)) ? [file] : [])));
   const directories = await Promise.all(STANDARDS_DIRECTORIES.map(async directory => {
     const entries = await readdir(join(root, directory), { withFileTypes: true }).catch(() => []);
     return entries.filter(entry => entry.isFile()).map(entry => `${directory}/${entry.name}`);
   }));
-  return [...files, ...directories].flat().sort();
+  return [...files, ...directories].flat().filter(path => !ignored(path)).sort();
 }
 
 function emptyEvidence(name: string, days: number, standards: string[]): RuleEvidence {
@@ -258,12 +289,12 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
   // Standards files sit at the checkout root, wherever under it the command runs.
   const root = repositoryIdentityLocation(resolve(repo)).workspaceRoot;
   const name = repositoryName(root);
-  const standards = await standardsFiles(root);
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
-  if (!(await exists(databasePath))) return emptyEvidence(name, days, standards);
+  if (!(await exists(databasePath))) return emptyEvidence(name, days, await standardsFiles(root, gitIgnoredUnder(root, true)));
   const database = openRerailDatabase(databasePath, { readonly: true });
   try {
     const checkout = lookupCheckout(database, root);
+    const standards = await standardsFiles(root, gitIgnoredUnder(root, followsGitignore(database, checkout)));
     if (checkout === undefined) return emptyEvidence(name, days, standards);
     // A session keeps the repository key it opened under: an alias the repository has since adopted, or a checkout's
     // clone id from before the repository had a remote. Its history is all of them, as `rerail reset` reads it.
@@ -309,7 +340,8 @@ interface EvidenceTally {
 function tallyCall(tally: EvidenceTally, payload: Record<string, unknown>): void {
   tally.recentCalls = [...tally.recentCalls, callSummary(payload)].slice(-CALLS_BEFORE);
   const input = typeof payload.input === "object" && payload.input !== null ? payload.input as Record<string, unknown> : {};
-  if (typeof input.command === "string") countRisky(tally.risky, input.command);
+  // A risky command's example is quoted to the agent; one over a path outside the boundary is not.
+  if (typeof input.command === "string" && !callNamesDeniedPath(input.command)) countRisky(tally.risky, input.command);
 }
 
 function tallySteer(tally: EvidenceTally, payload: Record<string, unknown>): void {

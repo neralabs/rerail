@@ -1,0 +1,1792 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-unstable-nested-components",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define components outside other components; a component created during render is a new type each render, so React remounts its subtree and loses its state.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "nested-component",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "matches": "function-witness",
+                    "pattern": "$A"
+                  },
+                  {
+                    "matches": "method-witness",
+                    "has": {
+                      "field": "parameters",
+                      "pattern": "$A"
+                    }
+                  },
+                  {
+                    "matches": "class-method-witness",
+                    "has": {
+                      "field": "parameters",
+                      "pattern": "$A"
+                    }
+                  },
+                  {
+                    "matches": "class-component",
+                    "kind": "class_declaration",
+                    "pattern": "$A"
+                  },
+                  {
+                    "matches": "class-component",
+                    "kind": "abstract_class_declaration",
+                    "pattern": "$A"
+                  },
+                  {
+                    "matches": "wrapper-witness",
+                    "pattern": "$A"
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "component"
+                  },
+                  "matches": "named-component"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "cap": {
+              "regex": "^_*(?:[^\\p{Ll}_]|$)"
+            },
+            "upper": {
+              "regex": "^[\\p{Lu}\\p{Lt}]"
+            },
+            "any-text": {
+              "regex": "[\\s\\S]"
+            },
+            "fn": {
+              "any": [
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                }
+              ]
+            },
+            "fn-declaration": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "kind": "generator_function_declaration",
+                    "regex": "^async\\b"
+                  }
+                }
+              ]
+            },
+            "object-method": {
+              "kind": "method_definition",
+              "inside": {
+                "kind": "object"
+              }
+            },
+            "anonymous": {
+              "not": {
+                "has": {
+                  "field": "name",
+                  "matches": "any-text"
+                }
+              }
+            },
+            "named-cap": {
+              "has": {
+                "field": "name",
+                "matches": "cap"
+              }
+            },
+            "anonymous-or-cap": {
+              "any": [
+                {
+                  "matches": "anonymous"
+                },
+                {
+                  "matches": "named-cap"
+                }
+              ]
+            },
+            "return-path": {
+              "any": [
+                {
+                  "kind": "statement_block"
+                },
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "else_clause"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "switch_statement"
+                },
+                {
+                  "kind": "switch_body"
+                },
+                {
+                  "kind": "switch_case"
+                },
+                {
+                  "kind": "switch_default"
+                }
+              ]
+            },
+            "jsx-node": {
+              "any": [
+                {
+                  "kind": "jsx_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "jsx-node"
+                  }
+                }
+              ]
+            },
+            "create-element": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "any": [
+                  {
+                    "kind": "member_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "object",
+                          "kind": "identifier",
+                          "regex": "^React$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "property",
+                          "regex": "^createElement$"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "identifier",
+                    "regex": "^createElement$",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "matches": "react-site"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "jsx": {
+              "any": [
+                {
+                  "kind": "jsx_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "jsx"
+                  }
+                },
+                {
+                  "kind": "ternary_expression",
+                  "any": [
+                    {
+                      "has": {
+                        "field": "consequence",
+                        "matches": "jsx"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "alternative",
+                        "matches": "jsx"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "matches": "jsx"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "matches": "jsx"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "sequence_expression",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "jsx"
+                  }
+                },
+                {
+                  "matches": "create-element"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "jsx-node"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "jsx-or-null": {
+              "any": [
+                {
+                  "kind": "null"
+                },
+                {
+                  "kind": "jsx_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "jsx-or-null"
+                  }
+                },
+                {
+                  "kind": "ternary_expression",
+                  "any": [
+                    {
+                      "has": {
+                        "field": "consequence",
+                        "matches": "jsx-or-null"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "alternative",
+                        "matches": "jsx-or-null"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                  },
+                  "any": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "matches": "jsx-or-null"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "matches": "jsx-or-null"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "sequence_expression",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "reverse": true,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "jsx-or-null"
+                  }
+                },
+                {
+                  "matches": "create-element"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "jsx-node"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "returns-jsx": {
+              "any": [
+                {
+                  "kind": "arrow_function",
+                  "has": {
+                    "field": "body",
+                    "matches": "jsx"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "return-path"
+                        }
+                      },
+                      "kind": "return_statement",
+                      "has": {
+                        "matches": "jsx"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "returns-jsx-or-null": {
+              "any": [
+                {
+                  "kind": "arrow_function",
+                  "has": {
+                    "field": "body",
+                    "matches": "jsx-or-null"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "return-path"
+                        }
+                      },
+                      "kind": "return_statement",
+                      "has": {
+                        "matches": "jsx-or-null"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-init": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^React$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "object",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      },
+                      {
+                        "matches": "require-react"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "require-react"
+                }
+              ]
+            },
+            "require-react": {
+              "kind": "call_expression",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^require$"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "kind": "string",
+                      "nthChild": 1,
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "react-site": {
+              "any": [
+                {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "react-init"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "has": {
+                      "field": "source",
+                      "kind": "string",
+                      "value": {
+                        "eq": "react"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "wrapper-call": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "any": [
+                  {
+                    "kind": "member_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "object",
+                          "kind": "identifier",
+                          "regex": "^React$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "property",
+                          "regex": "^(?:memo|forwardRef)$"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "identifier",
+                    "regex": "^(?:memo|forwardRef)$",
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "matches": "react-site"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "first-argument-fn": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "any": [
+                    {
+                      "matches": "fn"
+                    },
+                    {
+                      "kind": "parenthesized_expression",
+                      "has": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "matches": "fn"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "tag-jsx": {
+              "any": [
+                {
+                  "kind": "jsx_self_closing_element",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "pattern": "$TAG"
+                  }
+                },
+                {
+                  "kind": "jsx_element",
+                  "has": {
+                    "field": "open_tag",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "pattern": "$TAG"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "tag-jsx"
+                  }
+                }
+              ]
+            },
+            "fn-tag": {
+              "matches": "fn",
+              "any": [
+                {
+                  "kind": "arrow_function",
+                  "has": {
+                    "field": "body",
+                    "matches": "tag-jsx"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "kind": "return_statement",
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "kind": "return_statement"
+                        }
+                      },
+                      "has": {
+                        "matches": "tag-jsx"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "detected-declaration": {
+              "any": [
+                {
+                  "kind": "arrow_function",
+                  "all": [
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "matches": "cap",
+                          "pattern": "$DECL"
+                        }
+                      }
+                    },
+                    {
+                      "matches": "returns-jsx-or-null"
+                    },
+                    {
+                      "compare": {
+                        "left": "DECL",
+                        "op": "eq",
+                        "right": "TAG"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "class_declaration"
+                    },
+                    {
+                      "kind": "abstract_class_declaration"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "matches": "class-component"
+                    },
+                    {
+                      "has": {
+                        "field": "name",
+                        "pattern": "$DECL"
+                      }
+                    },
+                    {
+                      "compare": {
+                        "left": "DECL",
+                        "op": "eq",
+                        "right": "TAG"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "earlier-detected": {
+              "any": [
+                {
+                  "matches": "detected-declaration"
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "detected-declaration"
+                  }
+                }
+              ]
+            },
+            "wraps-detected": {
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "kind": "member_expression"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      "any": [
+                        {
+                          "matches": "fn-tag"
+                        },
+                        {
+                          "kind": "parenthesized_expression",
+                          "has": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "parenthesized_expression"
+                              }
+                            },
+                            "matches": "fn-tag"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "earlier-detected"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "matches": "detected-declaration"
+                          },
+                          {
+                            "follows": {
+                              "stopBy": "end",
+                              "matches": "earlier-detected"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "real-wrapper-call": {
+              "matches": "wrapper-call",
+              "not": {
+                "matches": "wraps-detected"
+              }
+            },
+            "wrapper-component": {
+              "all": [
+                {
+                  "matches": "real-wrapper-call"
+                },
+                {
+                  "matches": "first-argument-fn"
+                }
+              ]
+            },
+            "component-superclass": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:Pure)?Component$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^React$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^(?:Pure)?Component$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "explicit-component-comment": {
+              "kind": "comment",
+              "regex": "^/\\*\\*[\\s\\S]*@(?:extends|augments)\\s+React\\.(?:Pure)?Component(?:[^\\w.$]|$)"
+            },
+            "class-component": {
+              "any": [
+                {
+                  "has": {
+                    "kind": "class_heritage",
+                    "any": [
+                      {
+                        "has": {
+                          "kind": "extends_clause",
+                          "has": {
+                            "field": "value",
+                            "matches": "component-superclass"
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "component-superclass"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "follows": {
+                    "matches": "explicit-component-comment"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "export_statement",
+                    "follows": {
+                      "matches": "explicit-component-comment"
+                    }
+                  }
+                }
+              ]
+            },
+            "create-class-object": {
+              "kind": "object",
+              "inside": {
+                "kind": "arguments",
+                "inside": {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier",
+                        "regex": "^createReactClass$"
+                      },
+                      {
+                        "kind": "member_expression",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "object",
+                              "kind": "identifier",
+                              "regex": "^React$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "property",
+                              "regex": "^createReactClass$"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "return-decided": {
+              "inside": {
+                "kind": "statement_block",
+                "inside": {
+                  "any": [
+                    {
+                      "matches": "object-method"
+                    },
+                    {
+                      "matches": "fn",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "any": [
+                          {
+                            "kind": "assignment_expression"
+                          },
+                          {
+                            "kind": "pair"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "return-decided-cap": {
+              "inside": {
+                "kind": "statement_block",
+                "inside": {
+                  "any": [
+                    {
+                      "matches": "object-method",
+                      "has": {
+                        "field": "name",
+                        "kind": "property_identifier",
+                        "matches": "cap"
+                      }
+                    },
+                    {
+                      "matches": "fn",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "any": [
+                          {
+                            "kind": "assignment_expression",
+                            "has": {
+                              "field": "left",
+                              "kind": "identifier",
+                              "matches": "cap"
+                            }
+                          },
+                          {
+                            "kind": "pair",
+                            "has": {
+                              "field": "key",
+                              "kind": "property_identifier",
+                              "matches": "cap"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "loose-component": {
+              "any": [
+                {
+                  "matches": "fn-declaration",
+                  "all": [
+                    {
+                      "matches": "anonymous-or-cap"
+                    }
+                  ]
+                },
+                {
+                  "matches": "fn",
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "name",
+                          "kind": "identifier",
+                          "matches": "cap"
+                        }
+                      },
+                      {
+                        "kind": "assignment_expression",
+                        "has": {
+                          "field": "left",
+                          "kind": "identifier",
+                          "matches": "cap"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "fn",
+                  "all": [
+                    {
+                      "matches": "anonymous-or-cap"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "assignment_expression",
+                        "has": {
+                          "field": "left",
+                          "kind": "member_expression",
+                          "any": [
+                            {
+                              "has": {
+                                "field": "property",
+                                "matches": "cap"
+                              }
+                            },
+                            {
+                              "regex": "^module\\s*\\.\\s*exports$"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matches": "fn",
+                  "all": [
+                    {
+                      "matches": "anonymous-or-cap"
+                    },
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "reverse": true,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "sequence_expression",
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "kind": "parenthesized_expression"
+                            }
+                          },
+                          "any": [
+                            {
+                              "kind": "variable_declarator"
+                            },
+                            {
+                              "kind": "assignment_expression"
+                            },
+                            {
+                              "kind": "pair"
+                            },
+                            {
+                              "kind": "return_statement"
+                            },
+                            {
+                              "kind": "export_statement"
+                            },
+                            {
+                              "kind": "arrow_function"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "strict-component": {
+              "any": [
+                {
+                  "matches": "object-method",
+                  "has": {
+                    "field": "name",
+                    "kind": "property_identifier",
+                    "matches": "cap"
+                  }
+                },
+                {
+                  "matches": "fn",
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "export_statement"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "return_statement"
+                      },
+                      "any": [
+                        {
+                          "matches": "named-cap"
+                        },
+                        {
+                          "inside": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "parenthesized_expression"
+                              }
+                            },
+                            "kind": "return_statement",
+                            "matches": "return-decided-cap"
+                          }
+                        },
+                        {
+                          "matches": "anonymous",
+                          "inside": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "parenthesized_expression"
+                              }
+                            },
+                            "kind": "return_statement",
+                            "not": {
+                              "matches": "return-decided"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "arrow_function",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "any": [
+                                {
+                                  "kind": "assignment_expression",
+                                  "has": {
+                                    "field": "left",
+                                    "kind": "identifier",
+                                    "matches": "cap"
+                                  }
+                                },
+                                {
+                                  "kind": "pair",
+                                  "has": {
+                                    "field": "key",
+                                    "kind": "property_identifier",
+                                    "matches": "cap"
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "inside": {
+                                "stopBy": {
+                                  "not": {
+                                    "kind": "parenthesized_expression"
+                                  }
+                                },
+                                "any": [
+                                  {
+                                    "kind": "assignment_expression"
+                                  },
+                                  {
+                                    "kind": "pair"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "matches": "anonymous-or-cap"
+                        },
+                        {
+                          "inside": {
+                            "stopBy": {
+                              "not": {
+                                "kind": "parenthesized_expression"
+                              }
+                            },
+                            "kind": "arrow_function",
+                            "inside": {
+                              "stopBy": {
+                                "not": {
+                                  "kind": "parenthesized_expression"
+                                }
+                              },
+                              "any": [
+                                {
+                                  "kind": "assignment_expression"
+                                },
+                                {
+                                  "kind": "pair"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "pair",
+                        "has": {
+                          "field": "key",
+                          "kind": "property_identifier",
+                          "matches": "cap"
+                        }
+                      },
+                      "matches": "anonymous"
+                    },
+                    {
+                      "matches": "named-cap",
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "pair",
+                        "not": {
+                          "has": {
+                            "field": "key",
+                            "kind": "property_identifier",
+                            "regex": "^\\p{Ll}"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "fn-component": {
+              "any": [
+                {
+                  "matches": "loose-component",
+                  "all": [
+                    {
+                      "matches": "returns-jsx-or-null"
+                    }
+                  ]
+                },
+                {
+                  "matches": "strict-component",
+                  "all": [
+                    {
+                      "matches": "returns-jsx"
+                    }
+                  ]
+                }
+              ]
+            },
+            "stateless": {
+              "any": [
+                {
+                  "matches": "fn-component"
+                },
+                {
+                  "matches": "fn",
+                  "all": [
+                    {
+                      "matches": "wrapper-argument"
+                    },
+                    {
+                      "matches": "returns-jsx-or-null"
+                    }
+                  ]
+                }
+              ]
+            },
+            "class-kind": {
+              "any": [
+                {
+                  "kind": "class_declaration"
+                },
+                {
+                  "kind": "abstract_class_declaration"
+                },
+                {
+                  "kind": "class"
+                }
+              ]
+            },
+            "in-class-component": {
+              "inside": {
+                "stopBy": {
+                  "matches": "class-kind"
+                },
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  }
+                ],
+                "matches": "class-component"
+              }
+            },
+            "inside-class-component": {
+              "all": [
+                {
+                  "matches": "in-class-component"
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "fn-component"
+                    },
+                    {
+                      "not": {
+                        "matches": "stateless"
+                      },
+                      "inside": {
+                        "stopBy": {
+                          "matches": "stateless"
+                        },
+                        "matches": "fn-component"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "component": {
+              "any": [
+                {
+                  "matches": "fn-component"
+                },
+                {
+                  "matches": "class-kind",
+                  "all": [
+                    {
+                      "matches": "class-component"
+                    }
+                  ]
+                },
+                {
+                  "matches": "wrapper-component"
+                },
+                {
+                  "matches": "create-class-object"
+                }
+              ]
+            },
+            "named-component": {
+              "matches": "component",
+              "not": {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "matches": "fn-declaration"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      },
+                      {
+                        "kind": "class_declaration"
+                      },
+                      {
+                        "kind": "abstract_class_declaration"
+                      },
+                      {
+                        "kind": "class"
+                      }
+                    ],
+                    "has": {
+                      "field": "name",
+                      "not": {
+                        "matches": "upper"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "arrow_function",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "kind": "parenthesized_expression"
+                        }
+                      },
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "not": {
+                          "matches": "upper"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "pair-value": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "pair"
+              }
+            },
+            "in-attribute": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "jsx_expression",
+                "inside": {
+                  "kind": "jsx_attribute"
+                }
+              }
+            },
+            "render-key": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "pair",
+                "has": {
+                  "field": "key",
+                  "kind": "property_identifier",
+                  "regex": "^render"
+                }
+              }
+            },
+            "render-prop": {
+              "any": [
+                {
+                  "matches": "render-key"
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "jsx_expression",
+                    "inside": {
+                      "kind": "jsx_element",
+                      "has": {
+                        "field": "open_tag",
+                        "has": {
+                          "field": "name",
+                          "matches": "any-text"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "jsx_expression"
+                    },
+                    "kind": "jsx_expression",
+                    "inside": {
+                      "kind": "jsx_attribute",
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^(?:render[\\s\\S]*|children)$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "map-argument": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "arguments",
+                "inside": {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "kind": "member_expression",
+                    "has": {
+                      "field": "property",
+                      "regex": "^map$"
+                    }
+                  }
+                }
+              }
+            },
+            "wrapper-argument": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "arguments",
+                "inside": {
+                  "matches": "real-wrapper-call"
+                }
+              }
+            },
+            "hook-return": {
+              "all": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "parenthesized_expression"
+                      }
+                    },
+                    "kind": "return_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": {
+                      "kind": "call_expression"
+                    },
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "identifier",
+                      "regex": "^use[A-Z0-9]"
+                    }
+                  }
+                }
+              ]
+            },
+            "function-witness": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "matches": "fn"
+                    },
+                    {
+                      "matches": "fn-declaration"
+                    }
+                  ]
+                },
+                {
+                  "matches": "returns-jsx"
+                },
+                {
+                  "any": [
+                    {
+                      "matches": "pair-value"
+                    },
+                    {
+                      "matches": "in-attribute"
+                    },
+                    {
+                      "matches": "loose-component"
+                    },
+                    {
+                      "matches": "strict-component"
+                    },
+                    {
+                      "matches": "inside-class-component"
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "render-key"
+                      },
+                      {
+                        "matches": "map-argument"
+                      },
+                      {
+                        "matches": "hook-return"
+                      },
+                      {
+                        "matches": "wrapper-argument"
+                      },
+                      {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "matches": "pair-value"
+                              },
+                              {
+                                "matches": "in-attribute"
+                              }
+                            ]
+                          },
+                          {
+                            "matches": "render-prop"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "class-method-witness": {
+              "all": [
+                {
+                  "kind": "method_definition",
+                  "inside": {
+                    "kind": "class_body"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "field": "name",
+                      "regex": "^render$"
+                    }
+                  }
+                },
+                {
+                  "matches": "returns-jsx"
+                },
+                {
+                  "matches": "inside-class-component"
+                }
+              ]
+            },
+            "method-witness": {
+              "all": [
+                {
+                  "matches": "object-method"
+                },
+                {
+                  "matches": "returns-jsx"
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "has": {
+                          "field": "name",
+                          "kind": "property_identifier",
+                          "regex": "^render"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "kind": "jsx_expression"
+                          },
+                          "kind": "jsx_expression",
+                          "inside": {
+                            "kind": "jsx_attribute",
+                            "has": {
+                              "kind": "property_identifier",
+                              "regex": "^(?:render[\\s\\S]*|children)$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "wrapper-witness": {
+              "all": [
+                {
+                  "matches": "wrapper-component"
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "render-key"
+                      },
+                      {
+                        "matches": "map-argument"
+                      },
+                      {
+                        "matches": "hook-return"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.A",
+        "code": "react/no-unstable-nested-components",
+        "message": "Move this component out of its parent component and pass the data it reads as props; keep it here only when it is a render function called directly, not rendered as an element.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unstable-nested-components"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unstable-nested-components"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

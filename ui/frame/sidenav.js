@@ -35,7 +35,7 @@ function repositoryItems() {
   ];
 }
 
-/** A sidebar item; its tooltip is the full label, which a long pack name truncates ("JavaScript an…"). */
+/** A sidebar item; a long pack name wraps to a second line, its icon and count staying on the first. */
 function item(hash, label, glyph, { current = ui.view === hash, n = null, cls = "", title = label } = {}) {
   return h(`button.sn-item${cls}`, { "data-act": "nav", "data-i": hash, "aria-current": current ? "page" : "false", title },
     glyph, h("span.t", null, label), n === null ? null : h("span.n", { title: n.long, "aria-label": n.long }, n.short));

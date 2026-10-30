@@ -22,6 +22,7 @@ afterEach(() => {
   data.activitySessions = null;
   data.activityAllSessions = null;
   ui.actRule = null;
+  ui.histOutcome = "all";
   ui.range = 7;
 });
 
@@ -47,6 +48,16 @@ describe("History's rule list", () => {
 
     data.activity = { a: fired(1) };
     expect(rankedRules().map(r => r.id)).toEqual(["a"]);
+  });
+
+  it("under Steered counts what was recorded on Steer or Block, under Logged what was recorded on Log, each ranked on its own", () => {
+    data.rules = new Map([["a", storedRule("a", "Alpha")], ["b", storedRule("b", "Beta")], ["c", storedRule("c", "Gamma")]]);
+    data.activity = { a: fired(5, { loggedViolations: 5 }), b: fired(4, { loggedViolations: 1 }), c: fired(2) };
+
+    expect(rankedRules("steered").map(r => [r.id, r.count])).toEqual([["b", 3], ["c", 2]]);
+    expect(rankedRules("logged").map(r => [r.id, r.count])).toEqual([["a", 5], ["b", 1]]);
+    ui.histOutcome = "logged";
+    expect(rankedRules().map(r => r.id)).toEqual(["a", "b"]);
   });
 });
 
@@ -126,6 +137,14 @@ describe("what History says with no rule to list", () => {
   it("is null once a rule is listed", () => {
     data.activity = { a: fired(1) };
 
+    expect(historyEmpty()).toBeNull();
+  });
+
+  it("is null under a chip that lists nothing while other violations are in range", () => {
+    ui.histOutcome = "steered";
+    data.activity = { a: fired(2, { loggedViolations: 2 }) };
+
+    expect(rankedRules()).toEqual([]);
     expect(historyEmpty()).toBeNull();
   });
 });

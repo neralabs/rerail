@@ -34,12 +34,14 @@ describe("Rerail daemon CLI", () => {
         databasePath: database,
         ui: "dev",
       });
-      const health = await fetch(new URL("/healthz", state.url));
+      // Every request carries the capability the state file records, as every Rerail client and the browser's cookie do.
+      const access = { headers: { "x-rerail-access": state.accessToken! } };
+      const health = await fetch(new URL("/healthz", state.url), access);
       expect(health.status).toBe(200);
       expect(health.ok).toBe(true);
       expect(await health.json()).toMatchObject({ pid: child.pid, database: { path: database }, ui: "dev" });
       // `--dev` serves the committed `ui/` source straight from the checkout, not `dist/ui`.
-      const page = await fetch(state.url);
+      const page = await fetch(state.url, access);
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
       expect(await page.text()).toBe(await readFile(join(process.cwd(), "ui", "index.html"), "utf8"));

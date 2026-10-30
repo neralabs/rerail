@@ -1,11 +1,11 @@
-import { readFileSync, type Dirent } from "node:fs";
+import { existsSync, readFileSync, type Dirent } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { bundledModelPath } from "../engine/package-root.js";
 import { z } from "zod";
 import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import {
   IGNORED_DIRECTORIES,
@@ -20,19 +20,21 @@ import {
   loadNativeBinding,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
+  type NativeGitIgnoreMatcher,
 } from "../engine/native/native.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { normalizeFolder } from "../engine/catalog/repository-model.js";
-import { recordCheckout } from "../engine/catalog/repository-registry.js";
-import { checkoutStatus } from "../engine/catalog/repository-registry.js";
+import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
+import { deniedByPathBoundary } from "../engine/path-boundary.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import type { CodeRuleSourceLanguage } from "../engine/code-rule/code-rule.js";
 
 /** How many repository matches the report shows; the count covers every match. */
 const REPOSITORY_EXAMPLES = 5;
@@ -99,6 +101,11 @@ export interface RuleDraftReport {
     examples: RuleDraftRepositoryMatch[];
     /** Files some clause could not check, and the messages of such failures that name no file. */
     unchecked: { count: number; examples: RuleDraftUncheckedFile[]; unattributed: string[] };
+    /**
+     * Files and folders the data boundary kept the pass from reading: hidden, sensitive by name, or ignored by Git
+     * while the repository follows `.gitignore`. A count only; their names stay out of the report.
+     */
+    leftOut: number;
   } | null;
 }
 
@@ -218,11 +225,15 @@ const evaluationSchema = z.object({
 });
 type Evaluation = z.infer<typeof evaluationSchema>["evaluation"];
 
-/** Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. */
-async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, files: readonly SourceFile[]): Promise<Evaluation> {
+/**
+ * Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. Import
+ * targets resolve against the files below `root` the workspace does not hold, as in the daemon.
+ */
+async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, root: string, files: readonly SourceFile[]): Promise<Evaluation> {
   const workspace = new binding.CodeRuleDslWorkspace();
   try {
     workspace.addCodeRule(compiled);
+    workspace.setRoot(resolve(root));
     const accepted = files.filter(file => workspace.acceptsPath(file.path));
     if (accepted.length === 0) return { violations: [], failures: [] };
     const result = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 1, files: accepted, removed: [] }));
@@ -263,7 +274,7 @@ async function policyCaseResult(
     // The graph reads the sample in place of the repository's file at its path.
     const facts = await sourceFileFacts(root, sample.path, language, undefined, compiled.readsServerGraph(), { path: sample.path, source: sample.content });
     const file = { path: sample.path, language, source: sample.content, ...facts };
-    const evaluation = await evaluate(binding, compiled, [file]);
+    const evaluation = await evaluate(binding, compiled, root, [file]);
     caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
     // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
     const unchecked = caught ? undefined : uncheckedPlaces(evaluation.failures);
@@ -277,13 +288,12 @@ async function policyCaseResult(
 async function repositoryFile(
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
-  absolute: string,
+  path: string,
+  language: CodeRuleSourceLanguage,
   bytesSoFar: number,
   cache: SourceFactsCache,
 ): Promise<{ file: SourceFile; size: number } | undefined> {
-  const path = relative(root, absolute).split(sep).join("/");
-  const language = languageFor(path);
-  if (language === undefined || !compiled.inScope(path)) return undefined;
+  const absolute = join(root, path);
   const size = (await stat(absolute)).size;
   if (size > REPOSITORY_MAX_FILE_BYTES || bytesSoFar + size > REPOSITORY_MAX_SOURCE_BYTES) return undefined;
   const source = await readFile(absolute);
@@ -300,32 +310,106 @@ async function sortedEntries(directory: string): Promise<Dirent[]> {
   return entries.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/** Every regular file under `root` a scan visits, depth-first in name order, skipping ignored directories and symlinks. */
-async function* repositoryPaths(root: string): AsyncGenerator<string> {
+/** Whether `root`'s repository follows `.gitignore`, read without recording anything: on where Rerail cannot tell. */
+function repositoryFollowsGitignore(root: string, databasePath = defaultRerailDatabasePath()): boolean {
+  if (!existsSync(databasePath)) return true;
+  let database: RerailDatabase | undefined;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    return followsGitignore(database, lookupCheckout(database, root));
+  } catch {
+    return true;
+  } finally {
+    database?.$client.close();
+  }
+}
+
+/**
+ * The repository pass's data boundary: whether it must not read the file or folder at `path`, since the lines it
+ * matches go back to the agent that ran it. A hidden or sensitive path is always withheld, as is a checkout of its own
+ * nested in this one (its files answer to its own ignore rules and setting, which this pass does not read). A path
+ * Git ignores is withheld unless a person turned the repository's `followGitignore` off; a tracked file never is.
+ * Where the pass follows `.gitignore` in a Git checkout but Git's rules cannot be read, nothing can be told apart, so
+ * the pass refuses rather than read what may be ignored.
+ */
+function repositoryBoundary(binding: NativeBinding, root: string): (path: string, directory: boolean) => boolean {
+  let ignored = (_path: string, _directory: boolean): boolean => false;
+  if (repositoryFollowsGitignore(root)) {
+    let matcher: NativeGitIgnoreMatcher | null;
+    try {
+      matcher = binding.openGitIgnoreMatcher(root);
+    } catch (error) {
+      throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run: ${errorMessage(error)}`);
+    }
+    if (matcher === null && existsSync(join(root, ".git"))) {
+      throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run`);
+    }
+    if (matcher !== null) {
+      const opened = matcher;
+      ignored = (path, directory) => {
+        try {
+          return opened.ignored(path, directory);
+        } catch {
+          return true;
+        }
+      };
+    }
+  }
+  return (path, directory) =>
+    deniedByPathBoundary(path) || (directory && existsSync(join(root, path, ".git"))) || ignored(path, directory);
+}
+
+/**
+ * Every regular file under `root` a scan visits, as a `/`-separated path below it, depth-first in name order, skipping
+ * ignored directories, symlinks and the folders `prune` refuses.
+ */
+async function* repositoryPaths(root: string, prune: (path: string) => boolean): AsyncGenerator<string> {
   const pending = [root];
   while (pending.length > 0) {
     const directory = pending.pop()!;
     for (const entry of await sortedEntries(directory)) {
       const absolute = join(directory, entry.name);
-      if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) pending.push(absolute);
-      else if (entry.isFile()) yield absolute;
+      const path = relative(root, absolute).split(sep).join("/");
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRECTORIES.has(entry.name) && !prune(path)) pending.push(absolute);
+      } else if (entry.isFile()) yield path;
     }
   }
 }
 
-/** The files a repository scan would hand `compiled`: the same ignored directories, file types and bounds. */
-async function repositoryFiles(compiled: NativeCompiledCodeRuleDsl, root: string): Promise<SourceFile[]> {
+/**
+ * The files a repository scan would hand `compiled` (the same ignored directories, file types and bounds) that the
+ * data boundary lets the pass read, and how many files and folders it left out.
+ */
+async function repositoryFiles(
+  binding: NativeBinding,
+  compiled: NativeCompiledCodeRuleDsl,
+  root: string,
+): Promise<{ files: SourceFile[]; leftOut: number }> {
+  const withheld = repositoryBoundary(binding, root);
   const files: SourceFile[] = [];
   const cache = sourceFactsCache();
   let bytes = 0;
-  for await (const absolute of repositoryPaths(root)) {
+  let leftOut = 0;
+  const prune = (path: string): boolean => {
+    if (!withheld(path, true)) return false;
+    leftOut += 1;
+    return true;
+  };
+  for await (const path of repositoryPaths(root, prune)) {
     if (files.length >= REPOSITORY_MAX_FILES) break;
-    const read = await repositoryFile(compiled, root, absolute, bytes, cache);
+    const language = languageFor(path);
+    if (language === undefined || !compiled.inScope(path)) continue;
+    if (withheld(path, false)) {
+      leftOut += 1;
+      continue;
+    }
+    const read = await repositoryFile(compiled, root, path, language, bytes, cache);
     if (read === undefined) continue;
     bytes += read.size;
     files.push(read.file);
   }
-  return files;
+  return { files, leftOut };
 }
 
 async function repositoryPass(
@@ -333,9 +417,9 @@ async function repositoryPass(
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
 ): Promise<NonNullable<RuleDraftReport["repository"]>> {
-  const files = await repositoryFiles(compiled, root);
+  const { files, leftOut } = await repositoryFiles(binding, compiled, root);
   const sources = new Map(files.map(file => [file.path, file.source]));
-  const evaluation = await evaluate(binding, compiled, files);
+  const evaluation = await evaluate(binding, compiled, root, files);
   const located = evaluation.violations
     .map(violation => ({
       path: violation.path ?? "",
@@ -355,6 +439,7 @@ async function repositoryPass(
     matches: located.length,
     examples,
     unchecked: { count: unchecked.length, examples: unchecked.slice(0, REPOSITORY_EXAMPLES), unattributed },
+    leftOut,
   };
 }
 
@@ -455,7 +540,7 @@ function caseLine(result: RuleDraftCaseResult): string {
 
 function repositoryLines(repository: RuleDraftReport["repository"]): string[] {
   if (repository === null) return ["  Repo: not checked for conversation rules."];
-  const { matches, examples, unchecked } = repository;
+  const { matches, examples, unchecked, leftOut } = repository;
   const lines = [`  Repo: ${matches} ${matches === 1 ? "place matches" : "places match"}.`];
   for (const example of examples) lines.push(`    ${example.path}:${example.line}:${example.column}  ${example.text}`);
   if (matches > examples.length) lines.push(`    … and ${matches - examples.length} more.`);
@@ -465,6 +550,9 @@ function repositoryLines(repository: RuleDraftReport["repository"]): string[] {
     if (unchecked.count > unchecked.examples.length) lines.push(`    … and ${unchecked.count - unchecked.examples.length} more.`);
   }
   for (const message of unchecked.unattributed) lines.push(`  Not checked in any one file (${message}), so the rule may miss places anywhere.`);
+  if (leftOut > 0) {
+    lines.push(`  ${leftOut} ${leftOut === 1 ? "file or folder was" : "files or folders were"} left out unread: hidden, sensitive by name, or ignored by Git.`);
+  }
   return lines;
 }
 

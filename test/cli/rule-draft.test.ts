@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { eq } from "drizzle-orm";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,6 +15,7 @@ import {
   listLibraryRules,
   stableJsonText,
   checkoutStatus,
+  repositories,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { installPack } from "../support/installed-packs.js";
@@ -220,7 +222,66 @@ describe("rerail rules test", () => {
         { path: "src/nested/b.ts", line: 1, column: 1, text: "console.log('b');" },
       ],
       unchecked: { count: 0, examples: [], unattributed: [] },
+      leftOut: 0,
     });
+  });
+
+  it("never reads a hidden, sensitive or Git-ignored file; a person turning followGitignore off lets ignored files in", async () => {
+    const repo = await repository({
+      ".env": "TOKEN=SECRET\n",
+      "config/.secrets.json": "{ \"token\": \"SECRET\" }\n",
+      id_rsa: "SECRET\n",
+      "keys/server.pem": "SECRET\n",
+      ".github/workflows/ci.yml": "token: SECRET\n",
+      ".gitignore": "*.json\n",
+      "local.json": "{ \"token\": \"SECRET\" }\n",
+      "app.json": "{ \"token\": \"SECRET\" }\n",
+    });
+    // Tracked, so Git never ignores it whatever `.gitignore` says.
+    execFileSync("git", ["add", "--force", "app.json"], { cwd: repo });
+    const drafts = await mkdtemp(join(tmpdir(), "rerail-rule-draft-file-"));
+    directories.push(drafts);
+    const file = writeDraft(drafts, {
+      kind: "code",
+      rule: { ...noConsolePolicy("SECRET"), scope: { include: ["**"], exclude: [] } },
+    });
+
+    const following = await testReportText(file, repo);
+
+    // .gitignore is hidden: audits read it as text (it decides what npm publishes), so it is one of the files left out.
+    expect(following.report.repository).toMatchObject({ matches: 1, leftOut: 4 });
+    expect(following.report.repository?.examples.map(example => example.path)).toEqual(["app.json"]);
+    expect(following.stdout).toContain("4 files or folders were left out unread: hidden, sensitive by name, or ignored by Git.");
+    expect(following.stdout).not.toMatch(/\.env|\.secrets|id_rsa|server\.pem|ci\.yml|local\.json/);
+
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      database.update(repositories).set({ followGitignore: false })
+        .where(eq(repositories.repositoryKey, recordCheckout(database, repo).repositoryKey)).run();
+    } finally {
+      database.$client.close();
+    }
+    const { report } = await testReport(file, repo);
+
+    expect(report.repository).toMatchObject({ matches: 2, leftOut: 3 });
+    expect(report.repository?.examples.map(example => example.path)).toEqual(["app.json", "local.json"]);
+  });
+
+  it("never follows a symlink out of the checkout, to a file or a folder", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "rerail-rule-draft-outside-"));
+    directories.push(outside);
+    mkdirSync(join(outside, "folder"));
+    writeFileSync(join(outside, "secret.ts"), "console.log('outside');\n");
+    writeFileSync(join(outside, "folder", "b.ts"), "console.log('outside folder');\n");
+    const repo = await repository({ "src/a.ts": "console.log('inside');\n" });
+    symlinkSync(join(outside, "secret.ts"), join(repo, "src", "linked.ts"));
+    symlinkSync(join(outside, "folder"), join(repo, "src", "linked"), "dir");
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
+
+    const { exit, report } = await testReport(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report.repository).toMatchObject({ matches: 1, examples: [{ path: "src/a.ts", text: "console.log('inside');" }] });
   });
 
   it("reports a case and repo files a clause could not check, rather than passing them", async () => {

@@ -22,8 +22,8 @@ interface Entry {
  * SAMPLE_ID; each staged sample is staged whole, its labels (`<source.path>.expected.json`, sampleLabelsSchema) beside
  * its file, whose sha256 is the labels' `source.sha256`; and no sample is taken from a copyleft source
  * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (RECORDED_LICENCES) and its declared
- * `source.license` must equal it, so packFrom's allowlist check on `source.license` judges the recorded value, never a
- * label's own claim. Throws one error naming every problem.
+ * `source.license` must equal the one recorded at its `source.commit` (recordedLicence), so packFrom's allowlist check
+ * on `source.license` judges the recorded value, never a label's own claim. Throws one error naming every problem.
  */
 export function publishedSamples(files: readonly Entry[]): Entry[] {
   const problems: string[] = [];
@@ -59,9 +59,9 @@ export function publishedSamples(files: readonly Entry[]): Entry[] {
       problems.push(`${path}: ${parsed.source.repo} is a copyleft source (${copyleft}); no file of it becomes a sample`);
       continue;
     }
-    const recorded = recordedLicence(parsed.source.repo);
+    const recorded = recordedLicence(parsed.source.repo, parsed.source.commit);
     if (recorded === undefined) problems.push(`${path}: ${parsed.source.repo} has no recorded licence; read its licence and add it to scripts/samples/licences.ts`);
-    else if (parsed.source.license !== recorded) problems.push(`${path}: its source.license ${JSON.stringify(parsed.source.license)} is not ${parsed.source.repo}'s recorded licence ${JSON.stringify(recorded)}`);
+    else if (parsed.source.license !== recorded) problems.push(`${path}: its source.license ${JSON.stringify(parsed.source.license)} is not ${parsed.source.repo}'s recorded licence at ${parsed.source.commit.slice(0, 12)}, ${JSON.stringify(recorded)}`);
   }
   const unlabelled = [...new Set(entries.flatMap(({ path }) => (path === LICENSES_FILE || !path.includes("/") ? [] : [path.slice(0, path.indexOf("/"))])))]
     .filter(id => SAMPLE_ID.test(id) && !labelled.has(id));

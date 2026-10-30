@@ -1,0 +1,51 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-unpublished-bin",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Publish every file package.json lists as a bin executable: keep it in package.json's files field and out of .npmignore, or npm leaves the command out of the package.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "file": {
+            "package": {
+              "bin": true,
+              "published": false
+            }
+          },
+          "rule": {
+            "kind": "program"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "file.start",
+        "code": "n/no-unpublished-bin",
+        "message": "npm ignores this bin file, so the published package lacks the executable; list it in package.json's files field and keep .npmignore from ignoring it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-unpublished-bin"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

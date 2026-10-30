@@ -149,6 +149,29 @@ precedence = "override"
 SPDX-FileCopyrightText = ["Isaac Z. Schlueter and Contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "ISC"
 
+# eslint-plugin-n 18.4.1's getNpmignore, the ignore 5.3.2 and globrex 0.1.2 packages, ported to Rust (npm_ignore/mod.rs,
+# provenance in npm_ignore/UPSTREAM.md); their answers recorded by scripts/generate/npm-ignore/npm-ignore-cases.mjs.
+[[annotations]]
+path = ["native/src/code_rule_dsl/npm_ignore/mod.rs", "native/src/code_rule_dsl/npm_ignore/cases.json"]
+precedence = "override"
+SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2013 Kael Zhang <i@kael.me>, contributors", "2018 Terkel Gjervig Nielsen", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# enhanced-resolve 5.26.0's resolver, get-tsconfig 4.14.3's getTsconfig and eslint-plugin-n 18.4.1's ImportTarget, ported
+# to Rust (import_target/{resolver,entrypoints,tsconfig,mod,term,builtins}.rs, provenance in import_target/UPSTREAM.md).
+[[annotations]]
+path = [
+  "native/src/code_rule_dsl/import_target/resolver.rs",
+  "native/src/code_rule_dsl/import_target/entrypoints.rs",
+  "native/src/code_rule_dsl/import_target/tsconfig.rs",
+  "native/src/code_rule_dsl/import_target/mod.rs",
+  "native/src/code_rule_dsl/import_target/term.rs",
+  "native/src/code_rule_dsl/import_target/builtins.rs",
+]
+precedence = "override"
+SPDX-FileCopyrightText = ["JS Foundation and other contributors", "Hiroki Osame <hiroki.osame@gmail.com>", "2015 Toru Nagashima", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # Conformance fixtures under fixtures/ (see fixtures/README.md).
 # Third-party material, one entry per <family>/licenses/<project>/UPSTREAM.md and copy kind. Verbatim
 # copies keep their upstream licence alone; derived files and excerpts combine upstream material with
@@ -378,22 +401,6 @@ path = ["packs/vue/rules/**", "packs/vue/candidates/rules/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2017 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
-
-# shadcn/ui components adapted for the rule playground (a development tool, never published).
-[[annotations]]
-path = [
-  "playground/ui/src/components/ui/badge.tsx",
-  "playground/ui/src/components/ui/button.tsx",
-  "playground/ui/src/components/ui/card.tsx",
-  "playground/ui/src/components/ui/checkbox.tsx",
-  "playground/ui/src/components/ui/select.tsx",
-  "playground/ui/src/components/ui/tabs.tsx",
-  "playground/ui/src/components/ui/textarea.tsx",
-  "playground/ui/src/lib/utils.ts",
-]
-precedence = "override"
-SPDX-FileCopyrightText = ["2023 shadcn", "2026 Nera Software Inc."]
-SPDX-License-Identifier = "MIT AND Apache-2.0"
 
 # Rule packs under packs/ (see packs/README.md): the tools' copied tests, one entry per
 
@@ -690,14 +697,39 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2015 Toru Nagashima", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT AND Apache-2.0"
 
-# The two files Rerail wrote among them (packs/node/licenses/eslint-plugin-n/UPSTREAM.md): the fixtures' package.json
-# and its copy among the renamed variants.
+# The files Rerail wrote among them (packs/node/licenses/eslint-plugin-n/UPSTREAM.md): the fixtures' package.json, the
+# package.json of each case folder that states a case's configured Node version as engines.node (the rules that read
+# the configured range), and their copies among the renamed variants.
 [[annotations]]
 path = [
   "packs/node/upstream/eslint-plugin-n/fixtures/package.json",
-  "packs/node/upstream/eslint-plugin-n/publish/fixtures/package.json",
   "packs/node/upstream/eslint-plugin-n/fixtures/renamed/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/package.json",
   "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/prefer-process-get-builtin-module/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/fixtures/renamed/prefer-process-get-builtin-module/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/prefer-process-get-builtin-module/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-deprecated-api/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-unsupported-features/es-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-unsupported-features/es-syntax/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/no-unsupported-features/node-builtins/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/prefer-node-protocol/*/package.json",
+  "packs/node/upstream/eslint-plugin-n/publish/fixtures/renamed/prefer-process-get-builtin-module/*/package.json",
 ]
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Nera Software Inc."

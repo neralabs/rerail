@@ -24,8 +24,8 @@ function removeQuestion(pack) {
 }
 
 /**
- * Remove pack, which asks once in place before it acts; `quiet` draws it as a muted link that turns red on hover (a
- * list of packs, the pack page), else as the sheet's red button.
+ * Remove pack, which asks once in place before it acts; `quiet` draws it as a muted link that turns red on hover (the
+ * catalog), else as the sheet's red button. The pack page draws its own outline button and shows only the question.
  */
 export function removePackControl(pack, quiet = false) {
   if (ui.removeAsk === pack.id) return removeQuestion(pack);

@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-process-env",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Avoid reading process.env directly; pass configuration in explicitly so dependencies on the environment stay visible and testable.",
   "scope": {
@@ -19,6 +19,21 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "has": {
+              "field": "object",
+              "kind": "identifier",
+              "regex": "^process$"
+            }
+          }
+        }
+      }
+    },
+    {
       "id": "upstream",
       "forbid": {
         "ast": {
@@ -29,11 +44,7 @@
                 "kind": "member_expression",
                 "all": [
                   {
-                    "has": {
-                      "field": "object",
-                      "kind": "identifier",
-                      "regex": "^process$"
-                    }
+                    "matches": "c1"
                   },
                   {
                     "has": {
@@ -48,11 +59,7 @@
                 "kind": "subscript_expression",
                 "all": [
                   {
-                    "has": {
-                      "field": "object",
-                      "kind": "identifier",
-                      "regex": "^process$"
-                    }
+                    "matches": "c1"
                   },
                   {
                     "has": {

@@ -1,7 +1,8 @@
 /**
  * History by rule (`#history`; `#activity` before v8): the rules with violations in the range, most first, and the
  * chosen rule's violations, newest first by day, a page at a time. `?rule=<id>` (a rule's "See all", a steer link)
- * chooses the rule; without one the top rule shows.
+ * chooses the rule; without one the top rule shows. The All · Steered · Logged chips (`?outcome=`, the Violations
+ * steered tile opens Steered) narrow the list to the violations recorded on Steer or Block, or on Log.
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
 import { fmt, plural, dayLabel, daysAgo, shortSessionId } from "../format.js";
@@ -10,7 +11,7 @@ import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
 import { loadMoreFindings, refreshNow } from "../poll.js";
 import { invalidate, loadMore } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
-import { rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
+import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
 
 export const needs = ["rules", "packs", "activity", "findings"];
 
@@ -55,17 +56,23 @@ function build() {
   const more = h("div.more", { hidden: true }, h("button.btn.sm", { "data-act": "hmore" }));
   const nothing = h("div.empty.hnone", { hidden: true }, h("h3", null, "Nothing in this range"), h("p"));
   const empty = h("div.list.hempty", { hidden: true }, h("div.empty", null, h("h3"), h("p")));
+  const chips = h("div.chips.hchips", { role: "group", "aria-label": "Outcome" },
+    OUTCOME_CHIPS.map(([v, label]) => h("button.chip", { "data-act": "houtcome", "data-i": v, "aria-pressed": "false" }, label)));
+  // A chip that leaves the list empty: what the section says instead of a rule.
+  const unmatched = h("div.empty", { hidden: true }, h("h3"), h("p"));
+  const detail = h("div.hdetail", null, h("div.l1", null, title, pickWrap), meta, kvs);
+  const scroll = h("div.hscroll", null, nothing, violations, more);
   const ltrow = h("div.hltrow", null, toggle);
   const aside = h("aside", null,
     h("div.hsearch", null, glyph(SEARCH_PATH, 13), search),
-    h("div.list.hlistbox", null, h("div.hlhead", null, h("span", null, "Rule"), h("span", null, "Violations logged")), rows, noMatch));
+    chips,
+    h("div.list.hlistbox", null, h("div.hlhead", null, h("span", null, "Rule"), h("span", null, "Violations")), rows, noMatch));
   const body = h("div.hist", null, aside,
-    h("section", null, h("div.list", null, h("div.hdetail", null, h("div.l1", null, title, pickWrap), meta, kvs), summaryLine,
-      h("div.hscroll", null, nothing, violations, more))));
+    h("section", null, h("div.list", null, unmatched, detail, summaryLine, scroll)));
   pane = h("section.group.history", null,
     h("div.ghead.hh", null, h("h2", null, "History by rule"), lead, h("div.act", null, range)),
     empty, ltrow, body);
-  pane._a = { lead, range, toggle, search, rows, noMatch, title, pick, pickLabel, pickWrap, meta, kvs, summaryLine, violations, more, nothing, empty, ltrow, body };
+  pane._a = { lead, range, toggle, search, chips, rows, noMatch, unmatched, detail, scroll, title, pick, pickLabel, pickWrap, meta, kvs, summaryLine, violations, more, nothing, empty, ltrow, body };
 }
 
 const createListRow = () => h("button.hrow", { "data-act": "hsel" },
@@ -125,7 +132,7 @@ function renderMeta(a, id, told) {
   setContent(a.kvs, JSON.stringify([mode, told]), () => [
     mode === null ? null : [h("dt", null, "On a violation"),
       h("dd", null, h(`span.oc.oc-${MODE_OUTCOME[mode] ?? "steered"}`, null, icon(MODE_OUTCOME[mode] ?? "steered", 14), MODE_LABEL[mode] ?? mode))],
-    told === "" ? null : [h("dt", null, "Agent is told"), h("dd", null, h("span.said2", { title: told }, h("span", null, told)))],
+    told === "" ? null : [h("dt", null, "What the agent sees"), h("dd", null, h("span.said2", { title: told }, h("span", null, told)))],
   ]);
 }
 
@@ -196,16 +203,37 @@ const EMPTY_TEXT = {
   nothingInRange: ["Nothing in this range", () => `No rule logged a violation ${rangeLabel()}. Widen the range above to see earlier ones.`],
 };
 
+/** The line under the title: how many rules the list holds, and under a chip how many violations they count. */
+function leadText(ranked) {
+  const label = rangeLabel(), n = ranked.length, rules = `${fmt(n)} ${plural(n, "rule")}`;
+  if (ui.histOutcome === "all") return `${rules} with violations ${label}, most first`;
+  const total = ranked.reduce((sum, r) => sum + r.count, 0), violations = `${fmt(total)} ${plural(total, "violation")}`;
+  return ui.histOutcome === "steered" ? `${rules} · ${violations} steered ${label}, most first` : `${rules} · ${violations} logged on Log ${label}, most first`;
+}
+
+/** A chip whose list is empty, while other violations are in range: what the section says in place of a rule. */
+function renderUnmatched(a, show) {
+  setAttr(a.unmatched, "hidden", !show);
+  for (const part of [a.detail, a.summaryLine, a.scroll]) setAttr(part, "hidden", show);
+  if (!show) return;
+  const steered = ui.histOutcome === "steered";
+  setText(a.unmatched.querySelector("h3"), steered ? `Nothing steered ${rangeLabel()}` : `Nothing logged on Log ${rangeLabel()}`);
+  setText(a.unmatched.querySelector("p"), steered
+    ? `Every violation ${rangeLabel()} was logged by a rule on Log, which records without telling the coding agent.`
+    : `Every violation ${rangeLabel()} was steered: the rules that logged them were on Steer.`);
+}
+
 export function render(root) {
   if (pane === null) build();
   if (pane.parentNode !== root) root.replaceChildren(pane);
   const a = pane._a;
   syncRange(a.range);
-  const ranked = rankedRules();
-  const empty = historyEmpty(ranked);
+  const every = rankedRules("all");
+  const ranked = ui.histOutcome === "all" ? every : rankedRules();
+  const empty = historyEmpty(every);
   const id = historyRuleId(ranked);
-  const showBody = id !== null && (empty === null || ui.actRule !== null);
-  setText(a.lead, empty === null ? `${fmt(ranked.length)} with history · most violations first` : "");
+  const showBody = empty === null || (id !== null && ui.actRule !== null);
+  setText(a.lead, empty === null ? leadText(ranked) : "");
   // The range only matters once something was logged: before, every range reads the same.
   setAttr(a.range, "hidden", empty !== null && empty.kind !== "nothingInRange" && !showBody);
   // Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty.
@@ -224,16 +252,23 @@ export function render(root) {
   setAttr(a.toggle, "aria-pressed", String(!listHidden));
   setAttr(a.toggle, "aria-label", label);
   setText(a.toggle.lastChild, label);
+  for (const c of a.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.histOutcome));
   renderList(a, ranked, id);
+  renderUnmatched(a, id === null);
+  if (id === null) return;
   renderHeading(a, ranked, id);
   const told = toldOf(id);
   renderMeta(a, id, told);
-  renderViolations(a, id, ranked.find(r => r.id === id)?.count ?? 0, told);
+  renderViolations(a, id, inRange(id), told);
 }
 
-/** Entered with a rule (`#history?rule=<id>`, `#activity?rule=<id>`): that rule shows. */
+/**
+ * Entered from a link or the menu: the route's rule (`?rule=<id>`, a "See all", a steer link), else the top of the list;
+ * the route's chip (`?outcome=`), else All.
+ */
 export function enter(route) {
-  if (route.filterRule !== undefined) ui.actRule = route.filterRule;
+  ui.actRule = route.filterRule ?? null;
+  ui.histOutcome = route.outcome ?? "all";
 }
 
 /** The shown rule follows the ranking (the top one, before any is chosen): fetch its violations once it changes. */
@@ -253,6 +288,8 @@ export const actions = {
   hsel: id => selectRule(id),
   hmore: () => loadMore(loadMoreFindings, "violations"),
   hlisttoggle: () => { listHidden = !listHidden; invalidate(); },
+  // A chip starts over at the top of its own list.
+  houtcome: outcome => { ui.histOutcome = outcome; ui.actRule = null; invalidate(); refreshNow(); },
 };
 
 export function onInput(el) {

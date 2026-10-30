@@ -14,7 +14,13 @@ describe("a hash", () => {
     ["#created", { view: "created" }],
     ["#history", { view: "history" }],
     ["#history?rule=typescript%3Ano-any", { view: "history", filterRule: "typescript:no-any" }],
+    ["#history?outcome=steered", { view: "history", outcome: "steered" }],
+    ["#history?outcome=logged&rule=lib:a", { view: "history", outcome: "logged", filterRule: "lib:a" }],
+    ["#history?outcome=blocked", { view: "history" }],
     ["#sessions", { view: "sessions" }],
+    ["#sessions?filter=violations", { view: "sessions", sessionFilter: "corr" }],
+    ["#sessions?filter=in-progress", { view: "sessions", sessionFilter: "open" }],
+    ["#sessions?filter=nonsense", { view: "sessions" }],
     ["#settings", { view: "settings" }],
     ["#pack/typescript", { view: "pack", pack: "typescript" }],
     ["#somewhere-else", { view: "overview" }],
@@ -55,10 +61,20 @@ describe("a hash", () => {
     { view: "create" },
     { view: "history" },
     { view: "history", filterRule: "lib:no db calls?" },
+    { view: "history", outcome: "steered", filterRule: "lib:a" },
     { view: "sessions" },
+    { view: "sessions", sessionFilter: "corr" },
+    { view: "sessions", sessionFilter: "open" },
     { view: "settings" },
   ])("written back for %o, reads as the same route", route => {
     expect(parseRoute(hashOf(route))).toEqual(route);
+  });
+
+  it("writes no chip parameter for All, so the plain views keep their plain hashes", () => {
+    expect(hashOf({ view: "history", outcome: "all" })).toBe("history");
+    expect(hashOf({ view: "sessions", sessionFilter: "all" })).toBe("sessions");
+    // A chip belongs to its own view: the Overview's hash never carries one.
+    expect(hashOf({ view: "overview", outcome: "steered", sessionFilter: "corr" })).toBe("overview");
   });
 
   it("is the open rule's link while its sheet shows, over any view", () => {

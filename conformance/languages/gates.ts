@@ -14,7 +14,7 @@ import { conformanceChecks, conformanceOf } from "./checks/conformance.js";
 import type { Engine } from "./checks/engine.js";
 import { loadAsBundled, loadsGate, type RuleDocument } from "./checks/loads.js";
 import { defaultOn, upstreamStatusChecks } from "./checks/upstream-status.js";
-import { lintedPaths, readGatesManifest } from "./manifest.js";
+import { lintedPaths, lintedTypes, readGatesManifest } from "./manifest.js";
 import { compareDeterministicStrings } from "../../src/engine/index.js";
 import { documentPath, type LoadedPack } from "./pack.js";
 import type { T4Report } from "./report.js";
@@ -109,7 +109,6 @@ export function judgeToolPack(root: string, engine: Engine, loaded: LoadedPack, 
   const documents = packDocuments(root, pack);
   const mine = documents.filter((document) => entries.get(document.path)?.upstream.tool === tool);
   const on = packOn(root, pack);
-  const linted = lintedPaths(manifest);
   const scratch = mkdtempSync(join(tmpdir(), "rerail-gates-"));
   try {
     // bundled-load: rerail loads every document in the pack's rules/ together, whatever its upstream tool, so a
@@ -131,6 +130,20 @@ export function judgeToolPack(root: string, engine: Engine, loaded: LoadedPack, 
         ? `conformance.json pins ${tool} ${pinned}, as gates.yaml's upstream.version does`
         : `conformance.json pins ${tool} ${pinned ?? "(not listed)"}, but gates.yaml's upstream.version is ${manifest.upstream.version}`,
     });
+    // A port's own file types (conformance.json's `lints`) narrow the tool-pack's; one beyond them names a type the
+    // tool does not lint, and that port's in-scope check would ask for nothing upstream compares.
+    const declared = lintedTypes(manifest);
+    const stray = mine.flatMap(({ path }) => {
+      const entry = entries.get(path)!;
+      return (entry.lints ?? []).filter((type) => !declared.includes(type)).map((type) => `${entry.id} ${type}`);
+    });
+    checks.push({
+      id: "declared-lints",
+      ok: stray.length === 0,
+      detail: stray.length === 0
+        ? "every port's own file types (conformance.json's lints) are ones gates.yaml declares the tool lints"
+        : `conformance.json gives ports file types gates.yaml's upstream.lints (narrowed by rerail.in_scope) does not declare: ${stray.join(", ")}`,
+    });
     // An error naming another tool of the pack (its fixtures or samples) is that tool-pack's, not this one's.
     const runErrors = [...conformance.errors, ...(conformance.toolErrors.get(tool) ?? [])];
     checks.push({ id: "conformance-runs", ok: runErrors.length === 0, detail: runErrors.length === 0 ? "the pack's conformance check runs without errors" : runErrors.slice(0, 3).join("; ") });
@@ -140,7 +153,7 @@ export function judgeToolPack(root: string, engine: Engine, loaded: LoadedPack, 
       const entry = entries.get(path)!;
       const document = readDocument(root, path);
       const status = upstreamStatusChecks(entry.upstream.rule, manifest.rules[entry.upstream.rule], conformance.rows.get(entry.id));
-      const loads = loadsGate(engine, document, pack, scratch, linted);
+      const loads = loadsGate(engine, document, pack, scratch, lintedPaths(manifest, entry.lints));
       const parsed = loads.resolved ?? loads.document;
       const compact = parsed === undefined ? [{ id: "not-run", ok: false, detail: "the document is not JSON" }] : compactGate(document.bytes, parsed).checks;
       const gates = { "upstream-status": status, loads: loads.checks, compact, conformance: conformanceChecks(conformance, entry.id) };

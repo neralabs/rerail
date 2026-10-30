@@ -34,9 +34,13 @@ function updatedAgo(at) {
  * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
  * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
 function status() {
-  if (!data.loaded && !data.disconnected) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
+  if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
   const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
+  if (data.accessRequired) {
+    return { cls: "down", text: "Needs the dashboard link",
+      title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
+  }
   if (data.disconnected) {
     if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
       const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";

@@ -27,6 +27,7 @@ import {
   autostartDaemon,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  dashboardAccessLink,
   daemonUsesPackageRoot,
   findRunningDaemon,
   isUsableEngineSocketPath,
@@ -117,7 +118,7 @@ describe("Rerail daemon control", () => {
       // The recorded pid is alive (this test process) but the listener reports process.pid as well,
       // so use the parent pid: alive, yet not the pid the daemon answers with.
       const stateFile = join(home, DAEMON_STATE_FILE);
-      await writeFile(stateFile, JSON.stringify(stateFor({ pid: process.ppid, url: daemon.url, port: daemon.port })));
+      await writeFile(stateFile, JSON.stringify(stateFor({ pid: process.ppid, url: daemon.url, port: daemon.port, accessToken: daemon.state().accessToken! })));
       expect(await findRunningDaemon(home)).toBeUndefined();
       expect(existsSync(stateFile)).toBe(false);
     } finally {
@@ -330,7 +331,8 @@ describe("Rerail daemon control", () => {
 describe("openDashboard", () => {
   const url = "http://127.0.0.1:4737/#rules";
   const desktopOpener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32" : "xdg-open";
-  const underOrca = { ORCA_TAB_ID: "tab-1" };
+  let outsideOrca: NodeJS.ProcessEnv;
+  let underOrca: NodeJS.ProcessEnv;
   /** An installed Orca CLI, preceded by an absent candidate that must be skipped. */
   let orca: string;
   let candidates: string[];
@@ -341,16 +343,18 @@ describe("openDashboard", () => {
     orca = join(scratch, "orca");
     await writeFile(orca, "");
     candidates = [join(scratch, "missing", "orca"), orca];
+    outsideOrca = { RERAIL_HOME: join(scratch, "home") };
+    underOrca = { ...outsideOrca, ORCA_TAB_ID: "tab-1" };
   });
 
   /** Records every spawn; `orca` children settle per `settle`, desktop openers are inert. */
-  function interceptSpawns(settle: (child: EventEmitter) => void): string[] {
+  function interceptSpawns(settle: (child: EventEmitter) => void, opened = url): string[] {
     const commands: string[] = [];
     opener.intercept = (command, args) => {
       commands.push(command);
       const child = Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
       if (command === orca) {
-        expect(args).toEqual(["tab", "create", "--url", url]);
+        expect(args).toEqual(["tab", "create", "--url", opened]);
         process.nextTick(() => settle(child));
       }
       return child;
@@ -365,7 +369,7 @@ describe("openDashboard", () => {
 
   it("uses the desktop browser outside Orca", async () => {
     const commands = interceptSpawns(() => { throw new Error("orca must not be spawned"); });
-    expect(await openDashboard(url, {}, candidates)).toBe("system-browser");
+    expect(await openDashboard(url, outsideOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([desktopOpener]);
   });
 
@@ -391,6 +395,19 @@ describe("openDashboard", () => {
     const commands = interceptSpawns(child => child.emit("exit", 1, null));
     expect(await openDashboard(url, underOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
+  });
+
+  it.skipIf(process.platform === "win32")("hands the home daemon's access capability to the browser, only for that daemon's own pages", async () => {
+    const home = outsideOrca.RERAIL_HOME!;
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/", accessToken: "cap" })));
+    const commands = interceptSpawns(child => child.emit("exit", 0, null), "http://127.0.0.1:4737/?rerail-access=cap#rules");
+    expect(await openDashboard(url, underOrca, candidates)).toBe("orca-tab");
+    expect(commands).toEqual([orca]);
+    // Another origin is not this daemon, and a loopback-only daemon has nothing to hand over.
+    expect(await dashboardAccessLink("http://127.0.0.1:1/#rules", home)).toBe("http://127.0.0.1:1/#rules");
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/" })));
+    expect(await dashboardAccessLink(url, home)).toBe(url);
   });
 });
 

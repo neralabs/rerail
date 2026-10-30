@@ -68,7 +68,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
 - **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
 - **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
-- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it; `rerail update rollback` goes back.
+- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it.
 
 ## Rule packs
 
@@ -97,7 +97,7 @@ rerail manage                 # Rule packs page: add it to this repository
 | `rust` | Clippy (Rust 1.99) |
 | `blade` | Bladestan v0.11, tlint v9, stillat/blade-parser v2 |
 | `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
-| `complexity` | lizard v1: cyclomatic complexity above 6, for Python, TypeScript and JavaScript |
+| `complexity` | lizard v1: cyclomatic complexity above 6, for Python, TypeScript, JavaScript, PHP, Blade, Rust and Vue |
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
@@ -106,6 +106,8 @@ Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; 
 ## Supported coding agents
 
 Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
+
+Pi's [package gallery](https://pi.dev/packages) installs Rerail too, with `pi install npm:@neralabs/rerail`; `/rerail-start` in a Pi session then finishes set-up and swaps that entry for the managed install, so `rerail update` governs the version. See [Installing Rerail](docs/installation.md#from-pis-package-gallery).
 
 | Agent | Integration | In-session commands | Status line |
 | --- | --- | --- | --- |
@@ -126,7 +128,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
 
-Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
+Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
 ## Internal testing
 
@@ -163,7 +165,6 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 ├── conformance/      # the conformance check: scores ported rules against upstream tools' findings
 ├── fixtures/         # upstream test fixtures and corpora per language
 ├── benchmark/        # query parity and steer benchmarks
-├── playground/       # tool for developing rules; never published
 ├── test/             # unit tests (Vitest), mirroring src/
 ├── integration/      # end-to-end tests against real agent hosts
 ├── e2e/              # dashboard tests (Playwright)

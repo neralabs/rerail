@@ -1,0 +1,44 @@
+adapter: lizard
+# lizard's cyclomatic complexity in rerail's complexity pack: one port per language, each scoring every function of its
+# language's files the way lizard does, on Rerail's own corpus (upstream/lizard/UPSTREAM.md: nothing is copied from
+# lizard, so the pack keeps no licenses/lizard/).
+rerail:
+  pack: complexity
+  project: lizard
+upstream:
+  name: terryyin/lizard
+  repository: https://github.com/terryyin/lizard
+  # The release the pack's README names for every port; tag 1.24.0.
+  commit: 308b1c3efd8c1c69bcc3eb82deeaec64fd3662ec
+  version: 1.24.0
+  license: MIT
+  runtime: lizard-1.24.0
+  # lizard has no named configuration; `default` is its command line with no option, which warns about every function
+  # whose cyclomatic complexity is above 15 (`-C`). The ports keep lizard's decision points at the limit of 6 slapkit and
+  # the Metrics-in-the-Loop study set, and score each function as slapkit does, the lower of lizard's standard and
+  # modified (`-m`) counts: generate.mjs records lizard's findings on that reading, `lizard -C 6` with a switch or match
+  # counted once.
+  recommended_configs:
+    - default
+  # The file types lizard reads for the languages the pack ports (lizard_languages/: python.py, typescript.py,
+  # javascript.py, tsx.py, php.py, rust.py, vue.py; a .blade.php file is a .php file to it, and it reads no .mts or
+  # .cts). Each port declares its own in conformance.json (`lints`).
+  lints: [".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".php", ".blade.php", ".rs", ".vue"]
+popularity:
+  observed_on: 2026-10-29
+  evidence:
+    - "PyPI: 393,279 downloads of lizard in the last week and 1,279,211 in the last month, without mirrors (pypistats.org/api/packages/lizard/recent, 2026-10-29)"
+    - "GitHub: terryyin/lizard has 2,571 stars and 304 forks and is not archived (gh api repos/terryyin/lizard, 2026-10-29)"
+# lizard has one check, the cyclomatic complexity warning; the ports' violation code names it.
+rules:
+  "CYCLOMATIC_COMPLEXITY":
+    deprecated: null
+    recommended: { config: "default", options: [{"CCN": 15}] }
+watch:
+  # The corpus is Rerail's: no upstream test is read. What changes lizard's scores is its readers and its counting.
+  tests: []
+  code:
+    - lizard.py
+    - lizard_languages/**
+    - lizard_ext/lizardmodified.py
+  shared: []
