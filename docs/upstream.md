@@ -421,7 +421,8 @@ nothing; its token can only write pull request comments.
 - It builds one commit on the pull request's head with git plumbing alone (no checkout, no hooks): the new
   `test-data.lock` and `samples.lock`, with every published tool-pack's `publish/` deleted.
 - It pushes as the `neralabs-ci` app, whose token makes CI run again. The plain push only succeeds as a fast-forward of
-  the head prep packed; it never forces.
+  the head prep packed; it never forces. A rejected push is tried once more after a pause, since GitHub answers a
+  transient error with a rejection too; a branch found at the new commit afterwards counts as pushed.
 
 </details>
 
@@ -431,8 +432,9 @@ dispatch again. If an object fails, the **failed** job reports it and nothing is
 <details>
 <summary>Failure causes</summary>
 
-- **"action needed":** someone pushed to the branch since prep, or the branch is on a fork, which is never published
-  from ([Forks](#forks)). The run is red; the comment gives each lock's text and the reason.
+- **"action needed":** someone pushed to the branch since prep, GitHub rejected the push twice for another reason,
+  which the comment quotes, or the branch is on a fork, which is never published from ([Forks](#forks)). The run is
+  red; the comment gives each lock's text and the reason.
 - **failed:** an object was not put and confirmed (a failed put or confirm, a rejected approval, or a cancelled job).
   The **failed** job names each object's failure in the comment. No lock changes.
 
