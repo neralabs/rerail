@@ -1,5 +1,53 @@
 [
   {
+    "rule": "typescript-eslint-consistent-generic-constructors",
+    "source": "fixtures",
+    "path": "consistent-generic-constructors/036.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) reads `new` followed by a line break as an identifier: `_reserved_identifier` lists `new`, so `primary_expression` admits it as `identifier`, and the scanner inserts an automatic semicolon at the line break before `Foo`. `const a: Foo<string> = new⏎ Foo⏎ ();` parses with no error as `const a: Foo<string> = new;` followed by the statement `Foo ();`, so no `new_expression` exists and the rule misses the finding upstream reports on the declarator. typescript-eslint 8.70.1 and TypeScript read one `new Foo()` (no automatic semicolon follows `new`). Rerail cannot decide it until the grammar stops reading `new` as an expression identifier."
+  },
+  {
+    "rule": "typescript-eslint-consistent-generic-constructors",
+    "source": "fixtures",
+    "path": "renamed/consistent-generic-constructors/036.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-generic-constructors/036.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) reads `new` followed by a line break as an identifier: `_reserved_identifier` lists `new`, so `primary_expression` admits it as `identifier`, and the scanner inserts an automatic semicolon at the line break before `Foo`. `const a: Foo<string> = new⏎ Foo⏎ ();` parses with no error as `const a: Foo<string> = new;` followed by the statement `Foo ();`, so no `new_expression` exists and the rule misses the finding upstream reports on the declarator. typescript-eslint 8.70.1 and TypeScript read one `new Foo()` (no automatic semicolon follows `new`). Rerail cannot decide it until the grammar stops reading `new` as an expression identifier."
+  },
+  {
+    "rule": "typescript-eslint-consistent-indexed-object-style",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/088.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Bar { [key: string]; }`, line 7): on this file the engine reports source-partial (\"file has syntax errors\"), the rule's clauses are unsound under syntax errors (they resolve the value type's binding), so the engine skips the file and misses the finding upstream reports on `interface Foo` (line 2), whose own index signature is well formed. typescript-eslint 8.70.1 parses it and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects line 7 (TS1021, an index signature must have a type annotation). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-consistent-indexed-object-style",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/088.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/088.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Bar { [key: string]; }`, line 7): on this file the engine reports source-partial (\"file has syntax errors\"), the rule's clauses are unsound under syntax errors (they resolve the value type's binding), so the engine skips the file and misses the finding upstream reports on `interface Foo` (line 2), whose own index signature is well formed. typescript-eslint 8.70.1 parses it and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects line 7 (TS1021, an index signature must have a type annotation). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-consistent-indexed-object-style",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/089.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse a mapped type without a value type (`type Foo = { [k in string]; };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the object type (line 2). typescript-eslint 8.70.1 and TypeScript's parser read it with no parse diagnostics (the value type is implicitly any). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-consistent-indexed-object-style",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/089.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/089.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse a mapped type without a value type (`type Foo = { [k in string]; };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the object type (line 2). typescript-eslint 8.70.1 and TypeScript's parser read it with no parse diagnostics (the value type is implicitly any). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
     "rule": "typescript-eslint-consistent-type-definitions",
     "source": "fixtures",
     "path": "consistent-indexed-object-style/037.ts",
@@ -30,5 +78,141 @@
     "line": 1,
     "kind": "rerail-unknown",
     "evidence": "This file is the rename variant of consistent-indexed-object-style/038.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Hlo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/037.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Foo = { [key: string] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/037.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/037.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Hlo = { [key: string] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/038.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Foo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/038.ts",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/038.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Hlo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/039.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Foo { [key: string]; }`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the interface. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/039.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/039.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Hqf { [key: string]; }`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the interface. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/040.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Foo { []; }`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the interface. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/040.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/040.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Ids { []; }`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the interface. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/088.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Bar { [key: string]; }`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the unused interface. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/088.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/088.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`interface Atv { [key: string]; }`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the unused interface. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1021, an index signature must have a type annotation). Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "consistent-indexed-object-style/089.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse a mapped type without a type (`type Foo = { [k in string]; };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; TypeScript reports no diagnostic for it at all. The file is one of consistent-indexed-object-style's upstream tests; Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/consistent-indexed-object-style/089.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of consistent-indexed-object-style/089.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse a mapped type without a type (`type Cyh = { [q in string]; };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript's parser reads it with no parse diagnostics; TypeScript reports no diagnostic for it at all. Rerail cannot decide it until the grammar reads the construct."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "no-unused-vars/234.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `using resource = getResource();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `using` and reports the unused name. The file is one of no-unused-vars's upstream tests; Rerail cannot decide it until the grammar reads `using` declarations."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/no-unused-vars/234.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of no-unused-vars/234.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `using qboneefa = fkrJjdnxoka();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `using` and reports the unused name. Rerail cannot decide it until the grammar reads `using` declarations."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "no-unused-vars/235.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `await using resource = getResource();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `await using` and reports the unused name. The file is one of no-unused-vars's upstream tests; Rerail cannot decide it until the grammar reads `using` declarations."
+  },
+  {
+    "rule": "typescript-eslint-no-unused-vars",
+    "source": "fixtures",
+    "path": "renamed/no-unused-vars/235.ts",
+    "line": 2,
+    "kind": "rerail-unknown",
+    "evidence": "This file is the rename variant of no-unused-vars/235.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) has no `using_declaration` (native/grammars/tree-sitter-typescript/PATCHES.md): it reads `await using ykpukbqu = dslWmxvdepl();` as an `assignment_expression` with a leading `using`, so no binding is declared, the name reads as a write to an undeclared global, and the rule misses the finding upstream reports on the unused declaration. typescript-eslint 8.70.1 parses it as a VariableDeclaration of kind `await using` and reports the unused name. Rerail cannot decide it until the grammar reads `using` declarations."
+  },
+  {
+    "rule": "vitest-no-focused-tests",
+    "source": "samples",
+    "path": "jest-packages-jest-worker-src-workers-__tests__-workeredgecases.test.ts-3f887bed5b13/packages/jest-worker/src/workers/__tests__/WorkerEdgeCases.test.ts",
+    "line": 33,
+    "kind": "not-comparable",
+    "evidence": "The line before carries `// eslint-disable-next-line jest/no-focused-tests`, which names another plugin's rule, so ESLint reports the `test.only`. The port carries `suppress.oxlint` `no-focused-tests` (Oxlint 1.88.0 implements it, reads `eslint-disable` comments and matches a directive name with a `/` by its part after the last `/`), so the comment silences it as it silences Oxlint, by design (docs/pack-format.md, check 4). Without the comment the port reports the `test.only`, as ESLint does."
   }
 ]
