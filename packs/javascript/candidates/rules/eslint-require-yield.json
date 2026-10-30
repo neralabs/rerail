@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-require-yield",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Add a yield to generator functions with a non-empty body, or make them plain functions.",
   "scope": {
@@ -17,63 +17,17 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "all": [
-              {
-                "any": [
-                  {
-                    "kind": "generator_function"
-                  },
-                  {
-                    "kind": "generator_function_declaration"
-                  },
-                  {
-                    "kind": "method_definition",
-                    "has": {
-                      "regex": "^\\*$",
-                      "stopBy": "neighbor"
-                    }
+            "matches": "no-yield",
+            "not": {
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
                   }
-                ]
-              },
-              {
-                "has": {
-                  "kind": "statement_block",
-                  "stopBy": "neighbor",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "all": [
-                      {
-                        "regex": "."
-                      },
-                      {
-                        "not": {
-                          "kind": "comment"
-                        }
-                      },
-                      {
-                        "not": {
-                          "regex": "^[{}]$"
-                        }
-                      }
-                    ]
-                  }
-                }
-              },
-              {
-                "not": {
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "statement_block",
-                    "has": {
-                      "kind": "yield_expression",
-                      "stopBy": {
-                        "matches": "fn-boundary"
-                      }
-                    }
-                  }
-                }
+                },
+                "matches": "prop-parent"
               }
-            ]
+            }
           },
           "utils": {
             "fn-boundary": {
@@ -98,6 +52,224 @@
                 },
                 {
                   "kind": "class_static_block"
+                }
+              ]
+            },
+            "no-yield": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "method_definition",
+                      "has": {
+                        "regex": "^\\*$",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "kind": "statement_block",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "regex": "."
+                        },
+                        {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        },
+                        {
+                          "not": {
+                            "regex": "^[{}]$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "has": {
+                        "kind": "yield_expression",
+                        "stopBy": {
+                          "matches": "fn-boundary"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "prop-parent": {
+              "any": [
+                {
+                  "kind": "pair"
+                },
+                {
+                  "inside": {
+                    "kind": "class_body",
+                    "stopBy": "neighbor"
+                  },
+                  "not": {
+                    "kind": "method_definition"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "require-yield",
+        "message": "This generator function does not have 'yield'.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "require-yield"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "require-yield"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/correctness/useYield"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-yield-property",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "prop-parent",
+            "has": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "matches": "no-yield"
+            }
+          },
+          "utils": {
+            "fn-boundary": {
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                },
+                {
+                  "kind": "method_definition"
+                },
+                {
+                  "kind": "class_static_block"
+                }
+              ]
+            },
+            "no-yield": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "generator_function"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    },
+                    {
+                      "kind": "method_definition",
+                      "has": {
+                        "regex": "^\\*$",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "kind": "statement_block",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "all": [
+                        {
+                          "regex": "."
+                        },
+                        {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        },
+                        {
+                          "not": {
+                            "regex": "^[{}]$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "statement_block",
+                      "has": {
+                        "kind": "yield_expression",
+                        "stopBy": {
+                          "matches": "fn-boundary"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "prop-parent": {
+              "any": [
+                {
+                  "kind": "pair"
+                },
+                {
+                  "inside": {
+                    "kind": "class_body",
+                    "stopBy": "neighbor"
+                  },
+                  "not": {
+                    "kind": "method_definition"
+                  }
                 }
               ]
             }

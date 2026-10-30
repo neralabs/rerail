@@ -9,11 +9,11 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 ### `eslint-accessor-pairs`
 
-Port of ESLint accessor-pairs. Default options: setWithoutGet true, getWithoutSet false, enforceForClassMembers true, enforceForTSTypes false. Covers object literals, classes (static and instance members paired separately) and property descriptors passed to Object.defineProperty, Reflect.defineProperty, Object.create or Object.defineProperties. Static keys pair by ESLint's getStaticPropertyName; other keys by their tokens.
+Port of ESLint accessor-pairs. Default options: setWithoutGet true, getWithoutSet false, enforceForClassMembers true, enforceForTSTypes false. Covers object literals, classes (static and instance members paired separately) and property descriptors passed to Object.defineProperty, Reflect.defineProperty, Object.create or Object.defineProperties. Static keys pair by ESLint's getStaticPropertyName; other keys by their tokens. A descriptor is only the third argument of defineProperty; a decorated class accessor is reported at its first decorator, where ESLint's node starts.
 
 ### `eslint-class-methods-use-this`
 
-Port of ESLint class-methods-use-this, default options. Flags non-static, non-constructor methods and class fields initialized with a function/arrow whose own body never uses this or super. Nested functions, static blocks and nested class field initializers have their own this; arrows share it. An accessor field (AccessorProperty) is not treated as a field.
+Port of ESLint class-methods-use-this, default options. Flags non-static, non-constructor methods and class fields initialized with a function/arrow whose own body never uses this or super. Nested functions, static blocks and nested class field initializers have their own this; arrows share it. An accessor field (AccessorProperty) is not treated as a field. As in ESLint, a function expression that is an instance method's computed key (`[function () {}]() {}`) is checked as a method too and reported at the method. JavaScript files only.
 
 ### `eslint-func-name-matching`
 
@@ -25,7 +25,7 @@ Port of ESLint grouped-accessor-pairs, default order anyOrder. Reports the latte
 
 ### `eslint-id-length`
 
-Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties.
+Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties. As ESLint's parent-type table does, it also checks a class declaration's superclass identifier (`extends B`), the identifier key of a class method or field (`[a]() {}`), an arrow function's bare identifier body (`() => a`), a private name assigned through a member (`a.b.#x = …`) and a TypeScript parameter property only when it has a default; a class expression's name is not checked. Identifier names compare by their cooked name; an escaped identifier's length is still measured over its source text (`\u0061` counts 6).
 
 ### `eslint-max-classes-per-file`
 
@@ -73,7 +73,7 @@ Port of ESLint no-loss-of-precision. Binary literals whose significant bits span
 
 ### `eslint-no-magic-numbers`
 
-Port of ESLint no-magic-numbers. Numeric literals (with a leading unary +/-) are flagged except variable initialisers, object properties, member assignments, parseInt radixes and JSX containers. Options (ignore, ignoreArrayIndexes, ignoreDefaultValues, ignoreClassFieldInitialValues, enforceConst, detectObjects, ...) in the `options` define.
+Port of ESLint no-magic-numbers. Numeric literals (with a leading unary +/-) are flagged except variable initialisers, object properties and their keys (plain, computed, getter, setter and method keys in object literals and patterns; class member keys are flagged), member assignments (an assignment to a possibly parenthesised identifier is flagged), parseInt radixes (the second argument by position, comments ignored, of `parseInt`, `Number.parseInt`, `(Number).parseInt`, `Number['parseInt']` or ``Number[`parseInt`]``) and JSX containers. Class fields are read in both the JavaScript (`field_definition`) and TypeScript (`public_field_definition`) grammars. Options (ignore, ignoreArrayIndexes, ignoreDefaultValues, ignoreClassFieldInitialValues, enforceConst, detectObjects, ...) in the `options` define.
 
 ### `eslint-no-multi-assign`
 
@@ -121,11 +121,11 @@ Flags an empty constructor only in a class without `extends`; otherwise a constr
 
 ### `eslint-one-var`
 
-Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` declarations are not modelled (grammar gap).
+Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` and `await using` declarations (JavaScript files only: the TypeScript grammar has no `using_declaration`) are block-scoped kinds of their own under `always` (the default, or the `using`/`awaitUsing`/`initialized` options); their `consecutive` and `never` modes are not modelled.
 
 ### `eslint-prefer-destructuring`
 
-Checks declarations and assignments, array and object. Object destructuring only where the target name equals the property name. Array: plain (non-optional) access with an integer literal index (Number.isInteger); super and #private accesses skipped. Fix (object declarations only) as ESLint: only when no comment lies outside the object.
+Checks declarations and assignments, array and object. Object destructuring only where the target name equals the property name. Array: plain (non-optional) access with an integer literal index (Number.isInteger); super and #private accesses skipped. `using` and `await using` declarators are skipped, as ESLint skips them. Fix (object declarations only) as ESLint: only when no comment lies outside the object.
 
 ### `eslint-prefer-exponentiation-operator`
 
@@ -133,7 +133,7 @@ Flags global `Math.pow` including `globalThis.Math.pow`, computed and optional-c
 
 ### `eslint-prefer-object-has-own`
 
-Flags `Object.prototype.hasOwnProperty.call`, `Object.hasOwnProperty.call` and `({}).hasOwnProperty.call` when Object is the global. The `({})` form has no Object token to resolve and keeps an approximate scope graph.
+Flags `Object.prototype.hasOwnProperty.call`, `Object.hasOwnProperty.call` and `({}).hasOwnProperty.call` when Object is the global. The `({})` form has no Object token to resolve and keeps an approximate scope graph: an `Object` parameter, declaration or import in scope silences it, as does a `/* global Object: off */` comment, which leaves ESLint no Object variable.
 
 ### `eslint-require-await`
 
@@ -145,4 +145,4 @@ Default `safe` mode: `global` for CommonJS or globalReturn, else `function`. Eac
 
 ### `eslint-vars-on-top`
 
-A var must sit directly in a program, function body or static block, preceded only by declarations (after a leading run of directives and imports, except in static blocks).
+A var must sit directly in a program, function body or static block, preceded only by declarations (after a leading run of directives and imports, except in static blocks). A top-level `declare var` (TypeScript) is a var at the top of the program, reported from `declare` as typescript-eslint places it.

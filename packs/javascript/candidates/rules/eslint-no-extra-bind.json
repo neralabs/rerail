@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-no-extra-bind",
- "revision": 1,
+ "revision": 2,
  "mode": "steer",
  "description": "Remove bind() calls that do nothing because the function is an arrow function or never uses this.",
  "scope": {
@@ -38,8 +38,11 @@
        },
        {
         "inside": {
-         "kind": "public_field_definition",
-         "stopBy": "neighbor"
+         "stopBy": "neighbor",
+         "inside": {
+          "kind": "class_body",
+          "stopBy": "neighbor"
+         }
         },
         "follows": {
          "regex": "^=$",

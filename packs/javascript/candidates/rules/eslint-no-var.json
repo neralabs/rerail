@@ -1,15 +1,12 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-var",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Use let or const instead of var in JavaScript; they are block-scoped and avoid hoisting surprises.",
   "scope": {
     "include": [
-      "**/*.js",
-      "**/*.jsx",
-      "**/*.mjs",
-      "**/*.cjs"
+      "**/*"
     ],
     "exclude": [
       "**/node_modules/**",
@@ -38,9 +35,53 @@
       "id": "var",
       "forbid": {
         "ast": {
-          "language": "javascript",
+          "language": "typescript",
           "rule": {
-            "kind": "variable_declaration"
+            "any": [
+              {
+                "kind": "variable_declaration",
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "regex": "^declare\\s",
+                        "stopBy": "neighbor",
+                        "not": {
+                          "kind": "program"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "statement_block",
+                        "stopBy": "neighbor",
+                        "inside": {
+                          "regex": "^(?:declare\\s+)?global\\s*\\{",
+                          "stopBy": "neighbor"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "regex": "^declare\\s+var\\b",
+                "has": {
+                  "kind": "variable_declaration",
+                  "stopBy": "neighbor"
+                },
+                "not": {
+                  "kind": "program"
+                }
+              },
+              {
+                "regex": "^var$",
+                "inside": {
+                  "kind": "for_in_statement",
+                  "stopBy": "neighbor"
+                }
+              }
+            ]
           }
         }
       },

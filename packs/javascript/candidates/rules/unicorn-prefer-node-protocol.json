@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "unicorn-prefer-node-protocol",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Import Node.js built-in modules with the node: prefix; it makes clear they are built-ins, not npm packages.",
   "scope": {
@@ -41,21 +41,33 @@
           "language": "javascript",
           "rule": {
             "kind": "string",
-            "regex": "^[\"'](?:diagnostics_channel|inspector\\/promises|readline\\/promises|stream\\/consumers|stream\\/promises|timers\\/promises|string_decoder|worker_threads|assert\\/strict|child_process|dns\\/promises|trace_events|async_hooks|fs\\/promises|querystring|path\\/posix|path\\/win32|perf_hooks|stream\\/web|util\\/types|constants|inspector|punycode|readline|cluster|console|process|assert|buffer|crypto|domain|events|module|stream|timers|dgram|http2|https|http|path|repl|util|wasi|zlib|dns|net|sys|tls|tty|url|fs|os|v8|vm)[\"']$",
+            "value": {
+              "regex": "^(?:diagnostics_channel|inspector\\/promises|readline\\/promises|stream\\/consumers|stream\\/promises|timers\\/promises|string_decoder|worker_threads|assert\\/strict|child_process|dns\\/promises|trace_events|async_hooks|fs\\/promises|querystring|stream\\/iter|path\\/posix|path\\/win32|perf_hooks|stream\\/web|util\\/types|constants|inspector|zlib\\/iter|readline|cluster|console|process|assert|buffer|crypto|domain|events|module|stream|timers|dgram|http2|https|http|path|repl|util|wasi|zlib|dns|net|tls|tty|url|fs|os|v8|vm)$"
+            },
             "any": [
               {
                 "inside": {
-                  "kind": "import_statement",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    }
+                  ],
+                  "field": "source",
                   "stopBy": "neighbor"
                 }
               },
               {
-                "inside": {
-                  "kind": "export_statement",
-                  "stopBy": "neighbor"
-                }
-              },
-              {
+                "nthChild": {
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  },
+                  "position": 1
+                },
                 "inside": {
                   "kind": "arguments",
                   "stopBy": "neighbor",
@@ -64,10 +76,65 @@
                     "stopBy": "neighbor",
                     "has": {
                       "field": "function",
-                      "regex": "^(?:require|import)$"
+                      "kind": "import"
                     }
                   }
                 }
+              },
+              {
+                "all": [
+                  {
+                    "nthChild": {
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      },
+                      "position": 1
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "arguments",
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "has": {
+                              "nthChild": {
+                                "ofRule": {
+                                  "not": {
+                                    "kind": "comment"
+                                  }
+                                },
+                                "position": 2
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "kind": "spread_element"
+                            }
+                          }
+                        ]
+                      },
+                      "inside": {
+                        "kind": "call_expression",
+                        "stopBy": "neighbor",
+                        "has": {
+                          "field": "function",
+                          "regex": "^(?:\\(\\s*)*(?:require|process\\.getBuiltinModule)(?:\\s*\\))*$"
+                        },
+                        "not": {
+                          "has": {
+                            "kind": "optional_chain",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }
