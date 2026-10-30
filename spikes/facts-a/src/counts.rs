@@ -21,7 +21,11 @@
 //! select's output table), `subquery_runs` (expression subqueries evaluated, cache misses),
 //! `bounds_unproven` (fixpoints whose per-content bound check failed, W1: they ran under the
 //! algebraic budget, docs/facts/PHASE-3.md § P3b; not work, a deterministic fact of the plan on
-//! the content, kept with the physical counts).
+//! the content, kept with the physical counts), `tree_fallbacks` (likewise: executions where a
+//! forest rewrite's per-content side condition failed and the recursion ran as a fixpoint, R38
+//! and R39 of docs/facts/REWRITES.md), `rounds_run` (rounds a fixpoint evaluator executed, each a
+//! pass over the previous round's rows: the generic fixpoint, the closure, R19's walk; R38 and R39
+//! execute none, while `fix_rounds` keeps counting the logical fixpoint's rounds).
 //! The matcher's physical work (`pred_tests`, nodes tested by R12's predicates; `memo_hits`,
 //! nodes R13's memo answered) is shared by a rule's inputs, so it is counted per input, not per
 //! clause (`InputCounts`).
@@ -42,8 +46,10 @@ pub enum Phys {
     RowsOut,
     SubqueryRuns,
     BoundsUnproven,
+    TreeFallbacks,
+    RoundsRun,
 }
-pub const NPHYS: usize = 10;
+pub const NPHYS: usize = 12;
 
 /// Per-execution counter cells (`sql::engine::Exec`), flushed into this thread's totals when the
 /// execution ends.
@@ -125,11 +131,15 @@ pub struct Counts {
     pub subquery_runs: u64,
     #[serde(default)]
     pub bounds_unproven: u64,
+    #[serde(default)]
+    pub tree_fallbacks: u64,
+    #[serde(default)]
+    pub rounds_run: u64,
 }
 
 /// The algebraic counts' names, in `Counts` order (the rest are physical).
 pub const ALGEBRAIC: [&str; 7] = ["leaf_rows", "stage_rows", "fix_rounds", "fix_rows", "match_nodes", "match_roots", "input_rows"];
-pub const PHYSICAL: [&str; NPHYS] = ["index_builds", "index_rows", "range_builds", "range_rows", "probes", "rows_scanned", "rows_joined", "rows_out", "subquery_runs", "bounds_unproven"];
+pub const PHYSICAL: [&str; NPHYS] = ["index_builds", "index_rows", "range_builds", "range_rows", "probes", "rows_scanned", "rows_joined", "rows_out", "subquery_runs", "bounds_unproven", "tree_fallbacks", "rounds_run"];
 
 impl Counts {
     pub fn add_phys(&mut self, p: &[u64; NPHYS]) {
@@ -143,6 +153,8 @@ impl Counts {
         self.rows_out += p[Phys::RowsOut as usize];
         self.subquery_runs += p[Phys::SubqueryRuns as usize];
         self.bounds_unproven += p[Phys::BoundsUnproven as usize];
+        self.tree_fallbacks += p[Phys::TreeFallbacks as usize];
+        self.rounds_run += p[Phys::RoundsRun as usize];
     }
 
     pub fn add_stage(&mut self, s: &StageCounts) {
@@ -182,6 +194,8 @@ impl AddAssign<&Counts> for Counts {
         self.rows_out += o.rows_out;
         self.subquery_runs += o.subquery_runs;
         self.bounds_unproven += o.bounds_unproven;
+        self.tree_fallbacks += o.tree_fallbacks;
+        self.rounds_run += o.rounds_run;
     }
 }
 
