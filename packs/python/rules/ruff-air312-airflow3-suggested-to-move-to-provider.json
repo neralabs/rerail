@@ -376,11 +376,11 @@
        }
       },
       "seen-airflow": {"inside": {"stopBy": "end", "kind": "module", "matches": "imports-airflow"}},
+      "airflow-name": {"kind": "dotted_name", "regex": "^airflow([^0-9A-Za-z_]|$)"},
       "imports-airflow": {
        "has": {
         "stopBy": "end",
-        "kind": "dotted_name",
-        "regex": "^airflow([^0-9A-Za-z_]|$)",
+        "matches": "airflow-name",
         "any": [
          {"inside": {"stopBy": "neighbor", "kind": "import_statement"}},
          {
@@ -425,6 +425,7 @@
          {"matches": "string-attribute", "not": {"matches": "guarded-attribute"}}
         ]
        },
+       {"inside": {"stopBy": "end", "kind": "module", "has": {"stopBy": "end", "matches": "airflow-name"}}},
        {"matches": "seen-airflow"}
       ]
      }
