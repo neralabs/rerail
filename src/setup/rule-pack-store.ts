@@ -238,7 +238,7 @@ function skippedProblem(skipped: SkippedRulePack): string {
 
 /**
  * The installed packs in `home` that core `current` leaves out by their core range but `previous` loaded, each with
- * why: what `rerail update` and `update rollback` name, since every repository that adds one stops running its rules.
+ * why: what `rerail update` names, since every repository that adds one stops running its rules.
  */
 export function packsLeftOutByCore(home: string, current: string, previous: string | undefined): string[] {
   const directories = installedPackDirectories(home);

@@ -94,10 +94,13 @@ function togglePage() {
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) return;
   const turnOn = switchTurnsOn(packSwitch(all).state), pack = ui.view === "created" ? null : packById(ui.pack);
-  const label = `${turnOn ? "On" : "Off"}: ${all.length === 1 ? "its rule" : `all ${fmt(all.length)} rules`} in ${pack?.name ?? CREATED}.`;
+  const state = turnOn ? "on" : "off", one = all.length === 1;
+  const label = pack ? (one ? `The ${pack.name} rule is ${state}.` : `All ${fmt(all.length)} ${pack.name} rules are ${state}.`)
+    : (one ? `Your rule is ${state}.` : `All ${fmt(all.length)} of your rules are ${state}.`);
+  const failure = `Couldn’t turn ${pack ? `${pack.name} rules` : "your rules"} ${state}`;
   // A pack's rules follow one setting for the pack; rules created by you have no pack, so each gets its own.
-  if (pack) writes.setPackEnabled(pack.id, turnOn, label);
-  else writes.setEnabled(all.map(r => r.rule.id), turnOn, label);
+  if (pack) writes.setPackEnabled(pack.id, turnOn, label, failure);
+  else writes.setEnabled(all.map(r => r.rule.id), turnOn, label, failure);
 }
 
 export const actions = { ...ruleControlActions, ptoggle: togglePage };
