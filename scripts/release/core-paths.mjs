@@ -20,6 +20,7 @@ export const NOT_SHIPPED = [
   "integration/",
   "LICENSES/",
   "packs/",
+  "plugins/",
   "playground/",
   "scripts/check/",
   "scripts/dev/",
