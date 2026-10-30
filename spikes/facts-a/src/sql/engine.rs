@@ -4078,6 +4078,10 @@ impl<'d, 'a> Exec<'d, 'a> {
     fn forest_walk(&self, batch: usize, rec: &[PBody], (s, refs, n_slots): (&PSelect, &[WalkRef<'_>], usize), t0: &Table, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
         const NONE: u32 = u32::MAX;
         let w = schema.cols.len();
+        // No initial row: R19 ends at once (no index is built).
+        if t0.is_empty() {
+            return None;
+        }
         #[cfg(test)]
         if tests::NO_R39.with(std::cell::Cell::get) {
             return None;
