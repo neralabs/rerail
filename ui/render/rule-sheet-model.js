@@ -26,6 +26,15 @@ export function askPrompt(rule, intent) {
 export const agentSeesPrompt = (id, text) =>
   `Using Rerail, update the rule "${id}": change the message the coding agent sees on a violation to: ${text.trim()}`;
 
+/** Why a rule on Log's message goes nowhere: under the message, and under its draft. */
+export const LOG_NOTE = "Not sent while this rule is on Log.";
+
+/** What saving a new message does: a By Rerail rule's edit is a library copy, and on Log nothing reaches the agent. */
+export const agentSeesHint = ({ byRerail, log }) => [
+  ...(byRerail ? ["Saved as your copy. This one turns off."] : []),
+  log ? LOG_NOTE : "Reaches open sessions once your agent saves it.",
+].join(" ");
+
 const DAY_FORMAT = new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short", year: "numeric" });
 
 /** An absolute day with its year ("Sep 3, 2026"); "–" when the daemon has none. */

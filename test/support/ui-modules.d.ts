@@ -243,6 +243,8 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export interface AskRule { id: string; title: string; scope: string; mode: string }
   export function askPrompt(rule: AskRule, intent: AskIntent): string;
   export function agentSeesPrompt(id: string, text: string): string;
+  export const LOG_NOTE: string;
+  export function agentSeesHint(rule: { byRerail: boolean; log: boolean }): string;
   export function fmtDay(t: number | null | undefined): string;
   export interface LibraryAttachment { sourceKind: "library_rule"; sourceId: string; folder: string }
   export function libraryAttachments(stored: object): LibraryAttachment[];

@@ -9,7 +9,7 @@ import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
 import { ruleMode, isLog, isByRerail, originLabel, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
-import { ASK, ASK_OPEN, askPrompt, agentSeesPrompt, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
+import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
 const kv = rows => rows.flatMap(([k, v, cls]) => [h("dt", null, k), h("dd", { class: cls }, v)]);
@@ -146,21 +146,20 @@ function renderSees(stored, id) {
   setContent(p.sees, editing ? `edit|${id}` : `show|${id}|${message}|${log}`, () => [
     h("div.h3row", null, h("h3", null, "What the agent sees"),
       editing ? null : h("button.btn.sm.ghost.link", { "data-act": "promptedit" }, "Edit")),
-    editing ? agentSeesEdit(id, message) : [
+    editing ? agentSeesEdit(stored, message) : [
       h("p", null, h("span.said2", null, message)),
-      log ? h("p.muted.note2", null, "On Log, Rerail keeps this for you; the agent is told only once the rule is set to Steer or Block.") : null,
+      log ? h("p.muted.note2", null, LOG_NOTE) : null,
     ],
   ]);
 }
 
-/** The hand-off: an editable draft of the text and the prompt that asks the coding agent to make it the message. */
-function agentSeesEdit(id, message) {
+/** The hand-off: an editable draft of the text and what saving it does; Copy prompt asks the coding agent to save it. */
+function agentSeesEdit(stored, message) {
   const draft = h("textarea", { id: "agentDraft", rows: 3, "aria-label": "New text for what the agent sees" });
   draft.value = message;
   return h("div.pask.sees-edit", null,
     draft,
-    h("p.why", null, "Copy prompt copies: ", h("span.mono", null, agentSeesPrompt(id, "<your text>")),
-      ". Paste it into a coding agent session; the agent sees the new text from its next check."),
+    h("p.why", null, agentSeesHint({ byRerail: isByRerail(stored), log: isLog(stored) })),
     h("div.foot", null, h("span"), h("span.btns",
       null,
       h("button.btn.sm", { "data-act": "promptcancel" }, "Cancel"),
