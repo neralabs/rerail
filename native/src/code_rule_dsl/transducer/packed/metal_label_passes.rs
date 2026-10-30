@@ -6,9 +6,10 @@
 //! depth of the label graph, not its size (the evaluation's launch budget, `metal_launch_budget`):
 //! one interpreter `run_batch` with every program of the level on one shared workspace (its
 //! scheduler image copied in by a blit), `label_sink` turning their results into scratch bits or
-//! counts, `label_derive` for complements, count bounds and constraints, and `label_settle` moving
-//! the level's scratch into its labels. The host waits only to grow the workspace, past a
-//! segment's upload budget, and once per round of a recursive group (whose end is a changed flag).
+//! counts, the clause's pattern kernel (`patterns`), and `label_settle` writing each target:
+//! from scratch, or as a complement or count bound computed per word. A recursive group's rounds
+//! are encoded too and skipped on the GPU once settled (`label_round`), so a clause is one
+//! command buffer.
 
 #[path = "metal_label_patterns.rs"]
 mod patterns;
@@ -106,7 +107,7 @@ struct Op {
 }
 
 const SOURCE: &str = include_str!("metal_label_passes.metal");
-const KERNELS: [&str; 4] = ["label_sink", "label_derive", "label_settle", "label_round"];
+const KERNELS: [&str; 3] = ["label_sink", "label_settle", "label_round"];
 /// The launches a clause's encoding aims to stay within, below the evaluation's budget
 /// (`metal_launch_budget`); a recursive group's rounds are encoded from what is left.
 const LAUNCHES: usize = 560;
@@ -236,9 +237,8 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
     let launches = |level: &Vec<Pass<'_>>| {
         let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
-        let derived = level.iter().any(|pass| matches!(pass, Pass::Count { .. } | Pass::Complement { .. }));
         let patterns = level.iter().any(|pass| matches!(pass, Pass::Pattern { .. }));
-        2 * usize::from(programs) + usize::from(derived) + usize::from(patterns) + 1
+        2 * usize::from(programs) + usize::from(patterns) + 1
     };
     let fixed = plan
         .steps
@@ -278,26 +278,37 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
         .max()
         .unwrap_or(0)
         + 2;
-    let mut rounds = if per_round == 0 {
-        0
-    } else {
-        (LAUNCHES.saturating_sub(fixed + groups) / per_round).clamp(2, MOST_ROUNDS).min(expected)
+    // What the budget leaves for rounds, after `used` launches.
+    let affordable = |used: usize| {
+        if per_round == 0 {
+            0
+        } else {
+            (LAUNCHES.saturating_sub(used + fixed + groups) / per_round).clamp(2, MOST_ROUNDS)
+        }
     };
+    // Every round the tapes' shape expects, so that a clause is one command buffer; fewer first
+    // would save the launches of skipped rounds but cost a rerun where a group needs more.
+    let mut rounds = affordable(0).min(expected);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
-    let mut retries = 0;
+    let (mut retries, mut used, mut buffers) = (0, 0, 0);
     loop {
         let mut outcome = encode(device, plan, files, rounds)?;
+        used += outcome.dispatches;
+        buffers += outcome.command_buffers;
         // A group still changing in its last encoded round: everything after it read unsettled
-        // labels, so the clause runs again with more rounds, up to the CPU's bound.
+        // labels, so the clause runs again with the rounds the tapes' shape expects and the
+        // budget affords, then more, up to the CPU's bound.
         if outcome.waits[1] == 0 {
             outcome.waits[1] = retries;
+            outcome.dispatches = used;
+            outcome.command_buffers = buffers;
             return Ok(outcome);
         }
         if rounds > nodes + 1 {
             return Err(Error::WorkLimit);
         }
         retries += 1;
-        rounds *= 2;
+        rounds = (rounds * 2).max(affordable(used).min(expected));
     }
 }
 
@@ -478,7 +489,7 @@ impl Runner<'_> {
             finish: u32::from(finish),
             ..self.shape()
         };
-        self.kernel(3, &[(&flags, 0), (&head, 0)], shape, 1);
+        self.kernel(2, &[(&flags, 0), (&head, 0)], shape, 1);
     }
 
     /// Every level's batch, built once, and one workspace for all of them, sized before anything
@@ -556,28 +567,36 @@ impl Runner<'_> {
     /// labels, then every target settled.
     fn level(&mut self, passes: &[Pass<'_>]) -> Result<(), Error> {
         let programs = programs_of(passes);
-        let mut ops = Vec::new();
-        let mut items = Vec::new();
+        // How each target settles: from scratch, or computed by `label_settle` per word.
+        let mut settles = Vec::new();
         let mut matches = Vec::new();
         let mut constraints = Vec::new();
-        let mut targets = Vec::new();
         for pass in passes {
-            match pass {
-                Pass::Program { .. } => {}
+            settles.push(match pass {
+                Pass::Program { target, .. } | Pass::Empty { target } => Op {
+                    target: *target,
+                    ..Op::default()
+                },
                 Pass::Count {
                     target,
                     slot,
                     min,
                     max,
                     ..
-                } => {
-                    items.extend((0..self.words as u32).map(|index| [ops.len() as u32, index]));
-                    ops.push(Op { kind: 2, target: *target, slot: *slot, minimum: *min, maximum: *max, of: 0 });
-                }
-                Pass::Complement { target, of } => {
-                    items.extend((0..self.words as u32).map(|index| [ops.len() as u32, index]));
-                    ops.push(Op { kind: 1, target: *target, of: *of, ..Op::default() });
-                }
+                } => Op {
+                    kind: 2,
+                    target: *target,
+                    slot: *slot,
+                    minimum: *min,
+                    maximum: *max,
+                    of: 0,
+                },
+                Pass::Complement { target, of } => Op {
+                    kind: 1,
+                    target: *target,
+                    of: *of,
+                    ..Op::default()
+                },
                 Pass::Pattern {
                     target,
                     pattern,
@@ -595,15 +614,11 @@ impl Runner<'_> {
                     for root in roots {
                         matches.extend([*pattern as u32, *target, *root, start, count]);
                     }
+                    Op {
+                        target: *target,
+                        ..Op::default()
+                    }
                 }
-                Pass::Empty { .. } => {}
-            }
-            targets.push(match pass {
-                Pass::Program { target, .. }
-                | Pass::Count { target, .. }
-                | Pass::Complement { target, .. }
-                | Pass::Pattern { target, .. }
-                | Pass::Empty { target } => *target,
             });
         }
         if !programs.is_empty() {
@@ -613,12 +628,13 @@ impl Runner<'_> {
         let (scratch, counts, flags) =
             (self.scratch.buffer.clone(), self.counts.buffer.clone(), self.flags.buffer.clone());
         if !matches.is_empty() {
+            let item_count = (matches.len() / 5) as u32;
             let (items, constraints) = (self.upload(&matches)?, self.upload(&constraints)?);
             let tapes = &self.tapes;
             let (nodes, children, source) =
                 (tapes.nodes.buffer.clone(), tapes.children.buffer.clone(), tapes.source.buffer.clone());
             let shape = Shape {
-                item_count: (matches.len() / 5) as u32,
+                item_count,
                 ..self.shape()
             };
             self.pattern_kernel(
@@ -635,34 +651,18 @@ impl Runner<'_> {
                 shape,
             )?;
         }
-        if !items.is_empty() {
-            let (ops, items) = (self.upload(&ops)?, self.upload(&items)?);
-            let shape = Shape {
-                item_count: (items.length() / 8) as u32,
-                ..self.shape()
-            };
-            let count = shape.item_count as usize;
-            self.kernel(
-                1,
-                &[
-                    (&labels, 8),
-                    (&scratch, 0),
-                    (&counts, 0),
-                    (&ops, 0),
-                    (&items, 0),
-                    (&flags, 0),
-                ],
-                shape,
-                count,
-            );
-        }
-        let target_count = targets.len();
-        let targets = self.upload(&targets)?;
+        let target_count = settles.len();
+        let settles = self.upload(&settles)?;
         let shape = Shape {
             target_count: target_count as u32,
             ..self.shape()
         };
-        self.kernel(2, &[(&labels, 8), (&scratch, 0), (&flags, 0), (&targets, 0)], shape, target_count * self.words);
+        self.kernel(
+            1,
+            &[(&labels, 8), (&scratch, 0), (&flags, 0), (&settles, 0), (&counts, 0)],
+            shape,
+            target_count * self.words,
+        );
         if self.segment_bytes > SEGMENT_BYTES {
             self.outcome.waits[2] += 1;
             self.flush()?;

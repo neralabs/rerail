@@ -148,8 +148,8 @@ interpreter.
        whose scheduler image a blit copies in;
     2. `label_sink`: results become scratch bits, or count tallies routed by task;
     3. the pattern kernel;
-    4. `label_derive`: complements and count bounds;
-    5. `label_settle`: scratch becomes the label, and a change sets a flag.
+    4. `label_settle`: each target takes its scratch bits, or a complement or count bound
+       computed per word, and a change sets a flag.
   - **Recursive groups.** A group's rounds are encoded in the same command buffer. The count is
     the deepest node (or longest sibling run, where the group walks siblings) plus two, within
     the launch budget. A one-thread `label_round` kernel marks every round after one that changed
@@ -167,16 +167,19 @@ interpreter.
   - `lowered_clauses_find_the_same_roots_on_metal` (`metal-tests`): 87 of 87 clauses give the
     CPU's root sets on Metal. On 8 fixtures (164 matched nodes) that is 87 command buffers (one
     per clause), with 0 host waits for growth, rounds or uploads.
-  - That run took 8,892 launches, about 102 per clause, against a launch budget of 600. Metal
-    took 15.6 s, the CPU 18.2 s (test wall time, debug build).
+  - That run took 8,789 launches, about 101 per clause and at most 558 for one, against a
+    launch budget of 600. Metal took 15–23 s and the CPU 18–21 s over repeated runs (test wall
+    time, debug build, load 13–18).
+  - Encoding 4 rounds first brings launches down to about 62 per clause, but 3 clauses then
+    need a rerun (90 command buffers). One command buffer per clause was kept.
   - `metal_catches_a_widened_walk`: on 16 fixtures, widened clauses differ from W's matcher on
     Metal and still agree with the CPU.
   - All gates take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
     fixtures). The default sample is every eighth fixture.
 - **Left for later (O23):**
-  - Launches average about 102 per clause, above the budget's target of under 100. Recursive
-    rounds skipped on the GPU still count as launches. Batching a wave's clauses (S4) shares
-    levels.
+  - Launches average about 101 per clause, against the budget's target of under 100.
+    Recursive rounds skipped on the GPU still count as launches. Batching a wave's clauses (S4)
+    shares levels.
   - A label-domain program starts at every node, because its label is not known when the
     command buffer is encoded. Its first `SUPERTYPE` drops the others.
 

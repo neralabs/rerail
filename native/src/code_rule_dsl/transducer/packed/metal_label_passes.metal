@@ -15,9 +15,9 @@ struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch label `slot`), 2 and
 // 3 counts by root and by captured node (into count slot `slot`).
 struct Route { uint mode,slot; };
-// kind 1 complement of `of`, 2 count bounds of slot `slot`.
+// How a target settles: kind 0 from scratch, 1 the complement of `of`, 2 count slot `slot`'s
+// tallies within minimum..=maximum.
 struct Op { uint kind,target,of,slot,minimum,maximum; };
-struct Item { uint op,index; };
 
 static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&bits[node/32u],1u<<(node%32u),memory_order_relaxed);}
 
@@ -35,27 +35,21 @@ kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Res
   for(uint at=0u;at<result.captureCount;at++){uint node=captures[result.captureStart+at].node;if(route.mode==1u)mark(bits,node);else atomic_fetch_add_explicit(&tally[node],1u,memory_order_relaxed);}
 }
 
-kernel void label_derive(device const uint* labels [[buffer(0)]],device atomic_uint* scratch [[buffer(1)]],device uint* counts [[buffer(2)]],device const Op* ops [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint* flags [[buffer(5)]],constant Shape& shape [[buffer(6)]],uint tid [[thread_position_in_grid]]){
-  if(tid>=shape.itemCount||flags[2]!=0u)return;
-  Item item=items[tid];Op op=ops[item.op];
-  device atomic_uint* bits=scratch+op.target*shape.words;
-  if(op.kind==1u){
-    uint word=~labels[op.of*shape.words+item.index];
-    uint last=shape.nodeCount%32u;
-    if(item.index==shape.words-1u&&last!=0u)word&=(1u<<last)-1u;
-    atomic_store_explicit(&bits[item.index],word,memory_order_relaxed);
-  }else{
-    uint word=0u;
-    for(uint bit=0u;bit<32u;bit++){uint node=item.index*32u+bit;if(node>=shape.nodeCount)break;uint count=counts[op.slot*shape.nodeCount+node];counts[op.slot*shape.nodeCount+node]=0u;if(count>=op.minimum&&count<=op.maximum)word|=1u<<bit;}
-    atomic_store_explicit(&bits[item.index],word,memory_order_relaxed);
-  }
-}
-
-// Each of the level's targets takes its scratch bits; a change sets flags[1]; scratch is cleared.
-kernel void label_settle(device uint* labels [[buffer(0)]],device uint* scratch [[buffer(1)]],device atomic_uint* flags [[buffer(2)]],device const uint* targets [[buffer(3)]],constant Shape& shape [[buffer(4)]],uint tid [[thread_position_in_grid]]){
+// Each of the level's targets takes its new bits: a complement's or a count's computed here (per
+// word), the others' from scratch. A change sets flags[1]; scratch is cleared.
+kernel void label_settle(device uint* labels [[buffer(0)]],device uint* scratch [[buffer(1)]],device atomic_uint* flags [[buffer(2)]],device const Op* ops [[buffer(3)]],device uint* counts [[buffer(4)]],constant Shape& shape [[buffer(5)]],uint tid [[thread_position_in_grid]]){
   if(tid>=shape.targetCount*shape.words||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
-  uint at=targets[tid/shape.words]*shape.words+tid%shape.words;
+  Op op=ops[tid/shape.words];uint index=tid%shape.words;
+  uint at=op.target*shape.words+index;
   uint word=scratch[at];scratch[at]=0u;
+  if(op.kind==1u){
+    word=~labels[op.of*shape.words+index];
+    uint last=shape.nodeCount%32u;
+    if(index==shape.words-1u&&last!=0u)word&=(1u<<last)-1u;
+  }else if(op.kind==2u){
+    word=0u;
+    for(uint bit=0u;bit<32u;bit++){uint node=index*32u+bit;if(node>=shape.nodeCount)break;uint count=counts[op.slot*shape.nodeCount+node];counts[op.slot*shape.nodeCount+node]=0u;if(count>=op.minimum&&count<=op.maximum)word|=1u<<bit;}
+  }
   if(labels[at]!=word){labels[at]=word;atomic_fetch_or_explicit(&flags[1],1u,memory_order_relaxed);}
 }
 

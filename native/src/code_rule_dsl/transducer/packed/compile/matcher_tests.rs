@@ -265,6 +265,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     let compiled = clauses();
     let (mut lowered, mut matched_nodes, mut commands, mut dispatches) = (0, 0, 0, 0);
     let mut waits = [0; 3];
+    let mut most = 0;
     let mut differ = Vec::new();
     let (mut cpu_time, mut metal_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     for (policy, compiled) in &compiled {
@@ -280,6 +281,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
             cpu_time += started.elapsed();
             let started = std::time::Instant::now();
             let metal = program.roots_metal(&tapes).map(|(roots, outcome)| {
+                most = most.max(outcome.dispatches);
                 commands += outcome.command_buffers;
                 dispatches += outcome.dispatches;
                 waits.iter_mut().zip(outcome.waits).for_each(|(sum, wait)| *sum += wait);
@@ -305,7 +307,8 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     eprintln!(
         "S2 Metal parity: {} of {lowered} lowered clauses equal on {} fixtures ({matched_nodes} \
          matched nodes); CPU {cpu_time:?}, Metal {metal_time:?} ({commands} command buffers, \
-         {dispatches} dispatches; host waits for growth, rounds, uploads {waits:?})",
+         {dispatches} launches, at most {most} for a clause; host waits for growth, reruns, \
+         uploads {waits:?})",
         lowered - differ.len(),
         tapes.len(),
     );
