@@ -1,0 +1,1 @@
+type Jti = 'bar';

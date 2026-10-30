@@ -1,0 +1,1 @@
+function fi(a = 5, d = true, e = 'foo') {}

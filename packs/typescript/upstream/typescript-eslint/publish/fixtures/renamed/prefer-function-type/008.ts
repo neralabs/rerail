@@ -1,0 +1,6 @@
+
+interface Dye {
+  // comment
+  (): string;
+}
+      

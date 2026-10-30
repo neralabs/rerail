@@ -1,0 +1,5 @@
+
+interface Greeter {
+  message: any[];
+}
+      

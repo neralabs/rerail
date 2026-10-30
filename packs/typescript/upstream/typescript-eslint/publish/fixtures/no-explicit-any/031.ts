@@ -1,0 +1,1 @@
+const number: any = 1;

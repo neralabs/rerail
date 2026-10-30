@@ -1,0 +1,1 @@
+function lfv<W extends (...euom: any[]) => any>(ld: W, euom: any[]) {}

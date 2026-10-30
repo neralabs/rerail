@@ -1,0 +1,1 @@
+const xrz = function ({ p } = {}, u) {};

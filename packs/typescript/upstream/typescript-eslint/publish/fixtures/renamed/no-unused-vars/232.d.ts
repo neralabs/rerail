@@ -1,0 +1,5 @@
+
+declare class Djd {}
+
+export {};
+      

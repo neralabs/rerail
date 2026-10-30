@@ -1,0 +1,5 @@
+
+class wyr {
+  tmi(): void {}
+}
+    

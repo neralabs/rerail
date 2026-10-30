@@ -1,0 +1,5 @@
+
+class Greeter {
+  message: string;
+}
+    

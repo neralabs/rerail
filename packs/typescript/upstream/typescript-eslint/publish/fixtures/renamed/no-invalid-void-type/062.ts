@@ -1,0 +1,1 @@
+type ayyegkpZpgqPifzo = void | Map;

@@ -1,0 +1,5 @@
+
+const src = class {
+  constructor();
+};
+    

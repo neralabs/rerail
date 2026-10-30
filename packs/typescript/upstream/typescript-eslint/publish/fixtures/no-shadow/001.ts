@@ -1,0 +1,1 @@
+function foo<T = (arg: any) => any>(arg: T) {}

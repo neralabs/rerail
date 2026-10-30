@@ -1,0 +1,1 @@
+function greet(param: Array<string>): Array<string> {}

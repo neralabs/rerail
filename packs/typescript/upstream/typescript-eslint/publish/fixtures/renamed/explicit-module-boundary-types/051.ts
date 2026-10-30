@@ -1,0 +1,3 @@
+
+export var ncmtpXw = () => 'test';
+      

@@ -1,0 +1,1 @@
+const qyh = function (b = 1, { o }) {};

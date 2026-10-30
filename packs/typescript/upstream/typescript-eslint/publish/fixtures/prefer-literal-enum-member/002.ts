@@ -1,0 +1,5 @@
+
+enum ValidString {
+  A = 'test',
+}
+    

@@ -1,0 +1,1 @@
+type Glz = { [key: string] };

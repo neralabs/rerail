@@ -1,0 +1,5 @@
+
+type njh = {
+  message: string;
+};
+    

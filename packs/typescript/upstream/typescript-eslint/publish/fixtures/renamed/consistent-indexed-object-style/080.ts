@@ -1,0 +1,1 @@
+type W = { [key in string]: number };

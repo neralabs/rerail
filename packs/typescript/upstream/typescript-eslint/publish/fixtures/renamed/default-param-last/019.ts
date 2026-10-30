@@ -1,0 +1,1 @@
+const ubk = function (g: number, q = 1, t = 1) {};
