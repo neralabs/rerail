@@ -69,7 +69,7 @@ Score each one and keep the best five at most.
 
 | | High | Low |
 |---|---|---|
-| **Evidence** | The person corrected it more than once, or wrote it down as a standard | Your guess that it might help |
+| **Evidence** | The person corrected it more than once, wrote it down as a standard, or a maintainer sent a design back for it in review | Your guess that it might help |
 | **Harm prevented** | Correctness, security, data loss, a broken build (3) | Maintainability (2), style (1) |
 | **Repo agreement** | The repo pass matches a handful of places, and each one is a real violation | Hundreds of matches: the repo's convention says otherwise |
 | **Safe to obey** | Following the steer cannot break working code | The fix it asks for is wrong in some cases the matcher cannot tell apart |
@@ -79,6 +79,8 @@ Score each one and keep the best five at most.
 - **High:** strong evidence, harm prevented of 2 or more, matches only a handful of places in the repo, and safe to obey.
 - **Medium:** one weak dimension, which you name on the card's Risk line.
 - A written standard counts as strong evidence, even with no sessions.
+- An architecture rule's harm prevented is the rework a reviewer would ask for (2 or 3), however rarely it fires. See
+  [architecture-rules.md](architecture-rules.md).
 - **Skip:** any of the following.
   - It needs judgement.
   - It is formatting.
@@ -95,7 +97,7 @@ Rules worth adding to <repo>, from <N> sessions and <standards files>.
                    (or, with no sessions: from <standards files> and the code; Rerail has no sessions here yet)
 
   1. <what it checks, one line>                                  High
-     Why    <"You corrected this 3 times, last: '<quote>' (Oct 12)" | "CLAUDE.md: '<quote>'" | "140 files use logger, 3 use console.log">
+     Why    <"You corrected this 3 times, last: '<quote>' (Oct 12)" | "CLAUDE.md: '<quote>'" | "140 files use logger, 3 use console.log" | "#8335 review: '<quote>'">
      Where  When I edit <files> | When I run <command>
      Risk   <one line: "Existing code follows it: 2 places differ" | "Following it can't break code" | the weak dimension of a Medium>
 

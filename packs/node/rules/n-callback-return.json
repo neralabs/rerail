@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-callback-return",
-  "revision": 2,
+  "revision": 4,
   "mode": "steer",
   "description": "Return right after calling a callback named callback, cb or next; otherwise the function keeps running and the callback can fire twice.",
   "scope": {
@@ -18,6 +18,86 @@
     "exclude": []
   },
   "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "all": [
+              {
+                "matches": "c3"
+              }
+            ],
+            "inside": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ],
+                "field": "body"
+              },
+              "kind": "statement_block"
+            },
+            "kind": "expression_statement"
+          },
+          "c2": {
+            "all": [
+              {
+                "nthChild": {
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  },
+                  "position": 2,
+                  "reverse": true
+                }
+              }
+            ],
+            "inside": {
+              "has": {
+                "all": [
+                  {
+                    "matches": "c3"
+                  }
+                ],
+                "kind": "return_statement"
+              },
+              "kind": "statement_block"
+            },
+            "kind": "expression_statement"
+          },
+          "c3": {
+            "nthChild": {
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              },
+              "position": 1,
+              "reverse": true
+            }
+          }
+        }
+      }
+    },
     {
       "id": "upstream",
       "forbid": {
@@ -71,42 +151,7 @@
                   "any": [
                     {
                       "inside": {
-                        "kind": "expression_statement",
-                        "nthChild": {
-                          "position": 1,
-                          "reverse": true,
-                          "ofRule": {
-                            "not": {
-                              "kind": "comment"
-                            }
-                          }
-                        },
-                        "inside": {
-                          "kind": "statement_block",
-                          "inside": {
-                            "any": [
-                              {
-                                "kind": "function_declaration"
-                              },
-                              {
-                                "kind": "function_expression"
-                              },
-                              {
-                                "kind": "generator_function_declaration"
-                              },
-                              {
-                                "kind": "generator_function"
-                              },
-                              {
-                                "kind": "arrow_function"
-                              },
-                              {
-                                "kind": "method_definition"
-                              }
-                            ],
-                            "field": "body"
-                          }
-                        }
+                        "matches": "c1"
                       }
                     },
                     {
@@ -114,42 +159,7 @@
                         "kind": "binary_expression",
                         "field": "right",
                         "inside": {
-                          "kind": "expression_statement",
-                          "nthChild": {
-                            "position": 1,
-                            "reverse": true,
-                            "ofRule": {
-                              "not": {
-                                "kind": "comment"
-                              }
-                            }
-                          },
-                          "inside": {
-                            "kind": "statement_block",
-                            "inside": {
-                              "any": [
-                                {
-                                  "kind": "function_declaration"
-                                },
-                                {
-                                  "kind": "function_expression"
-                                },
-                                {
-                                  "kind": "generator_function_declaration"
-                                },
-                                {
-                                  "kind": "generator_function"
-                                },
-                                {
-                                  "kind": "arrow_function"
-                                },
-                                {
-                                  "kind": "method_definition"
-                                }
-                              ],
-                              "field": "body"
-                            }
-                          }
+                          "matches": "c1"
                         }
                       }
                     }
@@ -161,31 +171,7 @@
                   "any": [
                     {
                       "inside": {
-                        "kind": "expression_statement",
-                        "nthChild": {
-                          "position": 2,
-                          "reverse": true,
-                          "ofRule": {
-                            "not": {
-                              "kind": "comment"
-                            }
-                          }
-                        },
-                        "inside": {
-                          "kind": "statement_block",
-                          "has": {
-                            "kind": "return_statement",
-                            "nthChild": {
-                              "position": 1,
-                              "reverse": true,
-                              "ofRule": {
-                                "not": {
-                                  "kind": "comment"
-                                }
-                              }
-                            }
-                          }
-                        }
+                        "matches": "c2"
                       }
                     },
                     {
@@ -193,31 +179,7 @@
                         "kind": "binary_expression",
                         "field": "right",
                         "inside": {
-                          "kind": "expression_statement",
-                          "nthChild": {
-                            "position": 2,
-                            "reverse": true,
-                            "ofRule": {
-                              "not": {
-                                "kind": "comment"
-                              }
-                            }
-                          },
-                          "inside": {
-                            "kind": "statement_block",
-                            "has": {
-                              "kind": "return_statement",
-                              "nthChild": {
-                                "position": 1,
-                                "reverse": true,
-                                "ofRule": {
-                                  "not": {
-                                    "kind": "comment"
-                                  }
-                                }
-                              }
-                            }
-                          }
+                          "matches": "c2"
                         }
                       }
                     }
