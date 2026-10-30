@@ -123,7 +123,7 @@ is open to others again.
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
 6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
-7. A code owner, or the `neralabs-ci` reviewer for a low-risk change, reviews it. Push fixes to the same branch. Pack
+7. A code owner, or the `neralabs-reviewer` bot for a low-risk change, reviews it. Push fixes to the same branch. Pack
    data the pull request stages is published by a maintainer first
    ([How pack data is published](#how-pack-data-is-published)); once it is approved and CI passes, it is squash-merged.
 
