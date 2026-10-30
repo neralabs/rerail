@@ -463,7 +463,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a lib name that is no name", ast({ kind: "identifier" }, { languageOptions: { lib: ["dom/iterable"] } }), /Must be a TypeScript lib name/],
     ["a non-boolean declaration", ast({ kind: "identifier" }, { file: { declaration: "yes" } }), /expected boolean/],
     ["a path file condition that is no object", ast({ kind: "identifier" }, { file: { path: "^src/" } }), /expected object/],
-    ["an empty file condition", document({ forbid: { ast: { language: "python", file: {}, rule: { kind: "module" } } } }), /Set path, declaration, module, moduleName, package, inPackage or jsxRuntime/],
+    ["an empty file condition", document({ forbid: { ast: { language: "python", file: {}, rule: { kind: "module" } } } }), /Set path, declaration, module, moduleName, package, inPackage, jsxRuntime or byteOrderMark/],
     ["an unknown file condition", document({ forbid: { ast: { language: "python", file: { paths: { regex: "a" } }, rule: { kind: "module" } } } }), /Unrecognized key/],
     ["a file module that is no object", document({ forbid: { ast: { language: "python", file: { module: "^a$" }, rule: { kind: "module" } } } }), /expected object/],
     ["a non-boolean inPackage", document({ forbid: { ast: { language: "python", file: { inPackage: "yes" }, rule: { kind: "module" } } } }), /expected boolean/],
@@ -1102,6 +1102,23 @@ describe("code rule schema and engine agree on unsupported fields", () => {
       expect(codeRuleSchema.safeParse(input).success).toBe(true);
       expect(() => loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(input), "json", bundledCapabilities)).not.toThrow();
     }
+  });
+
+  it("file.byteOrderMark reads whether the file's text opens with U+FEFF, which no node's text holds", () => {
+    const files = [
+      { language: "javascript", path: "bom.js", source: "\uFEFF#!/usr/bin/env node\nhello();\n" },
+      { language: "javascript", path: "plain.js", source: "#!/usr/bin/env node\nhello();\n" },
+      { language: "javascript", path: "inner.js", source: "hello('\uFEFF');\n" },
+    ];
+    const snapshot = JSON.stringify({ facts: [], files, format: "rerail.repository-snapshot/v1", revision: 0 });
+    const runtime = loadNativeBinding().CodeRuleDslRuntime;
+    const reported = (byteOrderMark: boolean) => {
+      const input = ast({ kind: "program", regex: "\\A#!" }, { file: { byteOrderMark } });
+      expect(codeRuleSchema.safeParse(input).success).toBe(true);
+      return (JSON.parse(runtime.compile(JSON.stringify(input), "json", bundledCapabilities).evaluate(snapshot, "report")).violations as { path: string }[]).map(violation => violation.path);
+    };
+    expect(reported(true)).toEqual(["bom.js"]);
+    expect(reported(false)).toEqual(["plain.js"]);
   });
 
   it("both accept comparisons over values, property names, tokens, structures and nodes", () => {

@@ -233,7 +233,7 @@
         "tool": "eslint-plugin-n",
         "rule": "n/prefer-promises/dns"
       },
-      "policy": "candidates/rules/n-prefer-promises-dns.json",
+      "policy": "rules/n-prefer-promises-dns.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -321,6 +321,295 @@
       "policy": "rules/n-callback-return.json",
       "capabilities": [
         "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-deprecated-api",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-deprecated-api"
+      },
+      "policy": "rules/n-no-deprecated-api.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-hashbang",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/hashbang"
+      },
+      "policy": "rules/n-hashbang.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-crypto",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/crypto"
+      },
+      "policy": "rules/n-prefer-global-crypto.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-global-timers",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-global/timers"
+      },
+      "policy": "rules/n-prefer-global-timers.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-import-assert-strict",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-import/assert-strict"
+      },
+      "policy": "rules/n-prefer-import-assert-strict.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-prefer-process-get-builtin-module",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/prefer-process-get-builtin-module"
+      },
+      "policy": "rules/n-prefer-process-get-builtin-module.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unsupported-features-node-builtins",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unsupported-features/node-builtins"
+      },
+      "policy": "rules/n-no-unsupported-features-node-builtins.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unsupported-features-es-builtins",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unsupported-features/es-builtins"
+      },
+      "policy": "rules/n-no-unsupported-features-es-builtins.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unpublished-bin",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unpublished-bin"
+      },
+      "policy": "rules/n-no-unpublished-bin.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-top-level-await",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-top-level-await"
+      },
+      "policy": "rules/n-no-top-level-await.json",
+      "capabilities": [
+        "syntax",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unsupported-features-es-syntax",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unsupported-features/es-syntax"
+      },
+      "policy": "candidates/rules/n-no-unsupported-features-es-syntax.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-restricted-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-restricted-import"
+      },
+      "policy": "candidates/rules/n-no-restricted-import.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-restricted-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-restricted-require"
+      },
+      "policy": "candidates/rules/n-no-restricted-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-missing-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-missing-import"
+      },
+      "policy": "candidates/rules/n-no-missing-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-missing-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-missing-require"
+      },
+      "policy": "candidates/rules/n-no-missing-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-file-extension-in-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/file-extension-in-import"
+      },
+      "policy": "candidates/rules/n-file-extension-in-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unpublished-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unpublished-import"
+      },
+      "policy": "candidates/rules/n-no-unpublished-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-unpublished-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-unpublished-require"
+      },
+      "policy": "candidates/rules/n-no-unpublished-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-extraneous-import",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-extraneous-import"
+      },
+      "policy": "candidates/rules/n-no-extraneous-import.json",
+      "capabilities": [
+        "syntax",
+        "value",
+        "suppression"
+      ],
+      "match": "line+column"
+    },
+    {
+      "id": "n-no-extraneous-require",
+      "upstream": {
+        "tool": "eslint-plugin-n",
+        "rule": "n/no-extraneous-require"
+      },
+      "policy": "candidates/rules/n-no-extraneous-require.json",
+      "capabilities": [
+        "syntax",
+        "scope",
+        "value",
         "suppression"
       ],
       "match": "line+column"
