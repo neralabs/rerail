@@ -347,7 +347,7 @@
         "tool": "eslint",
         "rule": "no-loss-of-precision"
       },
-      "policy": "candidates/rules/eslint-no-loss-of-precision.json",
+      "policy": "rules/eslint-no-loss-of-precision.json",
       "capabilities": [
         "syntax",
         "value",
@@ -494,7 +494,7 @@
         "tool": "eslint",
         "rule": "no-prototype-builtins"
       },
-      "policy": "candidates/rules/eslint-no-prototype-builtins.json",
+      "policy": "rules/eslint-no-prototype-builtins.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -897,7 +897,7 @@
         "tool": "eslint",
         "rule": "accessor-pairs"
       },
-      "policy": "candidates/rules/eslint-accessor-pairs.json",
+      "policy": "rules/eslint-accessor-pairs.json",
       "capabilities": [
         "syntax",
         "value",
@@ -913,7 +913,7 @@
         "tool": "eslint",
         "rule": "class-methods-use-this"
       },
-      "policy": "candidates/rules/eslint-class-methods-use-this.json",
+      "policy": "rules/eslint-class-methods-use-this.json",
       "capabilities": [
         "syntax",
         "value",
@@ -998,7 +998,7 @@
         "tool": "eslint",
         "rule": "no-eval"
       },
-      "policy": "candidates/rules/eslint-no-eval.json",
+      "policy": "rules/eslint-no-eval.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1012,7 +1012,7 @@
         "tool": "eslint",
         "rule": "no-implied-eval"
       },
-      "policy": "candidates/rules/eslint-no-implied-eval.json",
+      "policy": "rules/eslint-no-implied-eval.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1047,7 +1047,7 @@
         "tool": "eslint",
         "rule": "no-useless-rename"
       },
-      "policy": "candidates/rules/eslint-no-useless-rename.json",
+      "policy": "rules/eslint-no-useless-rename.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1062,7 +1062,7 @@
         "tool": "eslint",
         "rule": "no-var"
       },
-      "policy": "candidates/rules/eslint-no-var.json",
+      "policy": "rules/eslint-no-var.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1088,7 +1088,7 @@
         "tool": "eslint",
         "rule": "func-name-matching"
       },
-      "policy": "candidates/rules/eslint-func-name-matching.json",
+      "policy": "rules/eslint-func-name-matching.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1103,7 +1103,7 @@
         "tool": "eslint",
         "rule": "grouped-accessor-pairs"
       },
-      "policy": "candidates/rules/eslint-grouped-accessor-pairs.json",
+      "policy": "rules/eslint-grouped-accessor-pairs.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1118,7 +1118,7 @@
         "tool": "eslint",
         "rule": "id-length"
       },
-      "policy": "candidates/rules/eslint-id-length.json",
+      "policy": "rules/eslint-id-length.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -1132,7 +1132,7 @@
         "tool": "eslint",
         "rule": "max-classes-per-file"
       },
-      "policy": "candidates/rules/eslint-max-classes-per-file.json",
+      "policy": "rules/eslint-max-classes-per-file.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1205,7 +1205,7 @@
         "tool": "eslint",
         "rule": "no-alert"
       },
-      "policy": "candidates/rules/eslint-no-alert.json",
+      "policy": "rules/eslint-no-alert.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1239,7 +1239,7 @@
         "tool": "eslint",
         "rule": "no-await-in-loop"
       },
-      "policy": "candidates/rules/eslint-no-await-in-loop.json",
+      "policy": "rules/eslint-no-await-in-loop.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1266,7 +1266,7 @@
         "tool": "eslint",
         "rule": "no-dupe-class-members"
       },
-      "policy": "candidates/rules/eslint-no-dupe-class-members.json",
+      "policy": "rules/eslint-no-dupe-class-members.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1287,7 +1287,7 @@
         "tool": "eslint",
         "rule": "no-dupe-else-if"
       },
-      "policy": "candidates/rules/eslint-no-dupe-else-if.json",
+      "policy": "rules/eslint-no-dupe-else-if.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -1336,7 +1336,7 @@
         "tool": "eslint",
         "rule": "no-extra-bind"
       },
-      "policy": "candidates/rules/eslint-no-extra-bind.json",
+      "policy": "rules/eslint-no-extra-bind.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1376,7 +1376,7 @@
         "tool": "eslint",
         "rule": "no-irregular-whitespace"
       },
-      "policy": "candidates/rules/eslint-no-irregular-whitespace.json",
+      "policy": "rules/eslint-no-irregular-whitespace.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1389,7 +1389,7 @@
         "tool": "eslint",
         "rule": "no-labels"
       },
-      "policy": "candidates/rules/eslint-no-labels.json",
+      "policy": "rules/eslint-no-labels.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1415,7 +1415,7 @@
         "tool": "eslint",
         "rule": "no-magic-numbers"
       },
-      "policy": "candidates/rules/eslint-no-magic-numbers.json",
+      "policy": "rules/eslint-no-magic-numbers.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1435,7 +1435,7 @@
         "tool": "eslint",
         "rule": "no-multi-assign"
       },
-      "policy": "candidates/rules/eslint-no-multi-assign.json",
+      "policy": "rules/eslint-no-multi-assign.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1448,7 +1448,7 @@
         "tool": "eslint",
         "rule": "no-new-func"
       },
-      "policy": "candidates/rules/eslint-no-new-func.json",
+      "policy": "rules/eslint-no-new-func.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1462,7 +1462,7 @@
         "tool": "eslint",
         "rule": "no-obj-calls"
       },
-      "policy": "candidates/rules/eslint-no-obj-calls.json",
+      "policy": "rules/eslint-no-obj-calls.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1497,7 +1497,7 @@
         "tool": "eslint",
         "rule": "no-redeclare"
       },
-      "policy": "candidates/rules/eslint-no-redeclare.json",
+      "policy": "rules/eslint-no-redeclare.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1519,7 +1519,7 @@
         "tool": "eslint",
         "rule": "no-self-assign"
       },
-      "policy": "candidates/rules/eslint-no-self-assign.json",
+      "policy": "rules/eslint-no-self-assign.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1580,7 +1580,7 @@
         "tool": "eslint",
         "rule": "no-unsafe-optional-chaining"
       },
-      "policy": "candidates/rules/eslint-no-unsafe-optional-chaining.json",
+      "policy": "rules/eslint-no-unsafe-optional-chaining.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1593,7 +1593,7 @@
         "tool": "eslint",
         "rule": "no-unused-expressions"
       },
-      "policy": "candidates/rules/eslint-no-unused-expressions.json",
+      "policy": "rules/eslint-no-unused-expressions.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1647,7 +1647,7 @@
         "tool": "eslint",
         "rule": "no-useless-computed-key"
       },
-      "policy": "candidates/rules/eslint-no-useless-computed-key.json",
+      "policy": "rules/eslint-no-useless-computed-key.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1661,7 +1661,7 @@
         "tool": "eslint",
         "rule": "no-useless-constructor"
       },
-      "policy": "candidates/rules/eslint-no-useless-constructor.json",
+      "policy": "rules/eslint-no-useless-constructor.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -1682,7 +1682,7 @@
         "tool": "eslint",
         "rule": "one-var"
       },
-      "policy": "candidates/rules/eslint-one-var.json",
+      "policy": "rules/eslint-one-var.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1695,7 +1695,7 @@
         "tool": "eslint",
         "rule": "prefer-destructuring"
       },
-      "policy": "candidates/rules/eslint-prefer-destructuring.json",
+      "policy": "rules/eslint-prefer-destructuring.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1716,7 +1716,7 @@
         "tool": "eslint",
         "rule": "prefer-exponentiation-operator"
       },
-      "policy": "candidates/rules/eslint-prefer-exponentiation-operator.json",
+      "policy": "rules/eslint-prefer-exponentiation-operator.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1731,7 +1731,7 @@
         "tool": "eslint",
         "rule": "prefer-object-has-own"
       },
-      "policy": "candidates/rules/eslint-prefer-object-has-own.json",
+      "policy": "rules/eslint-prefer-object-has-own.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1745,7 +1745,7 @@
         "tool": "eslint",
         "rule": "require-await"
       },
-      "policy": "candidates/rules/eslint-require-await.json",
+      "policy": "rules/eslint-require-await.json",
       "capabilities": [
         "syntax",
         "value",
@@ -1765,7 +1765,7 @@
         "tool": "eslint",
         "rule": "require-yield"
       },
-      "policy": "candidates/rules/eslint-require-yield.json",
+      "policy": "rules/eslint-require-yield.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1778,7 +1778,7 @@
         "tool": "eslint",
         "rule": "strict"
       },
-      "policy": "candidates/rules/eslint-strict.json",
+      "policy": "rules/eslint-strict.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1791,7 +1791,7 @@
         "tool": "eslint",
         "rule": "symbol-description"
       },
-      "policy": "candidates/rules/eslint-symbol-description.json",
+      "policy": "rules/eslint-symbol-description.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -1805,7 +1805,7 @@
         "tool": "eslint-plugin-unicorn",
         "rule": "unicorn/filename-case"
       },
-      "policy": "candidates/rules/unicorn-filename-case.json",
+      "policy": "rules/unicorn-filename-case.json",
       "capabilities": [
         "syntax"
       ],
@@ -1823,7 +1823,7 @@
         "tool": "eslint-plugin-unicorn",
         "rule": "unicorn/no-null"
       },
-      "policy": "candidates/rules/unicorn-no-null.json",
+      "policy": "rules/unicorn-no-null.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1836,7 +1836,7 @@
         "tool": "eslint-plugin-unicorn",
         "rule": "unicorn/prefer-node-protocol"
       },
-      "policy": "candidates/rules/unicorn-prefer-node-protocol.json",
+      "policy": "rules/unicorn-prefer-node-protocol.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -1855,7 +1855,7 @@
         "tool": "eslint",
         "rule": "vars-on-top"
       },
-      "policy": "candidates/rules/eslint-vars-on-top.json",
+      "policy": "rules/eslint-vars-on-top.json",
       "capabilities": [
         "syntax",
         "suppression"

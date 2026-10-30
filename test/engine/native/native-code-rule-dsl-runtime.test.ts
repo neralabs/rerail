@@ -3351,7 +3351,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("file-local name resolution (M
   it("separates TypeScript values from types and honors /* global */ comments only when asked", async () => {
     const source = "/* global jQuery */\ninterface Window { x: number }\nlet w: Window = window;\njQuery(alert);\n";
     const values = { ...astForbid({ resolves: { global: ["Window", "window", "alert", "jQuery"] } }, "typescript"), id: "plain" };
-    const directives = { ...astForbid({ resolves: { global: ["alert"], directives: "eslint" } }, "typescript"), id: "eslint" };
+    const directives = { ...astForbid({ resolves: { global: ["alert", "jQuery"], directives: "eslint" } }, "typescript"), id: "eslint" };
     const files = [{ language: "typescript" as const, path: "a.ts", source }];
     const { actual, full } = await workspaceAndFull([values, directives], files);
     expect(actual.violations).toEqual(full.violations);

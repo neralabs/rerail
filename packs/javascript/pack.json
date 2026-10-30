@@ -63,6 +63,13 @@
   },
   "rules": [
     {
+      "id": "eslint-accessor-pairs",
+      "document": "rules/eslint-accessor-pairs.json",
+      "title": "ESLint accessor-pairs: Enforce getter and setter pairs in objects and classes",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-arrow-body-style",
       "document": "rules/eslint-arrow-body-style.json",
       "title": "ESLint arrow-body-style: Require braces around arrow function bodies",
@@ -73,6 +80,13 @@
       "id": "eslint-capitalized-comments",
       "document": "rules/eslint-capitalized-comments.json",
       "title": "ESLint capitalized-comments: Enforce or disallow capitalization of the first letter of a comment",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-class-methods-use-this",
+      "document": "rules/eslint-class-methods-use-this.json",
+      "title": "ESLint class-methods-use-this: Enforce that class methods utilize `this`",
       "group": "ESLint",
       "on": false
     },
@@ -119,6 +133,13 @@
       "on": false
     },
     {
+      "id": "eslint-func-name-matching",
+      "document": "rules/eslint-func-name-matching.json",
+      "title": "ESLint func-name-matching: Require function names to match the name of the variable or property to which they are assigned",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-func-style",
       "document": "rules/eslint-func-style.json",
       "title": "ESLint func-style: Enforce the consistent use of either function declarations or expressions assigned to variables",
@@ -126,9 +147,30 @@
       "on": false
     },
     {
+      "id": "eslint-grouped-accessor-pairs",
+      "document": "rules/eslint-grouped-accessor-pairs.json",
+      "title": "ESLint grouped-accessor-pairs: Require grouped accessor pairs in object literals and classes",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-guard-for-in",
       "document": "rules/eslint-guard-for-in.json",
       "title": "ESLint guard-for-in: Require for-in loops to include an if statement",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-id-length",
+      "document": "rules/eslint-id-length.json",
+      "title": "ESLint id-length: Enforce minimum and maximum identifier lengths",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-max-classes-per-file",
+      "document": "rules/eslint-max-classes-per-file.json",
+      "title": "ESLint max-classes-per-file: Enforce a maximum number of classes per file",
       "group": "ESLint",
       "on": false
     },
@@ -161,9 +203,23 @@
       "on": false
     },
     {
+      "id": "eslint-no-alert",
+      "document": "rules/eslint-no-alert.json",
+      "title": "ESLint no-alert: Disallow the use of `alert`, `confirm`, and `prompt`",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-array-constructor",
       "document": "rules/eslint-no-array-constructor.json",
       "title": "ESLint no-array-constructor: Disallow Array constructors",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-await-in-loop",
+      "document": "rules/eslint-no-await-in-loop.json",
+      "title": "ESLint no-await-in-loop: Disallow `await` inside of loops",
       "group": "ESLint",
       "on": false
     },
@@ -233,6 +289,18 @@
       "on": false
     },
     {
+      "id": "eslint-no-dupe-class-members",
+      "document": "rules/eslint-no-dupe-class-members.json",
+      "title": "ESLint no-dupe-class-members: Disallow duplicate class members",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-dupe-else-if",
+      "document": "rules/eslint-no-dupe-else-if.json",
+      "title": "ESLint no-dupe-else-if: Disallow duplicate conditions in if-else-if chains",
+      "group": "ESLint"
+    },
+    {
       "id": "eslint-no-dupe-keys",
       "document": "rules/eslint-no-dupe-keys.json",
       "title": "ESLint no-dupe-keys: Disallow duplicate keys in object literals",
@@ -284,9 +352,23 @@
       "on": false
     },
     {
+      "id": "eslint-no-eval",
+      "document": "rules/eslint-no-eval.json",
+      "title": "ESLint no-eval: Disallow the use of `eval()`",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-extend-native",
       "document": "rules/eslint-no-extend-native.json",
       "title": "ESLint no-extend-native: Disallow extending native types",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-extra-bind",
+      "document": "rules/eslint-no-extra-bind.json",
+      "title": "ESLint no-extra-bind: Disallow unnecessary calls to `.bind()`",
       "group": "ESLint",
       "on": false
     },
@@ -298,11 +380,24 @@
       "on": false
     },
     {
+      "id": "eslint-no-implied-eval",
+      "document": "rules/eslint-no-implied-eval.json",
+      "title": "ESLint no-implied-eval: Disallow the use of `eval()`-like methods",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-inline-comments",
       "document": "rules/eslint-no-inline-comments.json",
       "title": "ESLint no-inline-comments: Disallow inline comments after code",
       "group": "ESLint",
       "on": false
+    },
+    {
+      "id": "eslint-no-irregular-whitespace",
+      "document": "rules/eslint-no-irregular-whitespace.json",
+      "title": "ESLint no-irregular-whitespace: Disallow irregular whitespace",
+      "group": "ESLint"
     },
     {
       "id": "eslint-no-iterator",
@@ -312,9 +407,36 @@
       "on": false
     },
     {
+      "id": "eslint-no-labels",
+      "document": "rules/eslint-no-labels.json",
+      "title": "ESLint no-labels: Disallow labeled statements",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-lonely-if",
       "document": "rules/eslint-no-lonely-if.json",
       "title": "ESLint no-lonely-if: Disallow `if` statements as the only statement in `else` blocks",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-loss-of-precision",
+      "document": "rules/eslint-no-loss-of-precision.json",
+      "title": "ESLint no-loss-of-precision: Disallow literal numbers that lose precision",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-magic-numbers",
+      "document": "rules/eslint-no-magic-numbers.json",
+      "title": "ESLint no-magic-numbers: Disallow magic numbers",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-multi-assign",
+      "document": "rules/eslint-no-multi-assign.json",
+      "title": "ESLint no-multi-assign: Disallow use of chained assignment expressions",
       "group": "ESLint",
       "on": false
     },
@@ -347,6 +469,13 @@
       "on": false
     },
     {
+      "id": "eslint-no-new-func",
+      "document": "rules/eslint-no-new-func.json",
+      "title": "ESLint no-new-func: Disallow `new` operators with the `Function` object",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-new-wrappers",
       "document": "rules/eslint-no-new-wrappers.json",
       "title": "ESLint no-new-wrappers: Disallow new operators with the String, Number, and Boolean objects",
@@ -357,6 +486,12 @@
       "id": "eslint-no-nonoctal-decimal-escape",
       "document": "rules/eslint-no-nonoctal-decimal-escape.json",
       "title": "ESLint no-nonoctal-decimal-escape: Disallow \\8 and \\9 escape sequences in string literals",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-obj-calls",
+      "document": "rules/eslint-no-obj-calls.json",
+      "title": "ESLint no-obj-calls: Disallow calling global object properties as functions",
       "group": "ESLint"
     },
     {
@@ -394,6 +529,18 @@
       "on": false
     },
     {
+      "id": "eslint-no-prototype-builtins",
+      "document": "rules/eslint-no-prototype-builtins.json",
+      "title": "ESLint no-prototype-builtins: Disallow calling some `Object.prototype` methods directly on objects",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-redeclare",
+      "document": "rules/eslint-no-redeclare.json",
+      "title": "ESLint no-redeclare: Disallow variable redeclaration",
+      "group": "ESLint"
+    },
+    {
       "id": "eslint-no-return-assign",
       "document": "rules/eslint-no-return-assign.json",
       "title": "ESLint no-return-assign: Disallow assignment operators in return statements",
@@ -406,6 +553,12 @@
       "title": "ESLint no-script-url: Disallow javascript: URLs",
       "group": "ESLint",
       "on": false
+    },
+    {
+      "id": "eslint-no-self-assign",
+      "document": "rules/eslint-no-self-assign.json",
+      "title": "ESLint no-self-assign: Disallow assignments where both sides are exactly the same",
+      "group": "ESLint"
     },
     {
       "id": "eslint-no-self-compare",
@@ -483,6 +636,19 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint-no-unsafe-optional-chaining",
+      "document": "rules/eslint-no-unsafe-optional-chaining.json",
+      "title": "ESLint no-unsafe-optional-chaining: Disallow use of optional chaining in contexts where the `undefined` value is not allowed",
+      "group": "ESLint"
+    },
+    {
+      "id": "eslint-no-unused-expressions",
+      "document": "rules/eslint-no-unused-expressions.json",
+      "title": "ESLint no-unused-expressions: Disallow unused expressions",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-unused-labels",
       "document": "rules/eslint-no-unused-labels.json",
       "title": "ESLint no-unused-labels: Disallow unused labels",
@@ -508,9 +674,37 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint-no-useless-computed-key",
+      "document": "rules/eslint-no-useless-computed-key.json",
+      "title": "ESLint no-useless-computed-key: Disallow unnecessary computed property keys in objects and classes",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-no-useless-concat",
       "document": "rules/eslint-no-useless-concat.json",
       "title": "ESLint no-useless-concat: Disallow unnecessary concatenation of literals or template literals",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-useless-constructor",
+      "document": "rules/eslint-no-useless-constructor.json",
+      "title": "ESLint no-useless-constructor: Disallow unnecessary constructors",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-useless-rename",
+      "document": "rules/eslint-no-useless-rename.json",
+      "title": "ESLint no-useless-rename: Disallow renaming import, export, and destructured assignments to the same name",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-no-var",
+      "document": "rules/eslint-no-var.json",
+      "title": "ESLint no-var: Require `let` or `const` instead of `var`",
       "group": "ESLint",
       "on": false
     },
@@ -535,6 +729,13 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint-one-var",
+      "document": "rules/eslint-one-var.json",
+      "title": "ESLint one-var: Enforce variables to be declared either together or separately in functions",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-operator-assignment",
       "document": "rules/eslint-operator-assignment.json",
       "title": "ESLint operator-assignment: Require or disallow assignment operator shorthand where possible",
@@ -542,9 +743,30 @@
       "on": false
     },
     {
+      "id": "eslint-prefer-destructuring",
+      "document": "rules/eslint-prefer-destructuring.json",
+      "title": "ESLint prefer-destructuring: Require destructuring from arrays and/or objects",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-prefer-exponentiation-operator",
+      "document": "rules/eslint-prefer-exponentiation-operator.json",
+      "title": "ESLint prefer-exponentiation-operator: Disallow the use of `Math.pow` in favor of the `**` operator",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-prefer-numeric-literals",
       "document": "rules/eslint-prefer-numeric-literals.json",
       "title": "ESLint prefer-numeric-literals: Disallow parseInt() and Number.parseInt() in favor of binary, octal, and hexadecimal literals",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-prefer-object-has-own",
+      "document": "rules/eslint-prefer-object-has-own.json",
+      "title": "ESLint prefer-object-has-own: Disallow use of `Object.prototype.hasOwnProperty.call()` and prefer use of `Object.hasOwn()`",
       "group": "ESLint",
       "on": false
     },
@@ -570,6 +792,19 @@
       "on": false
     },
     {
+      "id": "eslint-require-await",
+      "document": "rules/eslint-require-await.json",
+      "title": "ESLint require-await: Disallow async functions which have no `await` expression",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-require-yield",
+      "document": "rules/eslint-require-yield.json",
+      "title": "ESLint require-yield: Require generator functions to contain `yield`",
+      "group": "ESLint"
+    },
+    {
       "id": "eslint-sort-imports",
       "document": "rules/eslint-sort-imports.json",
       "title": "ESLint sort-imports: Enforce sorted import declarations within modules",
@@ -591,6 +826,20 @@
       "on": false
     },
     {
+      "id": "eslint-strict",
+      "document": "rules/eslint-strict.json",
+      "title": "ESLint strict: Require or disallow strict mode directives",
+      "group": "ESLint",
+      "on": false
+    },
+    {
+      "id": "eslint-symbol-description",
+      "document": "rules/eslint-symbol-description.json",
+      "title": "ESLint symbol-description: Require symbol descriptions",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-use-isnan",
       "document": "rules/eslint-use-isnan.json",
       "title": "ESLint use-isnan: Require calls to isNaN() when checking for NaN",
@@ -603,11 +852,36 @@
       "group": "ESLint"
     },
     {
+      "id": "eslint-vars-on-top",
+      "document": "rules/eslint-vars-on-top.json",
+      "title": "ESLint vars-on-top: Require `var` declarations be placed at the top of their containing scope",
+      "group": "ESLint",
+      "on": false
+    },
+    {
       "id": "eslint-yoda",
       "document": "rules/eslint-yoda.json",
       "title": "ESLint yoda: Require or disallow \"Yoda\" conditions",
       "group": "ESLint",
       "on": false
+    },
+    {
+      "id": "unicorn-filename-case",
+      "document": "rules/unicorn-filename-case.json",
+      "title": "eslint-plugin-unicorn filename-case: Enforce a case style for filenames and directory names.",
+      "group": "eslint-plugin-unicorn"
+    },
+    {
+      "id": "unicorn-no-null",
+      "document": "rules/unicorn-no-null.json",
+      "title": "eslint-plugin-unicorn no-null: Disallow the use of the `null` literal.",
+      "group": "eslint-plugin-unicorn"
+    },
+    {
+      "id": "unicorn-prefer-node-protocol",
+      "document": "rules/unicorn-prefer-node-protocol.json",
+      "title": "eslint-plugin-unicorn prefer-node-protocol: Prefer using the `node:` protocol when importing Node.js builtin modules.",
+      "group": "eslint-plugin-unicorn"
     }
   ]
 }
