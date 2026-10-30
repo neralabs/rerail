@@ -1,1 +1,0 @@
-(class { static ['__proto__']() {} })

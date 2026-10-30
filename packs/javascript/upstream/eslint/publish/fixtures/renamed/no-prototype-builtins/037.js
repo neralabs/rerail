@@ -1,1 +1,0 @@
-gkd?.hasOwnProperty('bar')

@@ -1,1 +1,0 @@
-class J { set j(riu) { try { return 1; } catch(n) {} } }

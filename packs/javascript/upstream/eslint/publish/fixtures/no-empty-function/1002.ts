@@ -1,1 +1,0 @@
-class A extends B { @decorator() override foo() {} } // allow: overrideMethods

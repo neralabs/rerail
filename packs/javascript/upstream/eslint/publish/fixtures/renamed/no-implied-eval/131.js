@@ -1,1 +1,0 @@
-setTimeout(`foo` + dst)

@@ -1,1 +1,0 @@
-swx.p = document.body;

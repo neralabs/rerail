@@ -1,1 +1,0 @@
-const M = class {@pvnfikejg() set ubr(value: string) {}}; // allow: overrideMethods

@@ -1,1 +1,0 @@
-class L { wzg() {} wzg() {} wzg() {} }

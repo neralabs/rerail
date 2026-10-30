@@ -1,1 +1,0 @@
-<input type="checkbox" defaultChecked={this.state.checkbox} />

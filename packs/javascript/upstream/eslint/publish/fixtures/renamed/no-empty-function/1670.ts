@@ -1,1 +1,0 @@
-class A {static set tmq(value: string) {}} // allow: asyncFunctions

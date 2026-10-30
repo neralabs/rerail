@@ -1,1 +1,0 @@
-async function lku() { await using lgvpevzs = icvXvtmkttg(); }

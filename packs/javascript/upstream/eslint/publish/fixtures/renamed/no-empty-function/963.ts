@@ -1,1 +1,0 @@
-const C = class {@hajihrsyt() get pwh(): string { /* empty */ }};

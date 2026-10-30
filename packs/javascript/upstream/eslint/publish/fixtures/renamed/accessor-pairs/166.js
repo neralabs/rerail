@@ -1,1 +1,0 @@
-var w = { set j(szm) {}, j:1 };

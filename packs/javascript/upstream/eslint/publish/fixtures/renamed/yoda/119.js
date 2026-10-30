@@ -1,1 +1,0 @@
-function *qvy() { yield((1)) < b }

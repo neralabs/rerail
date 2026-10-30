@@ -1,1 +1,0 @@
-const lde = {fkd: function(vubxe: string) {}}; // allow: setters

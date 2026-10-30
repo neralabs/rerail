@@ -1,1 +1,0 @@
-new L(ljx, Math.pow(c, j), jdu)

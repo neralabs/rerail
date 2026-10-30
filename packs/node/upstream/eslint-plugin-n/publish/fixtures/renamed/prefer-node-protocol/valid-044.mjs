@@ -1,1 +1,0 @@
-const fc = process.getNotBuiltinModule("eslint-plugin-n");

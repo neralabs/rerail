@@ -1,1 +1,0 @@
-type WwszcNkwf2 = string | number | void;

@@ -1,1 +1,0 @@
-class M { private qav() {} } // allow: getters

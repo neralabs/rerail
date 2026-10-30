@@ -1,1 +1,0 @@
-/*global k:false*/ function u() { k++; }

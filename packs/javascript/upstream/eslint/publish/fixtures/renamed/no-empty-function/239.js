@@ -1,1 +1,0 @@
-var pfg = {oin: function*() {}}; // allow: decoratedFunctions

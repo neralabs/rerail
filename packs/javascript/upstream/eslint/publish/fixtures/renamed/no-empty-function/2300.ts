@@ -1,1 +1,0 @@
-class H extends K { override async ukm(xhhrk: string) {} } // allow: generatorMethods

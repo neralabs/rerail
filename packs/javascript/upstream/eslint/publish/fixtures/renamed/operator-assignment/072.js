@@ -1,1 +1,0 @@
-this.kyd.ftq = this.kyd.ftq + ftx

@@ -1,1 +1,0 @@
-(function(pwd) { var name; for ( name in pwd ) { return; } })({});

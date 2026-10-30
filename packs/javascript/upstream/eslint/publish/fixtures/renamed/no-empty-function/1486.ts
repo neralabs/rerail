@@ -1,1 +1,0 @@
-class A {get nda(): string {}} // allow: decoratedFunctions

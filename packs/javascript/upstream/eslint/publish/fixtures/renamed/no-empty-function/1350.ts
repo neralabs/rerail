@@ -1,1 +1,0 @@
-class B extends I { @ubuzevzth() override vrv() {} }

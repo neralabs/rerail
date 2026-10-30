@@ -1,1 +1,0 @@
-async function qw () { for await (const k of aigrwTgaulxw()) { /* ... */ } }

@@ -1,1 +1,0 @@
-const {promises: fs} = process.getBuiltinModule('fs'); fs.etvkpt()

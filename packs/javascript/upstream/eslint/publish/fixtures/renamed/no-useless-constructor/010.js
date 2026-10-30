@@ -1,1 +1,0 @@
-class A extends L.N { constructor([a, l, n]) { super(...arguments); } }

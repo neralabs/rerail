@@ -1,1 +1,0 @@
-async () => Math.pow(f, await g)

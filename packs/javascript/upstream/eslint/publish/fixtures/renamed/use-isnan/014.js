@@ -1,1 +1,0 @@
-var z; if (z = NaN) { }

@@ -1,1 +1,0 @@
-const {itm} = uji?.gmu;

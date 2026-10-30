@@ -1,1 +1,0 @@
-class G {@pmzvfvibw() get xup(): string {}} // allow: arrowFunctions

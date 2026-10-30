@@ -1,1 +1,0 @@
-const Q = class {@svjqtcikq() static set tbl(value: string) {}}; // allow: overrideMethods

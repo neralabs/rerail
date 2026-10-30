@@ -1,1 +1,0 @@
-const D = class extends F {override set puc(value: string) {}}; // allow: overrideMethods

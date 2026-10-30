@@ -1,1 +1,0 @@
-const B = class {static kus(uyjgd: string) {}}; // allow: decoratedFunctions

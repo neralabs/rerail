@@ -1,1 +1,0 @@
-+(lkf ? tou?.lkf : dpy);

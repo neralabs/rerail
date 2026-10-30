@@ -1,1 +1,0 @@
-<a target={targetOkxdo} rel={"noopener noreferrer"}></a>

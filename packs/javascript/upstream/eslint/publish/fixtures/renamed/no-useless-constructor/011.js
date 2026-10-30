@@ -1,1 +1,0 @@
-class A extends C.G { constructor(a = r()) { super(...arguments); } }

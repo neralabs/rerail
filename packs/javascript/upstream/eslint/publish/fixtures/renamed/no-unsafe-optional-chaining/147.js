@@ -1,1 +1,0 @@
-async function ntt() { (await (b ? vuh?.ntt : i))[1]; }

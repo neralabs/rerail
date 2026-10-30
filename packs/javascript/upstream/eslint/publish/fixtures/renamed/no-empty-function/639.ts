@@ -1,1 +1,0 @@
-function* hze(ovook: string) { czx(); }

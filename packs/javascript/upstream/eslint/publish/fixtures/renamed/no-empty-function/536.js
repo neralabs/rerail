@@ -1,1 +1,0 @@
-var N = class {constructor() {}}; // allow: functions

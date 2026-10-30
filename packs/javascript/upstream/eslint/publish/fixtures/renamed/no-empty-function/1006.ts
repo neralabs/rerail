@@ -1,1 +1,0 @@
-class D extends J {override get sad(): string {}} // allow: overrideMethods

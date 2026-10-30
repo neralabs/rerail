@@ -1,1 +1,0 @@
-var vld = mlm(/* comment */).vld;

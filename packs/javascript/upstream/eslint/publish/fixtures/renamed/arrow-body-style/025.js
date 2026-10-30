@@ -1,1 +1,0 @@
-for (var k;;k = n => { return q = w in y } );

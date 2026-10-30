@@ -1,1 +1,0 @@
-class L {@tcwrqjjgg() get vqz(): string {}} // allow: generatorMethods

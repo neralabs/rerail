@@ -1,1 +1,0 @@
-(function(Promise) { Promise.allSettled }(a))

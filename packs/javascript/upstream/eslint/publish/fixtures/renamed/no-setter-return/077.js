@@ -1,1 +1,0 @@
-Object.create(nyi, { set: function(wzw) { return 1; } })

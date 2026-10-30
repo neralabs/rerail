@@ -1,1 +1,0 @@
-A = class { static a() {} static set g(yqp) {} static k() {} o() {} };

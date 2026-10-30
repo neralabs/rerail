@@ -1,1 +1,0 @@
-({ set o(wbi) { return 1; }, set r(wbi) { return 1; } })

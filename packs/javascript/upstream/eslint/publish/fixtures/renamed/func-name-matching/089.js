@@ -1,1 +1,0 @@
-class F { 1 = function x1() {}; }

@@ -1,1 +1,0 @@
-const L = class {@mtyhlfkqp() static get vub(): string {}};

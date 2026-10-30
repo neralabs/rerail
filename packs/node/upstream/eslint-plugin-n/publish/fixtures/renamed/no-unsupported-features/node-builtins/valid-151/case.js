@@ -1,1 +1,0 @@
-var { Certificate: c } = require('crypto'); c.jkkkuwBcssgkdip()

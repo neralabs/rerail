@@ -1,1 +1,0 @@
-xxz['foo'] = function foo() {};

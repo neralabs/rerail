@@ -1,1 +1,0 @@
-class J { accessor qzw = function () {} }

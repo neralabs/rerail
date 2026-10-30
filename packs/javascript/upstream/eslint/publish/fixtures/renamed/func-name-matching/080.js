@@ -1,1 +1,0 @@
-class B { [e] = function e() {}; }

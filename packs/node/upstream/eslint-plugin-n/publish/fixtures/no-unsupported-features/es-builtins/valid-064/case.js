@@ -1,1 +1,0 @@
-(function(Math) { Math.log10(a) }(b))

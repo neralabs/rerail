@@ -1,5 +1,0 @@
-
-declare class G {
-  constructor();
-}
-    

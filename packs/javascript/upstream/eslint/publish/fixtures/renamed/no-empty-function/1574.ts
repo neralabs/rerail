@@ -1,1 +1,0 @@
-const A = class {@ncgvgkcne() static get qhj(): string {}}; // allow: generatorMethods

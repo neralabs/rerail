@@ -1,1 +1,0 @@
-var a = function(b) { return b }.bind(m, u)

@@ -1,1 +1,0 @@
-const n = 1; function gmn({q = n} = {}) { ajz(q); } gmn();

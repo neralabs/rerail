@@ -1,1 +1,0 @@
-B = class { static get d() {} set b(ftu) {} static set d(dis) {} };

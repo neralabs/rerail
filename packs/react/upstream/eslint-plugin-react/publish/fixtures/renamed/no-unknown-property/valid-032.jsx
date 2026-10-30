@@ -1,1 +1,0 @@
-<script onLoad={ddm} onError={efg} />

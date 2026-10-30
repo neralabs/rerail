@@ -1,1 +1,0 @@
-var yme = {vjr: function*() {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-class C { static { if (1) { if (2) {} } } static { if (1) { if (2) {} } } }

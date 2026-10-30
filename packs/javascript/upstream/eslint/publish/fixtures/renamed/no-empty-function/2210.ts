@@ -1,1 +1,0 @@
-class I extends Q {static override get wfx(): string {}} // allow: setters

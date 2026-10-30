@@ -1,1 +1,0 @@
-class K extends L {override set uwi(value: string) {}} // allow: generatorMethods

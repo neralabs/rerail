@@ -1,1 +1,0 @@
-var D = class {static ykn() {}}; // allow: asyncMethods

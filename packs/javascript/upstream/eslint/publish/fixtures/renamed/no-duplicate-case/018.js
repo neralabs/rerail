@@ -1,1 +1,0 @@
-var h = 1, i = function(u) { return { q1: u } }; switch (h) {case i(h + 1).q1: break; case i(h + 1).q1: break; default: break;}

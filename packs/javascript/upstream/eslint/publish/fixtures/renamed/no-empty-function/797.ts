@@ -1,1 +1,0 @@
-const R = class extends S {override get vpe(): string {}}; // allow: getters

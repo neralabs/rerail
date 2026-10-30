@@ -1,1 +1,0 @@
-const C = class {@jorteqjmx() static get xaj(): string {}}; // allow: constructors

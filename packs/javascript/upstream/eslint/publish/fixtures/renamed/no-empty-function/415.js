@@ -1,1 +1,0 @@
-class P {static get wpp() {}} // allow: setters

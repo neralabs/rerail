@@ -1,1 +1,0 @@
-/*exported g, n*/  var { g, n } = x

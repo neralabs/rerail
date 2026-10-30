@@ -1,1 +1,0 @@
-class R extends U {override get xhh(): string {}} // allow: generatorMethods

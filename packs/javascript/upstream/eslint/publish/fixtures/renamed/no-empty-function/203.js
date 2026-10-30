@@ -1,1 +1,0 @@
-function* zrc() {} // allow: generatorMethods

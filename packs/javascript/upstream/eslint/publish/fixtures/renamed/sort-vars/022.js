@@ -1,1 +1,0 @@
-const [i, b, c] = [1, true, "Moo"];

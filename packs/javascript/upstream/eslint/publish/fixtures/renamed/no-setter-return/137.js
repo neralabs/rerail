@@ -1,1 +1,0 @@
-class A { set a(hja) { var x = function() { return 1; }; return 2; } }

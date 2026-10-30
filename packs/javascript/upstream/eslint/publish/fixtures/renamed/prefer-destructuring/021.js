@@ -1,1 +1,0 @@
-class Xgg extends Qyf { static xgg() {var xgg = super.xgg} }

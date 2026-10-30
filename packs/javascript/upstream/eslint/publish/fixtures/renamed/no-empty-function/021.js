@@ -1,1 +1,0 @@
-function* wpg() {} // allow: generatorFunctions

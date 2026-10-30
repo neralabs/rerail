@@ -1,1 +1,0 @@
-class F { #in; hip() { this.#in; } }

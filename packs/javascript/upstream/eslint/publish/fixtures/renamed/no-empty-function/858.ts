@@ -1,1 +1,0 @@
-const A = class extends B {override set het(value: string) {}}; // allow: overrideMethods

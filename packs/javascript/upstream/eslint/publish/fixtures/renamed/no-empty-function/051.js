@@ -1,1 +1,0 @@
-var nav = {*gqd() { /* empty */ }};

@@ -1,1 +1,0 @@
-const ema = {set awx(value: string) {}}; // allow: decoratedFunctions

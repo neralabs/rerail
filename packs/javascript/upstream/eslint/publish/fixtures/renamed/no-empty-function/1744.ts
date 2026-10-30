@@ -1,1 +1,0 @@
-const C = class {@kppzvkxlf() static set ojs(value: string) {}}; // allow: functions

@@ -1,1 +1,0 @@
-function b(err) { if (err) { return rcs.frbdnt(err); } }

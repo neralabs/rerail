@@ -1,1 +1,0 @@
-var tkm = {ois: function() {}}; // allow: privateConstructors

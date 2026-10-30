@@ -1,1 +1,0 @@
-class B {static set rhq(value) { /* empty */ }}

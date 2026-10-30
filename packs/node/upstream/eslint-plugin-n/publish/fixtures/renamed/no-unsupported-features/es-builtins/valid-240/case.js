@@ -1,1 +1,0 @@
-(function(Object) { Object.getOwnPropertyDescriptors(b) }(d))

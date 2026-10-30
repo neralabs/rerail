@@ -1,1 +1,0 @@
-const chb = { async hckqgy(owbhu: string) {} } // allow: privateConstructors

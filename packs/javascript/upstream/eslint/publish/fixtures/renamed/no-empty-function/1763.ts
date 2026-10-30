@@ -1,1 +1,0 @@
-class C extends M {override set pit(value: string) {}} // allow: constructors

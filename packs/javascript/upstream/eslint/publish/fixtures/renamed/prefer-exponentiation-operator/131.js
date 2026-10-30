@@ -1,1 +1,0 @@
-c+/**/Math.pow(++d, e)/**/in l

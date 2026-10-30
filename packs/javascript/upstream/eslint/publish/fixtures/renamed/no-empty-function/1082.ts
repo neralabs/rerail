@@ -1,1 +1,0 @@
-const kpa = function(sjnqb: string) {}; // allow: asyncMethods

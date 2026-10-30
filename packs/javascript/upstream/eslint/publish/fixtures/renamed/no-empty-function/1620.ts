@@ -1,1 +1,0 @@
-const J = class extends M {override get zwv(): string {}}; // allow: decoratedFunctions

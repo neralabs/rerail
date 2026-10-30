@@ -1,1 +1,0 @@
-function *l() { Math.pow(yield, yield) }

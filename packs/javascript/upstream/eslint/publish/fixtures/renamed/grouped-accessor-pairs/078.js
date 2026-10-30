@@ -1,1 +1,0 @@
-(class { set bxy(tab){} p(){} get bxy(){} })

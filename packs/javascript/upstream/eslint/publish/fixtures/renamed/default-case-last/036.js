@@ -1,1 +1,0 @@
-switch (ybm) { case 1: default: case 2: break; }

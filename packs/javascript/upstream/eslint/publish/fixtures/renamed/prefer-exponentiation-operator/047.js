@@ -1,1 +1,0 @@
-typeof Math.pow(e, g)

@@ -1,1 +1,0 @@
-if (azt) { const Intl = 1; Intl(); }

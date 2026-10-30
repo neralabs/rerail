@@ -1,1 +1,0 @@
-class Rli { async ooz() {} } // allow: getters

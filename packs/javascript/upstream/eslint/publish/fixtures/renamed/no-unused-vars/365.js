@@ -1,1 +1,0 @@
-const [[[{u}], a]] = asxps; alert(a);

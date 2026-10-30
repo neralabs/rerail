@@ -1,1 +1,0 @@
-function foo(this: unknown[], a, b, c) {}

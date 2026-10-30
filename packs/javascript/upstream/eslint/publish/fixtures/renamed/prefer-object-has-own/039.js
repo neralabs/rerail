@@ -1,1 +1,0 @@
-(Object) => Object.prototype.hasOwnProperty.call(obj, prob)

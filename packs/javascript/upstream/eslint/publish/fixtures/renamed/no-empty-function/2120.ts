@@ -1,1 +1,0 @@
-class B {@kosknheiq() set qeq(value: string) {}} // allow: getters

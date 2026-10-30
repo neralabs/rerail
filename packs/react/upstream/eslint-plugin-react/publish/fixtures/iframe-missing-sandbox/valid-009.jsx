@@ -1,1 +1,0 @@
-<iframe sandbox="allow-orientation-lock"></iframe>

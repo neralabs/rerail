@@ -1,1 +1,0 @@
-const { ghcta = 123 } = ibeieyIuljfa;

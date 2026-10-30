@@ -1,1 +1,0 @@
-const fs = process.getNotBuiltinModule("node:fs", amkpe);

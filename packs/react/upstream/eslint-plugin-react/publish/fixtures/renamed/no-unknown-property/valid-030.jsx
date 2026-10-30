@@ -1,1 +1,0 @@
-<picture inert={false} onError={hnn} onLoad={ern} />

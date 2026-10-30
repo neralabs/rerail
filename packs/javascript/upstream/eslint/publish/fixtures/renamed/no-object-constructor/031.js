@@ -1,1 +1,0 @@
-if (k) Object();

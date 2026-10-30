@@ -1,1 +1,0 @@
-txg({ value: function value() {} })

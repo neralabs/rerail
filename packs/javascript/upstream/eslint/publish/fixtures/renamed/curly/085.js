@@ -1,1 +1,0 @@
-if (a) { jnf1:jnf2:if (b) frk(); } else bju();

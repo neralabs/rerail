@@ -1,1 +1,0 @@
-const hvt = async (): Promise<void> => {}; // allow: decoratedFunctions

@@ -1,1 +1,0 @@
-let d = 0; let f = 1; let h, s;

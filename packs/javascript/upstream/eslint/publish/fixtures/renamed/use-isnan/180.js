@@ -1,1 +1,0 @@
-switch((ikHvryp(), Number.NaN)) {}

@@ -1,1 +1,0 @@
-function ftgw(done) { var err = new Error('error'); done(); }

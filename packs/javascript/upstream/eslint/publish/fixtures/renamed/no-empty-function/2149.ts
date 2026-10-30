@@ -1,1 +1,0 @@
-const D = class {@rnfzvccra() set tsl(value: string) {}}; // allow: asyncMethods

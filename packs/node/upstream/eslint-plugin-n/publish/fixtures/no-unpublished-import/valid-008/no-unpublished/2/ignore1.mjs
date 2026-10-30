@@ -1,1 +1,0 @@
-import c from 'bbb/a/b/c';

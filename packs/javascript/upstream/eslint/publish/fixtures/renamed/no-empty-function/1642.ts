@@ -1,1 +1,0 @@
-const mtn = {set lli(value: string) {}}; // allow: asyncFunctions

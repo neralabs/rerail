@@ -1,1 +1,0 @@
-function xmos() { Uint8Array }

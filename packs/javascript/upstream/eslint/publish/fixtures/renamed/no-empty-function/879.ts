@@ -1,1 +1,0 @@
-const J = class {constructor(ozprw: string) { /* empty */ }};

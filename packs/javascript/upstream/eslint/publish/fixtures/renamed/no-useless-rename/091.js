@@ -1,1 +1,0 @@
-const {ocu: ocu, bom: boo, ...vljqn} = trPflsxz;

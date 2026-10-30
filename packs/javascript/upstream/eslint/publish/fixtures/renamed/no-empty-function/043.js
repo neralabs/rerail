@@ -1,1 +1,0 @@
-var T = class {zwq() { /* empty */ }};

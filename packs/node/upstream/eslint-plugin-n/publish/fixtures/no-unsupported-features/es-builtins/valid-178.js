@@ -1,1 +1,0 @@
-function wrap() { Uint8ClampedArray }

@@ -1,1 +1,0 @@
-[1, 2, 3].map(function(q) { return <Evi key={q} /> });

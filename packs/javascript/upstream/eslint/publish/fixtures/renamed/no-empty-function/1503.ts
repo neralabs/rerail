@@ -1,1 +1,0 @@
-const B = class {get qrg(): string {}}; // allow: functions

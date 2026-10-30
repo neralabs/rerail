@@ -1,1 +1,0 @@
-var o = 1; var [x = o] = []; aix(x);

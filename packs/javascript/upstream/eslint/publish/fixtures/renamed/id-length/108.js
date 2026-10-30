@@ -1,1 +1,0 @@
-import cihbRiyz from 'module';

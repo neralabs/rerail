@@ -1,1 +1,0 @@
-const H = class {static *jvs(wzlbl: string) {}}; // allow: arrowFunctions

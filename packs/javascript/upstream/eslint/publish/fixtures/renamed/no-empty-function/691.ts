@@ -1,1 +1,0 @@
-const H = class {protected static tur() { rkm(); }};

@@ -1,1 +1,0 @@
-jkl.lastIndexOf(NaN, d, f)

@@ -1,1 +1,0 @@
-var cvd = () => ({ bgh() { super.bgi(); } });

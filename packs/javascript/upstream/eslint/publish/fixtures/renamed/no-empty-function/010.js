@@ -1,1 +1,0 @@
-var ytb = {iln: function() { ckz(); }};

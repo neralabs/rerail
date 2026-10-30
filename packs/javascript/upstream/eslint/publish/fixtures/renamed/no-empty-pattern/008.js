@@ -1,1 +1,0 @@
-var xkg = function({}) {}

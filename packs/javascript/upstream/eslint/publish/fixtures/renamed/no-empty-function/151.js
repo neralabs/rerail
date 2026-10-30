@@ -1,1 +1,0 @@
-function jjg() {} // allow: asyncFunctions

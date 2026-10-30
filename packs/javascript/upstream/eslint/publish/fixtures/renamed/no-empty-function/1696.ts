@@ -1,1 +1,0 @@
-const F = class {static set ocx(value: string) {}}; // allow: getters

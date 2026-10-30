@@ -1,1 +1,0 @@
-class O { get o(){} set o(zgj){} static get p(){} static set p(puq){} }

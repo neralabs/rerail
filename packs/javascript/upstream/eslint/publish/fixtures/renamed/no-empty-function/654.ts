@@ -1,1 +1,0 @@
-const ehu = {dtn(flcky: string) {}}; // allow: methods

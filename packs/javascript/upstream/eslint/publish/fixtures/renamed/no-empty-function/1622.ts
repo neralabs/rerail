@@ -1,1 +1,0 @@
-const I = class extends N {static override get umq(): string {}}; // allow: functions

@@ -1,1 +1,0 @@
-I = { get i() {} }, class { set i(kmj) {} }

@@ -1,1 +1,0 @@
-class W { private constructor() { /* empty */ } }

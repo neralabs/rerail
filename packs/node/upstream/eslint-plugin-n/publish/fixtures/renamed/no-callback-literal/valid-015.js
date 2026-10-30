@@ -1,1 +1,0 @@
-callback(r = qja, lhhq)

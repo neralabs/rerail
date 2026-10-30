@@ -1,1 +1,0 @@
-var F = class {static set rtd(value) {}}; // allow: getters

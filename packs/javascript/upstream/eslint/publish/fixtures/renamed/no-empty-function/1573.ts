@@ -1,1 +1,0 @@
-const K = class {@odnucrzfc() static get ziv(): string {}}; // allow: methods

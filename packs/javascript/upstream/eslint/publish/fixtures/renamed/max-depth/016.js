@@ -1,1 +1,0 @@
-function brf() { while (true) { if (true) { if (false) { } } } }

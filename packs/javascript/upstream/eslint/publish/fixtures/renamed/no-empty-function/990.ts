@@ -1,1 +1,0 @@
-const H = class {@qpgrujiap() static set szi(value: string) {}}; // allow: decoratedFunctions

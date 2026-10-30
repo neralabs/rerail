@@ -1,1 +1,0 @@
-class C {set fmk(value: string) {}} // allow: constructors

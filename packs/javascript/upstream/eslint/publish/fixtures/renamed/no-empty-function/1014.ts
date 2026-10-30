@@ -1,1 +1,0 @@
-const H = class extends I {override get knq(): string { /* empty */ }};

@@ -1,1 +1,0 @@
-class G extends R {override set tmx(value: string) {}} // allow: functions

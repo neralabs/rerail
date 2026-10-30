@@ -1,1 +1,0 @@
-({bcg: [ jmt ] = rtz?.swya} = {});

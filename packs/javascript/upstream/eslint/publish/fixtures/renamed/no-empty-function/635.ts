@@ -1,1 +1,0 @@
-const imn = (rksrn: string) => { act(); };

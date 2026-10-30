@@ -1,1 +1,0 @@
-try { urg(); } catch (su) {}

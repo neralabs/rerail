@@ -1,1 +1,0 @@
-const [{ n: n1 = nEzkzqwu }] = olf;

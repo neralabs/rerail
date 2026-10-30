@@ -1,1 +1,0 @@
-class O { static { function k(){} } static { k; } }

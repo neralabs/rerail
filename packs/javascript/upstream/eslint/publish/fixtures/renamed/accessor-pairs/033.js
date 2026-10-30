@@ -1,1 +1,0 @@
-var u = { get [k(j)]() {}, set [k(j)](kxx) {} };

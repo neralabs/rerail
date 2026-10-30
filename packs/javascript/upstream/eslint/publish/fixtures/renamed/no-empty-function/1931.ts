@@ -1,1 +1,0 @@
-class D { async jqm(qgmhb: string) {} } // allow: functions

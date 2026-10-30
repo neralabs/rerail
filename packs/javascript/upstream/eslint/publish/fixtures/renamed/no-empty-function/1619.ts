@@ -1,1 +1,0 @@
-const I = class extends J {override get lwx(): string {}}; // allow: protectedConstructors

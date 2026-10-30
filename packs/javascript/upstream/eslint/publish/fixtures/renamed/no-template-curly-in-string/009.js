@@ -1,1 +1,0 @@
-`Hello, ${{egb: "bar"}.egb}`

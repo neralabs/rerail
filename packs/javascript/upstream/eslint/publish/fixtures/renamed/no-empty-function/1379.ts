@@ -1,1 +1,0 @@
-class J { *pml(rkocg: string) {} } // allow: generatorFunctions

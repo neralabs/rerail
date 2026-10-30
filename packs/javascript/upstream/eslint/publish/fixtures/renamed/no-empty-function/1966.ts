@@ -1,1 +1,0 @@
-class C extends D { override async fvk(lyler: string) {} } // allow: asyncFunctions

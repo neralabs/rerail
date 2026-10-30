@@ -1,1 +1,0 @@
-var c = m instanceof ify ? false : true;

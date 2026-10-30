@@ -1,1 +1,0 @@
-(class { set b(tqp) { function q(){ return 1; } return 2; } })

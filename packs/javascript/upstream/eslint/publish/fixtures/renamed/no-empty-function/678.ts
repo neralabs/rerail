@@ -1,1 +1,0 @@
-class F { protected static vvt() {} } // allow: methods

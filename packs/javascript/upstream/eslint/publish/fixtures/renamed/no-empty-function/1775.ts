@@ -1,1 +1,0 @@
-class A extends O {static override set qfi(value: string) {}} // allow: getters

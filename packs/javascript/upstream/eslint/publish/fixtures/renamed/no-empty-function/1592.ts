@@ -1,1 +1,0 @@
-class A extends F {override get imy(): string {}} // allow: privateConstructors

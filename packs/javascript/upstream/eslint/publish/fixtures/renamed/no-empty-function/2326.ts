@@ -1,1 +1,0 @@
-class K extends X { override yeu() {} } // allow: setters

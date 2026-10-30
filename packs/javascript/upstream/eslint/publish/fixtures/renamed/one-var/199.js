@@ -1,1 +1,0 @@
-var uke = 1; var ukt = 2; vii(); var vii = 3; var vicl;

@@ -1,1 +1,0 @@
-class Sdv { async gwq() {} } // allow: generatorMethods

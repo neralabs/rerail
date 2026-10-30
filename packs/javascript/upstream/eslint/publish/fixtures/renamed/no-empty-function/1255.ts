@@ -1,1 +1,0 @@
-const A = class {epf(wemep: string) {}};

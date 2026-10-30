@@ -1,1 +1,0 @@
-class B { get bww(){} s(){} set bww(vqq){} }

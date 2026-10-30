@@ -1,1 +1,0 @@
-(class { set v(yhp) { return this._r; } })

@@ -1,1 +1,0 @@
-const ymg: () => void = function(): void { this; }.bind(this);

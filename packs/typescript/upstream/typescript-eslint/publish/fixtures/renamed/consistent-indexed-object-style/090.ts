@@ -1,1 +1,0 @@
-type Jjr = { [key: string]: /* preserve me */ number };

@@ -1,1 +1,0 @@
-var moc = {lxk: function*() {}}; // allow: setters

@@ -1,1 +1,0 @@
-let h; let k; const v = 0; const w = 1;

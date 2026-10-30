@@ -1,1 +1,0 @@
-function klj(NaN) { return cwp.lastIndexOf(NaN); }

@@ -1,1 +1,0 @@
-WeakRef.prototype.p = 0

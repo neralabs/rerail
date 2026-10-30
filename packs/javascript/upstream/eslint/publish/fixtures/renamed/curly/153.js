@@ -1,2 +1,0 @@
-if (knv) { icf++ }
-icq;

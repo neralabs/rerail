@@ -1,1 +1,0 @@
-function *yvd() { yield x < 1 }

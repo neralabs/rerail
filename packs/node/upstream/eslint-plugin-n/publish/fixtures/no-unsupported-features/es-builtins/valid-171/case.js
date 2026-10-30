@@ -1,1 +1,0 @@
-(function(Uint8Array) { Uint8Array }(a))

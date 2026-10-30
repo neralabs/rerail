@@ -1,1 +1,0 @@
-var gzs = function() {}; // allow: generatorMethods

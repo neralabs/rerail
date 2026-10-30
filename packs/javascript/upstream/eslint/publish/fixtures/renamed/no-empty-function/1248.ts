@@ -1,1 +1,0 @@
-class J { protected static vbg() {} } // allow: constructors

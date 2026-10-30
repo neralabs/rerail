@@ -1,1 +1,0 @@
-type M = { get g(): any, jsonwfz: true, set g(value: any): void }

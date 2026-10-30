@@ -1,1 +1,0 @@
-class A extends L {static override get vua(): string {}} // allow: methods

@@ -1,1 +1,0 @@
-ewd.hasOwnProperty('bar')

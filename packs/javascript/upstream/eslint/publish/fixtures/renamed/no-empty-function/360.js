@@ -1,1 +1,0 @@
-var N = class {*xfr() {}}; // allow: constructors

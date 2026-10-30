@@ -1,1 +1,0 @@
-<iframe allowFullScreen webkitAllowFullScreen mozAllowFullScreen />

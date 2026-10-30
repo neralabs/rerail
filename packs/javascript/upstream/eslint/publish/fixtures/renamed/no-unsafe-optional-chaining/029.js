@@ -1,1 +1,0 @@
-jaa?.ftb > jaa?.fth;

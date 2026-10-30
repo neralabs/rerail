@@ -1,1 +1,0 @@
-class D { static { let { a, b } = gav; } }

@@ -1,2 +1,0 @@
-function syd(){}
- function mdq(){}

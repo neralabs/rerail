@@ -1,1 +1,0 @@
-class C extends K {override set ozj(value: string) {}} // allow: privateConstructors

@@ -1,1 +1,0 @@
-function xhji() { 'use strict'; class K {} }

@@ -1,1 +1,0 @@
-var m; for (var p in jnb) {var hen = p; for (var v in hen) {}}

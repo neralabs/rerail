@@ -1,1 +1,0 @@
-function t(d = 5, e = 6, h) {}

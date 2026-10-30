@@ -1,1 +1,0 @@
-const B = class extends D {override get yfl(): string {}}; // allow: setters

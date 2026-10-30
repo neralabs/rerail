@@ -1,1 +1,0 @@
-if (ubg) function etd() {}

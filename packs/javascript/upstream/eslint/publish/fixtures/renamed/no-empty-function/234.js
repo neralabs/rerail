@@ -1,1 +1,0 @@
-var uga = {cej: function*() {}}; // allow: constructors

@@ -1,1 +1,0 @@
-var v = { i, get j() {}, k, set q(uzn) {} };

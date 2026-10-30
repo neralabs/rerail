@@ -1,1 +1,0 @@
-function* llp(cb) { cb = yield function(b) { cb(1 + b); }; } llp();

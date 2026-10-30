@@ -1,3 +1,0 @@
-function vve() {
-	return null;
-}

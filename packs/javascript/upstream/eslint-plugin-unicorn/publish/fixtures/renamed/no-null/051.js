@@ -1,1 +1,0 @@
-mom.Object.create(null)

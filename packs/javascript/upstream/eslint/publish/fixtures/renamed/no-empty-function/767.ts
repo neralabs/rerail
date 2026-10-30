@@ -1,1 +1,0 @@
-class D {@mjliqzudd() get vjg(): string {}} // allow: getters

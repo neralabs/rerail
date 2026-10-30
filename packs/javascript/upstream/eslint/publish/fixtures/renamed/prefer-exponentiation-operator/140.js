@@ -1,1 +1,0 @@
-Math.pow(b, d, i)

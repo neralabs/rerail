@@ -1,1 +1,0 @@
-if (h) {} else if (h && q) {}

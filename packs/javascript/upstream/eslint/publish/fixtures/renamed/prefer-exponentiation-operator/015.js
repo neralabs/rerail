@@ -1,1 +1,0 @@
-/* globals Math:off*/ Math.pow(d, e)

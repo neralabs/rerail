@@ -1,1 +1,0 @@
-function foo(){return({}.hasOwnProperty.call)(object, property)}

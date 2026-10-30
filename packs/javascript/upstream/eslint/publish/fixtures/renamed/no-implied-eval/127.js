@@ -1,1 +1,0 @@
-window.window.setTimeout(`foo${egx}`)

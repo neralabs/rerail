@@ -1,1 +1,0 @@
-const oy = require("eslint")

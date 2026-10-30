@@ -1,1 +1,0 @@
-const A = class {@pvoxexmby() get ufd(): string { gsv(); }};

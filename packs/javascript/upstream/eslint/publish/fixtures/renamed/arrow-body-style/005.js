@@ -1,3 +1,0 @@
-var blm = () => {
- /* do nothing */ 
-};

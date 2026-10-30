@@ -1,1 +1,0 @@
-var rvc = { gbh:10 }

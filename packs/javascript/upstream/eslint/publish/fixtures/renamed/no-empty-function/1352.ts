@@ -1,1 +1,0 @@
-class A extends F { @gluwcndpb() override may() {} } // allow: arrowFunctions

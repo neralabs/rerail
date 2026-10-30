@@ -1,1 +1,0 @@
-const K = class {static *lug(pbcmt: string) {}}; // allow: generatorFunctions

@@ -1,5 +1,0 @@
-
-class qwr {
-  nwv;
-}
-    

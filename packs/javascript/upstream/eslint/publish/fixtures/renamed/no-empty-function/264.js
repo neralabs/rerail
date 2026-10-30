@@ -1,1 +1,0 @@
-class A {ltt() {}} // allow: asyncMethods

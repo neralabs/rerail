@@ -1,1 +1,0 @@
-var L = class {static get vxe() {}}; // allow: constructors

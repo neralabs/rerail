@@ -1,1 +1,0 @@
-interface G { get rumf(): any }

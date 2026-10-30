@@ -1,1 +1,0 @@
-class G {set olw(value: string) {}} // allow: functions

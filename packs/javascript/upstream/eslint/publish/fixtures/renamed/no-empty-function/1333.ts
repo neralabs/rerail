@@ -1,1 +1,0 @@
-const D = class { @myvmgomjq() qyb() {} } // allow: asyncMethods

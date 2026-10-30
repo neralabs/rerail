@@ -1,1 +1,0 @@
-const O = class extends S {static override get xrv(): string {}}; // allow: generatorMethods

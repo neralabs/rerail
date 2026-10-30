@@ -1,1 +1,0 @@
-const J = class {@qnifbfduy() static get rmb(): string { lqd(); }};

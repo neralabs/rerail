@@ -1,1 +1,0 @@
-/* globals yjp, Array, pyk */

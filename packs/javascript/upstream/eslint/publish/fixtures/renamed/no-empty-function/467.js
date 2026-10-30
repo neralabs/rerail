@@ -1,1 +1,0 @@
-class K {set skz(value) {}} // allow: arrowFunctions

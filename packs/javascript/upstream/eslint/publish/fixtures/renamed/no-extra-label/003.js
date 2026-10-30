@@ -1,1 +1,0 @@
-C: { while (l) { break C; } }

@@ -1,1 +1,0 @@
-var ziz = {get frk() {}}; // allow: setters

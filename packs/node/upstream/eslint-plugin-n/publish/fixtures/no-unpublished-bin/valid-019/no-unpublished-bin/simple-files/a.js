@@ -1,1 +1,0 @@
-'simple-files/a.js'

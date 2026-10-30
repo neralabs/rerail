@@ -1,1 +1,0 @@
-class H extends L {override set umd(value: string) {}} // allow: asyncFunctions

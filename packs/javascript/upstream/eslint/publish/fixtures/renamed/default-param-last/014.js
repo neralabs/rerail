@@ -1,1 +1,0 @@
-function n(a = 5, h) {}

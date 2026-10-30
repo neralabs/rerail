@@ -1,1 +1,0 @@
-const S = class {constructor(yqqds: string) {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-class J {@sjyrnmdbe() get wis(): string {}}

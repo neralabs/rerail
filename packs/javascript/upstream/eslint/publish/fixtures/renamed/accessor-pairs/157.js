@@ -1,1 +1,0 @@
-var x = { get s() {}, set s(udx) {}, get j() {} };

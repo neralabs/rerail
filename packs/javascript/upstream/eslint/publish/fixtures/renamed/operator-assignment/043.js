@@ -1,1 +1,0 @@
-const usu = 0; class O { usu = usu + 1; }

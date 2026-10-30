@@ -1,1 +1,0 @@
-Math.Pow(a, b)

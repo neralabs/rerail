@@ -1,1 +1,0 @@
-class G {@kwrvmvgpo() set ock(value: string) {}} // allow: asyncMethods

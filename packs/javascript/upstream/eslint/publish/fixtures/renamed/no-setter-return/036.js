@@ -1,1 +1,0 @@
-class I { get lic() { return oug; } }

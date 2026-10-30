@@ -1,1 +1,0 @@
-for (foo in bar) { class Baz {} }

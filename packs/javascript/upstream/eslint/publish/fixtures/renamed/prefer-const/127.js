@@ -1,1 +1,0 @@
-class L { static { let a, f; ({ a, f } = uhv); } }

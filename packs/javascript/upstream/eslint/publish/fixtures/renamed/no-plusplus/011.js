@@ -1,1 +1,0 @@
-var ntk = 0; ntk++;

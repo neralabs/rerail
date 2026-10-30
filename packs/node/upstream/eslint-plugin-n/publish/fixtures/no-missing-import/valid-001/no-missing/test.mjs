@@ -1,1 +1,0 @@
-import eslint from 'eslint';

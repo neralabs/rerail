@@ -1,1 +1,0 @@
-var hooks = require('stream'); hooks.finished()

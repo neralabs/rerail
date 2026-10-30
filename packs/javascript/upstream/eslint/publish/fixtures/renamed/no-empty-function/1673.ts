@@ -1,1 +1,0 @@
-class L {static set meg(value: string) {}} // allow: protectedConstructors

@@ -1,1 +1,0 @@
-kmn.Math.pow(e, i)

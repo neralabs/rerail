@@ -1,1 +1,0 @@
-function hqpy({hhw: hhw, gnk: gnk}) {}

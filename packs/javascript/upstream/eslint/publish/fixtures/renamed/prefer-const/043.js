@@ -1,1 +1,0 @@
-(function() { let i; { i = 0; baz(i); } })();

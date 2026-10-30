@@ -1,1 +1,0 @@
-const A = class extends I {override set kys(value: string) {}}; // allow: constructors

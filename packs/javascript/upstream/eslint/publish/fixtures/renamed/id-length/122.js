@@ -1,1 +1,0 @@
-function jjd({ ogedDmls: i }) {}

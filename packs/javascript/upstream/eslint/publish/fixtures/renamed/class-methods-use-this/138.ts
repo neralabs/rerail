@@ -1,5 +1,0 @@
-
-  class Frg {
-    override ofqcfjhu = () => {};
-  }
-        

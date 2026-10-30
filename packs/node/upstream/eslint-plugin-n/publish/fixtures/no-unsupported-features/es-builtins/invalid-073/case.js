@@ -1,1 +1,0 @@
-function wrap() { Float64Array }

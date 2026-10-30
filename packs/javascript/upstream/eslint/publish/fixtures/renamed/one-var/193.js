@@ -1,1 +1,0 @@
-var f; var i; var r = 0, y = 1;

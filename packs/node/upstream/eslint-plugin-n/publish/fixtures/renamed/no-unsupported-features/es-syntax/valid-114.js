@@ -1,1 +1,0 @@
-class P { vkx() { super.vkx } }

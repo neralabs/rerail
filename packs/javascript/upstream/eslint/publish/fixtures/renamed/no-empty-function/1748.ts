@@ -1,1 +1,0 @@
-const D = class {@kviyljlrh() static set tgd(value: string) {}}; // allow: generatorMethods

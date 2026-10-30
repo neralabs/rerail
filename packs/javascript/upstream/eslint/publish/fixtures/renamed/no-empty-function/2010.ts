@@ -1,1 +1,0 @@
-class H { protected constructor() {} }

@@ -1,1 +1,0 @@
-type M = { -readonly [key in string]: number };

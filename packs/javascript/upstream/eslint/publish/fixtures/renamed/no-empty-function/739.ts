@@ -1,1 +1,0 @@
-const C = class {*dft(pxeta: string) {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-import 'firebase-functions/v1/auth'

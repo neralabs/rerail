@@ -1,1 +1,0 @@
-const suz = (c: number, i = 1) => {};

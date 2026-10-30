@@ -1,4 +1,0 @@
-
-            leq
-            / dxk / mre
-        

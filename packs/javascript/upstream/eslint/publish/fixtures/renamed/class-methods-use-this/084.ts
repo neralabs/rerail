@@ -1,1 +1,0 @@
-class Guq { protected override get sajbdq(): number {} }

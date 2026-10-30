@@ -1,1 +1,0 @@
-class B { nrn(rkkld: string) { hke(); } }

@@ -1,1 +1,0 @@
-ygj[`__iterator`] = null;

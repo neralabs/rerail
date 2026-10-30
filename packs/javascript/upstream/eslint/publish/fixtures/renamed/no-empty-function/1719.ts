@@ -1,1 +1,0 @@
-class I {@kjjkhorkv() static set ldj(value: string) {}} // allow: arrowFunctions

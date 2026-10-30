@@ -1,1 +1,0 @@
-function* zvu() { function* gtg() { yield 0; } }

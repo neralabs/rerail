@@ -1,1 +1,0 @@
-class D { static isd(jjgtr: string) {} } // allow: protectedConstructors

@@ -1,1 +1,0 @@
-class K {*plw() {}} // allow: privateConstructors

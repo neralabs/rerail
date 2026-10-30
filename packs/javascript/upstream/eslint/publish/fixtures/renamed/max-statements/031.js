@@ -1,1 +1,0 @@
-var qsc = { xyxox: () => { var meh = 1; var meq = 2; var meq2; } }

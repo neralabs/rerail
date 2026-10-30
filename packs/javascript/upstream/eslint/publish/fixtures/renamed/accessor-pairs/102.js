@@ -1,1 +1,0 @@
-class I { get i() {} set i(mvd) {} static i() {} }

@@ -1,1 +1,0 @@
-<div onPointerDown={this.onEybv} onPointerUp={this.onVk} />

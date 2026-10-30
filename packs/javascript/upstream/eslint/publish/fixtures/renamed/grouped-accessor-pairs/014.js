@@ -1,1 +1,0 @@
-class D { get(){} d(){} set(){} }

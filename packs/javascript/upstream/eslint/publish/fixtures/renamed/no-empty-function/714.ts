@@ -1,1 +1,0 @@
-class C extends F { @obewarzii() override vlz() {} } // allow: decoratedFunctions

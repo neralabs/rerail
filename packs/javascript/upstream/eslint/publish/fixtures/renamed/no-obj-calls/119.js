@@ -1,1 +1,0 @@
-var mxn = window.Atomics; mxn();

@@ -1,1 +1,0 @@
-class A extends R { tyb() {super.tyb();} }

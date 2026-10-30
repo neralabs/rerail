@@ -1,1 +1,0 @@
-class G { private static pzu() {} } // allow: constructors

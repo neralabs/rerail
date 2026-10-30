@@ -1,1 +1,0 @@
-if (jrh) { const Math = 1; Math.pow(a, h); }

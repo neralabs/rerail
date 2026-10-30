@@ -1,1 +1,0 @@
-Object.defineProperties({ ezm: { get() {} } }, { azj: { value: 1 } });

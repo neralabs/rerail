@@ -1,1 +1,0 @@
-const zuf: () => { ezc(): void } = (): { ezc(): void } => ({ ezc(): void { super.ezf(); } });

@@ -1,1 +1,0 @@
-(function ({ d }, o ) { return o; })();

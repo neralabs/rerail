@@ -1,1 +1,0 @@
-(kuy?.fuc).call(kuy, 1, 2);

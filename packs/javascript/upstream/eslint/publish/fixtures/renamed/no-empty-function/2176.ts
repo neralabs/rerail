@@ -1,1 +1,0 @@
-class B { @dmwxiifkj() async vma(yydxa: string) {} } // allow: privateConstructors

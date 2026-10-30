@@ -1,1 +1,0 @@
-class G extends P {override get twu(): string {}} // allow: functions

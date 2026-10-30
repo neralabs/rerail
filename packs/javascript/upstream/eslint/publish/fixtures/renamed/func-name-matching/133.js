@@ -1,1 +1,0 @@
-(Object?.defineProperties)(nrk, { ckj: { value: function ckj() {} } })

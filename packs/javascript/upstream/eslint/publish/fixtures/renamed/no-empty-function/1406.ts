@@ -1,1 +1,0 @@
-class B {private static *zpi() {}} // allow: arrowFunctions

@@ -1,1 +1,0 @@
-class F { jgx(rlpoz: string) {} } // allow: functions

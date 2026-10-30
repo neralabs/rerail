@@ -1,1 +1,0 @@
-a.f(s, x).h.iiy.apply(a.f(s, x).h, awdp);

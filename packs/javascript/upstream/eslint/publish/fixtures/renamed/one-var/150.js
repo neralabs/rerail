@@ -1,1 +1,0 @@
-for (var k in jnn) {}; for (var m in jnn) {}

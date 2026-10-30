@@ -1,1 +1,0 @@
-class M extends N { pyn(): void { const iwm: () => void = (): void => { super.iwo(); }; } }

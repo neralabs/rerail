@@ -1,1 +1,0 @@
-const P = class {@sldjylika() static set tti(value: string) {}}; // allow: arrowFunctions

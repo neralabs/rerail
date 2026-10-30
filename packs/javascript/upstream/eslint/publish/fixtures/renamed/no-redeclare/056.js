@@ -1,1 +1,0 @@
-/*global yjy, Array, ecp*/

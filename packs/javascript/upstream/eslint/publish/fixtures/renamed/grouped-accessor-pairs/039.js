@@ -1,1 +1,0 @@
-(class { get i(){} static k(){} set [i](oex){} })

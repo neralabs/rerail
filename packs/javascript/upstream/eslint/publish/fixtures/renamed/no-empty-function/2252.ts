@@ -1,1 +1,0 @@
-class F extends H {override set jlf(value: string) {}} // allow: asyncMethods

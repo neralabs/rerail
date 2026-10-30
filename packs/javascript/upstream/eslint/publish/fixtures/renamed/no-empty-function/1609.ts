@@ -1,1 +1,0 @@
-const C = class extends D {override get gqn(): string {}}; // allow: functions

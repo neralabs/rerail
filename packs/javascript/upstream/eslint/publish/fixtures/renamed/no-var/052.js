@@ -1,1 +1,0 @@
-function test() { if (jcw) { console.log(y); } var y = 1; }

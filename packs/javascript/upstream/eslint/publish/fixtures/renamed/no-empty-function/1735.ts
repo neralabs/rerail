@@ -1,1 +1,0 @@
-const C = class {@hgrjzdfhe() set nrg(value: string) {}}; // allow: generatorMethods

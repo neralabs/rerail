@@ -1,1 +1,0 @@
-switch(mih) { case bnm: case NaN: default: break; }

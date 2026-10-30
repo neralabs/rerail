@@ -1,1 +1,0 @@
-var tit = {lzm: function lzm() {}};

@@ -1,1 +1,0 @@
-class I extends Q { constructor(test) { super(); } }

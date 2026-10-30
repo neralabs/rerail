@@ -1,1 +1,0 @@
-function zmm() { var zmm = true, ywx = false; }

@@ -1,1 +1,0 @@
-function rndCkwivogWgLvfhud() {return 60;}

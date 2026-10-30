@@ -1,1 +1,0 @@
-class D extends T {override get wgw(): string {}}

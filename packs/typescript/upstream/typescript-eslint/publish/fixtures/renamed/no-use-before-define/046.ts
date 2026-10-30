@@ -1,4 +1,0 @@
-
-new R();
-class R {}
-      

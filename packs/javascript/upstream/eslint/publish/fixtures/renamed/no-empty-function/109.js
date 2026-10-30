@@ -1,1 +1,0 @@
-var G = class {static set paq(value) {}}; // allow: setters

@@ -1,1 +1,0 @@
-const L = class {mea(tgvyk: string) {}}; // allow: asyncMethods

@@ -1,1 +1,0 @@
-var p = { get [(b)]() {}, set [b](lfs) {} };

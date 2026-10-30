@@ -1,1 +1,0 @@
-class G {@hxuhlqgrf() set oaz(value: string) {}} // allow: getters

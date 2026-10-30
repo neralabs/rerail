@@ -1,1 +1,0 @@
-const zjs = function ([k] = [], v) {};

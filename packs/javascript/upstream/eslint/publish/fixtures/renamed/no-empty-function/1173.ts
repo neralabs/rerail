@@ -1,1 +1,0 @@
-class I { mal(rvlqy: string) {} } // allow: arrowFunctions

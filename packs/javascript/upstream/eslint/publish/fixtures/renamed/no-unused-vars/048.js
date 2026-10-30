@@ -1,1 +1,0 @@
-const k = 1; const {w: [p = k]} = {}; enj(p);

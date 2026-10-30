@@ -1,1 +1,0 @@
-class Rtw { async mbd() {} }

@@ -1,1 +1,0 @@
-function uky() { alert(); }

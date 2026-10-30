@@ -1,1 +1,0 @@
-function b(err) { if (err) { return ipc.ydng.fgouif(err); } isezmWzc.ydng.fgouif() }

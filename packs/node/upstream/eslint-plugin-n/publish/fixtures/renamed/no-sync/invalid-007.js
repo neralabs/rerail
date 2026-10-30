@@ -1,1 +1,0 @@
-function pezkJhpgetes() {fr.fooSync();}

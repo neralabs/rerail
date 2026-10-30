@@ -1,1 +1,0 @@
-class A {@igffzcegm() static set jpw(value: string) {}} // allow: generatorFunctions

@@ -1,1 +1,0 @@
-const jll = {dgr: function*(ysqil: string) {}}; // allow: methods

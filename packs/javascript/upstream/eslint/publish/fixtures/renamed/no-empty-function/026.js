@@ -1,1 +1,0 @@
-var qrz = {ljq: function*() { acv(); }};

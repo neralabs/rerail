@@ -1,4 +1,0 @@
-
-enum Dtt {}
-namespace Dtt {}
-    

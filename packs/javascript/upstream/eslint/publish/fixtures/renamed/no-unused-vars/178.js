@@ -1,1 +1,0 @@
-function k(o, u, v){ return u; }; k();

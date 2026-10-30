@@ -1,1 +1,0 @@
-class Q { #x; sma() { const x = this.#x; } }

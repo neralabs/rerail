@@ -1,1 +1,0 @@
-const ajn = { async okdbbj(uoahg: string) {} }

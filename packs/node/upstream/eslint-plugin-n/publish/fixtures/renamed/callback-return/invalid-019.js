@@ -1,1 +1,0 @@
-function a() { switch(q) { case 'horse': callback(); } }

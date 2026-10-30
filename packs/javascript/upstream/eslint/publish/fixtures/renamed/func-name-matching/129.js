@@ -1,1 +1,0 @@
-(Object?.defineProperty)(kjw, 'bar', { value: function bar() {} })

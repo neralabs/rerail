@@ -1,1 +1,0 @@
-R: "use strict"

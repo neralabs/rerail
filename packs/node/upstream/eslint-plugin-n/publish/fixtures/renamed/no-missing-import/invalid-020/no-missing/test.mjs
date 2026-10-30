@@ -1,1 +1,0 @@
-import d from 'virtual:package-name';

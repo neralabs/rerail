@@ -1,1 +1,0 @@
-giv.map((diy) => <Giv key={diy.jc} />)

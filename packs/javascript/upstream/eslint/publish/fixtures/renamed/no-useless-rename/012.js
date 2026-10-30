@@ -1,1 +1,0 @@
-let {['foo']: {['bar']: bay}} = imo;

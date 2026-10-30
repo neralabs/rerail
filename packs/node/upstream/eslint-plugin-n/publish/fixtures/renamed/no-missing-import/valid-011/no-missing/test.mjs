@@ -1,1 +1,0 @@
-import pztpkzwpv from 'cjs-module-with-no-main';

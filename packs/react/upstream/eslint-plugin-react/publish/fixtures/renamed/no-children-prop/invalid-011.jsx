@@ -1,1 +1,0 @@
-<ElQjpbvinmo className="class-name" children="Children" />;

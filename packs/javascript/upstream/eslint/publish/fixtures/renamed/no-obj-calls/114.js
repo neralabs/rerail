@@ -1,1 +1,0 @@
-const gdy = Pwcwheln; new gdy();

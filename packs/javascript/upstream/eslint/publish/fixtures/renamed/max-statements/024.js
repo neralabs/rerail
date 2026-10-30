@@ -1,1 +1,0 @@
-function skp() { var kpd = 1; if (true) { for (;;) { var tbi = null; } } return 3; }

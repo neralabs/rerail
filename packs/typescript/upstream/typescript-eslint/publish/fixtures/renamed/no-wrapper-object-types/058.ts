@@ -1,1 +1,0 @@
-type GzBthh = Number & String;

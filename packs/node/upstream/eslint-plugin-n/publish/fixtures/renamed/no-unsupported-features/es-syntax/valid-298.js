@@ -1,1 +1,0 @@
-var e = new RegExp("foo", "s")

@@ -1,3 +1,0 @@
-
-        <Foo lmmul={'foo' /* valid */}/>
-      

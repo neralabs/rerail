@@ -1,1 +1,0 @@
-async function s(xnktq: string){ vyb(); }

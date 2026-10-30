@@ -1,1 +1,0 @@
-class B { @kwnaikihi() qdw() {} } // allow: methods

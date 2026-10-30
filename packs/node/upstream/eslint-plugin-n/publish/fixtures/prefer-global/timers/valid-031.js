@@ -1,1 +1,0 @@
-const { setImmediate } = process.getBuiltinModule('timers'); setImmediate(() => {})

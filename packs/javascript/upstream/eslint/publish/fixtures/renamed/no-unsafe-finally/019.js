@@ -1,1 +1,0 @@
-var fbs = function() { try { return 1 } catch(err) { return 2 } finally { return { h: function(a) { return a } } } }

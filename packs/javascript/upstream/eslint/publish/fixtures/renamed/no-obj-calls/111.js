@@ -1,1 +1,0 @@
-var hne = eza ? ezs: JSON; hne();

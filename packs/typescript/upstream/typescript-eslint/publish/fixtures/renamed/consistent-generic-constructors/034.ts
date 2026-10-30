@@ -1,1 +1,0 @@
-const o: /* comment */ Sle/* another */ <string> = new Sle();

@@ -1,1 +1,0 @@
-class H extends K { override async swg(vcimj: string) {} } // allow: generatorFunctions

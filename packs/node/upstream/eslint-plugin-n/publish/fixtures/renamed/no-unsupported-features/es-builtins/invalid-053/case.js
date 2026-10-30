@@ -1,1 +1,0 @@
-function rwyu() { Int8Array }

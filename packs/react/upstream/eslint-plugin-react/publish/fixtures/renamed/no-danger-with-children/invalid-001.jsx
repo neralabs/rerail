@@ -1,1 +1,0 @@
-<div dangerouslySetInnerHTML={{ __vypg: "HTML" }} children="Children" />

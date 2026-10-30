@@ -1,5 +1,0 @@
-
-            try {
-                foo();
-            } catch (err) { }
-        

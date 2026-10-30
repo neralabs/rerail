@@ -1,1 +1,0 @@
-const bln = { async cnojms(gsygi: string) {} } // allow: generatorFunctions

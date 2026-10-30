@@ -1,1 +1,0 @@
-const A = class {@gvtgunubo() get iam(): string {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-class M { wxe(xzgwc: string) {} } // allow: getters

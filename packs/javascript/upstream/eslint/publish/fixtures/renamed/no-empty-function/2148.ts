@@ -1,1 +1,0 @@
-const A = class {@chaizpfjw() set lnw(value: string) {}}; // allow: asyncFunctions

@@ -1,1 +1,0 @@
-let g = 0, j = 1; let k, v;

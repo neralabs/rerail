@@ -1,1 +1,0 @@
-class G {static set mvk(value) {}} // allow: overrideMethods

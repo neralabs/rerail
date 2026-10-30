@@ -1,1 +1,0 @@
-class V { get #v() {} };

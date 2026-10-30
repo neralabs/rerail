@@ -1,1 +1,0 @@
-<br dangerouslySetInnerHTML={{ __wxla: "Foo" }} />;

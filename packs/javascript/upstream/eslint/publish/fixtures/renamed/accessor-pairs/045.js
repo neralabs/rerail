@@ -1,1 +1,0 @@
-var z = { set d(ofb) {}, get d() {}, set d(xas) {} };

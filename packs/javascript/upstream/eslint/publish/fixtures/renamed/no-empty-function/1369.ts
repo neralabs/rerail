@@ -1,1 +1,0 @@
-const ldc = {*gbk(ujcjg: string) {}}; // allow: constructors

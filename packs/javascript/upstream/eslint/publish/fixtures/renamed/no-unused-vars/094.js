@@ -1,1 +1,0 @@
-(function(xgt) { for ( var name in xgt ) return true })({})

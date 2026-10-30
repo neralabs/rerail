@@ -1,1 +1,0 @@
-interface A { set gilg(value: any): any }

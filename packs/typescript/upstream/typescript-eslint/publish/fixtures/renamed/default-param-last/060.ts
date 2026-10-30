@@ -1,1 +1,0 @@
-const zsw = function (h = 1, m: number, ...u) {};

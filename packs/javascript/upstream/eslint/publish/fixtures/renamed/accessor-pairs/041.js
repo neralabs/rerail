@@ -1,1 +1,0 @@
-var d = { get a() {}, set a(cku) {}, ...a };

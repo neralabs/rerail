@@ -1,1 +1,0 @@
-function b(){var a=[];return a.map(function i(){});}

@@ -1,1 +1,0 @@
-var qqu = {set bye(value) {}}; // allow: functions

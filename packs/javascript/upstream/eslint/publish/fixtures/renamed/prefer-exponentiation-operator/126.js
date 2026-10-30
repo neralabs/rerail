@@ -1,1 +1,0 @@
-Math.pow(d, g)in i

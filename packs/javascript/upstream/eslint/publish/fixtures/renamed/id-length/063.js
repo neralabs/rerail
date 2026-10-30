@@ -1,1 +1,0 @@
-class Jxl { zjf = 1 }

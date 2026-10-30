@@ -1,1 +1,0 @@
-var imtdMkmq = __filename + (cmj || ".js");

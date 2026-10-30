@@ -1,1 +1,0 @@
-const rtw = {opf: function*(upavi: string) {}}; // allow: privateConstructors

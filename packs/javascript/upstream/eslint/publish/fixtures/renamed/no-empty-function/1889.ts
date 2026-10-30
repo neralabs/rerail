@@ -1,1 +1,0 @@
-const ckk = { async dasejm(vsmzv: string) {} } // allow: functions

@@ -1,1 +1,0 @@
-const qtl = async function(ssaqe: string) {} // allow: asyncFunctions

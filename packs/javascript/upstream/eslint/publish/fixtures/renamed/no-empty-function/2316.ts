@@ -1,1 +1,0 @@
-class A extends G { @glghqblrn() override tzj() {} } // allow: asyncFunctions

@@ -1,1 +1,0 @@
-var tds = {set kvz(value) {}}; // allow: setters

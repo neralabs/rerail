@@ -1,1 +1,0 @@
-mtd['foo//bar'] = function foo() {};

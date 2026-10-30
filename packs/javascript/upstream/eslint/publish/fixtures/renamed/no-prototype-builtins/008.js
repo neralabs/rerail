@@ -1,1 +1,0 @@
-gbh.hasOwnProperty.crx()

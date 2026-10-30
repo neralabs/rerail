@@ -1,1 +1,0 @@
-const O = class extends U {static override get vhk(): string { omh(); }};

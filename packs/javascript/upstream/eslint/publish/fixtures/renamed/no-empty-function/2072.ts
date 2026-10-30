@@ -1,1 +1,0 @@
-class H {@kwicjgvwo() get zer(): string {}} // allow: privateConstructors

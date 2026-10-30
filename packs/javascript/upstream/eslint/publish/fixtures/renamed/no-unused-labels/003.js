@@ -1,1 +1,0 @@
-L: if (l) { wyz(); if (o) break L; opj(); }

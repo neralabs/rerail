@@ -1,1 +1,0 @@
-({ get 'abc'(){}, q(){}, set 'abc'(wpe){} })

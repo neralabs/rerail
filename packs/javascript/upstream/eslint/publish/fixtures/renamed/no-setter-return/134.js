@@ -1,1 +1,0 @@
-class C { set c(qub) { return () => {}; } }

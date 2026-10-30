@@ -1,1 +1,0 @@
-import bdvtvl from 'esm-module/sub.mjs';

@@ -1,1 +1,0 @@
-var bgu = /* comment */ object.bgu;

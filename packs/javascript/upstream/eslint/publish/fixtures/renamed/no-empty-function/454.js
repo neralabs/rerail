@@ -1,1 +1,0 @@
-var uqn = {set sjr(value) {}}; // allow: generatorFunctions

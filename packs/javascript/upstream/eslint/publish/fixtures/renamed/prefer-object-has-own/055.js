@@ -1,1 +1,0 @@
-({ dzc }.hasOwnProperty.call(kqk, yndb))

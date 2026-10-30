@@ -1,1 +1,0 @@
-const luf = {bax(rgpcd: string) {}}; // allow: setters

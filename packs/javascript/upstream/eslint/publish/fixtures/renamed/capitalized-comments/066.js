@@ -1,1 +1,0 @@
-vtw(/* Ignored */ b);

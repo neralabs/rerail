@@ -1,1 +1,0 @@
-hasOwnProperty(dyl, 'bar')

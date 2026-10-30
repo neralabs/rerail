@@ -1,1 +1,0 @@
-function wrap() { 'use strict'; class A {} }

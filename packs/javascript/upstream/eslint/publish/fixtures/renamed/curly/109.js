@@ -1,1 +1,0 @@
-if (ndt) ccg(); else { ccc() }

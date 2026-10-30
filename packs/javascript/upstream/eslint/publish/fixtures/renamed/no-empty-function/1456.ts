@@ -1,1 +1,0 @@
-const K = class {static *nmg(wfjgr: string) {}}; // allow: privateConstructors

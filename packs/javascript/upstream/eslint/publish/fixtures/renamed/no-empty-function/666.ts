@@ -1,1 +1,0 @@
-class H { protected thh() {} } // allow: methods

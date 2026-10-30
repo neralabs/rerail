@@ -1,1 +1,0 @@
-const gzu = Ogefmjdw; gzu();

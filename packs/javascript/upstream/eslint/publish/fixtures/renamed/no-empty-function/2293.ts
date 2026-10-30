@@ -1,1 +1,0 @@
-const B = class extends F {static override set icq(value: string) {}}; // allow: protectedConstructors

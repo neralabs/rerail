@@ -1,1 +1,0 @@
-switch (ykr) { default: case 1: break; }

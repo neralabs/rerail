@@ -1,1 +1,0 @@
-var y = { __proto__: null, ['__proto__']: null };

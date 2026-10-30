@@ -1,1 +1,0 @@
-type CqwdDprj = readonly void[];

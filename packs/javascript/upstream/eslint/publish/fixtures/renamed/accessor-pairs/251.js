@@ -1,1 +1,0 @@
-N = class { set n(zpd) {} set n(zpd) {} };

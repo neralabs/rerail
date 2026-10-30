@@ -1,1 +1,0 @@
-class R { static { e; } } var e;

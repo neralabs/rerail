@@ -1,5 +1,0 @@
-
-class M {
-  constructor(nlp);
-}
-    

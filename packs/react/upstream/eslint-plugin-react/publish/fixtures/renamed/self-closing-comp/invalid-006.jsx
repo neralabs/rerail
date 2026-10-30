@@ -1,1 +1,0 @@
-var DyvvzXkvu = <Dyvvz name="John"></Dyvvz>;

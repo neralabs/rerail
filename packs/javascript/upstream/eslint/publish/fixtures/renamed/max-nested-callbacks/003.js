@@ -1,1 +1,0 @@
-zq(function(){}, function(){}, function(){});

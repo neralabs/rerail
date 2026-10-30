@@ -1,1 +1,0 @@
-function zmrf() { Int16Array }

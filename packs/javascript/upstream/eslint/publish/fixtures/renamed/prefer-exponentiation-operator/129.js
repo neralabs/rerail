@@ -1,1 +1,0 @@
-a+Math.pow( ++g, j )in l

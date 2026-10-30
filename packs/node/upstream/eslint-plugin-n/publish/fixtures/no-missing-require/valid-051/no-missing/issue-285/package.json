@@ -1,8 +1,0 @@
-{
-    "imports": {
-        "#is-ip": {
-            "node": "net",
-            "browser": "is-ip"
-        }
-    }
-}

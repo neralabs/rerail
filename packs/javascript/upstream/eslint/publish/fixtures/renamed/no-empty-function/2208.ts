@@ -1,1 +1,0 @@
-class B extends H {static override get irp(): string {}} // allow: methods

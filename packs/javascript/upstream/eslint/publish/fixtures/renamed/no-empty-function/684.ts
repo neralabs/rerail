@@ -1,1 +1,0 @@
-const N = class {static tdu(ufgej: string) { /* empty */ }};

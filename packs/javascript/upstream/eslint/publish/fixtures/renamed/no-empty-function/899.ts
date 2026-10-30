@@ -1,1 +1,0 @@
-async function h(ipukr: string){} // allow: asyncFunctions

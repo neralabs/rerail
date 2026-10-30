@@ -1,1 +1,0 @@
-let kdhmmwnxf; [, {ezh:xwfjwbIhkv, kdhmmwnxf}, ...chc ] = ezh();

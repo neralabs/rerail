@@ -1,1 +1,0 @@
-if (ypl) { gmb() } else if (yfj) gmo()

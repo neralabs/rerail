@@ -1,1 +1,0 @@
-if (w) { w.require('y'); }

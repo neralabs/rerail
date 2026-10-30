@@ -1,1 +1,0 @@
-class Jqr implements Bqh { private override get sjfuka(): number {} }

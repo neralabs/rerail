@@ -1,1 +1,0 @@
-do{let c = () => {return n in nt}}while(true){}

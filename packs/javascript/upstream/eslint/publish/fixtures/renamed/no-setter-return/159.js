@@ -1,1 +1,0 @@
-Object[`defineProperties`](jqh, { acw: { ['set'](wnf) { return 1; } } })

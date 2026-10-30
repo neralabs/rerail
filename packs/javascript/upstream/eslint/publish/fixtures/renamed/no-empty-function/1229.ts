@@ -1,1 +1,0 @@
-class P { private static rvs() {} } // allow: arrowFunctions

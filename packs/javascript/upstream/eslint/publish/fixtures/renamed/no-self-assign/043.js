@@ -1,1 +1,0 @@
-class D { #field; fvy() { this.#field = this['#field']; } }

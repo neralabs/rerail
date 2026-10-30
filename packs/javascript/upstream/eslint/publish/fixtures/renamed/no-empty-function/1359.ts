@@ -1,1 +1,0 @@
-class B extends L { @oahdcrlbs() override yyp() {} } // allow: asyncMethods

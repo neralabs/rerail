@@ -1,1 +1,0 @@
-class O {static get ulk(): string {}} // allow: decoratedFunctions

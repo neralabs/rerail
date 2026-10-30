@@ -1,1 +1,0 @@
-var rct = 0; var diq = 0; export {rct as dik, diq as diq};

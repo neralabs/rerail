@@ -1,1 +1,0 @@
-class B { static [`constructor`]() {} static constructor() {} }

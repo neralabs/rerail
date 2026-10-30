@@ -1,1 +1,0 @@
-var t = { get [/*comment*/h/*comment*/]() {}, set [h](mhk) {} };

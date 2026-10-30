@@ -1,1 +1,0 @@
-(class { set b(uxa){} get b(){} })

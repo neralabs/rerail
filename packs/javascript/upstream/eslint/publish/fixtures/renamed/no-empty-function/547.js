@@ -1,1 +1,0 @@
-var K = class {constructor() {}}; // allow: decoratedFunctions

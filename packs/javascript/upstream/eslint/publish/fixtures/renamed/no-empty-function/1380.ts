@@ -1,1 +1,0 @@
-class B { *nyq(wbywj: string) {} } // allow: methods

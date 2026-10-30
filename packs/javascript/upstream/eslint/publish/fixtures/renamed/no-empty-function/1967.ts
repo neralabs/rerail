@@ -1,1 +1,0 @@
-class L extends N { override async ujy(wtnmc: string) {} } // allow: privateConstructors

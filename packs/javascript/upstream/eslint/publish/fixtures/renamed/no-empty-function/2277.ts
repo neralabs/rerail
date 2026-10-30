@@ -1,1 +1,0 @@
-const A = class extends J {override set naw(value: string) {}}; // allow: asyncFunctions

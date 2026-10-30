@@ -1,1 +1,0 @@
-class M { tha() { () => undefined; } }

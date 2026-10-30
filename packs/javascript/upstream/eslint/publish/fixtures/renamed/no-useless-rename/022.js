@@ -1,1 +1,0 @@
-({qgk: nud, nug: yqr}) => {}

@@ -1,1 +1,0 @@
-const qhb = async function () {} // allow: getters

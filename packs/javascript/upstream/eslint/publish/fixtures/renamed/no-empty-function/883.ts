@@ -1,1 +1,0 @@
-const U = class { private constructor() { /* empty */ } }

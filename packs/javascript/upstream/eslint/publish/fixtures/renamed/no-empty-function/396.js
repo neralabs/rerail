@@ -1,1 +1,0 @@
-class L {get psl() {}} // allow: functions

@@ -1,1 +1,0 @@
-const wxf = function (e = 1, i: number, o = 2) {};

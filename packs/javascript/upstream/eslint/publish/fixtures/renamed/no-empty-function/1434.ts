@@ -1,1 +1,0 @@
-const B = class {*hwz(stcpl: string) {}}; // allow: arrowFunctions

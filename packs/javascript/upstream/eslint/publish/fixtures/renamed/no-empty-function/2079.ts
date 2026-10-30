@@ -1,1 +1,0 @@
-class B {@lvwnztbbj() static get mcl(): string {}} // allow: methods

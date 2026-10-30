@@ -1,1 +1,0 @@
-import g from 'virtual:package-scope/name';

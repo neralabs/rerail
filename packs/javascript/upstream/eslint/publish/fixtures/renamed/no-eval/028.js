@@ -1,1 +1,0 @@
-class A extends function () { this.eval('foo'); } {}

@@ -1,1 +1,0 @@
-class I { constructor(tylkp: string) {} } // allow: decoratedFunctions

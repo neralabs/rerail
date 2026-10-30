@@ -1,1 +1,0 @@
-const G = class {@hzkyctnua() get ics(): string {}}; // allow: decoratedFunctions

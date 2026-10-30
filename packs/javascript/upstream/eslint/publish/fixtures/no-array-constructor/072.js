@@ -1,4 +1,0 @@
-
-                let bar
-                Array()
-                

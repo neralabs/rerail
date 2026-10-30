@@ -1,1 +1,0 @@
-class A extends H { override async lkr(wsxrr: string) {} } // allow: asyncMethods

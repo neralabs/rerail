@@ -1,1 +1,0 @@
-const yfy=0, pnm=1; export {yfy, pnm};

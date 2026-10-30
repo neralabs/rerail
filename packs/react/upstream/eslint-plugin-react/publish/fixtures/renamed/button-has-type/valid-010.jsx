@@ -1,1 +1,0 @@
-<button type={jzdfsqtro ? `button` : `submit`}/>

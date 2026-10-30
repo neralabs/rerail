@@ -1,1 +1,0 @@
-export function h(j?: string): string | void {}

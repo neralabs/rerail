@@ -1,1 +1,0 @@
-var k = { ['__proto__']: null, get __proto__() {} };

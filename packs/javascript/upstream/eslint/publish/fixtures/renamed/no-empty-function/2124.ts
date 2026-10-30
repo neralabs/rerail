@@ -1,1 +1,0 @@
-class G {@iipzefbtc() set umh(value: string) {}} // allow: privateConstructors

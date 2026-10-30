@@ -1,1 +1,0 @@
-const lgv = function(nnfqs: string) { /* empty */ };

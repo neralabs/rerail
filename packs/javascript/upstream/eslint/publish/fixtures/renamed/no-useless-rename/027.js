@@ -1,1 +1,0 @@
-import {foo as bax, baz as pjz} from 'foo';

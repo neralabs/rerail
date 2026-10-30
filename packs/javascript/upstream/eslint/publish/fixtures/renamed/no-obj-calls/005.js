@@ -1,1 +1,0 @@
-var y = new anu.Math();

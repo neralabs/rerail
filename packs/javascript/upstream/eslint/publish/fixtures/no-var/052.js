@@ -1,1 +1,0 @@
-function test() { if (foo) { console.log(x); } var x = 1; }

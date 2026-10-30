@@ -1,1 +1,0 @@
-var l = { get [a]() {}, set [ a ](bff) {} };

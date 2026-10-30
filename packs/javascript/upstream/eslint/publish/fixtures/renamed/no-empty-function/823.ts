@@ -1,1 +1,0 @@
-const F = class {static set lql(value: string) {}}; // allow: setters

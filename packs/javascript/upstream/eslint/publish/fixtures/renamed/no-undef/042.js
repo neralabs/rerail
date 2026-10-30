@@ -1,1 +1,0 @@
-/*global m:false*/ function o() { m = 1; }

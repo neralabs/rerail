@@ -1,1 +1,0 @@
-var logger = require(DEELU ? 'dev-logger' : 'logger');

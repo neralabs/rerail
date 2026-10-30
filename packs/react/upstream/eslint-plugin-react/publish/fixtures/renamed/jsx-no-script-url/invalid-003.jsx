@@ -1,1 +1,0 @@
-<Bfm ms="javascript:"></Bfm>

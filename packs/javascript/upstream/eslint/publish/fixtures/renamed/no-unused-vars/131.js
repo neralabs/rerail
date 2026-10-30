@@ -1,1 +1,0 @@
-(function(c, g, {p, t}) { t })

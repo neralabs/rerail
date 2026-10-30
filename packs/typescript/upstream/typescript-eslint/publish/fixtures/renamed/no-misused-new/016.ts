@@ -1,5 +1,0 @@
-
-type M = {
-  constructor(): void;
-};
-      

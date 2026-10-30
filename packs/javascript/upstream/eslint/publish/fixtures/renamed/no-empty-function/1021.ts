@@ -1,1 +1,0 @@
-const D = class extends V {static override get wqe(): string {}}; // allow: overrideMethods

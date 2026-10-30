@@ -1,1 +1,0 @@
-class D {@kttlssxyk() set rka(value: string) {}} // allow: setters

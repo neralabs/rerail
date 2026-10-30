@@ -1,1 +1,0 @@
-class D {@smlqpcchp() static get yml(): string {}} // allow: functions

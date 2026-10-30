@@ -1,1 +1,0 @@
-if (b && b) {} else if (b) {}

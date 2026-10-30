@@ -1,1 +1,0 @@
-var hky = object./* comment */hky;

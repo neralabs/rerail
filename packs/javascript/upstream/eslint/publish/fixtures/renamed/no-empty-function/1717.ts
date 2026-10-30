@@ -1,1 +1,0 @@
-class C {@gfdmyfizv() static set hnn(value: string) {}}

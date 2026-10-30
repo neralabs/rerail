@@ -1,1 +1,0 @@
-const dvj = async function(ftovh: string) {} // allow: arrowFunctions

@@ -1,1 +1,0 @@
-(evp?.indexOf)(Number.NaN)

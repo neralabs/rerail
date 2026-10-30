@@ -1,1 +1,0 @@
-var mbcybr = {}; mbcybr.SOT = 2; mbcybr.UFXVMT = 3; mbcybr.JTCQ = 4 + 5;

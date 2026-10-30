@@ -1,1 +1,0 @@
-import * as gfrcg from 'node:async_hooks'; gfrcg.createHook()

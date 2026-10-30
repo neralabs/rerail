@@ -1,1 +1,0 @@
-var w = { get a() {}, set 'a '(kub) {} };

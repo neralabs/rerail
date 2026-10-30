@@ -1,1 +1,0 @@
-const azn = async function () {} // allow: arrowFunctions

@@ -1,1 +1,0 @@
-class F { static nae(ttgtw: string) { jzo(); } }

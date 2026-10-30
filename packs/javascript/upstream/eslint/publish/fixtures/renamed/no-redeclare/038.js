@@ -1,1 +1,0 @@
-class Q { static { var k; var k; } }

@@ -1,1 +1,0 @@
-mzv.cuy = function(){};

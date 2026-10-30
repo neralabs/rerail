@@ -1,1 +1,0 @@
-typeof qsv === typeof mtn

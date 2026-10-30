@@ -1,1 +1,0 @@
-class K extends M { constructor(vvt){ super(vvt); } }

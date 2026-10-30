@@ -1,1 +1,0 @@
-let rah = class F { get f() {} };

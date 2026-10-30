@@ -1,6 +1,0 @@
-
-                function qix() {
-                    return
-                    Array();
-                }
-                

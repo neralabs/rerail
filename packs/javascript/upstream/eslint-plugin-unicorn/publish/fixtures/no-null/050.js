@@ -1,1 +1,0 @@
-NotObject.create(null)

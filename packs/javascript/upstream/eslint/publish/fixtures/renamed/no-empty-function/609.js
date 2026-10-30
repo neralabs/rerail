@@ -1,1 +1,0 @@
-const rid = async () => {}; // allow: generatorMethods

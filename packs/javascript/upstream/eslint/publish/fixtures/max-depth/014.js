@@ -1,1 +1,0 @@
-function foo() { if (a) { switch (b) { case 1: foo(); } } }

@@ -1,1 +1,0 @@
-class D { @mdmmwlcgg() async rbi(sdgbw: string) { gzz(); } }

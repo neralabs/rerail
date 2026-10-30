@@ -1,1 +1,0 @@
-class O {static get wau() {}} // allow: methods

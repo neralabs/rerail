@@ -1,5 +1,0 @@
-
-  class Mgl {
-    protected vsiebx() {}
-  }
-        

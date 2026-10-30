@@ -1,1 +1,0 @@
-var jhy = () => { /* do nothing */ };

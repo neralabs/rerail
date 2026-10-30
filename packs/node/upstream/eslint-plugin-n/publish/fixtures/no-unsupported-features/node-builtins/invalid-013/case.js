@@ -1,1 +1,0 @@
-const { CallTracker } = require('assert'); new CallTracker();

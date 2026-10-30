@@ -1,1 +1,0 @@
-var i = { ['__proto__']: null, __proto__() {} };

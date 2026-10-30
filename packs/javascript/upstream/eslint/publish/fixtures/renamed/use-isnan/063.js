@@ -1,1 +1,0 @@
-czf.indexOf(NaN)

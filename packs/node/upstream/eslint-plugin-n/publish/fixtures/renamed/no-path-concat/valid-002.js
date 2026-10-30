@@ -1,1 +1,0 @@
-var fweuYemy = __dirname == "foo.js";

@@ -1,1 +1,0 @@
-const nlb = {set bit(value: string) {}}; // allow: methods

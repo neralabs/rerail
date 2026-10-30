@@ -1,1 +1,0 @@
-a ** Math.pow(b ** c, e ** j) ** l

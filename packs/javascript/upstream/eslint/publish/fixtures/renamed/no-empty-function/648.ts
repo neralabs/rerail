@@ -1,1 +1,0 @@
-const nds = {lpz: function*(qvbkc: string) { /* empty */ }};

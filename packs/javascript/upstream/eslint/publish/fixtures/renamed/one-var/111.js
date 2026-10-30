@@ -1,1 +1,0 @@
-class V { static { let p; ycs; let t; } }

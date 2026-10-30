@@ -1,1 +1,0 @@
-/*exported jgpqiaw, camicb*/ var jgpqiaw = 1; camicb = 0;

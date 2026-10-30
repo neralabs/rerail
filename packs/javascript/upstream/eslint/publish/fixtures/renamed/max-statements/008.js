@@ -1,1 +1,0 @@
-var iav = { xfqdf: function() { var brj = 1; var brl = 2; } }

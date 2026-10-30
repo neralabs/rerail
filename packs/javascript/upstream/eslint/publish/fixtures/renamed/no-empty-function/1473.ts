@@ -1,1 +1,0 @@
-const rja = {get mjm(): string {}}; // allow: overrideMethods

@@ -1,1 +1,0 @@
-Object.defineProperties(lxf, { ['bar']: { value: function bar() {} } })

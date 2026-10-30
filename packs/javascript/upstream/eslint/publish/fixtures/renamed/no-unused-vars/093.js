@@ -1,1 +1,0 @@
-(function(zcr) { for ( var name in zcr ) { return true } })({})

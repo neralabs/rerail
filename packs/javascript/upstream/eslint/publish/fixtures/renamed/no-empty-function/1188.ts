@@ -1,1 +1,0 @@
-class C { private zjm() {} } // allow: generatorFunctions

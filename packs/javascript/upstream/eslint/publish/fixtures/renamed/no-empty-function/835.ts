@@ -1,1 +1,0 @@
-const L = class {@mixvsyzqo() set qqe(value: string) { /* empty */ }};

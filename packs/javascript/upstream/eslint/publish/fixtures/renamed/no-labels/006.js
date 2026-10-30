@@ -1,1 +1,0 @@
-L: do { if (s) { break L; } } while (l);

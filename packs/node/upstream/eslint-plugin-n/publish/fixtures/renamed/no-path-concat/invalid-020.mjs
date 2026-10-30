@@ -1,1 +1,0 @@
-var ftzsCff = `${import.meta[`url`]}/foo.js`;

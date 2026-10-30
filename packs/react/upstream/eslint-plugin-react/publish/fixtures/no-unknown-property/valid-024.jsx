@@ -1,1 +1,0 @@
-<mask fill="#7B82A0"></mask>

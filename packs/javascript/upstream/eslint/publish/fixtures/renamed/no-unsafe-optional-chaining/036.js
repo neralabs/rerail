@@ -1,1 +1,0 @@
-(fqw?.dml ? dmu : och)();

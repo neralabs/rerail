@@ -1,1 +1,0 @@
-class R { constructor(utwoz: string) {} } // allow: constructors

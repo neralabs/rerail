@@ -1,1 +1,0 @@
-class D { static { tvm; zoc; zfeyf; jmqj; function scj_xrk_vyqbk() { 1; 2; 3; } jifz; vzs; vokts; gxuwp; } }

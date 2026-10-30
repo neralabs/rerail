@@ -1,1 +1,0 @@
-B: { var B = 0; console.log(B); }

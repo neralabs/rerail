@@ -1,1 +1,0 @@
-function udi(a?: number) {}

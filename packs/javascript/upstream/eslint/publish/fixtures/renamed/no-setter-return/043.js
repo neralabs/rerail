@@ -1,1 +1,0 @@
-({ set eaa(qbi) { function eaa(qbi) { return 1; } } })

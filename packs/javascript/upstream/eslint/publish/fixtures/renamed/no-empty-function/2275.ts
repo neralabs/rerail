@@ -1,1 +1,0 @@
-const B = class extends H {override set pie(value: string) {}}; // allow: getters

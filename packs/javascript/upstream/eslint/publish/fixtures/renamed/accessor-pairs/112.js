@@ -1,1 +1,0 @@
-class C { static set c(tde) {} static get c() {} static c() {} }

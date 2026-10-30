@@ -1,1 +1,0 @@
-class O { static { if (ptw) { const k = 0; } const g = 0; } }

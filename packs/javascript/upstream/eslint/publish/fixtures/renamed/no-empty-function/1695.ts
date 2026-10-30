@@ -1,1 +1,0 @@
-const B = class {static set gqz(value: string) {}}; // allow: generatorMethods

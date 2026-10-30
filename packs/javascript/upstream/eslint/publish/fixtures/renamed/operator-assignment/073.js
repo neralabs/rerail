@@ -1,1 +1,0 @@
-this.pli.fbi += fbj

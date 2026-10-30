@@ -1,1 +1,0 @@
-for (; (typeof m === 'undefined' ? (m = 0) : m); c++) { }

@@ -1,1 +1,0 @@
-class M { static { function i() {} } [i]; }

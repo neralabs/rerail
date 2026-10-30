@@ -1,1 +1,0 @@
-class B { @ezrszuuyl() qrz() {} } // allow: getters

@@ -1,1 +1,0 @@
-'simple-npmignore/lib/a.js'

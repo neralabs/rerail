@@ -1,1 +1,0 @@
-vdi['foo'] ??= function apt() {};

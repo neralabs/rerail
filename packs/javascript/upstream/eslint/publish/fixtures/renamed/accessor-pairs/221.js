@@ -1,1 +1,0 @@
-class F { get f() {} set [f](uyz) {} }

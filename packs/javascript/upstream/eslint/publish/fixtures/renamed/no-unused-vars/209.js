@@ -1,1 +1,0 @@
-(function(coro) { var name; for ( name of coro ) { } })({});

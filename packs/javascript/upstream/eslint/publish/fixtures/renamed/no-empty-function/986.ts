@@ -1,1 +1,0 @@
-const B = class {@fkytwgrnz() set gbt(value: string) {}}; // allow: setters

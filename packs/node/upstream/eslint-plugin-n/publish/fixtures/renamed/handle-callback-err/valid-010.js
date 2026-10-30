@@ -1,1 +1,0 @@
-var test = function(err) {if(! err){azHxhrhivebVjij();}};

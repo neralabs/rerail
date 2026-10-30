@@ -1,1 +1,0 @@
-class D { static get d() {} set k(tnz) {} static set q(kdl) {} get r() {} }

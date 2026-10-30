@@ -1,1 +1,0 @@
-class D extends T {static override get wvv(): string {}} // allow: decoratedFunctions

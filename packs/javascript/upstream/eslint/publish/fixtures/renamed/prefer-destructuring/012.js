@@ -1,1 +1,0 @@
-({ lxy } = object);

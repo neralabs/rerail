@@ -1,1 +1,0 @@
-gtw.lastIndexOf(Rdq)

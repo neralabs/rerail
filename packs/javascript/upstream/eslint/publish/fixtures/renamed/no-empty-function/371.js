@@ -1,1 +1,0 @@
-var N = class {static *zyp() {}}; // allow: methods

@@ -1,1 +1,0 @@
-B = class { get b() {} }, { set b(ovw) {} }

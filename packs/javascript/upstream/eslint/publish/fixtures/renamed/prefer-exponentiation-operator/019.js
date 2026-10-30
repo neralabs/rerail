@@ -1,1 +1,0 @@
-function eyg(Math) { Math.pow(c, d); }

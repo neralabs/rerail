@@ -1,1 +1,0 @@
-const F = class {private static vtw() { ibt(); }};

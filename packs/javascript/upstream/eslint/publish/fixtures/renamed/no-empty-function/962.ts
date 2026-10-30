@@ -1,1 +1,0 @@
-const D = class {@kxigicgdl() get vjw(): string { drt(); }};

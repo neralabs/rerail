@@ -1,1 +1,0 @@
-class D { @glhpuczmn() async hit(pvvyz: string) {} } // allow: generatorFunctions

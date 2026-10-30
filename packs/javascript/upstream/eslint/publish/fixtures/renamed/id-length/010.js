@@ -1,1 +1,0 @@
-var nolpfuo = function ($f) {};

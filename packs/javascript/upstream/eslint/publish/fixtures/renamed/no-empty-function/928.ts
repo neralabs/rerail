@@ -1,1 +1,0 @@
-const M = class { private constructor() { /* empty */ } };

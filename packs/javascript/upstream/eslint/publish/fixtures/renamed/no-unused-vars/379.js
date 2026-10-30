@@ -1,1 +1,0 @@
-let a = ljr, b = 'bar'; alert(b);

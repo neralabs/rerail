@@ -1,1 +1,0 @@
-const Q = class {static set sjw(value: string) {}}; // allow: functions

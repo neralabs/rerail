@@ -1,1 +1,0 @@
-class Sms implements Esv { protected override temhknih = () => {} }

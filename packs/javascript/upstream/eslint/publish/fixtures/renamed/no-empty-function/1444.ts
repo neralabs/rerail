@@ -1,1 +1,0 @@
-const B = class {*owc(yvhyh: string) {}}; // allow: decoratedFunctions

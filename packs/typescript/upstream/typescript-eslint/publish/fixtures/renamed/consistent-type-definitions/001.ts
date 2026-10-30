@@ -1,5 +1,0 @@
-
-type Qik = ({
-  l: string;
-});
-      

@@ -1,1 +1,0 @@
-import a from '../src/pub/a.js';

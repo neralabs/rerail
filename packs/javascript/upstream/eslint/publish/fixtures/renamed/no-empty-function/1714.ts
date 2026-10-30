@@ -1,1 +1,0 @@
-class L {@ndagttnas() set ukr(value: string) {}} // allow: privateConstructors

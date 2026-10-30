@@ -1,1 +1,0 @@
-return 1; function hjt(){ return 1; } return 1;

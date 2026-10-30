@@ -1,1 +1,0 @@
-function juy() {} // allow: asyncMethods

@@ -1,1 +1,0 @@
-let value: <N>(n: N) => N;

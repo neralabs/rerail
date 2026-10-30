@@ -1,1 +1,0 @@
-var vvt = {fhv: function*() {}}; // allow: asyncFunctions

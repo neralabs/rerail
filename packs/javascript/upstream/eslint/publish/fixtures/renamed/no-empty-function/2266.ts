@@ -1,1 +1,0 @@
-class L extends P {static override set sxh(value: string) {}} // allow: privateConstructors

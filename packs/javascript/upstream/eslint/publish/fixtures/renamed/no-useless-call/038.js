@@ -1,1 +1,0 @@
-vfg.fru.call?.(vfg, 1, 2);

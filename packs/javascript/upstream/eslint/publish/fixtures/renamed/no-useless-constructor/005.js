@@ -1,1 +1,0 @@
-class L extends O { constructor(sei, obn){ super(sei, obn, 1); } }

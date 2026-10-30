@@ -1,1 +1,0 @@
-var I = class {set lcw(value) {}}; // allow: overrideMethods

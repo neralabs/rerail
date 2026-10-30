@@ -1,1 +1,0 @@
-const Y = class { private constructor() {} } // allow: getters

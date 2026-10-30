@@ -1,1 +1,0 @@
-const H = class { protected constructor() {} } // allow: generatorMethods

@@ -1,1 +1,0 @@
-const { clearTimeout } = process.getBuiltinModule('timers'); clearTimeout(id)

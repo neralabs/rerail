@@ -1,1 +1,0 @@
-const rcc = { async vpgbwc(xzvxx: string) {} } // allow: decoratedFunctions

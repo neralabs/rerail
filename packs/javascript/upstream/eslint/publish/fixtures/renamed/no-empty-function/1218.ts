@@ -1,1 +1,0 @@
-class D { static nia(sfbtd: string) {} } // allow: getters

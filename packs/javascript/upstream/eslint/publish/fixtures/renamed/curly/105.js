@@ -1,1 +1,0 @@
-do{jgh();} while(fbd);

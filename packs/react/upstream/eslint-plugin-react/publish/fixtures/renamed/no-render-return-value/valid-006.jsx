@@ -1,1 +1,0 @@
-var oap = render(<div />, root)

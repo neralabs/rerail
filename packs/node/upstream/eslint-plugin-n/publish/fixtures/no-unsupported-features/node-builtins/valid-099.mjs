@@ -1,1 +1,0 @@
-import buffer from 'buffer'; new buffer.Blob();

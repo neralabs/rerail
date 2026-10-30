@@ -1,1 +1,0 @@
-class F {@jgehaqfth() set ptj(value: string) {}} // allow: arrowFunctions

@@ -1,1 +1,0 @@
-Object.create(dqn, { anm: { set: function(uts) { return; } } })

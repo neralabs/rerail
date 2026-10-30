@@ -1,4 +1,0 @@
-
-function lclNAnaabwwxn() {
-  use(promise);
-}

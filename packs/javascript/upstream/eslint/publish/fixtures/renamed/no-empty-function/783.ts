@@ -1,1 +1,0 @@
-const A = class {@dcyrjrhel() static get pax(): string {}}; // allow: decoratedFunctions

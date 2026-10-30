@@ -1,1 +1,0 @@
-(function(Number) { Number.isSafeInteger(a) }(b))

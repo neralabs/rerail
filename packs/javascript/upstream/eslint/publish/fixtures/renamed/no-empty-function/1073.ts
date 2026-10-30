@@ -1,1 +1,0 @@
-const jab = function(sbmdy: string) {};

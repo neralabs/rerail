@@ -1,1 +1,0 @@
-const M = class {static set nam(value: string) {}}; // allow: methods

@@ -1,1 +1,0 @@
-for await (const e of asyncIterate()) { /* ... */ }

@@ -1,1 +1,0 @@
-var v = { set p(rss) {}, get p() {} };

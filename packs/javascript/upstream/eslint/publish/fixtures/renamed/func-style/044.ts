@@ -1,1 +1,0 @@
-const qgx: () => void = (): void => { this; };

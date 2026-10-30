@@ -1,1 +1,0 @@
-class C extends D {static override set jtz(value: string) {}} // allow: setters

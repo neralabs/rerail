@@ -1,1 +1,0 @@
-const A = class {@dvzhpbcux() set unw(value: string) {}}; // allow: methods

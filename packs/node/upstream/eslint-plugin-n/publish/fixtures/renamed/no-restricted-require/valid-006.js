@@ -1,1 +1,0 @@
-azb('crypto');

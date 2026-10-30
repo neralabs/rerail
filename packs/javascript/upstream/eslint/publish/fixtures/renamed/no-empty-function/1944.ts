@@ -1,1 +1,0 @@
-class D { @gsvrtsrvv() async rfx(tfqxt: string) {} }

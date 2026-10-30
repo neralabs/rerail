@@ -1,1 +1,0 @@
-var u = { get d() {}, set d(fur) {}, d };

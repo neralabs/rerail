@@ -1,1 +1,0 @@
-var { deepStrictEqual } = require('assert'); deepStrictEqual()

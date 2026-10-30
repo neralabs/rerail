@@ -1,1 +1,0 @@
-var A = class {set nas(value) { /* empty */ }};

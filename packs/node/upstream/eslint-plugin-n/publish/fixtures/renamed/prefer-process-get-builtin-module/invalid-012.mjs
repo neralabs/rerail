@@ -1,1 +1,0 @@
-import { createRequire as mcmgGtpkbck } from "module"; const require = mcmgGtpkbck(import.meta.skt); require("node:fs")

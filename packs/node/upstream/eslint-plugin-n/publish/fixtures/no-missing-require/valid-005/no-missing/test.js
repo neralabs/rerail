@@ -1,1 +1,0 @@
-require('rimraf/package.json');

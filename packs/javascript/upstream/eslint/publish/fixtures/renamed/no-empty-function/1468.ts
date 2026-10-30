@@ -1,1 +1,0 @@
-const ixq = {get aqv(): string {}}; // allow: asyncFunctions

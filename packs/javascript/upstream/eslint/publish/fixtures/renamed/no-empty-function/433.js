@@ -1,1 +1,0 @@
-var M = class {get trh() {}}; // allow: privateConstructors

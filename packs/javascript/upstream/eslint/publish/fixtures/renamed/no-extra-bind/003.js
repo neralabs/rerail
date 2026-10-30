@@ -1,1 +1,0 @@
-var q = function() { this.r }()

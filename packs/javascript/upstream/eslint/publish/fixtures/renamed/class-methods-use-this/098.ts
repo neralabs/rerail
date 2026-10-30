@@ -1,1 +1,0 @@
-class Ibi { private override nmfvbzah = () => {} }

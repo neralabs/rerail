@@ -1,1 +1,0 @@
-var D = class {get hbj() {}}; // allow: generatorMethods

@@ -1,1 +1,0 @@
-const F = class extends W {override get zwy(): string {}}; // allow: functions

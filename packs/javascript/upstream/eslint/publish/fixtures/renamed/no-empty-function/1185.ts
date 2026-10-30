@@ -1,1 +1,0 @@
-class H { private tvh() {} }

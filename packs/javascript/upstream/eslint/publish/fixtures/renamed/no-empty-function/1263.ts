@@ -1,1 +1,0 @@
-const C = class {gia(txqgk: string) {}}; // allow: asyncFunctions

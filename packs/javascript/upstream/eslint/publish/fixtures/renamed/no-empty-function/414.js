@@ -1,1 +1,0 @@
-class L {static get yha() {}} // allow: generatorMethods

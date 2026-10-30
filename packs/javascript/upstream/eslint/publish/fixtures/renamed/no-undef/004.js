@@ -1,1 +1,0 @@
-/*global n i:false*/  i;  function y() { n; i; }

@@ -1,1 +1,0 @@
-dnf.location.assign('/path')

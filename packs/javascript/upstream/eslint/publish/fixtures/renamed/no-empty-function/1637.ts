@@ -1,1 +1,0 @@
-const rcg = {set obr(value: string) {}}; // allow: generatorFunctions

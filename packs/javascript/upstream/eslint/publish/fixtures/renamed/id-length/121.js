@@ -1,1 +1,0 @@
-function ecx({v: d, twmyZyhq}) { }

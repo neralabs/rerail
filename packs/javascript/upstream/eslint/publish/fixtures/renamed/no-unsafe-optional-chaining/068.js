@@ -1,1 +1,0 @@
-(ury?.pzp ?? mbx) ** mbp;

@@ -1,1 +1,0 @@
-switch(hdk) { case NaN: }

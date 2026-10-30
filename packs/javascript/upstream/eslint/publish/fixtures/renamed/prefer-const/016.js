@@ -1,1 +1,0 @@
-(function() { for (let j = 0, bql = 10; j < bql; ++j) {} })();

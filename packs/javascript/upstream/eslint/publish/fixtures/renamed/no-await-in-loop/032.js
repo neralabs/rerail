@@ -1,1 +1,0 @@
-async function yrg() { while (true) { if (ucv) { yrg(await ucv); } } }

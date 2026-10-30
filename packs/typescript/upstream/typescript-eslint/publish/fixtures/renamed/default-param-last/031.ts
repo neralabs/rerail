@@ -1,1 +1,0 @@
-const itz = (c: number, d = 1, h?: number) => {};

@@ -1,1 +1,0 @@
-class M {@obetxkkpo() static set pdx(value: string) {}} // allow: overrideMethods

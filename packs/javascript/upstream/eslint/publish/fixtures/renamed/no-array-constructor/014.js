@@ -1,1 +1,0 @@
-new Array(s, y)

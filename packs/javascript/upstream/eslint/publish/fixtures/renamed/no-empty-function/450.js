@@ -1,1 +1,0 @@
-var J = class {static get vuf() {}}; // allow: overrideMethods

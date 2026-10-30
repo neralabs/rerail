@@ -1,1 +1,0 @@
-const J = class {@tioakqzzd() get usu(): string {}}; // allow: protectedConstructors

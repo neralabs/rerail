@@ -1,1 +1,0 @@
-function localScopedRequire(require) { require('y'); }

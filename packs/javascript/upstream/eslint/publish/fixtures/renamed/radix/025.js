@@ -1,1 +1,0 @@
-parseInt(...lhcj, 1);

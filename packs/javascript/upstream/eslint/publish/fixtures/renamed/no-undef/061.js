@@ -1,1 +1,0 @@
-class K { static { g; { var g; } } }

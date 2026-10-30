@@ -1,1 +1,0 @@
-switch (b) { case 0: let z; z = 0; }

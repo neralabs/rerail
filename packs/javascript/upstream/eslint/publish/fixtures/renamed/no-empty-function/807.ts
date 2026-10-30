@@ -1,1 +1,0 @@
-const lrn = {set hia(value: string) {}}; // allow: setters

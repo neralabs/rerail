@@ -1,1 +1,0 @@
-(yfd?.dmy).wxb = function gga() {};

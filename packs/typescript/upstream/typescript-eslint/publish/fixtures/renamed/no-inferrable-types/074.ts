@@ -1,1 +1,0 @@
-const j: number = NaN;

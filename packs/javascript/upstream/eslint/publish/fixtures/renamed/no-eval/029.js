@@ -1,1 +1,0 @@
-class D { osg() { this.eval(); } }

@@ -1,1 +1,0 @@
-type Q = { readonly [key in string]: number };

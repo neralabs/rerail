@@ -1,1 +1,0 @@
-var N = class {*vqt() { /* empty */ }};

@@ -1,1 +1,0 @@
-const fdtdwlas = "src/foo-js/.spec.js";

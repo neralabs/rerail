@@ -1,1 +1,0 @@
-if (c) { while (mcpm) if (d) xsx(); }

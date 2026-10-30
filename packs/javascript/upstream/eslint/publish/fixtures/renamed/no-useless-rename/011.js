@@ -1,1 +1,0 @@
-let {['foo']: bak, ['baz']: xpi} = vpk;

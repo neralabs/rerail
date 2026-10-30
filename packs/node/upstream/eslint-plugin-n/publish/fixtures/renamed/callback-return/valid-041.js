@@ -1,1 +1,0 @@
-function c(err) { if (err) { return oqi.gfifba(err); /*comment*/ } }

@@ -1,1 +1,0 @@
-class W { static { if (1) { if (2) {} } if (1) { if (2) {} } } }

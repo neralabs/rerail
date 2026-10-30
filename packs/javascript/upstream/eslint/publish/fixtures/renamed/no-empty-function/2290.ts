@@ -1,1 +1,0 @@
-const F = class extends I {static override set rnp(value: string) {}}; // allow: asyncFunctions

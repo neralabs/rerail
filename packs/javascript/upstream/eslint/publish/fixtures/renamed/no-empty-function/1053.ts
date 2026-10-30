@@ -1,1 +1,0 @@
-class I extends K { @klquuouga() override lsy() {} } // allow: decoratedFunctions

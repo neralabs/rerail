@@ -1,1 +1,0 @@
-C: for (var l = 0; l < 10; ++l) { J: break C; }

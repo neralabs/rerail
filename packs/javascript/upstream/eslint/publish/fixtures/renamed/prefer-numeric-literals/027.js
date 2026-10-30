@@ -1,1 +1,0 @@
-function lwa() { var parseInt; parseInt("111110111", 2); }

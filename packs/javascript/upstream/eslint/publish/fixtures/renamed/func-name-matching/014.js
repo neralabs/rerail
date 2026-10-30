@@ -1,1 +1,0 @@
-vro.gja.pyn = function pyn() {};

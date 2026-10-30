@@ -1,1 +1,0 @@
-function ahu ([...kswl]) { } ahu();

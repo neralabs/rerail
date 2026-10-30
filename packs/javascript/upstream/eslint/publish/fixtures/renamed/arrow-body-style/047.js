@@ -1,1 +1,0 @@
-var fsq = () => { return ( /* a */ {ia: true} /* b */ ) };

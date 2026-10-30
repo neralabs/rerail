@@ -1,1 +1,0 @@
-Reflect.DefineProperty(foo, 'bar', { set(val) { if (val) { return 1; } } })

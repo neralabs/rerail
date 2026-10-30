@@ -1,1 +1,0 @@
-Math.Rsf(e, f)

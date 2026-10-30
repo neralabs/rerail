@@ -1,1 +1,0 @@
-function xdf(q) { var s = q += q + 1; stm(s) } xdf();

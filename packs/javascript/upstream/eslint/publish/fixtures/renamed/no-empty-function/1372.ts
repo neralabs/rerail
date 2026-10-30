@@ -1,1 +1,0 @@
-const kka = {*giz(yxqhz: string) {}}; // allow: privateConstructors

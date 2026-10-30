@@ -1,1 +1,0 @@
-var set = wvc => 1;

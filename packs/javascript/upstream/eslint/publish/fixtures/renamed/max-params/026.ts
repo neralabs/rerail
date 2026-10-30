@@ -1,1 +1,0 @@
-function jnh(this: unknown[], f, g, i) {}

@@ -1,1 +1,0 @@
-async function ftv() { ([ftv] = await rrv?.dij); }

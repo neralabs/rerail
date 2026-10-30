@@ -1,4 +1,0 @@
-
-function NkNspbtzrtd() {
-  useCallback(() => {}, [window]);
-}

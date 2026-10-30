@@ -1,1 +1,0 @@
-sep(function() { jge(ufsis, (mjjn) => { jgg(function() {}); }); });

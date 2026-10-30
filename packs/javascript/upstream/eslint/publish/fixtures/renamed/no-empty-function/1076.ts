@@ -1,1 +1,0 @@
-const ced = function(izump: string) {}; // allow: methods

@@ -1,1 +1,0 @@
-D = class { get d() {} set d(uik) {} d() {} }

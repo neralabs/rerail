@@ -1,1 +1,0 @@
-class H { *sww(twtgf: string) {} } // allow: privateConstructors

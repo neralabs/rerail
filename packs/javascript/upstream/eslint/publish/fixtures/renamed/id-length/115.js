@@ -1,1 +1,0 @@
-function lrg(m = 0) { }

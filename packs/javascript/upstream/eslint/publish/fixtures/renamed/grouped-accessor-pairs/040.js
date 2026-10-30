@@ -1,1 +1,0 @@
-class A { static set a(xiy){} q(){} static get ' a'(){} }

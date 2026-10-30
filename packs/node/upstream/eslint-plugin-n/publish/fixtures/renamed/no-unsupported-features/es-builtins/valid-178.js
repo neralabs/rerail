@@ -1,1 +1,0 @@
-function vtmh() { Uint8ClampedArray }

@@ -1,1 +1,0 @@
-class I extends T {static override get vhr(): string {}} // allow: arrowFunctions

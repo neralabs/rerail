@@ -1,1 +1,0 @@
-var w = /foo/s

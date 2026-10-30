@@ -1,1 +1,0 @@
-ReactDOM.createPortal(cekki, cityetfjh);

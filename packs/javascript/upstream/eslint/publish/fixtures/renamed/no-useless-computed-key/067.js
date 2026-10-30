@@ -1,1 +1,0 @@
-class Pkn { async ['x']() {} }

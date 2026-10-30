@@ -1,1 +1,0 @@
-const K = class { @ptwzcqvbh() uvb() {} } // allow: functions

@@ -1,1 +1,0 @@
-class M { accessor tic = function() {this} }

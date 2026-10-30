@@ -1,1 +1,0 @@
-class G { @korjgrolf() async nqb(zjgxz: string) {} } // allow: getters

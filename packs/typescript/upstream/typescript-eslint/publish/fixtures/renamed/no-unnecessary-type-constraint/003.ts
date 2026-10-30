@@ -1,1 +1,0 @@
-function bxmx<O, S>() {}

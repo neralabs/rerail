@@ -1,1 +1,0 @@
-const g: string = String(1);

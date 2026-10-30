@@ -1,1 +1,0 @@
-const [[a, [s]]] = anbjj; alert(a);

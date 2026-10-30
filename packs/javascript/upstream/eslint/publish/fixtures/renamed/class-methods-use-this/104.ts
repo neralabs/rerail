@@ -1,1 +1,0 @@
-class Dms implements Ato { ["method"]() {} }

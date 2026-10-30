@@ -1,1 +1,0 @@
-for (var dsb in alo) { if (dsb) console.log(1) }

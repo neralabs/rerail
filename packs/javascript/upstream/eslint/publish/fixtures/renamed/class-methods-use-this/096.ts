@@ -1,1 +1,0 @@
-class Dpb implements Aqt { protected override set gjfdbm(m: number) {} }

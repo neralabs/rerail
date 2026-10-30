@@ -1,1 +1,0 @@
-const G = class extends P {override get snb(): string {}}; // allow: constructors

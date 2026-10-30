@@ -1,1 +1,0 @@
-export default function hjxyv<T>(efe: T) {}

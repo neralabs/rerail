@@ -1,1 +1,0 @@
-class T { xcx () { return class { static { this; } } } }

@@ -1,1 +1,0 @@
-var c = require('console'); c.clear()

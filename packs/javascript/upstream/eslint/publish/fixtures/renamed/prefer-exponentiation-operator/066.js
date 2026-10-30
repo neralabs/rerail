@@ -1,1 +1,0 @@
-[lgg, Math.pow(d, k), klk]

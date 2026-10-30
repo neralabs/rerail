@@ -1,1 +1,0 @@
-const ekl = {set bzg(value: string) {}}; // allow: generatorMethods

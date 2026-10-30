@@ -1,1 +1,0 @@
-class B { static imp(rxqrd: string) {} } // allow: asyncFunctions

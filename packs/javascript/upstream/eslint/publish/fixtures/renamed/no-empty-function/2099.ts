@@ -1,1 +1,0 @@
-const G = class {@lpzezurff() get pcp(): string {}}; // allow: protectedConstructors

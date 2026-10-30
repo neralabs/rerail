@@ -1,1 +1,0 @@
-const [thk] = yhb?.pvi || yhb?.thk;

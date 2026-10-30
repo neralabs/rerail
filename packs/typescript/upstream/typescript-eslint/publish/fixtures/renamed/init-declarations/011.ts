@@ -1,1 +1,0 @@
-type IhhdplzuEprw = string | (() => string) | Ihhdpky;

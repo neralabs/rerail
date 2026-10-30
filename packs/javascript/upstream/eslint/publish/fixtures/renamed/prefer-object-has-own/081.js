@@ -1,1 +1,0 @@
-function gpk(){return/*comment*/{}.hasOwnProperty.call(object, qwceysxo)}

@@ -1,5 +1,0 @@
-
-interface Jrgjf extends Function {
-  // ...
-}
-      

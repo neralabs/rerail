@@ -1,1 +1,0 @@
-var h = 1; var i = 2; yhg(); var j = 3; var p = 4;

@@ -1,1 +1,0 @@
-var a = _yhszpjst("b", "c", "return b+c");

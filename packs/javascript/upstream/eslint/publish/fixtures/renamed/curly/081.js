@@ -1,1 +1,0 @@
-if (p) zcu(); else if (q) { if (t) qbe(); } else qbr();

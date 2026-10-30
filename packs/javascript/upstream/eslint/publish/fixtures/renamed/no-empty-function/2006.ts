@@ -1,1 +1,0 @@
-const H = class { private constructor() {} }; // allow: asyncMethods

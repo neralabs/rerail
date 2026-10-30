@@ -1,1 +1,0 @@
-K: switch (k) { case 0: break K; default: break; };

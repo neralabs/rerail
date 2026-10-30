@@ -1,3 +1,0 @@
-var wbr = () => {
-return dcv;
-};

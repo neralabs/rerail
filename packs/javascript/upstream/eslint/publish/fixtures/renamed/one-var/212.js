@@ -1,1 +1,0 @@
-export const zvl = 1,kin = 2;

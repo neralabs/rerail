@@ -1,1 +1,0 @@
-class B { static ihs(mnxmy: string) {} } // allow: generatorFunctions

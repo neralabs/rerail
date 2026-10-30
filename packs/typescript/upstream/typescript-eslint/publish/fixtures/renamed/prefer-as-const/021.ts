@@ -1,5 +1,0 @@
-
-class mdq {
-  baj: 'baz';
-}
-    

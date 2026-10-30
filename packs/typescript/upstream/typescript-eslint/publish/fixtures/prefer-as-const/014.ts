@@ -1,1 +1,0 @@
-let foo: number = 1;

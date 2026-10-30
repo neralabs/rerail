@@ -1,1 +1,0 @@
-if (0 <= index && index < lggk.length) {}

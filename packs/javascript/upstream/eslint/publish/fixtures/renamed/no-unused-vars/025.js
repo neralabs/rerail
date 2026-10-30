@@ -1,1 +1,0 @@
-function t(mdo, mdx) { return mdx; }; t();

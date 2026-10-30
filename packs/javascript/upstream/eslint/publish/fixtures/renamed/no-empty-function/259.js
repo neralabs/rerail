@@ -1,1 +1,0 @@
-class O {qnx() {}} // allow: generatorMethods

@@ -1,1 +1,0 @@
-function takeVoid(thing: void) {}

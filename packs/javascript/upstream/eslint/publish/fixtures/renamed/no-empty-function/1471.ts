@@ -1,1 +1,0 @@
-const ptn = {get cjd(): string {}}; // allow: protectedConstructors

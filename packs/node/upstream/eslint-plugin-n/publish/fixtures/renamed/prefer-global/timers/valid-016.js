@@ -1,1 +1,0 @@
-const { clearInterval } = require('node:timers'); clearInterval(hu)

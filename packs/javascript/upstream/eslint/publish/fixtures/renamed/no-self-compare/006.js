@@ -1,1 +1,0 @@
-class A { #field; fzp() { this['#field'] === this.#field; } }

@@ -1,1 +1,0 @@
-(class { static set f(sce){} static get f(){} })

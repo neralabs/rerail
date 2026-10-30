@@ -1,1 +1,0 @@
-U: while(true) { continue/**/U; }

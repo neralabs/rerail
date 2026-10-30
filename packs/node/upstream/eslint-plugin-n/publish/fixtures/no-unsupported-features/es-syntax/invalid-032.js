@@ -1,1 +1,0 @@
-async function wrap() { for await (var a of b); }

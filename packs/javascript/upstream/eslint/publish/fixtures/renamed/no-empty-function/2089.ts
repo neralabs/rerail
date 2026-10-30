@@ -1,1 +1,0 @@
-const C = class {@hrfipwzei() get ruj(): string {}}; // allow: functions

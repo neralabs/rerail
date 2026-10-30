@@ -1,1 +1,0 @@
-type FrfnbMwzv3 = string | ((number & any) | (string | void));

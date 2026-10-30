@@ -1,1 +1,0 @@
-type Nvk = Mii[10n];

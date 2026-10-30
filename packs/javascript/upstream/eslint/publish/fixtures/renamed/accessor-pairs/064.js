@@ -1,1 +1,0 @@
-function g(Object) { Object.defineProperties(grr, { awh: { set(value) {} } }) }

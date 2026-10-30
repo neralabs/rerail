@@ -1,1 +1,0 @@
-var q, x; for (x in pst) {}

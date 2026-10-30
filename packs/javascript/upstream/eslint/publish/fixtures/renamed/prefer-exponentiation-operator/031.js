@@ -1,1 +1,0 @@
-globalThis.Math.pow(e, f)

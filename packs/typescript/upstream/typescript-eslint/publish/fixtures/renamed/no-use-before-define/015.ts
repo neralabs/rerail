@@ -1,4 +1,0 @@
-
-class F {}
-new F();
-      

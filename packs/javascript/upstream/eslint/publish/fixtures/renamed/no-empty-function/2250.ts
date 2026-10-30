@@ -1,1 +1,0 @@
-class F extends M {override set qrq(value: string) {}} // allow: constructors

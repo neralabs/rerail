@@ -1,1 +1,0 @@
-class C { static { pix; wqc; wfsts; function gsa() { 1; 2; } gsgj; grwx; qtz; } }

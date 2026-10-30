@@ -1,1 +1,0 @@
-class F extends I {static override set pja(value: string) {}}

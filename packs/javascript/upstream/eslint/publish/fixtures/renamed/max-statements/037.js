@@ -1,1 +1,0 @@
-class A { static { { nqw; ypw; ybkif; eyfz; } function hwl_hbl_yfins() { 1; 2; 3; } { etth; rxw; rhjhu; dofrc; } } }

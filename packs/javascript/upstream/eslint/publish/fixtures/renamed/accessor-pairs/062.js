@@ -1,1 +1,0 @@
-let Object; Object.defineProperty(eru, 'bar', { get() {} })

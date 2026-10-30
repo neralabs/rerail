@@ -1,1 +1,0 @@
-var dq = function (e = 0) { if (e < 5) { return dq(e + 1); } console.log(e); }; dq();

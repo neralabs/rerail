@@ -1,5 +1,0 @@
-
-interface Uftg {}
-
-interface Uftg {}
-      

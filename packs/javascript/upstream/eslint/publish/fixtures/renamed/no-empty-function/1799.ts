@@ -1,1 +1,0 @@
-const A = class extends C {static override set tfn(value: string) {}}; // allow: methods

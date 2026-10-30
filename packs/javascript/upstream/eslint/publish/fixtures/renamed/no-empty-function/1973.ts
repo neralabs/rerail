@@ -1,1 +1,0 @@
-const hgf = async (): Promise<void> => {}; // allow: methods

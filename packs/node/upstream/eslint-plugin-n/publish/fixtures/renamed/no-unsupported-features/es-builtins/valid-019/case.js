@@ -1,1 +1,0 @@
-(function(Map) { Map }(d))

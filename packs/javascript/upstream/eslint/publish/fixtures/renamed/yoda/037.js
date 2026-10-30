@@ -1,1 +1,0 @@
-if (WZUR <= index && index < 100) {}

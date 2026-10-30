@@ -1,1 +1,0 @@
-wbw ? wbw?.gmw : gmw.gmx;

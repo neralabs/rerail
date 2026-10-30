@@ -1,1 +1,0 @@
-switch (ssc) { default: case 1: }

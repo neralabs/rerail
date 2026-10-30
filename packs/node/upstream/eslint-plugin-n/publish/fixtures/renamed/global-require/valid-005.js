@@ -1,1 +1,0 @@
-var u = require('y'), y = require('y'), z = require('z');

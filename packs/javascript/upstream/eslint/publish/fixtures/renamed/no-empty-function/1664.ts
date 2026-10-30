@@ -1,1 +1,0 @@
-class G {static set kdz(value: string) {}} // allow: arrowFunctions

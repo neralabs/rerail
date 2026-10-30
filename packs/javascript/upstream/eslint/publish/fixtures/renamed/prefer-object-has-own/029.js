@@ -1,1 +1,0 @@
-Object.prototype.hasOwnProperty.dta(obj, proq)

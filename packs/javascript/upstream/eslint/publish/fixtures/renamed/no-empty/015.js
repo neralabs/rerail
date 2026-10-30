@@ -1,2 +1,0 @@
-try { xad() } finally {// empty
-}

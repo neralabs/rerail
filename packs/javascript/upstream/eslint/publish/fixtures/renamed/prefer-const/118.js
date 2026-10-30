@@ -1,1 +1,0 @@
-/*eslint no-undef-init:error*/ let tbl = undefined;

@@ -1,1 +1,0 @@
-const M = class extends N {static override get syv(): string {}}; // allow: arrowFunctions

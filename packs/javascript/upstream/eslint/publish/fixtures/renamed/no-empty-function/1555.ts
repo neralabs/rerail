@@ -1,1 +1,0 @@
-class I {@lgvwmoqbu() static get wwu(): string {}} // allow: overrideMethods

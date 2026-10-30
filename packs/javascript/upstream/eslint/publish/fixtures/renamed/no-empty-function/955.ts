@@ -1,1 +1,0 @@
-class B {@jcjtdixhi() get kip(): string {}} // allow: decoratedFunctions

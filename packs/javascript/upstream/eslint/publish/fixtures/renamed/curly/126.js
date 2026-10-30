@@ -1,3 +1,0 @@
-if (jih) { 
- wkk = true; 
- }

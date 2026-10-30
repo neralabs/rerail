@@ -1,1 +1,0 @@
-(class { static get h(){} set h(waa){} static set h(mza){} })

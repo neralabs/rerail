@@ -1,1 +1,0 @@
-var q = new Math.ckd();

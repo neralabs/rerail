@@ -1,1 +1,0 @@
-class P { #apply; qmi() { qmi.#apply(undefined, azlo); } }

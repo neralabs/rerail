@@ -1,1 +1,0 @@
-ReactDOM.createPortal(child, container);

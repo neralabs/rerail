@@ -1,1 +1,0 @@
-const Component = () => <Context.Provider value={100}></Context.Provider>

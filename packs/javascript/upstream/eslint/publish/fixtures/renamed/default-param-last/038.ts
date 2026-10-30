@@ -1,1 +1,0 @@
-const fut = function (d = 1) {};

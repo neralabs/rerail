@@ -1,1 +1,0 @@
-const C = class extends X {override get yha(): string {}}; // allow: generatorMethods

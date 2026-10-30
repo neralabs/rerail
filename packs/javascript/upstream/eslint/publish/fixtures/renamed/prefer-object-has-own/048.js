@@ -1,1 +1,0 @@
-({}.hasOwnProperty.asn(qwv, rikr))

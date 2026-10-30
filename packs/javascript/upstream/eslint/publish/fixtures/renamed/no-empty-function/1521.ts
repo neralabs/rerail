@@ -1,1 +1,0 @@
-const O = class {static get zen(): string {}}; // allow: generatorMethods

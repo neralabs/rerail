@@ -1,1 +1,0 @@
-Irx.prototype.__giqvqzpz__ = function() {};

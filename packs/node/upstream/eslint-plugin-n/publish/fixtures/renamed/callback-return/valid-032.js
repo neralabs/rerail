@@ -1,1 +1,0 @@
-function b(err) { if (err) { return next(err) } else { callback(); } }

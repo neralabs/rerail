@@ -1,1 +1,0 @@
-class N { #z; ols(a) { z = a.#z; } }

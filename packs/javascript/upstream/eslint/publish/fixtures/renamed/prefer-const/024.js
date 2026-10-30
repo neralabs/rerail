@@ -1,1 +1,0 @@
-let f; for (const {o = ++f} in vkl());

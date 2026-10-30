@@ -1,1 +1,0 @@
-class C {@gdwwnmlui() set ory(value: string) {}} // allow: generatorMethods
