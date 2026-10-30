@@ -315,8 +315,12 @@ interpreter.
     one in the background mode) has 0 differ. The roots take 178 ms; the label passes before them
     are slow (O26).
   - **Planner.** `logic::plan::emit` gives a lowered program as a `schedule::Program`, and T's
-    workload, workload_demand and calls give `run_atoms`' outputs through `schedule::run` (O14).
-    The wave's own step stays one statement: it reads the demand relation, and is not a rule.
+    workload, workload_demand and calls give `run_atoms`' outputs through `schedule::run`, planned
+    from the estimates and again from a run's boundary counts (O14). The frontier loop now runs
+    every stratum with nothing pending upstream in the same wave, so waves follow the dependency
+    depth (calls: 64, from 117). The wave's own step stays one statement: it reads the chunk's
+    demand relation through `:batch`, which is not a planner input (it has no statistics outside
+    a batch), and planning one join would emit the same statement.
 
 ### S5. Findings layer (first version of §8)
 

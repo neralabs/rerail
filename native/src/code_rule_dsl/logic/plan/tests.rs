@@ -268,7 +268,8 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
 }
 
 /// O14: the planner's programs as wave programs (`emit`) run through the frontier loop
-/// (`waves::schedule::run`) give the rows `run_atoms` gives with its own stratum loop.
+/// (`waves::schedule::run`) give the rows `run_atoms` gives with its own stratum loop, planned from
+/// the estimates and again from the counts the first run's boundary recorded.
 #[test]
 fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
@@ -295,29 +296,48 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
         let p = program(name);
         let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let expected = run_atoms(&lowered, &db, "s").unwrap_or_else(|e| panic!("{name}: {e}"));
-        let emitted = emit::emit(&lowered, &db, "s", name).unwrap_or_else(|e| panic!("{name}: {e}"));
-        let backing = Backing::default();
-        let scope = backing.enter(&store);
-        let lease = scope.pool().take().unwrap();
-        super::super::native::register_symbols(&lease).unwrap();
-        // The steps read the documents' node intervals from the statistics schema, as `run_atoms`.
-        lease.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER)").unwrap();
-        let ranges: Vec<(i64, i64, i64)> =
-            db.prepare("SELECT d, lo, hi FROM s.stat_docrange").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(|r| r.unwrap()).collect();
-        for range in ranges {
-            lease.execute("INSERT INTO s.stat_docrange VALUES (?1, ?2, ?3)", [range.0, range.1, range.2]).unwrap();
-        }
-        for statement in &emitted.setup {
-            lease.execute_batch(statement).unwrap();
-        }
-        let outcome = schedule::run(&lease, &store, &emitted.program, "/w", docs.clone(), &schedule::Limits::default(), &mut |_| Ok(None))
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let (got, _) = emit::outputs(&lowered, &lease).unwrap();
-        eprintln!("O14 {name}: {} steps in {} waves; {} outputs", emitted.program.steps.len(), outcome.waves, got.len());
-        for (rel, rows) in &expected.outputs {
-            if got.get(rel) != Some(rows) {
-                failures.push(format!("{name} {rel}: {} rows, run_atoms {}", got.get(rel).map_or(0, Vec::len), rows.len()));
+        // Planned from the estimates, then from the counts the first run's boundary recorded.
+        let mut counts = None;
+        let mut first: Option<Vec<String>> = None;
+        for pass in ["estimates", "counts"] {
+            let emitted = emit::emit(&lowered, &db, "s", name, counts.as_ref()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let backing = Backing::default();
+            let scope = backing.enter(&store);
+            let lease = scope.pool().take().unwrap();
+            super::super::native::register_symbols(&lease).unwrap();
+            // The steps read the documents' node intervals from the statistics schema, as `run_atoms`.
+            lease.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER)").unwrap();
+            let ranges: Vec<(i64, i64, i64)> = db
+                .prepare("SELECT d, lo, hi FROM s.stat_docrange")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            for range in ranges {
+                lease.execute("INSERT INTO s.stat_docrange VALUES (?1, ?2, ?3)", [range.0, range.1, range.2]).unwrap();
             }
+            for statement in &emitted.setup {
+                lease.execute_batch(statement).unwrap();
+            }
+            let outcome = schedule::run(&lease, &store, &emitted.program, "/w", docs.clone(), &schedule::Limits::default(), &mut |_| Ok(None))
+                .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let (got, _) = emit::outputs(&lowered, &lease).unwrap();
+            let sql: Vec<String> = emitted.program.steps.iter().map(|s| s.sql.clone()).collect();
+            let replanned = first.as_ref().map_or(0, |f| f.iter().zip(&sql).filter(|(a, b)| a != b).count());
+            eprintln!(
+                "O14 {name} ({pass}): {} steps ({replanned} replanned) in {} waves; {} outputs",
+                sql.len(),
+                outcome.waves,
+                got.len()
+            );
+            for (rel, rows) in &expected.outputs {
+                if got.get(rel) != Some(rows) {
+                    failures.push(format!("{name} {pass} {rel}: {} rows, run_atoms {}", got.get(rel).map_or(0, Vec::len), rows.len()));
+                }
+            }
+            first.get_or_insert(sql);
+            counts = Some(outcome.rows);
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

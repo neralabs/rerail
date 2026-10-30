@@ -101,6 +101,8 @@ is the number of waves (03 §7), which the tests count.
 ## Consequences
 - `logic::plan` can emit steps instead of running its own stratum loop. That port is O14:
   `run_atoms` keeps its loop until the planner emits steps.
+  2026-10-30: done (`logic::plan::emit`). The frontier is now every stratum with no pending
+  stratum upstream of it, not only the lowest, so independent strata share waves.
 - Statistics of derived relations are row counts only. The `ndv` of a derived column still
   comes from `logic::plan`'s `count(DISTINCT)` (T18), until `stats::ingest` merges derived
   families.

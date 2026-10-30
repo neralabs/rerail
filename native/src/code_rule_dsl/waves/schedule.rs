@@ -9,15 +9,18 @@
 //!
 //! What runs next is now a query. The steps, their reads and each wave's deltas are rows of
 //! `temp.wave_step`, `temp.wave_read` and `temp.wave_delta`, and two fixed statements select a
-//! wave's frontier: the pending steps of the lowest pending stratum. Rust executes the statements
+//! wave's frontier: the pending steps of every stratum with no pending stratum upstream of it
+//! (`temp.wave_after`, the strata a stratum reads from, transitively). Independent strata share
+//! waves, so a program takes about its dependency depth in waves, not one per stratum. Rust executes the statements
 //! SQL selected and folds each `new_` table with fixed SQL; it never runs per row (ledger 17).
 //!
 //! Step contract:
 //! - A step's statement inserts into `new_<output>`.
 //! - It reads `delta_<r>` for a relation `r` of its own stratum (semi-naive) and whole
 //!   relations otherwise.
-//! - A stratum runs only when no lower stratum has pending steps, so negation and aggregation
-//!   read complete relations.
+//! - `reads` lists every derived relation the statement reads.
+//! - A stratum runs only when no stratum it reads from (transitively) has pending steps, so
+//!   negation and aggregation read complete relations.
 //! - A statement may read the chunk's `demand(batch)` relations through `:batch`. A batch's
 //!   files are the chunk's documents in order: `temp.wave_document(position, d)` maps a
 //!   relation's `file_index` to the document's key.
@@ -145,11 +148,12 @@ fn chunks(documents: Vec<Document>, budget: usize, file_local: bool) -> Vec<Vec<
     out
 }
 
-const CONTROL: [(&str, &str); 5] = [
+const CONTROL: [(&str, &str); 6] = [
     ("wave_step", "CREATE TEMP TABLE wave_step(step INTEGER PRIMARY KEY, stratum INTEGER NOT NULL, output TEXT NOT NULL, sql TEXT NOT NULL)"),
     ("wave_read", "CREATE TEMP TABLE wave_read(rel TEXT NOT NULL, step INTEGER NOT NULL, PRIMARY KEY (rel, step)) WITHOUT ROWID"),
     ("wave_delta", "CREATE TEMP TABLE wave_delta(wave INTEGER NOT NULL, rel TEXT NOT NULL, rows INTEGER NOT NULL, PRIMARY KEY (wave, rel)) WITHOUT ROWID"),
     ("wave_pending", "CREATE TEMP TABLE wave_pending(step INTEGER PRIMARY KEY)"),
+    ("wave_after", "CREATE TEMP TABLE wave_after(stratum INTEGER NOT NULL, before INTEGER NOT NULL, PRIMARY KEY (stratum, before)) WITHOUT ROWID"),
     ("wave_document", "CREATE TEMP TABLE wave_document(position INTEGER PRIMARY KEY, d INTEGER NOT NULL)"),
 ];
 
@@ -183,6 +187,14 @@ fn declare(lease: &Lease<'_>, program: &Program) -> rusqlite::Result<()> {
             read.execute(rusqlite::params![r, i as i64])?;
         }
     }
+    // A stratum waits on the strata whose outputs its steps read, and on theirs.
+    lease.execute_batch(
+        "INSERT INTO temp.wave_after WITH RECURSIVE \
+           e(stratum, before) AS (SELECT DISTINCT s.stratum, p.stratum FROM temp.wave_read r \
+             JOIN temp.wave_step s USING (step) JOIN temp.wave_step p ON p.output = r.rel WHERE p.stratum <> s.stratum), \
+           c(stratum, before) AS (SELECT * FROM e UNION SELECT c.stratum, e.before FROM c JOIN e ON e.stratum = c.before) \
+         SELECT * FROM c WHERE stratum <> before",
+    )?;
     Ok(())
 }
 
@@ -220,12 +232,10 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
     lease.execute_batch("DELETE FROM temp.wave_delta; DELETE FROM temp.wave_pending; INSERT INTO temp.wave_pending SELECT step FROM temp.wave_step")?;
     let mut wave = 0;
     loop {
-        let stratum: Option<i64> = lease.query_row(
-            "SELECT min(s.stratum) FROM temp.wave_pending p JOIN temp.wave_step s USING (step)",
-            [],
-            |r| r.get(0),
-        )?;
-        let Some(stratum) = stratum else { break };
+        let pending: i64 = lease.query_row("SELECT count(*) FROM temp.wave_pending", [], |r| r.get(0))?;
+        if pending == 0 {
+            break;
+        }
         if wave == max_waves {
             return Err(StoreError::Invalid(format!("{}: no fixpoint in {max_waves} waves", program.name)));
         }
@@ -233,14 +243,16 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
         let frontier: Vec<(i64, String, String)> = lease
             .prepare_cached(
                 "SELECT s.step, s.output, s.sql FROM temp.wave_pending p JOIN temp.wave_step s USING (step) \
-                 WHERE s.stratum = ?1 ORDER BY s.step",
+                 WHERE NOT EXISTS (SELECT 1 FROM temp.wave_after a JOIN temp.wave_step u ON u.stratum = a.before \
+                   JOIN temp.wave_pending q ON q.step = u.step WHERE a.stratum = s.stratum) ORDER BY s.step",
             )?
-            .query_map([stratum], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?;
-        lease.execute(
-            "DELETE FROM temp.wave_pending WHERE step IN (SELECT step FROM temp.wave_step WHERE stratum = ?1)",
-            [stratum],
-        )?;
+        let mut clear = lease.prepare_cached("DELETE FROM temp.wave_pending WHERE step = ?1")?;
+        for (step, ..) in &frontier {
+            clear.execute([step])?;
+        }
+        drop(clear);
         let mut written = BTreeSet::new();
         for (_, output, text) in &frontier {
             let mut statement = lease.prepare_execution(text)?;

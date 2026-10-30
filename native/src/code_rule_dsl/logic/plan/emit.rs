@@ -10,8 +10,12 @@
 //! Lattice relations fold by key as `merge_lattice` merges them (`Program::lattices`). The views
 //! `run` makes of one-atom projections are statements to run on the connection first, as is
 //! `rdl_int`; a step that maps a node to its document reads `stat_docrange` of the statistics
-//! schema, which the connection attaches as `run_atoms` has it. Plans are made up front from the input statistics: `run` refreshes a stratum's
-//! counts before planning the next, which only changes the plans, not their rows.
+//! schema, which the connection attaches as `run_atoms` has it.
+//!
+//! Plans are made before the program runs, since its steps are rows the frontier loop selects. A
+//! derived relation's count is then the one a previous run's boundary recorded (`rows.<relation>`,
+//! `schedule::Outcome::rows`), where `run` counts each stratum before planning the next; without
+//! one, the planner's estimate. The counts change the plans, never their rows.
 
 use super::*;
 use crate::code_rule_dsl::waves::schedule;
@@ -24,7 +28,14 @@ pub(in crate::code_rule_dsl) struct Emitted {
 
 /// `lowered` as the wave program `name`, planned over the statistics in schema `stats` of `db`,
 /// in the product's input mode (`run_atoms`).
-pub(in crate::code_rule_dsl) fn emit(lowered: &lower::Lowered, db: &Connection, stats: &str, name: &str) -> Result<Emitted> {
+/// `counts` are a previous run's `rows.<relation>`.
+pub(in crate::code_rule_dsl) fn emit(
+    lowered: &lower::Lowered,
+    db: &Connection,
+    stats: &str,
+    name: &str,
+    counts: Option<&BTreeMap<String, u64>>,
+) -> Result<Emitted> {
     let prog = &lowered.program;
     let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new() };
     let mut model = make_plan(prog, db, inputs)?;
@@ -40,6 +51,14 @@ pub(in crate::code_rule_dsl) fn emit(lowered: &lower::Lowered, db: &Connection, 
         views.insert(rel);
     }
     let derived = |rel: &str| !prog.inputs.iter().any(|i| i == rel) && !views.contains(rel);
+    for (rel, rows) in counts.into_iter().flatten() {
+        if let Some(rel) = rel.strip_prefix("rows.")
+            && derived(rel)
+            && prog.decls.contains_key(rel)
+        {
+            model.stats.card.insert(rel.to_owned(), (*rows as f64).max(1.0));
+        }
+    }
     let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.clone(), cols.len())).collect();
     // The derived relations a rule body reads, in order.
     let reads = |order: &[Step], keep: &dyn Fn(&str) -> bool| -> Vec<String> {
