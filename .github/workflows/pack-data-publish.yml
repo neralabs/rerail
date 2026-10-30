@@ -10,8 +10,9 @@ name: Publish pack data
 # request and holds the write role only after a code owner approves the test-data-upload deployment, having read prep's
 # summary; finish builds its one commit with git plumbing alone and pushes it with the neralabs-ci app's token, which
 # it mints only after every object is confirmed in S3, and never forces. A fork's branch, or a push GitHub rejects
-# (the branch moved), gets the locks in the sticky comment instead. Re-running is safe: puts are create-only and
-# content-addressed, and confirm accepts an object S3 already holds once it verifies.
+# twice (the branch moved, or GitHub's own error, which the comment quotes), gets the locks in the sticky comment
+# instead. Re-running is safe: puts are create-only and content-addressed, and confirm accepts an object S3 already
+# holds once it verifies.
 
 run-name: Publish pack data for #${{ inputs.pr }}
 
@@ -24,8 +25,11 @@ on:
         required: true
       replace:
         description: >-
-          Make each tool-pack's archive exactly what its publish/ holds (for deletions or a full regeneration), rather
-          than lay publish/ over the locked archive.
+          On when publish/ holds each tool-pack's whole data set (a regeneration or re-derive staged with
+          `fixtures:stage --all`, or a publish that deletes files from the archive): the archive becomes exactly
+          publish/. Off when publish/ holds only what is new or changed: it is laid over the locked archive. On over
+          additions drops every locked file publish/ lacks; off over a regeneration keeps the files it deleted. The
+          pull request's "Pack data waiting to publish" comment recommends a value.
         type: boolean
         default: false
 
@@ -284,7 +288,7 @@ jobs:
   # Only after every object is confirmed: one commit on the pull request's head writes the new locks and deletes every
   # publish/, built with git plumbing alone (no checkout of the pull request, no hooks), and pushed with the app's
   # token (a push with GITHUB_TOKEN would start no CI) as a plain push GitHub accepts only as a fast-forward. A fork, or
-  # a rejected push, gets the locks in the sticky comment instead.
+  # a push rejected twice, gets the locks in the sticky comment instead.
   finish:
     name: finish
     needs: [prep, upload]
@@ -378,7 +382,10 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
-      # A plain push: GitHub rejects it unless it fast-forwards the head prep packed. Never --force.
+      # A plain push: GitHub rejects it unless it fast-forwards the head prep packed. Never --force. A rejected push is
+      # tried once more after a pause, since GitHub answers a transient error (a 5xx) with a rejection too, and a push
+      # the first attempt landed is then "Everything up-to-date". A second rejection is diagnosed for the comment: the
+      # branch's head against prep's, else GitHub's own answer.
       - id: push
         name: Push the commit
         if: steps.commit.outputs.made == 'true'
@@ -396,12 +403,34 @@ jobs:
           export GIT_AUTHOR_NAME="${APP_SLUG}[bot]" GIT_AUTHOR_EMAIL="$email" GIT_COMMITTER_NAME="${APP_SLUG}[bot]" GIT_COMMITTER_EMAIL="$email"
           new="$(git -c core.hooksPath=/dev/null commit-tree "$TREE" -p "$HEAD_SHA" -m "$MESSAGE")"
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
-          if git -c core.hooksPath=/dev/null -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" \
-            push origin "$new:refs/heads/$HEAD_REF"; then
+          as_app=(-c core.hooksPath=/dev/null -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}")
+          pushed=false
+          for attempt in 1 2; do
+            if git "${as_app[@]}" push origin "$new:refs/heads/$HEAD_REF" 2> "$RUNNER_TEMP/push-error.txt"; then
+              pushed=true
+              break
+            fi
+            cat "$RUNNER_TEMP/push-error.txt" >&2
+            if [ "$attempt" = 1 ]; then
+              echo "GitHub rejected the push; trying once more in 15 s"
+              sleep 15
+            fi
+          done
+          if [ "$pushed" = true ]; then
             echo "pushed=$new" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::GitHub rejected the push to $HEAD_REF (the branch moved since prep); the comment carries the locks instead"
+            exit 0
           fi
+          # Why, in one line of plain text for the comment: the branch's head is no longer the one prep packed, or
+          # GitHub's own answer (its "! [rejected]" line, else stderr's last line).
+          head="$(git "${as_app[@]}" ls-remote --quiet origin "refs/heads/$HEAD_REF" | cut -f1 || true)"
+          if [ -n "$head" ] && [ "$head" != "$HEAD_SHA" ]; then
+            rejected="the branch moved since prep (its head is ${head:0:12}, not ${HEAD_SHA:0:12})"
+          else
+            answer="$({ grep -m1 '^ ! ' "$RUNNER_TEMP/push-error.txt" || tail -n 1 "$RUNNER_TEMP/push-error.txt"; } | tr -d '`' | tr -c '[:print:]' ' ' | sed 's/^ *//; s/ *$//' | cut -c1-200)"
+            rejected="GitHub answered twice with \`${answer:-no message}\`"
+          fi
+          echo "rejected=$rejected" >> "$GITHUB_OUTPUT"
+          echo "::warning::GitHub rejected the push to $HEAD_REF: $rejected; the comment carries the locks instead"
 
       - name: Update the sticky comment
         if: always()
@@ -415,6 +444,7 @@ jobs:
           COMMIT_OUTCOME: ${{ steps.commit.outcome }}
           MADE: ${{ steps.commit.outputs.made }}
           PUSH_OUTCOME: ${{ steps.push.outcome }}
+          REJECTED: ${{ steps.push.outputs.rejected }}
         run: |
           set -euo pipefail
           if [ -n "$COMMIT" ]; then
@@ -430,7 +460,7 @@ jobs:
             elif [ "$PUSH_OUTCOME" != "success" ]; then
               export REASON="the push step did not run to completion (see the token and push steps' logs)"
             else
-              export REASON="GitHub rejected the push to the pull request's branch (someone pushed to it since prep)"
+              export REASON="GitHub rejected the push to the pull request's branch: ${REJECTED:-see the push step's log}"
             fi
           fi
           body="$(node scripts/s3/pack-data-publish.mjs comment "$state")"

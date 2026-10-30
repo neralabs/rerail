@@ -427,10 +427,10 @@ flowchart LR
 | Step | Who | What happens |
 | --- | --- | --- |
 | 1 | Contributor | Stages the data in `publish/` ([Adding or changing a pack](#adding-or-changing-a-pack)) and opens the pull request. |
-| 2 | `pack-data-publish-request.yml` | Keeps one comment, **Pack data waiting to publish**, listing each tool-pack's files in `publish/` and authored rows removed, with the publish steps by hand and with the `gh` CLI. It runs on `pull_request_target`, so for forks too, and checks out and runs nothing of the pull request. On a fork's pull request the comment lists the data without the publish steps: it comes in with the ported pull request. |
+| 2 | `pack-data-publish-request.yml` | Keeps one comment, **Pack data waiting to publish**, listing each tool-pack's files in `publish/` and authored rows removed, with the publish steps by hand and with the `gh` CLI and the `replace` value its counts recommend ([Merging](#merging-maintainers)). It runs on `pull_request_target`, so for forks too, and checks out and runs nothing of the pull request. On a fork's pull request the comment lists the data without the publish steps: it comes in with the ported pull request. |
 | 3 | CI | Judges the data as it would be published: `publish/` over the locked archive, `publish/samples/` over the locked samples. Structure metric #3 (`npm run check`) fails while any `publish/` is tracked, so the pull request cannot merge yet. |
 | 4 | Maintainer | Dispatches **Publish pack data** on `main` with the pull request's number ([Merging](#merging-maintainers)). |
-| 5 | prep | Packs every `publish/` from the pull request head's git blobs with main's code, never checking it out or running it. It refuses a closed pull request, a head on this repository's `main` or another protected branch, a path in `publish/` that is no pack data, a sample set that fails validation, and any file whose licence the allowlist does not take, before anyone is asked to approve, and writes the approver's summary. |
+| 5 | prep | Packs every `publish/` from the pull request head's git blobs with main's code, never checking it out or running it. It refuses a closed pull request, a head on this repository's `main` or another protected branch, a path in `publish/` that is no pack data, a sample set that fails validation, and any file whose licence the allowlist does not take, before anyone is asked to approve, and writes the approver's summary, with a warning when the `replace` value contradicts what `publish/` restages of the locked archive. |
 | 6 | Code owner | Reads the summary and approves the `test-data-upload` deployment ([Approving a data upload](#approving-a-data-upload-code-owners)). |
 | 7 | upload | Fails unless an approval is on record. Puts each archive create-only (an object is never overwritten), tagged with the commit, pull request, run and approver, then downloads each again and verifies it against its lock. |
 | 8 | finish | Commits the new locks and removes `publish/` in one commit on the pull request's branch, pushed with the `neralabs-ci` app's token so CI runs again, and only as a fast-forward. When the branch moved, the comment gives the locks to commit instead. |
@@ -524,10 +524,18 @@ first: its pack data is reviewed like its code ([REVIEW.md](REVIEW.md#what-block
    gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> [-f replace=true]
    ```
 
-   Leave `replace` off to lay `publish/` over the locked archive (the files the pull request's `UPSTREAM.md` stopped
-   listing are dropped). Turn it on when the pull request stages a whole set with `--all`, to remove files or
-   regenerate the set. An upstream bump or re-snapshot pull request (`auto/bump-upstream`, `auto/resnapshot-upstream`)
-   stages whole sets, so it publishes with `replace`, and only this way
+   Tick `replace` when `publish/` holds the tool-pack's whole data set (a regeneration or re-derive staged with
+   `fixtures:stage --all`, or a publish that deletes files from the archive); leave it off when `publish/` holds only
+   what is new or changed and the rest of the locked archive must stay (samples added beside the locked ones, a few
+   new authored cases). Off, `publish/` is laid over the locked archive, less the files whose rows the pull request
+   removed from `UPSTREAM.md`; on, the archive becomes exactly `publish/`. The wrong value is costly: `replace` over
+   additions drops every locked file `publish/` lacks, and an overlay over a regeneration keeps the files it deleted.
+   Prep refuses the wrong value for test data, whose `provenance.json` must list exactly the archive's files, but
+   nothing guards a samples archive: read the warning in prep's summary. The waiting comment recommends a value from
+   the counts it has (the files staged, with or without `provenance.json`, against the lock's `files`) and says which
+   signal decided; for a samples set, which carries no whole-set marker, it says the counts cannot tell. An upstream
+   bump or re-snapshot pull request (`auto/bump-upstream`, `auto/resnapshot-upstream`) stages whole sets, so it
+   publishes with `replace`, and only this way
    ([docs/upstream.md, "Bump pull requests"](docs/upstream.md#bump-pull-requests)).
 2. If prep fails, nothing is asked of the approver: its log says what it refused. Fix the pull request and dispatch
    again.
@@ -536,8 +544,9 @@ first: its pack data is reviewed like its code ([REVIEW.md](REVIEW.md#what-block
 4. The comment says how the run ended:
    - **Pack data published**: the branch has the new locks and no `publish/`, and CI runs again on it;
    - **Pack data published: action needed**: S3 holds the data, but the locks were not committed, and the comment says
-     why (the branch moved since prep). Commit the locks the comment gives, delete `publish/` and push, or pull the
-     branch and dispatch again;
+     why: the branch moved since prep, or GitHub rejected the push twice and the comment quotes its answer (a rejected
+     push is tried once more after a pause). Commit the locks the comment gives, delete `publish/` and push, or pull
+     the branch and dispatch again;
    - **Pack data publish failed**: not every object was put and confirmed, or the approval was rejected. Nothing was
      committed. Re-running is safe: puts are create-only, and an object S3 already holds is accepted once it
      verifies.

@@ -218,17 +218,26 @@ written by hand, the sample builders, or derive once it resumes), then `npm run 
 Two workflows carry a request. Neither runs any code of the pull request.
 
 1. **The request comment.** `pack-data-publish-request.yml` runs on `pull_request_target`, so for forks too, with the
-   base branch's workflow: it checks out nothing and holds only a token that writes pull request comments. While the
-   pull request has anything to publish, it keeps one sticky comment, "Pack data waiting to publish": a row per
-   tool-pack with its files in `publish/` and its authored rows removed from `UPSTREAM.md`, and the publish steps by
-   hand and with the `gh` CLI. On a fork's pull request, a proposal ([Forks](#forks)), the comment is "Pack data in a
-   proposal from a fork": the same rows, saying the data is published from the pull request that ports the change,
-   with no publish steps. It deletes the comment, while it is still waiting, once nothing is left to publish. The
-   comment blocks nothing; structure metric #3 does.
+   base branch's workflow: it checks out the base branch's code alone, runs nothing of the pull request, and holds
+   only a token that writes pull request comments. While the pull request has anything to publish, it keeps one sticky
+   comment, "Pack data waiting to publish" (`scripts/s3/pack-data-publish.mjs comment waiting`): a row per tool-pack
+   with its files in `publish/` and its authored rows removed from `UPSTREAM.md`, the publish steps by hand and with
+   the `gh` CLI, and the `replace` value it recommends from counts alone (never a file name of the pull request): on
+   for a tool-pack whose `publish/` stages `provenance.json` and at least half as many test data files as its
+   `test-data.lock` counts, a whole set; off for fewer, for no `provenance.json`, or for removed rows alone; and for a
+   samples set, which carries no whole-set marker, it says the counts cannot tell and what each value does to the
+   locked samples. Tool-packs that want different values are asked to publish from separate pull requests, since one
+   run publishes every `publish/` the same way. On a fork's pull request, a proposal ([Forks](#forks)), the comment
+   is "Pack data in a proposal from a fork": the same rows, saying the data is published from the pull request that
+   ports the change, with no publish steps. It deletes the comment, while it is still waiting, once nothing is left to
+   publish. The comment blocks nothing; structure metric #3 does.
 2. **The dispatch.** A maintainer, or an agent with write access, dispatches **Publish pack data**
    (`pack-data-publish.yml`) on main with the pull request's number. With `replace` off (the default) each tool-pack's
    archive is the locked one, less the files of removed authored rows, with `publish/` laid over it; with `replace`
-   on it is exactly what `publish/` holds. The run is titled "Publish pack data for #<n>".
+   on it is exactly what `publish/` holds. So `replace` is for a `publish/` that holds the tool-pack's whole set
+   (`fixtures:stage --all`): over additions it drops every locked file `publish/` lacks, while an overlay over a
+   regeneration keeps the files it deleted ([CONTRIBUTING.md, "Merging"](../CONTRIBUTING.md#merging-maintainers)).
+   The run is titled "Publish pack data for #<n>".
 
    ```sh
    gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> [-f replace=true]
@@ -241,11 +250,13 @@ Two workflows carry a request. Neither runs any code of the pull request.
    Staged samples go through `publishedSamples` ([Sample licences](#sample-licences)). Every file going to S3 must be
    under a licence the allowlist takes: test data as pack check 6 decides it, through the same classifier
    ([pack-format.md, "Licensing"](pack-format.md#licensing)), samples by their recorded licence. A refusal fails prep,
-   and no approval is asked. prep then writes the approver's summary: per archive its kind, tool-pack, sha256, files,
-   bytes, its licences with their file counts and a Sources column (a samples archive's repositories with their
-   licences; for test data, the `licenses/*/UPSTREAM.md` records), then what each archive adds, changes and drops (up
-   to 50 paths per list; a replace publish's dropped files appear nowhere else), and how many `publish/` files the
-   commit will delete.
+   and no approval is asked. prep then writes the approver's summary: a warning for each archive whose mode
+   contradicts what `publish/` restages of the locked archive (a `replace` that restages under half of its files, an
+   overlay that restages all but a tenth of them; for test data the provenance check refuses the wrong mode outright,
+   so this guards the samples), then per archive its kind, tool-pack, sha256, files, bytes, its licences with their
+   file counts and a Sources column (a samples archive's repositories with their licences; for test data, the
+   `licenses/*/UPSTREAM.md` records), then what each archive adds, changes and drops (up to 50 paths per list; a
+   replace publish's dropped files appear nowhere else), and how many `publish/` files the commit will delete.
 4. **upload** waits for the `test-data-upload` deployment, whose required reviewer is a code owner who has read the
    summary ([REVIEW.md](../REVIEW.md)). It fails, putting nothing, when no approval is on record: an environment
    without a required reviewer would gate nothing. Only then does it assume the write role. It verifies each archive
@@ -256,13 +267,14 @@ Two workflows carry a request. Neither runs any code of the pull request.
 5. **finish** runs only once every object is confirmed. It builds one commit on the pull request's head with git
    plumbing alone (no checkout, no hooks): the new `test-data.lock` and `samples.lock` files written, and every
    `publish/` of the published tool-packs deleted. It pushes it as the `neralabs-ci` app, with the app's token so CI
-   runs again, as a plain push that GitHub accepts only as a fast-forward of the head prep packed; it never forces. The
+   runs again, as a plain push that GitHub accepts only as a fast-forward of the head prep packed; it never forces. A
+   rejected push is tried once more after a pause, since GitHub answers a transient error with a rejection too. The
    comment then reads "published".
 
 When finish cannot push, the run is red and the comment reads "action needed", with each lock's text and the reason:
-someone pushed to the branch since prep, or the branch is on a fork, which the project never publishes from
-([Forks](#forks)). Commit the locks, delete `publish/` and
-push, or pull and dispatch again. When an object was not put and confirmed (a failed put or confirm, a rejected
+the branch moved since prep (its head is no longer the one prep packed), GitHub rejected the push twice for another
+reason, which the comment quotes, or the branch is on a fork, which the project never publishes from
+([Forks](#forks)). Commit the locks, delete `publish/` and push, or pull and dispatch again. When an object was not put and confirmed (a failed put or confirm, a rejected
 approval, a cancelled job), the **failed** job names each object's failure in the comment; nothing is committed and
 no lock changes. Re-running is safe: puts are create-only and content-addressed, and confirm accepts an object S3
 already holds once it verifies.
