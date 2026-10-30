@@ -165,8 +165,13 @@ interpreter.
     lower, all exact. That is 10 more; the other 15 `count` clauses are refused for semantic
     leaves inside them.
   - `lowered_clauses_find_the_same_roots_on_metal` (`metal-tests`): 87 of 87 clauses give the
-    CPU's root sets on Metal. On 8 fixtures (164 matched nodes) that is 87 command buffers (one
-    per clause), with 0 host waits for growth, rounds or uploads.
+    CPU's root sets on Metal on the whole default sample (60 fixtures, 1,177 matched nodes). It
+    ran as four batches of 15 (`RERAIL_S1_FROM`) to keep each run under two minutes, and the CPU
+    gate against W is 87 of 87 exact on the same batches.
+  - Each batch is one command buffer per clause, with 0 host waits for growth, reruns or
+    uploads. Launches average 57–112 per clause across the batches, at most 558.
+  - On 8 fixtures (164 matched nodes), likewise one command buffer per clause and no host
+    waits.
   - That run took 8,789 launches, about 101 per clause and at most 558 for one, against a
     launch budget of 600. Metal took 15–23 s and the CPU 18–21 s over repeated runs (test wall
     time, debug build, load 13–18).
@@ -174,8 +179,8 @@ interpreter.
     need a rerun (90 command buffers). One command buffer per clause was kept.
   - `metal_catches_a_widened_walk`: on 16 fixtures, widened clauses differ from W's matcher on
     Metal and still agree with the CPU.
-  - All gates take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
-    fixtures). The default sample is every eighth fixture.
+  - All gates take `RERAIL_S1_CLAUSE` (a clause-name filter), and `RERAIL_S1_FILES` and
+    `RERAIL_S1_FROM` (n fixtures from the m-th). The default sample is every eighth fixture.
 - **Left for later (O23):**
   - Launches average about 101 per clause, against the budget's target of under 100.
     Recursive rounds skipped on the GPU still count as launches. Batching a wave's clauses (S4)

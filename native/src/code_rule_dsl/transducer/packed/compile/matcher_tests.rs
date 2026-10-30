@@ -60,17 +60,20 @@ fn clauses() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .collect()
 }
 
-/// The fixtures a gate reads: every eighth by default, all with `RERAIL_S1_ALL=1`, the first n
-/// of those with `RERAIL_S1_FILES=n` for a targeted check.
+/// The fixtures a gate reads: every eighth by default, all with `RERAIL_S1_ALL=1`; of those, n
+/// from the m-th with `RERAIL_S1_FILES=n` and `RERAIL_S1_FROM=m`, for a targeted check or a
+/// sample in pieces.
 fn fixtures() -> Vec<TapeDoc> {
     let mut sources = Vec::new();
     files(&pack().join("upstream"), "py", &mut sources);
     sources.sort();
     let step = if std::env::var_os("RERAIL_S1_ALL").is_some() { 1 } else { 8 };
     let most = std::env::var("RERAIL_S1_FILES").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let from = std::env::var("RERAIL_S1_FROM").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
     sources
         .iter()
         .step_by(step)
+        .skip(from)
         .take(most)
         .filter_map(|path| std::fs::read_to_string(path).ok())
         .map(|source| python_tape(&source))
