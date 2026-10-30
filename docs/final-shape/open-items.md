@@ -25,7 +25,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | closed (2026-10-29): option (a), user decision |
 | O23 | Phase 4 / 9 | Lowered matchers' node labels on Metal (06 S1, decision 0011) | open |
 | O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
-| O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | open |
+| O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
 
 ## O1. Stale-fact detection after a crash
 
@@ -592,6 +592,9 @@ Its sub-rules are lowered as labels of their own. Shared bindings are joins on c
 between labels, in the wave's SQL.
 
 ## O25. A wave's recursive label rounds on Metal
+
+**Closed (2026-10-30)** by candidate 2, recursion in node order, on the GPU (`label_sweep`,
+06 S4). The wave is 1 command buffer with 77 launches. The measurements below are from before.
 
 06 S4's Metal check: the wave (87 lowered clauses over a chunk) as one evaluation under 100
 launches (`metal_launch_budget.rs`). Not met; `the_wave_is_one_evaluation_on_metal` is ignored with

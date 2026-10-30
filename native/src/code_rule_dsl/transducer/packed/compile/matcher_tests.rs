@@ -358,3 +358,22 @@ fn metal_catches_a_widened_walk() {
     }
     panic!("only {caught} widened clauses differ from W's matcher on Metal");
 }
+
+#[test]
+#[ignore = "a probe of the sweeps a recursive group needs"]
+fn recursive_groups_settle_in_few_sweeps() {
+    let tapes = fixtures();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
+            let needed = program.sweeps_needed(&tapes).unwrap();
+            if !needed.is_empty() {
+                eprintln!("{policy}/{clause}: {needed:?}");
+            }
+        }
+    }
+}

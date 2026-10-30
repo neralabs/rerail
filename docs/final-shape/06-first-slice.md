@@ -236,7 +236,7 @@ interpreter.
 - Left for later: nothing outside tests calls `push` yet. W's workspace scan keeps its own path
   until the entry points (S6). Worktree edits reach the slice through a directory snapshot.
 
-### S4. The wave: prefilter → `demand(batch)` → match facts — CPU done (2026-10-30); Metal check open (O25)
+### S4. The wave: prefilter → `demand(batch)` → match facts — done (2026-10-30)
 
 - **Program** (`waves::matches`): one `waves::schedule::Program`, `file_local = true`, with one
   step:
@@ -278,18 +278,30 @@ interpreter.
     - It took 100 s on the CPU JIT, 30 s on the reference interpreter (debug build, load about 17).
       The gate's default is 8 fixtures; `RERAIL_S1_FILES` widens it.
   - `the_wave_runs_chunk_by_chunk`: the same check in chunks of one document each.
-- **Metal check, open (O25).** On Metal the wave is planned as one evaluation (`LoweredWave::roots_metal`).
-  - Labels are scheduled by global dependency level across clauses. The non-recursive passes take
-    45 launches.
-  - Recursive groups at the same level share their rounds, and cost 72 launches per round.
-  - Their rounds are encoded to bounds of 25–154, against the 2–18 they actually take. So the wave
-    exceeds the 600-launch limit, and the target of under 100 is not met.
-  - `the_wave_is_one_evaluation_on_metal` is ignored with O25 as the reason. O25 has the
-    measurements and the candidate fixes.
+- **Metal check, met (O25 closed).** On Metal the wave is one evaluation
+  (`LoweredWave::roots_metal`), checked by `the_wave_is_one_evaluation_on_metal`:
+  - The result: 1 command buffer, 77 launches, no reruns. All 87 clauses' roots equal W's on all
+    15 fixtures (324 matched nodes).
+  - **Labels by global dependency level.** Every clause's labels are scheduled by global
+    dependency level, merged across clauses. The non-recursive passes take 45 launches, about 15
+    levels at 3 kernels each.
+  - **Recursive groups sweep** (`label_sweep`) instead of iterating rounds. Each GPU thread takes
+    a file and runs the group's tasks in node order. A result marks its label at once, so later
+    tasks in the same sweep read it.
+    - A node's labels run past the labels they read at that node (`local_levels`).
+    - A group of positive programs alternates forward and reverse preorder.
+    - A group with complements sweeps in reverse preorder only, computing each node from final
+      verdicts (decision 0011).
+    - The groups of a wave level are merged. Each costs 4 launches, one per sweep, and a sweep
+      after one that changed nothing does nothing.
+  - **Measured.** Before, the rounds moved the recursion one tree edge each, encoded to bounds
+    of 25–154 (f704 needed 18). Now f704 settles in one sweep, and the S2 parity gate (87 clauses
+    one at a time) takes 1,196 launches instead of 4,731, at most 47 for a clause.
 - **Left for later:**
   - **CPU cost.** The CPU JIT compiles the wave's programs on every chunk, which is slower than the
     interpreter. The JIT binding (Phase 4d) caches them.
-  - **Root programs on Metal.** The demand step does not use the label passes on Metal yet.
+  - **Root programs on Metal.** The wave's demand step still runs on the CPU JIT. On Metal, the
+    roots step of `roots_metal` is the shape to take.
   - **Planner.** The step is still hand-written; O14 has the planner-emitted version.
 
 ### S5. Findings layer (first version of §8)

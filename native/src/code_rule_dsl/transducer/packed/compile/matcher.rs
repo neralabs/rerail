@@ -276,6 +276,69 @@ impl LoweredMatcher {
         Ok(())
     }
 
+    /// Probe: per recursive group of programs, the forward sweeps (each node in preorder, its
+    /// results marked at once) that settle it from the other labels' final sets.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn sweeps_needed(&self, tapes: &[TapeDoc]) -> Result<Vec<usize>, Error> {
+        let mut sets = empty_sets(tapes, self.labels.defs.len());
+        self.label(tapes, &mut sets)?;
+        let mut needed = Vec::new();
+        for step in &self.labels.steps {
+            if !self.labels.recursive.values().any(|id| step.contains(id))
+                || !step.iter().all(|id| matches!(self.labels.def(*id), Label::Roots(..) | Label::Targets(..)))
+            {
+                continue;
+            }
+            for sets in sets.iter_mut() {
+                for &id in step {
+                    Arc::make_mut(sets)[usize::from(id - LABEL_BASE)].iter_mut().for_each(|word| *word = 0);
+                }
+            }
+          let local = local_levels(&self.labels, step);
+          let mut ordered = step.clone();
+          ordered.sort_by_key(|id| local[id]);
+          for reverse in [false, true] {
+            for sets in sets.iter_mut() {
+                for &id in step {
+                    Arc::make_mut(sets)[usize::from(id - LABEL_BASE)].iter_mut().for_each(|word| *word = 0);
+                }
+            }
+            let mut sweeps = 0;
+            loop {
+                sweeps += 1;
+                let mut changed = false;
+                for (tape, sets) in tapes.iter().zip(sets.iter_mut()) {
+                    let len = tape.transducer_len() as u32;
+                    for node in (0..len).map(|at| if reverse { len - 1 - at } else { at }) {
+                        for &id in &ordered {
+                            let (Label::Roots(program, _) | Label::Targets(program, _)) = self.labels.def(id) else { unreachable!() };
+                            let view = tape.with_labels(Arc::clone(sets));
+                            for output in program.execute_roots(&view, [node])? {
+                                let nodes = match self.labels.def(id) {
+                                    Label::Roots(..) => vec![output.start],
+                                    _ => output.captures.iter().map(|capture| capture.node).collect(),
+                                };
+                                for marked in nodes {
+                                    let bits = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
+                                    if bits[marked as usize / 64] >> (marked % 64) & 1 == 0 {
+                                        bits[marked as usize / 64] |= 1 << (marked % 64);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !changed || sweeps > 64 {
+                    break;
+                }
+            }
+            needed.push(sweeps);
+          }
+        }
+        Ok(needed)
+    }
+
     /// A label's set on each tape of the batch.
     fn evaluate(
         &self,
@@ -463,6 +526,47 @@ impl LoweredWave {
 }
 
 /// Per tape, `labels` empty label sets.
+/// A recursive group's labels by their order at a node: past every member the label reads at the
+/// node itself (a class its program tests before it navigates). Evaluated in that order, a node's
+/// labels see each other's verdicts in the same pass, so a pass in node order follows the
+/// recursion along the tree rather than one level of it per pass.
+fn local_levels(labels: &Labels, step: &[u16]) -> BTreeMap<u16, usize> {
+    let here = |id: u16| -> Vec<u16> {
+        let program = match labels.def(id) {
+            Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. } => program,
+            Label::Complement(of) => return vec![*of],
+            _ => return Vec::new(),
+        };
+        let mut read = Vec::new();
+        for &word in &program.words {
+            match split(word) {
+                (SUPERTYPE, _, class) if step.contains(&class) => read.push(class),
+                (CHILD | NEXT | PARENT | DESCEND | FOLLOWING | RESTORE_CURSOR, ..) => break,
+                _ => {}
+            }
+        }
+        read
+    };
+    let reads = step.iter().map(|&id| (id, here(id))).collect::<BTreeMap<_, _>>();
+    let mut level = step.iter().map(|&id| (id, 0)).collect::<BTreeMap<_, _>>();
+    // Longest same-node chains, bounded by the group (a cycle of same-node reads stops there).
+    for _ in 0..step.len() {
+        let mut changed = false;
+        for &id in step {
+            let deepest = reads[&id].iter().filter(|read| **read != id).map(|read| level[read] + 1).max().unwrap_or(0);
+            let deepest = deepest.min(step.len() - 1);
+            if deepest > level[&id] {
+                level.insert(id, deepest);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    level
+}
+
 fn empty_sets(tapes: &[TapeDoc], labels: usize) -> Vec<Arc<Vec<Vec<u64>>>> {
     tapes
         .iter()
@@ -641,17 +745,19 @@ fn metal<'a>(
             if groups.len() <= at {
                 groups.resize_with(at + 1, || (Vec::new(), Some(BTreeSet::new()), false));
             }
-            // Inside the group a label's level is one past the deepest member it reads that is
-            // computed before it; a read of a later member is the last round's.
-            let mut level = BTreeMap::<u16, usize>::new();
-            for &id in step {
-                let inner = clause.labels.reads(id).iter().filter_map(|read| level.get(read)).map(|deepest| deepest + 1).max().unwrap_or(0);
+            // Inside the group a label's level is past the members it reads at its own node
+            // (`local_levels`); a read of a member at the same or a later level is the last
+            // round's (or, sweeping, an earlier node's).
+            let local = local_levels(&clause.labels, step);
+            let mut ordered = step.clone();
+            ordered.sort_by_key(|id| local[id]);
+            for &id in &ordered {
+                let inner = local[&id];
                 let levels = &mut groups[at].0;
                 if levels.len() <= inner {
                     levels.resize_with(inner + 1, Vec::new);
                 }
                 levels[inner].push(pass(clause, id)?);
-                level.insert(id, inner);
             }
             let (_, kinds, siblings) = &mut groups[at];
             for id in step.iter().filter(|id| clause.labels.recursive.values().any(|label| label == *id)) {

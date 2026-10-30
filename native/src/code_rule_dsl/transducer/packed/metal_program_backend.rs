@@ -512,11 +512,14 @@ fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
     ))
 }
 
+const INTERPRETER_FETCH: &str =
+    "uint word=words[program.wordStart+path.pc];op=word&255u;mode=(word>>8u)&255u;operand=word>>16u;";
+
 pub(super) fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
         pipeline: pipeline_named(
             &kernel_source(
-                "uint word=words[program.wordStart+path.pc];op=word&255u;mode=(word>>8u)&255u;operand=word>>16u;",
+                INTERPRETER_FETCH,
                 None,
                 "",
                 "",
@@ -526,6 +529,43 @@ pub(super) fn compile_interpreter() -> Result<Engine, Error> {
         )?,
         buffers: Arc::new(Mutex::new(None)),
     })
+}
+
+/// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
+/// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
+/// the label) marks its label as each result is published; other programs run as in `run_batch`.
+pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
+    static SWEEP: Mutex<Option<ComputePipelineState>> = Mutex::new(None);
+    let mut cached = SWEEP.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(pipeline) = &*cached {
+        return Ok(pipeline.clone());
+    }
+    let source = kernel_source(INTERPRETER_FETCH, None, "", "", "");
+    let edit = |source: String, from: &str, to: &str| {
+        assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
+        source.replacen(from, to, 1)
+    };
+    const MARK: &str = "if(program.flags&0x80000000u){device uint* sweepHead=(device uint*)supertypes;device atomic_uint* sweepBits=((device atomic_uint*)(sweepHead+2u))+((program.flags>>8u)&0x3fffffu)*sweepHead[1];if(program.flags&0x40000000u){for(uint sweepAt=0u;sweepAt<raw.captureCount;sweepAt++)sweepChanged|=sweep_mark(sweepBits,finalCaptures[captureBefore+sweepAt].node);}else sweepChanged|=sweep_mark(sweepBits,raw.start);}";
+    // Labels marked in this sweep must be read as they are marked, not through a read-only cache.
+    let source = edit(
+        source,
+        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;",
+        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-61440u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
+    );
+    let source = edit(source, "uint pendingCount=0,", "bool sweepChanged=false;uint pendingCount=0,");
+    let source = edit(source, "dynamicProperties};selected++", &format!("dynamicProperties}};{MARK}selected++"));
+    let source = edit(source, "status.reserved=taskWork", "status.reserved=taskWork|(sweepChanged?0x80000000u:0u)");
+    let source = edit(
+        source,
+        "void run_task(",
+        "static bool sweep_mark(device atomic_uint* bits,uint node){uint bit=1u<<(node%32u);return (atomic_fetch_or_explicit(&bits[node/32u],bit,memory_order_relaxed)&bit)==0u;}\nvoid run_task(",
+    );
+    let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
+    let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
+    let kernel = include_str!("metal_label_sweep.metal").replace("/*PARAMETERS*/", &source[begin..end]);
+    let pipeline = pipeline_named(&format!("{source}\n{kernel}"), "label_sweep")?;
+    *cached = Some(pipeline.clone());
+    Ok(pipeline)
 }
 
 pub(super) fn compile_jit(programs: &[Program]) -> Result<Engine, Error> {

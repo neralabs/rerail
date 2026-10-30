@@ -9,7 +9,9 @@
 //! counts, the clause's pattern kernel (`patterns`), and `label_settle` writing each target:
 //! from scratch, or as a complement or count bound computed per word. A recursive group's rounds
 //! are encoded too and skipped on the GPU once settled (`label_round`), so a clause is one
-//! command buffer.
+//! command buffer. A group of programs alone runs as sweeps instead (`label_sweep`): one launch
+//! per sweep, each thread a file in node order, each result marking its label at once, so the
+//! sweeps follow the recursion's direction rather than one tree edge per round.
 
 #[path = "metal_label_patterns.rs"]
 mod patterns;
@@ -68,6 +70,25 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// chains of such nodes, nested or (stepping to siblings) side by side.
     pub(in crate::code_rule_dsl) chains: Vec<(Option<Vec<u16>>, bool)>,
 }
+
+/// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
+/// add to their labels, or complements as well, where its programs mark their roots (a node's
+/// verdicts are then all its own, computed at it in a reverse sweep).
+fn sweeps(levels: &[Vec<Pass<'_>>]) -> bool {
+    let passes = || levels.iter().flatten();
+    passes().all(|pass| matches!(pass, Pass::Program { .. } | Pass::Empty { .. } | Pass::Complement { .. }))
+        && passes().any(|pass| matches!(pass, Pass::Program { .. }))
+        && (!complements(levels) || passes().all(|pass| !matches!(pass, Pass::Program { captured: true, .. })))
+}
+
+/// A group with complements sweeps in reverse preorder only: its walks move forward in preorder.
+fn complements(levels: &[Vec<Pass<'_>>]) -> bool {
+    levels.iter().flatten().any(|pass| matches!(pass, Pass::Complement { .. }))
+}
+
+/// Sweeps encoded per group: a recursion that runs one way settles in the first or second (the
+/// directions alternate), one that turns once in the third, and one more sees nothing change.
+const SWEEPS: usize = 4;
 
 #[derive(Debug, Default)]
 pub(in crate::code_rule_dsl) struct Outcome {
@@ -214,10 +235,17 @@ struct Runner<'a> {
     queue: metal::CommandQueue,
     engine: Engine,
     kernels: Vec<ComputePipelineState>,
+    /// `label_sweep`, where a group runs as sweeps.
+    sweep: Option<ComputePipelineState>,
+    /// By a sweeping group's address: per file the start of its tasks, then their indices by
+    /// (root, program). Its task buffer carries them after the tasks.
+    orders: HashMap<usize, Vec<u32>>,
     /// The clause's pattern kernel and each pattern's metavariables in index order.
     patterns: Option<(ComputePipelineState, Vec<Vec<String>>)>,
     files: &'a [TapeDoc],
     tapes: Tapes,
+    /// Labels in the prefix.
+    plan_labels: usize,
     words: usize,
     nodes: usize,
     scratch: MappedBuffer,
@@ -250,7 +278,8 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
         .flat_map(|(_, levels)| levels)
         .map(launches)
         .sum::<usize>();
-    let groups = plan.steps.iter().filter(|(recursive, _)| *recursive).count();
+    // A group of rounds ends with `label_round`; a group of sweeps is checked by the host.
+    let groups = plan.steps.iter().filter(|(recursive, levels)| *recursive && !sweeps(levels)).count();
     // A recursive group's label grows (or settles) one node of a chain per round: a node joins
     // in the round after the node its walk reaches. Its nodes have the label's kinds, so the
     // longest chain of such nodes, nested along a path or (where the group steps to siblings)
@@ -259,7 +288,11 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
     let expected = plan
         .chains
         .iter()
-        .map(|(kinds, siblings)| {
+        .zip(&plan.steps)
+        .map(|((kinds, siblings), (_, levels))| {
+            if sweeps(levels) {
+                return SWEEPS;
+            }
             let has = |tape: &TapeDoc, node: u32| {
                 kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&tape.transducer_kind(node)).is_ok())
             };
@@ -291,7 +324,11 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
     let per_group = plan
         .steps
         .iter()
-        .map(|(recursive, levels)| if *recursive { levels.iter().map(launches).sum::<usize>() } else { 0 })
+        .map(|(recursive, levels)| match (*recursive, sweeps(levels)) {
+            (false, _) => 0,
+            (true, true) => 1,
+            (true, false) => levels.iter().map(launches).sum::<usize>(),
+        })
         .collect::<Vec<_>>();
     let plan_rounds = |used: usize, wanted: &[usize]| {
         let budget = LAUNCHES.saturating_sub(used + fixed + groups);
@@ -344,11 +381,18 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize])
         device,
         engine: compile_interpreter_cached()?,
         kernels: pipelines()?,
+        sweep: if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
+            Some(compile_sweep_cached()?)
+        } else {
+            None
+        },
+        orders: HashMap::new(),
         patterns: pattern_pipeline(&plan.patterns)?,
         command,
         queue,
         files,
         tapes: tapes(device, files, plan, words)?,
+        plan_labels: plan.labels,
         words,
         nodes,
         scratch: MappedBuffer::zeroed::<u32>(device, plan.labels * words)?,
@@ -367,10 +411,17 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize])
         },
     };
     runner.size(plan)?;
-    for ((recursive, levels), &rounds) in plan.steps.iter().zip(rounds) {
+    for (group, ((recursive, levels), &rounds)) in plan.steps.iter().zip(rounds).enumerate() {
         if !recursive {
             for level in levels {
                 runner.level(level, None)?;
+            }
+            continue;
+        }
+        if sweeps(levels) {
+            let reverse = complements(levels);
+            for round in 0..rounds {
+                runner.sweep(levels.as_ptr() as usize, group, round, reverse)?;
             }
             continue;
         }
@@ -388,7 +439,27 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize])
     if runner.flag(0) != 0 {
         return Err(Error::BackendFailure);
     }
-    runner.outcome.waits[1] = runner.flag(3) as usize;
+    // The sweeps' words: a failure, and per group whether its last sweep still changed a label.
+    let sweep_words = unsafe {
+        std::slice::from_raw_parts(
+            runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2 + plan.labels * words),
+            2 + 2 * plan.steps.len(),
+        )
+        .to_vec()
+    };
+    if sweep_words[1] != 0 {
+        return Err(Error::BackendFailure);
+    }
+    let unsettled = plan
+        .steps
+        .iter()
+        .zip(rounds)
+        .enumerate()
+        .filter(|(group, ((recursive, levels), rounds))| {
+            *recursive && sweeps(levels) && **rounds > 0 && sweep_words[2 + 2 * group + (**rounds - 1) % 2] != 0
+        })
+        .count();
+    runner.outcome.waits[1] = runner.flag(3) as usize + unsettled;
     runner.outcome.labels = unsafe {
         std::slice::from_raw_parts(
             runner.tapes.supertypes.buffer.contents().cast::<u32>().add(2),
@@ -404,7 +475,8 @@ fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize) -> R
     let program = Program::new(vec![super::super::word(EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new())?;
     let anchors = vec![vec![Vec::new()]; files.len()];
     let batch = PackedBatch::new(std::slice::from_ref(&program), files, &anchors)?;
-    let prefix = 1 + (plan.labels * words).div_ceil(2);
+    // The labels, then the sweeps' round, failure and per group (by step) changes (`label_sweep`).
+    let prefix = 1 + (plan.labels * words + 2 + 2 * plan.steps.len()).div_ceil(2);
     let mut supertypes = Vec::with_capacity(prefix + batch.supertypes.len());
     supertypes.push(MetalSupertype {
         node: plan.labels as u32,
@@ -515,16 +587,61 @@ impl Runner<'_> {
     /// is encoded so the host never waits to grow it.
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
-        for level in plan.steps.iter().flat_map(|(_, levels)| levels) {
-            let passes = programs_of(level);
+        // A sweeping group is one batch of all its programs, by its address; a level is one by
+        // its own.
+        let batches = plan.steps.iter().flat_map(|(recursive, levels)| {
+            if *recursive && sweeps(levels) {
+                vec![(levels.as_ptr() as usize, levels.iter().flat_map(|level| programs_of(level)).collect::<Vec<_>>(), Some(levels))]
+            } else {
+                levels.iter().map(|level| (level.as_ptr() as usize, programs_of(level), None)).collect()
+            }
+        });
+        for (key, passes, sweep) in batches {
             if passes.is_empty() {
                 continue;
             }
             let (programs, anchors) = self.batch_inputs(&passes);
             let mut batch = PackedBatch::new(&programs, self.files, &anchors)?;
             if batch.tasks.is_empty() {
-                self.prepared.insert(level.as_ptr() as usize, None);
+                self.prepared.insert(key, None);
                 continue;
+            }
+            if let Some(levels) = sweep {
+                // The route in the program's flags marks its label as it publishes (`label_sweep`).
+                for (program, (_, _, mode, target)) in batch.programs.iter_mut().zip(&passes) {
+                    program.flags |= 0x8000_0000 | (u32::from(*mode == 1) << 30) | (target << 8);
+                }
+                // Each program's and complement's place among a node's work: the group's order.
+                let (mut positions, mut ops) = (Vec::new(), Vec::new());
+                for (at, pass) in levels.iter().flatten().enumerate() {
+                    match pass {
+                        Pass::Program { .. } => positions.push(at as u32),
+                        Pass::Complement { target, of } => ops.push((at as u32, [*target, *of])),
+                        _ => {}
+                    }
+                }
+                // Entries per file: (node, place, item).
+                let mut entries = vec![Vec::new(); self.files.len()];
+                for (index, task) in batch.tasks.iter().enumerate() {
+                    entries[task.file as usize].push((task.root, positions[task.program as usize], index as u32));
+                }
+                for (file, entries) in batch.files.iter().zip(&mut entries) {
+                    for node in file.node_start..file.node_start + file.node_count {
+                        for (op, (at, _)) in ops.iter().enumerate() {
+                            entries.push((node, *at, 0x8000_0000 | op as u32));
+                        }
+                    }
+                }
+                let mut order = vec![0_u32];
+                for entries in &mut entries {
+                    entries.sort_unstable();
+                    order.push(order.last().copied().unwrap_or(0) + entries.len() as u32);
+                }
+                for (node, _, item) in entries.into_iter().flatten() {
+                    order.extend([item, node]);
+                }
+                order.extend(ops.iter().flat_map(|(_, op)| *op));
+                self.orders.insert(key, order);
             }
             batch.header.supertype_count = self.tapes.supertype_count;
             let totals = batch.assign_workspace_with_result_limits_and_lanes(&programs, None, EXECUTION_LANES)?;
@@ -538,8 +655,12 @@ impl Runner<'_> {
                 let (_, _, mode, slot) = passes[task.program as usize];
                 routes[task.batch_ordinal as usize] = [mode, slot];
             }
+            let mut tasks = bytes_of(&batch.tasks).to_vec();
+            if let Some(order) = self.orders.get(&key) {
+                tasks.extend_from_slice(bytes_of(order));
+            }
             let prepared = Prepared {
-                tasks: MappedBuffer::from_slice(self.device, &batch.tasks)?,
+                tasks: MappedBuffer::from_slice(self.device, &tasks)?,
                 header: MappedBuffer::from_slice(self.device, &[batch.header])?,
                 routes: MappedBuffer::from_slice(self.device, &routes)?,
                 program: self.engine.program_buffers(self.device, &batch)?,
@@ -549,7 +670,7 @@ impl Runner<'_> {
                 evaluations: std::mem::take(&mut batch.evaluations),
                 lanes: std::mem::take(&mut batch.evaluation_lanes),
             };
-            self.prepared.insert(level.as_ptr() as usize, Some(prepared));
+            self.prepared.insert(key, Some(prepared));
         }
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
             let mut lease = MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks)?;
@@ -693,9 +814,9 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// The level's prepared batch, then `label_sink` routing each result by its task's program.
-    fn programs(&mut self, level: usize) -> Result<(), Error> {
-        let Some(Some(prepared)) = self.prepared.get(&level) else {
+    /// The batch's scheduler image, with a fresh generation, copied into the workspace.
+    fn stage(&mut self, key: usize) -> Result<(), Error> {
+        let Some(Some(prepared)) = self.prepared.get(&key) else {
             return Ok(());
         };
         let workspace = self.workspace.as_mut().ok_or(Error::BackendFailure)?;
@@ -711,28 +832,24 @@ impl Runner<'_> {
         let mut image = bytes_of(std::slice::from_ref(&prepared.arenas)).to_vec();
         image.extend_from_slice(bytes_of(&stamp(&prepared.evaluations)));
         image.extend_from_slice(bytes_of(&stamp(&prepared.lanes)));
-        let (tasks, lanes_count, capacity) = (prepared.task_count, prepared.lanes.len(), prepared.result_capacity);
         let image_length = image.len() as u64;
         let image = self.upload(&image)?;
-        let prepared = self.prepared.get(&level).and_then(Option::as_ref).expect("prepared");
-        let (task_buffer, header_buffer, routes, program_buffers) = (
-            prepared.tasks.buffer.clone(),
-            prepared.header.buffer.clone(),
-            prepared.routes.buffer.clone(),
-            Arc::clone(&prepared.program),
-        );
         let lease = &self.workspace.as_ref().expect("a workspace").lease;
-        let tapes = &self.tapes;
         let blit = self.command.new_blit_command_encoder();
         blit.set_label("Rerail label pass scheduler image");
         blit.copy_from_buffer(&image, 0, &lease.scheduler.buffer, 0, image_length);
         blit.end_encoding();
-        let encoder = self.command.new_compute_command_encoder();
-        encoder.set_label("Rerail label pass programs");
-        encoder.set_compute_pipeline_state(self.engine.pipeline());
-        for (index, buffer) in [
-            &task_buffer,
-            &header_buffer,
+        Ok(())
+    }
+
+    /// The interpreter's buffers for a prepared batch, in `run_batch`'s order.
+    fn bound(&self, prepared: &Prepared) -> Vec<Buffer> {
+        let lease = &self.workspace.as_ref().expect("a workspace").lease;
+        let tapes = &self.tapes;
+        let program_buffers = &prepared.program;
+        [
+            &prepared.tasks.buffer,
+            &prepared.header.buffer,
             &tapes.files.buffer,
             &tapes.nodes.buffer,
             &program_buffers.programs.buffer,
@@ -764,8 +881,61 @@ impl Runner<'_> {
             &lease.output_storage.buffer,
         ]
         .into_iter()
-        .enumerate()
-        {
+        .cloned()
+        .collect()
+    }
+
+    /// One sweep of the group at step `group` (`label_sweep`), its changed flag cleared first.
+    fn sweep(&mut self, key: usize, group: usize, round: usize, reverse: bool) -> Result<(), Error> {
+        let Some(Some(prepared)) = self.prepared.get(&key) else {
+            return Ok(());
+        };
+        let lanes = prepared.lanes.len() as u64;
+        self.stage(key)?;
+        let prepared = self.prepared.get(&key).and_then(Option::as_ref).expect("prepared");
+        let buffers = self.bound(prepared);
+        // The round, and its changed flag cleared, in the prefix after the labels.
+        let at = 4 * (2 + self.plan_labels * self.words) as u64;
+        let word = u32::try_from(round).ok().filter(|round| *round < 1 << 16).ok_or(Error::BackendCapacity)?
+            | u32::try_from(group).ok().filter(|group| *group < 1 << 15).ok_or(Error::BackendCapacity)? << 16
+            | u32::from(reverse) << 31;
+        let round_word = self.upload(&[word])?;
+        let head = self.tapes.supertypes.buffer.clone();
+        let blit = self.command.new_blit_command_encoder();
+        blit.set_label("Rerail label sweep round");
+        blit.copy_from_buffer(&round_word, 0, &head, at, 4);
+        blit.fill_buffer(&head, metal::NSRange::new(at + 4 * (2 + 2 * group as u64 + round as u64 % 2), 4), 0);
+        blit.end_encoding();
+        let state = self.sweep.clone().ok_or(Error::BackendFailure)?;
+        let encoder = self.command.new_compute_command_encoder();
+        encoder.set_label("label_sweep");
+        encoder.set_compute_pipeline_state(&state);
+        for (index, buffer) in buffers.iter().enumerate() {
+            encoder.set_buffer(index as u64, Some(buffer), 0);
+        }
+        let width = state.thread_execution_width().max(1);
+        encoder.checked_dispatch_threads(&self.command, MTLSize::new(lanes, 1, 1), MTLSize::new(width.min(lanes), 1, 1));
+        encoder.end_encoding();
+        self.encoded = true;
+        self.outcome.dispatches += 1;
+        Ok(())
+    }
+
+    /// The level's prepared batch, then `label_sink` routing each result by its task's program.
+    fn programs(&mut self, level: usize) -> Result<(), Error> {
+        let Some(Some(prepared)) = self.prepared.get(&level) else {
+            return Ok(());
+        };
+        let (tasks, lanes_count, capacity) = (prepared.task_count, prepared.lanes.len(), prepared.result_capacity);
+        self.stage(level)?;
+        let prepared = self.prepared.get(&level).and_then(Option::as_ref).expect("prepared");
+        let routes = prepared.routes.buffer.clone();
+        let buffers = self.bound(prepared);
+        let lease = &self.workspace.as_ref().expect("a workspace").lease;
+        let encoder = self.command.new_compute_command_encoder();
+        encoder.set_label("Rerail label pass programs");
+        encoder.set_compute_pipeline_state(self.engine.pipeline());
+        for (index, buffer) in buffers.iter().enumerate() {
             encoder.set_buffer(index as u64, Some(buffer), 0);
         }
         let lanes = lanes_count as u64;

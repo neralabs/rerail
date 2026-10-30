@@ -209,7 +209,6 @@ fn gate(default: usize, limits: Limits) {
 /// prefilter candidates, in one command buffer, with W's matches.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
-#[ignore = "O25: the wave's recursive rounds, encoded to their bounds, exceed the launch limit"]
 fn the_wave_is_one_evaluation_on_metal() {
     let (store, paths) = ingested(15);
     let (clauses, grammars) = clauses();
@@ -247,4 +246,5 @@ fn the_wave_is_one_evaluation_on_metal() {
     }
     assert!(differ.is_empty());
     assert_eq!(outcome.command_buffers, 1, "one evaluation");
+    assert!(outcome.dispatches < 100, "the launch budget's target");
 }

@@ -99,3 +99,23 @@ A clause becomes a sequence of **node-label passes**, then one root program
   Every pass is a GPU kernel, pattern leaves included, run a dependency level at a time in one
   command buffer per clause (`metal_program_backend::label_passes`). The parity gate passes for
   87 of 87 clauses.
+- **Recursive groups sweep in node order** (S4, O25).
+  - *What the rounds cost.* Round after round, a group recomputed every node in parallel, so the
+    recursion moved one tree edge per round. A clause's launches were then rounds × group levels
+    × 3, not the dependency depth.
+  - *The sweep.* Each GPU thread takes a file and runs the group's tasks in node order
+    (`label_sweep`). A result marks its label at once, so later tasks in the same sweep read it.
+    A node's labels run past the labels they read at that node (`local_levels`).
+  - *Positive groups* alternate forward and reverse preorder, and reach the same least fixpoint
+    as the rounds.
+  - *Groups with complements* sweep in reverse preorder only. The rule above, that every walk
+    moves forward in preorder, means each node reads only verdicts already final, so one sweep
+    computes the unique answer.
+  - *Result.* The wave is 1 command buffer, 77 launches. The S2 gate takes at most 47 launches
+    per clause, down from 560.
+  - *Prior work:*
+    - Design-index 2 (the tape is preorder plus subtree size) gives the node order the sweeps
+      use.
+    - History index L626 (a recursive worktable estimated at 10 iterations ran 54–77): iteration
+      counts are measured here, not assumed. A group still changing in its last encoded sweep
+      reruns the clause with more sweeps.
