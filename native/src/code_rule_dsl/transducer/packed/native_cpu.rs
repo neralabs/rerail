@@ -264,7 +264,8 @@ pub(super) struct CompiledStraightLine {
 unsafe impl Send for CompiledStraightLine {}
 unsafe impl Sync for CompiledStraightLine {}
 
-const CPU_JIT_CACHE_LIMIT: usize = 512;
+// A wave's programs (its labels' and roots') fit: past this the oldest key goes.
+const CPU_JIT_CACHE_LIMIT: usize = 4096;
 static CPU_JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Arc<CompiledStraightLine>>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
@@ -2759,12 +2760,27 @@ pub(super) fn warm_jit(program: &Program) -> Result<(), Error> {
     compile_cached(program).map(|_| ())
 }
 
-pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLine>, Error> {
-    let key = format!(
+fn cache_key(program: &Program) -> String {
+    format!(
         "cpu-jit:{FORMAT_VERSION}:{}:{}",
         std::env::consts::ARCH,
         program.canonical_digest("", b"")
-    );
+    )
+}
+
+/// One key for a batch's programs (`compilation::request`).
+pub(super) fn batch_key(programs: &[Program]) -> String {
+    programs.iter().map(|program| program.canonical_digest("", b"")).collect::<Vec<_>>().join(",")
+}
+
+/// Whether every one of `programs` is compiled (`compile_cached`), without compiling any.
+pub(super) fn compiled(programs: &[Program]) -> Result<bool, Error> {
+    let cache = CPU_JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    Ok(programs.iter().all(|program| cache.contains_key(&cache_key(program))))
+}
+
+pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLine>, Error> {
+    let key = cache_key(program);
     if let Some(compiled) = CPU_JIT_CACHE
         .lock()
         .map_err(|_| Error::BackendFailure)?

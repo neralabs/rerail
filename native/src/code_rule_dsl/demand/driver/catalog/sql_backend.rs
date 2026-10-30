@@ -651,7 +651,7 @@ impl PackedDemand {
             .sum();
         let metal = matches!(
             self.backend,
-            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit
+            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground
         );
         let (partition_ranges, partitions) = self.execution_partitions();
         let dispatch_count = partition_ranges.len();

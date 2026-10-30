@@ -576,7 +576,7 @@ pub(super) fn compile_jit(programs: &[Program]) -> Result<Engine, Error> {
     })
 }
 
-fn jit_cache_key(programs: &[Program]) -> Result<String, Error> {
+pub(super) fn jit_cache_key(programs: &[Program]) -> Result<String, Error> {
     Ok(format!(
         "metal-jit:{FORMAT_VERSION}:{}:{}",
         std::env::consts::ARCH,
@@ -602,6 +602,12 @@ pub(super) fn compile_interpreter_cached() -> Result<Engine, Error> {
     let engine = compile_interpreter()?;
     *cached = Some(engine.clone());
     Ok(engine)
+}
+
+/// Whether `programs`' kernel is compiled (`compile_jit_cached`), without compiling it.
+pub(super) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
+    let key = jit_cache_key(programs)?;
+    Ok(JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
 }
 
 pub(super) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {

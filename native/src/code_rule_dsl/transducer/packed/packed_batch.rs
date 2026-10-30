@@ -1366,13 +1366,23 @@ impl PackedExecution {
         }
     }
 
-    // Test oracle only: preserve all interpreter values through the production
-    // publication adapter without planning a JIT execution workspace.
+    // Test oracle: one file's interpreter values through the production publication adapter.
     #[cfg(test)]
     pub(super) fn interpret_reference(
         programs: &[Program],
         file: &TapeDoc,
         roots: &[Vec<u32>],
+        limits: &[u32],
+    ) -> Result<Self, Error> {
+        Self::interpret(programs, std::slice::from_ref(file), &[roots.to_vec()], limits)
+    }
+
+    /// The batch on the CPU interpreter, published as the JIT's would be, without planning a JIT
+    /// workspace: the CPU backend until its compiled programs are ready (`compilation`).
+    pub(super) fn interpret(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Vec<u32>>],
         limits: &[u32],
     ) -> Result<Self, Error> {
         fn append_bytes(arena: &mut Vec<u8>, bytes: &[u8]) -> Result<(u32, u32), Error> {
@@ -1384,27 +1394,35 @@ impl PackedExecution {
             arena.extend_from_slice(bytes);
             Ok((start, count))
         }
-        if programs.len() != roots.len() || programs.len() != limits.len() {
+        if anchors.len() != files.len()
+            || anchors.iter().any(|roots| roots.len() != programs.len())
+            || programs.len() != limits.len()
+        {
             return Err(Error::InvalidAnchor);
         }
-        let files = std::slice::from_ref(file);
-        let anchors = vec![roots.to_vec()];
-        let input = super::metal_grid::MetalGridInput::build(programs, files, &anchors)?;
-        let BatchOutcome { outputs, errors } =
-            super::execute_batch_outcomes(programs, files, &anchors)?;
-        let [outputs]: [Vec<Vec<Output>>; 1] =
-            outputs.try_into().map_err(|_| Error::BackendFailure)?;
-        let [errors]: [Vec<Option<Error>>; 1] =
-            errors.try_into().map_err(|_| Error::BackendFailure)?;
-        if outputs.len() != programs.len() || errors.len() != programs.len() {
+        let input = super::metal_grid::MetalGridInput::build(programs, files, anchors)?;
+        let BatchOutcome { outputs, errors } = super::execute_batch_outcomes(programs, files, anchors)?;
+        if outputs.len() != files.len()
+            || errors.len() != files.len()
+            || outputs.iter().zip(&errors).any(|(outputs, errors)| outputs.len() != programs.len() || errors.len() != programs.len())
+        {
             return Err(Error::BackendFailure);
         }
         let mut results = Vec::new();
         let mut captures = Vec::new();
         let mut properties = Vec::new();
         let mut bytes = Vec::new();
-        for (program, mut outputs) in outputs.into_iter().enumerate() {
-            if errors[program].is_some() && !outputs.is_empty() {
+        // The interpreter's nodes and spans are the file's; the batch's are past the files before.
+        let bases = input.packed.files.iter().map(|file| (file.node_start, file.source_start)).collect::<Vec<_>>();
+        for ((base, source), program, error, mut outputs) in outputs
+            .into_iter()
+            .zip(&errors)
+            .zip(&bases)
+            .flat_map(|((outputs, errors), &bases)| {
+                outputs.into_iter().zip(errors).enumerate().map(move |(program, (outputs, error))| (bases, program, error, outputs))
+            })
+        {
+            if error.is_some() && !outputs.is_empty() {
                 return Err(Error::BackendFailure);
             }
             // Limits select complete interpreter results. They cannot hide a
@@ -1443,9 +1461,9 @@ impl PackedExecution {
                     };
                     captures.push(FinalCaptureRecord {
                         label: u32::from(capture.label),
-                        node: capture.node,
-                        start: checked_u32(capture.span.start)?,
-                        end: checked_u32(capture.span.end)?,
+                        node: base + capture.node,
+                        start: source + checked_u32(capture.span.start)?,
+                        end: source + checked_u32(capture.span.end)?,
                         text_start,
                         text_length,
                         property_start,
@@ -1473,7 +1491,7 @@ impl PackedExecution {
                 results.push(ResultRecord {
                     task_ordinal: output.task_ordinal,
                     local_ordinal: output.local_ordinal,
-                    start: output.start,
+                    start: base + output.start,
                     label: u32::from(output.label),
                     capture_start,
                     capture_count: checked_u32(captures.len())? - capture_start,
@@ -1488,7 +1506,7 @@ impl PackedExecution {
             .grid
             .evaluation_spans
             .iter()
-            .map(|span| errors[span.program as usize].clone())
+            .map(|span| errors[span.file as usize][span.program as usize].clone())
             .collect();
         Self::from_grid_arenas(
             input.packed,

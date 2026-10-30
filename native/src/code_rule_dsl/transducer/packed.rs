@@ -212,6 +212,7 @@ mod metal_terminal_repeat;
 mod metal_typed_output;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_unique_child_tests;
+mod compilation;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
@@ -873,8 +874,13 @@ pub(in crate::code_rule_dsl) struct Output {
 pub(in crate::code_rule_dsl) enum ExecutionBackend {
     CpuInterpreter,
     CpuJit,
+    /// The CPU JIT's programs once compiled in the background, the interpreter until then
+    /// (`compilation`).
+    CpuBackground,
     MetalInterpreter,
     MetalJit,
+    /// Metal's compiled kernel once built in the background, its interpreter until then.
+    MetalBackground,
     Metal,
 }
 
@@ -3663,7 +3669,11 @@ pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
-    match backend {
+    match compilation::resolve(backend, programs)? {
+        ExecutionBackend::CpuInterpreter => {
+            let limits = result_limits.map_or_else(|| vec![u32::MAX; programs.len()], <[u32]>::to_vec);
+            packed_batch::PackedExecution::interpret(programs, files, anchors, &limits)
+        }
         ExecutionBackend::CpuJit => native_cpu::execute_batch_packed_with_result_limits(
             programs,
             files,
@@ -3692,8 +3702,9 @@ pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
                 result_limits,
             )
         }
-        ExecutionBackend::CpuInterpreter => Err(Error::UnsupportedBackend),
-        ExecutionBackend::Metal => Err(Error::UnsupportedBackend),
+        ExecutionBackend::Metal | ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
+            Err(Error::UnsupportedBackend)
+        }
         #[cfg(not(target_os = "macos"))]
         ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => {
             Err(Error::UnsupportedBackend)
@@ -3707,7 +3718,7 @@ fn execute_with_backend_outcomes(
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
 ) -> Result<BatchOutcome, Error> {
-    match backend {
+    match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
         ExecutionBackend::CpuJit => native_cpu::execute_batch_outcomes(programs, files, anchors),
         #[cfg(target_os = "macos")]
@@ -3728,6 +3739,7 @@ fn execute_with_backend_outcomes(
         ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::Metal => {
             Err(Error::UnsupportedBackend)
         }
+        ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => Err(Error::UnsupportedBackend),
     }
 }
 
