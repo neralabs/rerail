@@ -416,7 +416,9 @@ export function recordedLicences(repo: string): string[] {
 const LICENCE_MARKERS: Readonly<Record<string, readonly RegExp[]>> = {
   MIT: [/Permission is hereby granted, free of charge/u],
   "BSD-2-Clause": [/Redistribution and use in source and binary forms/u],
-  "BSD-3-Clause": [/Redistribution and use in source and binary forms/u, /Neither the name|endorse or promote/u],
+  // The non-endorsement clause, however it wraps: "Neither the name ...", or older texts' "may not be used to endorse
+  // or\n promote" (Twig's before 2020).
+  "BSD-3-Clause": [/Redistribution and use in source and binary forms/u, /Neither\s+the\s+name|endorse\s+or\s+promote/u],
   "Apache-2.0": [/Apache License,?\s+Version 2\.0/u],
   PostgreSQL: [/Permission to use, copy, modify, and distribute this software and its\s+documentation for any purpose, without fee/u],
   Unlicense: [/free and unencumbered software released into the public domain/u],

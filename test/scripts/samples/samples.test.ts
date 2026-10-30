@@ -147,6 +147,37 @@ describe("licences", () => {
     expect(licenceTexts(cache, "sequelize/sequelize", "155381bd5ddfc8d4b7a6f1cd8385bfca60921ada")).toEqual({ spdx: "NONE", texts: [] });
   });
 
+  it("read BSD-3-Clause's non-endorsement clause however it wraps, as Twig's LICENSE before 2020 does", () => {
+    const cache = scratch();
+    // twigphp/Twig's LICENSE at d168660 (2020-01-31): "endorse or" ends a line, "promote" starts the next.
+    const path = join(cache, "licences", "twigphp/twig", COMMIT, "LICENSE");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(
+      path,
+      [
+        "Copyright (c) 2009-2020 by the Twig Team.",
+        "",
+        "Redistribution and use in source and binary forms, with or without",
+        "modification, are permitted provided that the following conditions are",
+        "met:",
+        "",
+        "    * Redistributions of source code must retain the above copyright",
+        "      notice, this list of conditions and the following disclaimer.",
+        "",
+        "    * Redistributions in binary form must reproduce the above",
+        "      copyright notice, this list of conditions and the following",
+        "      disclaimer in the documentation and/or other materials provided",
+        "      with the distribution.",
+        "",
+        "    * The names of the contributors may not be used to endorse or",
+        "      promote products derived from this software without specific",
+        "      prior written permission.",
+        "",
+      ].join("\n"),
+    );
+    expect(licenceTexts(cache, "twigphp/Twig", COMMIT).spdx).toBe("BSD-3-Clause");
+  });
+
   it("are claimed in SAMPLES.md and LICENSES.md as texts only for the repositories whose texts the archive holds", () => {
     const samples = [sample({ source: { ...sample().source, repo: "a/x" } }), sample({ path: "b.py", source: { ...sample().source, repo: "b/y", path: "b.py" } })];
     const lock = { sha256: "f".repeat(64), files: 4, bytes: 10 };
