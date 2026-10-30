@@ -1,0 +1,1 @@
+import gfurg from 'node:async_hooks'; gfurg.createHook()

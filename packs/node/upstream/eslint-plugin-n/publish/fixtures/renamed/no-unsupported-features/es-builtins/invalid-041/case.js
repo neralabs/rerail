@@ -1,0 +1,1 @@
+function ygcf() { Promise.any }

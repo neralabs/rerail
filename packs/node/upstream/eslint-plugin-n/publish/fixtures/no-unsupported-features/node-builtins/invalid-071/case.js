@@ -1,0 +1,1 @@
+var hooks = require('crypto'); hooks.constants

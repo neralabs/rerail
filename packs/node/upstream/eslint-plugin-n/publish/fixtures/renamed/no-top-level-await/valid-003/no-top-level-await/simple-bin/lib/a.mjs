@@ -1,0 +1,1 @@
+async function fa () { const foo = await import('foo') }

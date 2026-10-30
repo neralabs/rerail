@@ -1,0 +1,1 @@
+var oyttn = require('stream'); oyttn.finished()

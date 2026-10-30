@@ -1,0 +1,1 @@
+import i from 'process'; i.argv0

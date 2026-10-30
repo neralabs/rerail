@@ -1,0 +1,1 @@
+class C { async qddanx() { await 1 } }

@@ -1,0 +1,1 @@
+(function(Symbol) { Symbol }(m))

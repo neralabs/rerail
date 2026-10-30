@@ -1,0 +1,1 @@
+const { webcrypto } = require('crypto'); webcrypto.rbyeikVPBT()

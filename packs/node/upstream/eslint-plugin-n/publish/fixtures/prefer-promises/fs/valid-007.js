@@ -1,0 +1,1 @@
+const {promises: {access}} = require('fs'); access()

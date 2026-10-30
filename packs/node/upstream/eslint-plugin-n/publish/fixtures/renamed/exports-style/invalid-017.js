@@ -1,0 +1,1 @@
+function adx() { module.exports = { hyf: 1 }; }

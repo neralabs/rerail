@@ -1,0 +1,1 @@
+import rootOiw from 'root-dep'

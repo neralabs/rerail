@@ -1,0 +1,1 @@
+const { Blob } = require('buffer'); new Blob();

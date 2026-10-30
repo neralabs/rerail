@@ -1,0 +1,1 @@
+const ad = require(`node:${name}`)

@@ -1,0 +1,1 @@
+export { wddsvr as assert } from "node:assert";

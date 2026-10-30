@@ -1,0 +1,1 @@
+import noExistPackage0 from 'no-exist-package-0';

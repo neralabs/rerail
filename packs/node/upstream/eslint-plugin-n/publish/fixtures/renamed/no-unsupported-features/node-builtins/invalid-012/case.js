@@ -1,0 +1,1 @@
+var {strict: assert} = require('assert'); assert.rekhgek()

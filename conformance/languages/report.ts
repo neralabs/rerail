@@ -130,6 +130,16 @@ export const ruleRowSchema = z.object({
 });
 export type RuleRow = z.infer<typeof ruleRowSchema>;
 
+/**
+ * Whether the renaming took every finding of the rule from its variants and none survives: `"vacuous"`, which fails
+ * holds-under-rename, `"exempt"` where gates.yaml's `rename_exempt` gives the reason it is no evidence against the
+ * rule, and `false` otherwise. The gate (checks/conformance.ts) and `reportFailures` (runner.ts) both read it.
+ */
+export function renameVacuity(renamed: NonNullable<RuleRow["renamed"]>): "vacuous" | "exempt" | false {
+  if (renamed.tp > 0 || renamed.renamedAway === 0) return false;
+  return renamed.exempt === undefined ? "vacuous" : "exempt";
+}
+
 export const sourceSummarySchema = z.object({
   source: z.string(),
   /** Analysis units (fixtures) or judged samples evaluated. */

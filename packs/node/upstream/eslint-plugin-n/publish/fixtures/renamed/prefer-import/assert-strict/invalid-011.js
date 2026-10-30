@@ -1,0 +1,1 @@
+require("node:assert", cnfpi);

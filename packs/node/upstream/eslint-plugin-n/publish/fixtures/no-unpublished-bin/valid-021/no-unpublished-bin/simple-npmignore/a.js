@@ -1,0 +1,1 @@
+'simple-npmignore/a.js'

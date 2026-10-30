@@ -1,0 +1,1 @@
+'use strict'; function zuim() { if (c) { function q() {} } }

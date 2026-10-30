@@ -1,0 +1,1 @@
+import perf_hooks from 'perf_hooks'

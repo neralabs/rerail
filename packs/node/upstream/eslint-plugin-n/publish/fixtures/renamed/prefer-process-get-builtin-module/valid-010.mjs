@@ -1,0 +1,1 @@
+const da = await import(name)

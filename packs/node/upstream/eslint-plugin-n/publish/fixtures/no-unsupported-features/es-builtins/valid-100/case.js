@@ -1,0 +1,1 @@
+(function(Number) { Number.isNaN(a) }(b))

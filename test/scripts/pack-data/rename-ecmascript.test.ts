@@ -7,6 +7,7 @@ const comparisons: Array<[string, (left: string, right: string) => number]> = [
   ["code units", (left, right) => (left < right ? -1 : left > right ? 1 : 0)],
   ["ignoring case", (left, right) => (left.toLowerCase() < right.toLowerCase() ? -1 : left.toLowerCase() > right.toLowerCase() ? 1 : 0)],
   ["locale", (left, right) => left.localeCompare(right)],
+  ["naturally", new Intl.Collator(undefined, { numeric: true }).compare],
 ];
 
 describe("renameSource", () => {
@@ -33,8 +34,8 @@ describe("renameSource", () => {
     expect(renames.has("cfg")).toBe(true);
   });
 
-  it("keeps every two names' order: by code units, ignoring case and by locale", () => {
-    const names = ["a", "b", "B", "Ab", "aB", "abc", "abd", "Abe", "zeta", "Zeta", "alpha", "alphaB", "x1", "x10", "x2", "_y", "$z", "mixedCase", "MixedCase", "mixedcase", "q"];
+  it("keeps every two names' order: by code units, ignoring case, by locale and naturally", () => {
+    const names = ["a", "b", "B", "Ab", "aB", "abc", "abd", "Abe", "zeta", "Zeta", "alpha", "alphaB", "x1", "x10", "x2", "item9", "item10", "v2b", "v10a", "_y", "$z", "mixedCase", "MixedCase", "mixedcase", "q"];
     const source = `var ${names.join(", ")};\nconst o = { "middle": 1, log: 2 };\n`;
     const { renames } = renameSource(source, "a.js");
     const all = [...names, "middle", "log"];
@@ -83,6 +84,22 @@ describe("renameSource", () => {
     expect(renamed.split("\n")[0]).toBe(`/* global ${fooBar}, ${bazQux}: writable -- set by the page */`);
     expect(renamed).toContain(`${fooBar}(); ${bazQux} = 1;`);
     expect(renamed).toContain("// fooBar stays here");
+  });
+
+  it("renames the names of a global, globals or exported comment anywhere in the file", () => {
+    const source = "function f() { /* global fooBar */ }\nfooBar();\nconst g = (/* globals bazQux */) => bazQux;\nexport { g /* exported quuxCorge */ };\nvar quuxCorge = [/* global graultX */];\ngraultX;\n";
+    const { source: renamed, renames } = renameSource(source, "a.js");
+    for (const name of ["fooBar", "bazQux", "quuxCorge", "graultX"]) expect(renames.has(name), name).toBe(true);
+    expect(renamed).toContain(`function ${renames.get("f")}() { /* global ${renames.get("fooBar")} */ }`);
+    expect(renamed).toContain(`(/* globals ${renames.get("bazQux")} */) => ${renames.get("bazQux")};`);
+    expect(renamed).toContain(`/* exported ${renames.get("quuxCorge")} */`);
+    expect(renamed).toContain(`[/* global ${renames.get("graultX")} */];`);
+  });
+
+  it("renames nothing in a file with a non-ASCII identifier, whose order by locale the relabelling cannot keep", () => {
+    const source = "var éb = 1, ez = 2, ea = 3, éz = 4;\n";
+    expect(renameSource(source, "a.js")).toEqual({ source, renames: new Map() });
+    expect(renameVariant(source, "a.js")).toEqual({ problem: "nothing to rename" });
   });
 
   it("keeps intrinsic JSX tags, their attributes and namespaced names, and renames user components", () => {

@@ -23,6 +23,9 @@
  *   binding, shadowing and name-equality relation in the file holds without modelling scopes), and any two names of
  *   the file (renamed or staying, literal words included) compare the same way after renaming as before: by code units
  *   (sort-keys, sort-vars and sort-imports at their defaults), ignoring case, by locale and naturally (digit runs stay).
+ *   A locale orders a non-ASCII letter among the ASCII ones (`é` between `e` and `f`), which the relabelling of the
+ *   ASCII letters around it cannot follow (`éb`, `ez`, `ea` would become `ép`, `nu`, `nb`), so a file with any
+ *   non-ASCII identifier is not renamed at all: it gets no variant.
  * - Protected, the APIs a rule is about rather than the tests' own names: keywords and contextual keywords, the ES
  *   standard library (globals and every member declared in TypeScript's lib.es*.d.ts), the names `HOST_NAMES` lists (a
  *   few browser and Node globals, Node's deprecated `GLOBAL`, `root` and `COUNTER_*`, console methods, React's component
@@ -49,11 +52,14 @@ import ts from "typescript";
 /** The test runners' globals. */
 const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe"];
 
+/** Host objects whose members are their API: kept themselves (`HOST_NAMES`), and their members (`MEMBER_ROOTS`). */
+const HOST_OBJECTS = ["process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require", "Intl"];
+
 /**
- * Host objects whose members are their API: the member names of a chain of accesses and calls on one are kept
+ * The roots whose members are kept: the member names of a chain of accesses and calls on one
  * (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `jest.mock`, `it.only.each`, `expect(x).not.toBe`).
  */
-const MEMBER_ROOTS = new Set([...TEST_GLOBALS, "process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require", "Intl"]);
+const MEMBER_ROOTS = new Set([...TEST_GLOBALS, ...HOST_OBJECTS]);
 
 /** The root identifier of a chain of member accesses and calls (`a` of `a.b(c).d`), if it has one. */
 function chainRoot(expression: ts.Expression): ts.Identifier | undefined {
@@ -140,12 +146,11 @@ function isApiName(node: ts.Identifier | ts.PrivateIdentifier, bindings: Readonl
 
 /** The host, module-system, React and test-runner names kept (not exhaustive: any name missing here is renamed). */
 const HOST_NAMES = [
-  "window", "document", "navigator", "location", "globalThis", "self", "console", "process", "Buffer", "global", "require", "module", "exports",
-  "define", "__dirname", "__filename", "GLOBAL", "root", "COUNTER_HTTP_CLIENT_REQUEST", "COUNTER_HTTP_CLIENT_RESPONSE",
+  ...HOST_OBJECTS, "define", "__dirname", "__filename", "GLOBAL", "root", "COUNTER_HTTP_CLIENT_REQUEST", "COUNTER_HTTP_CLIENT_RESPONSE",
   "COUNTER_HTTP_SERVER_REQUEST", "COUNTER_HTTP_SERVER_RESPONSE", "COUNTER_NET_SERVER_CONNECTION", "COUNTER_NET_SERVER_CONNECTION_CLOSE", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate",
   "requestAnimationFrame", "fetch", "alert", "confirm", "prompt", "localStorage", "sessionStorage", "addEventListener", "removeEventListener",
   "log", "warn", "error", "info", "debug", "trace", "time", "timeEnd", "dir", "table", "assert",
-  "React", "ReactDOM", "Component", "PureComponent", "Fragment", "createElement", "props", "state", "setState", "render", "children", "key",
+  "Component", "PureComponent", "Fragment", "createElement", "props", "state", "setState", "render", "children", "key",
   "ref", "className", "createReactClass", "createClass", "findDOMNode", "isMounted", "replaceState", "forceUpdate", "getInitialState",
   "getDefaultProps", "getChildContext", "displayName", "propTypes", "defaultProps", "contextTypes", "childContextTypes", "contextType",
   "componentDidMount", "componentDidUpdate", "componentWillUnmount", "componentWillMount", "componentWillReceiveProps", "componentWillUpdate",
@@ -368,13 +373,22 @@ export function renameSource(source: string, fileName: string): RenameResult {
     bucket.push(occurrence);
     occurrences.set(text, bucket);
   };
+  // Every comment in the file: the trivia before and after every token, punctuation included, so a comment no node
+  // starts or ends at (`{ /* global a */ }`) is found too. JSX text is no trivia, and a JSDoc node's children sit inside
+  // its comment.
+  const jsxText: Array<[number, number]> = [];
   const collectComments = (node: ts.Node): void => {
+    if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode) return;
+    if (ts.isJsxText(node)) {
+      jsxText.push([node.pos, node.end]);
+      return;
+    }
     for (const range of [...(ts.getLeadingCommentRanges(source, node.pos) ?? []), ...(ts.getTrailingCommentRanges(source, node.end) ?? [])]) comments.set(range.pos, range);
+    for (const child of node.getChildren(file)) collectComments(child);
   };
   const packages = packageNames(file);
   for (const name of packages.exported) pinned.add(name);
   const visit = (node: ts.Node): void => {
-    collectComments(node);
     if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
       const text = node.text;
       if (text === "") return;
@@ -398,7 +412,10 @@ export function renameSource(source: string, fileName: string): RenameResult {
     ts.forEachChild(node, visit);
   };
   visit(file);
-  collectComments(file.endOfFileToken);
+  // A non-ASCII identifier anywhere leaves the file as it is (see module doc).
+  if ([...occurrences.keys()].some(name => /[^\x00-\x7f]/u.test(name))) return { source, renames: new Map() };
+  collectComments(file);
+  for (const [start, end] of jsxText) for (const position of [...comments.keys()]) if (position >= start && position < end) comments.delete(position);
 
   // Names a `/* global */`-style comment lists are occurrences too; every other comment word is only avoided.
   const commentWords = new Set<string>();

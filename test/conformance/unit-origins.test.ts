@@ -148,4 +148,56 @@ describe("rename variants and unit origins", () => {
     const kept = JSON.parse(inUnitLanguage(JSON.stringify(own), { ecmaVersion: 5, sourceType: "script" }));
     expect(kept.clauses[0].forbid.ast.rule.all[1].has.resolves).toEqual({ global: ["console"] });
   });
+
+  it("keeps a /* global */-reading list matching what it matches without languageOptions, off removing a name", () => {
+    const violation = { anchor: "witness.span", code: "c", message: "m" };
+    const read = { kind: "identifier", resolves: { global: ["myGlobal"], directives: "eslint" } };
+    const document = (rule: unknown) =>
+      JSON.stringify({ format: "rerail.policy/v1", id: "directives-probe", revision: 1, mode: "log", description: "d", scope: { include: ["**/*"], exclude: [] }, clauses: [{ id: "one", forbid: { ast: { language: "javascript", rule } }, violation }] });
+    const language = { ecmaVersion: 5, sourceType: "script" } as const;
+    const merged = inUnitLanguage(document(read), language);
+    expect(JSON.parse(merged).clauses[0].forbid.ast.languageOptions).toEqual({ globals: { myGlobal: "readonly" }, ...language });
+    const findings = (documentText: string, source: string): number => {
+      const compiled = loadNativeBinding().CodeRuleDslRuntime.compile(documentText, "json", capabilitiesJson());
+      const input = { format: "rerail.repository-snapshot/v1", revision: 0, facts: [], files: [{ language: "javascript", path: "a.js", source }] };
+      return (JSON.parse(compiled.evaluate(JSON.stringify(input), "report")) as { violations?: unknown[] }).violations?.length ?? 0;
+    };
+    for (const source of ["myGlobal();\n", "/* global myGlobal: off */\nmyGlobal();\n", "var myGlobal; myGlobal();\n"]) {
+      expect(findings(merged, source), source).toBe(findings(document(read), source));
+    }
+    expect(findings(merged, "myGlobal();\n")).toBe(1);
+    // Declaring the list's names would change what an unresolved read in the same query matches.
+    const both = { any: [read, { kind: "identifier", resolves: { unresolved: true } }] };
+    expect(() => inUnitLanguage(document(both), language)).toThrow(/reads the configuration's declared globals/);
+  });
+
+  it("merges into a select_when's queries and a nested option case, and fails on a shape where a query could hide", () => {
+    const violation = { anchor: "witness.span", code: "c", message: "m" };
+    const ast = { language: "javascript", rule: { kind: "debugger_statement" } };
+    const document = (clauses: unknown[]) =>
+      JSON.stringify({ format: "rerail.policy/v1", id: "shapes-probe", revision: 1, mode: "log", description: "d", scope: { include: ["**/*"], exclude: [] }, clauses });
+    const language = { ecmaVersion: 5, sourceType: "script" } as const;
+    const merged = JSON.parse(
+      inUnitLanguage(
+        document([
+          { id: "define", define: { options: { s: { type: "string", default: "a" } } } },
+          { id: "pair", forbid: { select_when: { select: { ast }, exists: { regex: "x" } } }, violation },
+          { id: "nested", forbid: { ast: { $option: "s", cases: { a: { $option: "s", cases: { a: ast }, default: ast } }, default: ast } }, violation },
+        ]),
+        language,
+      ),
+    );
+    expect(merged.clauses[1].forbid.select_when.select.ast.languageOptions).toEqual(language);
+    expect(merged.clauses[2].forbid.ast.cases.a.cases.a.languageOptions).toEqual(language);
+    expect(merged.clauses[2].forbid.ast.cases.a.default.languageOptions).toEqual(language);
+    for (const clause of [
+      { $option: "clauses", cases: { a: [] }, default: [], spread: true },
+      { id: "each", require_each: { subject: { ast }, evidence: { ast } }, violation },
+      { id: "query", forbid: { $option: "s", template: "{}" }, violation },
+      { id: "language", forbid: { ast: { ...ast, language: { $option: "s", cases: { a: "javascript" }, default: "typescript" } } }, violation },
+      { id: "options", forbid: { ast: { ...ast, languageOptions: { $option: "s", cases: { a: {} }, default: {} } } }, violation },
+    ]) {
+      expect(() => inUnitLanguage(document([clause]), language), JSON.stringify(clause)).toThrow(/has a shape it does not read/);
+    }
+  });
 });

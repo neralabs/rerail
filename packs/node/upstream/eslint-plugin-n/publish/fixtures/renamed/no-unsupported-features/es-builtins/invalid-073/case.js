@@ -1,0 +1,1 @@
+function vqjn() { Float64Array }

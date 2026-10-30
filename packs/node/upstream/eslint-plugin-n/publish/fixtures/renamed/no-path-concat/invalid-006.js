@@ -1,0 +1,1 @@
+var path = require("path"); var fsgrVhbs = `${__filename}${path.sep}foo.js`;

@@ -1,0 +1,1 @@
+(function(DataView) { DataView }(b))

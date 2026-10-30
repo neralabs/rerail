@@ -1,0 +1,1 @@
+undefinedVar = require('fs')

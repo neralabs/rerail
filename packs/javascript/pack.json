@@ -1,9 +1,9 @@
 {
   "format": "rerail.rule-pack/v1",
   "id": "javascript",
-  "name": "JavaScript and TypeScript (ESLint core)",
+  "name": "JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn)",
   "category": "language",
-  "covers": "ESLint's core rules for sound, consistent JavaScript and TypeScript.",
+  "covers": "ESLint's core rules for sound, consistent JavaScript and TypeScript, and eslint-plugin-unicorn rules for JavaScript.",
   "reason": "matches JavaScript or TypeScript source",
   "match": {
     "any": [

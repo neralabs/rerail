@@ -1,0 +1,1 @@
+var x = { x(err) { if (err) { callback (err); } } }

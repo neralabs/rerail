@@ -1,0 +1,1 @@
+require('./ignore1.js');

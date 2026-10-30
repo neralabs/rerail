@@ -1,0 +1,1 @@
+(function(String) { String.fromCodePoint(a) }(b))

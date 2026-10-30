@@ -39,8 +39,8 @@ import {
   type UnitOrigin,
   type UpstreamFinding,
 } from "./pack.js";
-import { GATES_MANIFEST, readGatesManifest, toolPackDirectory } from "./manifest.js";
-import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
+import { GATES_MANIFEST, parseGatesManifest } from "./manifest.js";
+import { EXAMPLE_LIMIT, renameVacuity, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
 import { precisionRecall, scoreSamples, scoreSource, type JudgedSample, type Point, type SourceScore } from "./score.js";
 
 /** The production repository audit's batching and paging (`code-rule-enforcer.ts`). */
@@ -277,19 +277,43 @@ export function queryLanguageOptions(language: UnitLanguage): JsonObject {
 }
 
 /**
- * Marks every `resolves` under `value` that lists `global` names, without `declared` or `directives`, as
- * `declared: false`: what such a read means in a query without `languageOptions` (the name is unbound, whether or not
- * the configuration declares it), which giving the query `languageOptions` would otherwise turn into "a declared global".
+ * Keeps every `resolves` under `query` (a query without `languageOptions`) reading globals as it does without them,
+ * once the merge gives the query the unit's `languageOptions`. Without them a `global: [names]` read is the list alone
+ * (the name is unbound, whether or not a configuration declares it), with `directives: "eslint"` less the names a
+ * `/* global x: off *\/` comment removes; with them, the name must also be a declared global. So a list without
+ * `directives` is marked `declared: false`, and a list with `directives` (which `declared: false` would stop reading)
+ * gets its names declared in the query's `globals`, where only `off` removes them, as before. `global: true` and
+ * `unresolved` read the declared globals of a configuration either way (ESLint's latest module globals by default),
+ * so the unit's, which the tool linted the case under, replace the defaults; but a query that both declares listed
+ * names and reads one of those is refused, since the declared names would change what they match, and so is a
+ * `resolves` whose `global` or `declared` is spelt any other way. Returns the names to declare.
  */
-function keepUndeclaredGlobals(value: unknown): void {
-  if (Array.isArray(value)) {
-    for (const item of value) keepUndeclaredGlobals(item);
-    return;
+function keepUndeclaredGlobals(query: JsonObject, where: string): string[] {
+  const declare = new Set<string>();
+  let readsConfiguration = false;
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!isJsonObject(value)) return;
+    const resolves = value.resolves;
+    if (isJsonObject(resolves)) {
+      const listed = Array.isArray(resolves.global) && resolves.global.every(name => typeof name === "string");
+      if (resolves.declared !== undefined || (resolves.global !== undefined && !listed && resolves.global !== true)) {
+        throw new Error(`inUnitLanguage: ${where} has a resolves it cannot keep reading globals as it does without languageOptions (${JSON.stringify(resolves).slice(0, 200)})`);
+      }
+      if (resolves.global === true || resolves.unresolved !== undefined) readsConfiguration = true;
+      if (listed && resolves.directives === undefined) resolves.declared = false;
+      else if (listed) for (const name of resolves.global as string[]) declare.add(name);
+    }
+    for (const inner of Object.values(value)) visit(inner);
+  };
+  visit(query);
+  if (declare.size > 0 && readsConfiguration) {
+    throw new Error(`inUnitLanguage: ${where} declares the names its /* global */-reading list holds and also reads the configuration's declared globals (global: true or unresolved), which those names would change`);
   }
-  if (!isJsonObject(value)) return;
-  const resolves = value.resolves;
-  if (isJsonObject(resolves) && Array.isArray(resolves.global) && resolves.declared === undefined && resolves.directives === undefined) resolves.declared = false;
-  for (const inner of Object.values(value)) keepUndeclaredGlobals(inner);
+  return [...declare].sort();
 }
 
 /**
@@ -298,17 +322,19 @@ function keepUndeclaredGlobals(value: unknown): void {
  * `sourceType` and typescript-eslint options and adds to its `ecmaFeatures`; the rule's `globals` stay. A query that
  * had no `languageOptions` keeps reading its listed globals as unbound names (`keepUndeclaredGlobals`); shared
  * definitions compile apart from any query's options, so they need none. A language with nothing the engine reads
- * leaves the document as it is.
+ * leaves the document as it is. A shape the walk does not read (a clause other than a `forbid` or a define, a reference
+ * among the clauses, a query an option builds other than by `cases`, a language or `languageOptions` an option builds)
+ * throws: it could hold an AST query the merge would miss.
  */
 export function inUnitLanguage(documentText: string, language: UnitLanguage): string {
   const options = queryLanguageOptions(language);
   // Nothing of the unit's language is the engine's to read (its parserOptions are the parser's alone).
   if (Object.keys(options).length === 0) return documentText;
   const document = JSON.parse(documentText) as JsonObject;
-  const merge = (query: JsonObject): void => {
+  const merge = (query: JsonObject, where: string): void => {
     if (!isEcmaQuery(query.language)) return;
-    if (!isJsonObject(query.languageOptions)) keepUndeclaredGlobals(query);
-    const own = isJsonObject(query.languageOptions) ? query.languageOptions : {};
+    const declare = isJsonObject(query.languageOptions) ? [] : keepUndeclaredGlobals(query, where);
+    const own: JsonObject = isJsonObject(query.languageOptions) ? query.languageOptions : declare.length > 0 ? { globals: Object.fromEntries(declare.map(name => [name, "readonly"])) } : {};
     const merged: JsonObject = { ...own, ...options };
     if (isJsonObject(options.parserOptions) && isJsonObject(own.parserOptions)) {
       const ownFeatures = isJsonObject(own.parserOptions.ecmaFeatures) ? own.parserOptions.ecmaFeatures : {};
@@ -316,12 +342,47 @@ export function inUnitLanguage(documentText: string, language: UnitLanguage): st
     }
     query.languageOptions = merged;
   };
-  for (const clause of Array.isArray(document.clauses) ? document.clauses.filter(isJsonObject) : []) {
-    const body = isJsonObject(clause.forbid) ? clause.forbid : isJsonObject(clause.require) ? clause.require : undefined;
-    if (!isJsonObject(body?.ast)) continue;
-    const ast = body.ast;
-    if (ast.$option !== undefined && isJsonObject(ast.cases)) for (const variant of [...Object.values(ast.cases), ast.default].filter(isJsonObject)) merge(variant);
-    else merge(ast);
+  // Every shape the walk knows; any other one could hold an AST query the merge would miss, so it fails loudly.
+  const unknownShape = (where: string, value: unknown): never => {
+    throw new Error(`inUnitLanguage: ${where} has a shape it does not read (${JSON.stringify(value).slice(0, 200)}); teach it, or its AST queries go without the unit's language`);
+  };
+  // A value an option chooses (`cases`, `default`): each case is read as the value it stands for.
+  const choices = (where: string, value: JsonObject): unknown[] => {
+    if (!isJsonObject(value.cases)) return unknownShape(where, value);
+    return [...Object.values(value.cases), ...(value.default === undefined ? [] : [value.default])];
+  };
+  const visitAst = (where: string, ast: unknown): void => {
+    if (!isJsonObject(ast)) return unknownShape(where, ast);
+    if (ast.$option !== undefined) {
+      for (const variant of choices(where, ast)) visitAst(`${where} (a case)`, variant);
+      return;
+    }
+    if (typeof ast.language !== "string") return unknownShape(`${where}'s language`, ast.language);
+    if (ast.languageOptions !== undefined && (!isJsonObject(ast.languageOptions) || JSON.stringify(ast.languageOptions).includes('"$option"'))) {
+      return unknownShape(`${where}'s languageOptions`, ast.languageOptions);
+    }
+    merge(ast, where);
+  };
+  const visitQuery = (where: string, query: unknown): void => {
+    if (!isJsonObject(query)) return unknownShape(where, query);
+    if (query.$option !== undefined) {
+      for (const variant of choices(where, query)) visitQuery(`${where} (a case)`, variant);
+      return;
+    }
+    if (query.ast !== undefined) visitAst(`${where}.ast`, query.ast);
+    else if (isJsonObject(query.select_when)) {
+      visitQuery(`${where}.select_when.select`, query.select_when.select);
+      visitQuery(`${where}.select_when.exists`, query.select_when.exists);
+    } else if (query.regex === undefined) unknownShape(where, query);
+  };
+  const clauses = document.clauses;
+  if (!Array.isArray(clauses)) return unknownShape("the document's clauses", clauses);
+  for (const [index, clause] of clauses.entries()) {
+    const where = `clause ${index}`;
+    if (!isJsonObject(clause) || clause.$option !== undefined) unknownShape(where, clause);
+    else if (clause.forbid !== undefined) visitQuery(`${where}.forbid`, clause.forbid);
+    // A define's shared utilities compile apart from any query's options (see above).
+    else if (clause.define === undefined) unknownShape(where, clause);
   }
   return JSON.stringify(document);
 }
@@ -342,6 +403,11 @@ function unitLanguageRules(errors: string[]): (rules: readonly CompiledRule[], l
       let compiled = cache.get(cacheKey);
       if (compiled === undefined) {
         const document = inUnitLanguage(entry.document, language);
+        // Nothing of the language reaches the rule's queries: the rule as compiled already is the unit's.
+        if (document === entry.document) {
+          cache.set(cacheKey, entry);
+          return [entry];
+        }
         try {
           compiled = { ...entry, compiled: loadNativeBinding().CodeRuleDslRuntime.compile(document, "json", capabilitiesJson()) };
         } catch (error) {
@@ -941,11 +1007,27 @@ function ownUnits(rule: PackRule, units: readonly ScoredUnit[], findings: readon
   return { ownUnits: own.length, silentOwnUnits: silent.length };
 }
 
-/** gates.yaml's `rename_exempt` for an upstream rule, as the row's `renamed.exempt`; none when the tool has no gates.yaml. */
+/** Each loaded pack's `rename_exempt` reasons by tool, then upstream rule: its gates.yaml files, each read once per run. */
+const renameExemptions = new WeakMap<LoadedPack, Map<string, ReadonlyMap<string, string>>>();
+
+/**
+ * gates.yaml's `rename_exempt` for an upstream rule, as the row's `renamed.exempt`; none when the tool has no gates.yaml.
+ * The gates.yaml is the tool-pack's beside the loaded pack (`upstream/<tool>/`), read once per pack and tool.
+ */
 function renameExemption(loaded: LoadedPack, tool: string, upstreamRule: string): { exempt?: string } {
-  const { pack } = loaded.pack;
-  if (!existsSync(join(toolPackDirectory(RERAIL_ROOT, pack, tool), GATES_MANIFEST))) return {};
-  const exempt = readGatesManifest(RERAIL_ROOT, pack, tool).rules[upstreamRule]?.rename_exempt;
+  let byTool = renameExemptions.get(loaded);
+  if (byTool === undefined) renameExemptions.set(loaded, (byTool = new Map()));
+  let exemptions = byTool.get(tool);
+  if (exemptions === undefined) {
+    const { pack } = loaded.pack;
+    const path = join(loaded.directory, "upstream", tool, GATES_MANIFEST);
+    const label = `packs/${pack}/upstream/${tool}/${GATES_MANIFEST}`;
+    const manifest = existsSync(path) ? parseGatesManifest(readFileSync(path, "utf8"), label) : undefined;
+    if (manifest !== undefined && manifest.rerail.pack !== pack) throw new Error(`${label}: rerail.pack is ${manifest.rerail.pack}, but the manifest sits in packs/${pack}/`);
+    exemptions = new Map(Object.entries(manifest?.rules ?? {}).flatMap(([rule, facts]) => (facts.rename_exempt === undefined ? [] : [[rule, facts.rename_exempt] as const])));
+    byTool.set(tool, exemptions);
+  }
+  const exempt = exemptions.get(upstreamRule);
   return exempt === undefined ? {} : { exempt };
 }
 
@@ -1122,7 +1204,7 @@ export function reportFailures(report: T4Report): string[] {
         if (row.renamed !== null && row.renamed.fp > 0) problems.push(`${where}: ${row.renamed.fp} unexplained FP on rename variants, first ${JSON.stringify(row.renamed.falsePositives[0])}`);
         if (row.renamed !== null && row.renamed.fn > 0) problems.push(`${where}: ${row.renamed.fn} unexplained FN on rename variants, first ${JSON.stringify(row.renamed.falseNegatives[0])}`);
         if (row.renamed !== null && row.renamed.engineFailures > 0) problems.push(`${where}: ${row.renamed.engineFailures} engine failure(s) on rename variants`);
-        if (row.renamed !== null && row.renamed.tp === 0 && row.renamed.renamedAway > 0 && row.renamed.exempt === undefined) problems.push(`${where}: the renaming took every finding from its ${row.renamed.renamedAway} rename variant(s) and none survives`);
+        if (row.renamed !== null && renameVacuity(row.renamed) === "vacuous") problems.push(`${where}: the renaming took every finding from its ${row.renamed.renamedAway} rename variant(s) and none survives`);
       }
       if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
       return problems;

@@ -1,0 +1,1 @@
+const { clearInterval } = process.getBuiltinModule('timers'); clearInterval(id)

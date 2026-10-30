@@ -1,0 +1,1 @@
+function vxbc() { Uint32Array }

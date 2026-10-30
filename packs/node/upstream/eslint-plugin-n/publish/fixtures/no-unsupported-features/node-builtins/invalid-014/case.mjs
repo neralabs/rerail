@@ -1,0 +1,1 @@
+import { CallTracker } from 'assert'; new CallTracker();

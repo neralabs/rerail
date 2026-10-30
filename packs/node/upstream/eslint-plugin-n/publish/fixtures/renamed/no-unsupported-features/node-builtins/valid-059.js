@@ -1,0 +1,1 @@
+const khxov = require('node:async_hooks'); new khxov.AsyncLocalStorage()

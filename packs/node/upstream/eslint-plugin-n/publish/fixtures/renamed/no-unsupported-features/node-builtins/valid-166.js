@@ -1,0 +1,1 @@
+var pzcib = require('crypto'); pzcib.constants

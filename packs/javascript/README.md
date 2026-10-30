@@ -1,13 +1,13 @@
-# Rerail rule pack: JavaScript and TypeScript (ESLint core)
+# Rerail rule pack: JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn)
 
 121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core
-rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.mjs` and `.cjs` files only, as unicorn lints them.
-36 start on; 85 start off (`"on": false`) because neither tool's `recommended` configuration turns them on, so they
-are experimental. Each shipped rule is scored against its tool's own findings on the tool's test cases and on their
-rename variants (each case with its identifiers renamed, keeping literals and the names' order, and linted by the tool
-again: `holds-under-rename`), and against the
-labelled lines of real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's
-production workspace path, with every disagreement declared in `divergences.json`. The conformance check
+rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.jsx`, `.mjs` and `.cjs` files only, as unicorn
+lints them. 36 start on; 85 start off (`"on": false`) because neither tool's `recommended` configuration turns them
+on, so they are experimental. Each shipped rule is scored against its tool's own findings on the tool's test cases and
+on their rename variants (each case with its identifiers renamed, keeping literals and the names' order, and linted by
+the tool again: `holds-under-rename`), and against the labelled lines of real-code samples
+([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with every
+disagreement declared in `divergences.json`. The conformance check
 ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules and reports the candidates.
 
 It is checked by `npx vitest run test/engine/catalog/packs.test.ts -t "pack javascript"`, against the
@@ -109,7 +109,7 @@ Port of ESLint guard-for-in. Accepted bodies: empty, an if statement, or a block
 
 ### `eslint-id-length`
 
-Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties. As ESLint's parent-type table does, it also checks a class declaration's superclass identifier (`extends B`), the identifier key of a class method or field (`[a]() {}`), an arrow function's bare identifier body (`() => a`), a private name assigned through a member (`a.b.#x = …`) and a TypeScript parameter property only when it has a default; a class expression's name is not checked. Identifier names compare and are measured by their cooked name (`value: { name: true }`), so an escaped identifier counts its decoded graphemes (`\u0061` counts 1), and a private name is measured without its `#`.
+Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties. As ESLint's parent-type table does, it also checks a class declaration's superclass identifier (`extends B`), the identifier key of a class method or field (`[a]() {}`), an arrow function's bare identifier body (`() => a`), a private name assigned through a member (`a.b.#x = …`) and a TypeScript parameter property only when it has a default; a class expression's name is not checked. Identifier names compare and are measured by their cooked name (`value: { name: true }`), so an escaped identifier counts its decoded graphemes (`\u0061` counts 1), and a private name is measured without its `#`. Any `min` and `max` fill the length regexes, and `exceptions` (exact names) and `exceptionPatterns` exempt a name in both directions, as ESLint's do. Two limits: `min` and `max` must be from 0 to 200 (ESLint takes any integer; here the bound is a regex repetition count, which the engine refuses when negative and past its size limit somewhat above 200, so the rule does not compile), and each `exceptionPatterns` entry is read as a Rust `regex` pattern, not as a JavaScript `RegExp` with the `u` flag, so lookaround and backreferences are refused.
 
 ### `eslint-max-classes-per-file`
 
@@ -245,7 +245,7 @@ Port of ESLint no-iterator. Member accesses whose static property name (getStati
 
 ### `eslint-no-labels`
 
-Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` define. On the real-code samples (`docs/upstream.md#samples`), its labels in Flow-annotated files are declared divergences (`not-comparable` in `divergences.json`): the pinned ESLint cannot parse those files.
 
 ### `eslint-no-lonely-if`
 
@@ -301,7 +301,7 @@ Matches member accesses whose static property name (ESLint getStaticPropertyName
 
 ### `eslint-no-prototype-builtins`
 
-Port of ESLint no-prototype-builtins. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Port of ESLint no-prototype-builtins. On the real-code samples (`docs/upstream.md#samples`), its labels in Flow-annotated files are declared divergences (`not-comparable` in `divergences.json`): the pinned ESLint cannot parse those files.
 
 ### `eslint-no-redeclare`
 
@@ -317,7 +317,7 @@ Matches string literals and untagged, substitution-free template literals whose 
 
 ### `eslint-no-self-assign`
 
-Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. A candidate: on the real-code samples (`docs/upstream.md#samples`) it misses findings in Flow-annotated files the engine's grammar cannot parse.
+Covers `=`, `&&=`, `||=`, `??=` for identifiers and member chains with equal tokens, or one level deep equal objects and static property names (props: true). Destructuring follows ESLint's eachSelfAssignment to any depth through recursive utilities: i-th array elements compared by index with holes counted, nothing after a right spread, a rest against a last spread; object properties by static key after the right object's last spread. Parenthesized elements on the left (`[(a)] = [(a)]`) are not followed. On the real-code samples (`docs/upstream.md#samples`), its labels in Flow-annotated files are declared divergences (`not-comparable` in `divergences.json`): the pinned ESLint cannot parse those files.
 
 ### `eslint-no-self-compare`
 

@@ -1,0 +1,1 @@
+var e = new RegExp("\\p{Letter}", "u")

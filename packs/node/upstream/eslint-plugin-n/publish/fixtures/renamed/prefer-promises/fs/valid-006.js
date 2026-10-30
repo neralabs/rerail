@@ -1,0 +1,1 @@
+const {promises: fs} = require('fs'); fs.eykban()

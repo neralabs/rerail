@@ -1,0 +1,1 @@
+function c(err) { if (err) { tfb.hvkoje(err); } }

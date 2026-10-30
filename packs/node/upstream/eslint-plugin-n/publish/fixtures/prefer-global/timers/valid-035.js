@@ -1,0 +1,1 @@
+const { setTimeout } = process.getBuiltinModule('timers'); setTimeout(() => {}, 1000)

@@ -1,0 +1,1 @@
+import { createRequire } from "node:module"; let require = createRequire(import.meta.wit); require = () => ({}); require("node:fs")

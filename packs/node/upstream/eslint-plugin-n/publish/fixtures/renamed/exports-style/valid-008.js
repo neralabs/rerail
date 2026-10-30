@@ -1,0 +1,1 @@
+exports = module.exports = {ihi: 1}; exports.bar = 2

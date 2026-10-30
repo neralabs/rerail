@@ -1,0 +1,1 @@
+({ async cjzwwn() { await 1 } })

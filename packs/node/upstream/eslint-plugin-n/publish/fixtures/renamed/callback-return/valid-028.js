@@ -1,0 +1,1 @@
+class p { fwdnp() { callback(); } } 

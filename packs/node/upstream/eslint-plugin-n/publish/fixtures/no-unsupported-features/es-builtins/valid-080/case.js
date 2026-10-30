@@ -1,0 +1,1 @@
+(function(Math) { Math.sinh(a) }(b))

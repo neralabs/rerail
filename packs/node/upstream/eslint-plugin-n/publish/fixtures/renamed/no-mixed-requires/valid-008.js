@@ -1,0 +1,1 @@
+var ipd = require(42), bsx = require(lqoMgab())

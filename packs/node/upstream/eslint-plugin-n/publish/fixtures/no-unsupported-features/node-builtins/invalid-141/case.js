@@ -1,0 +1,1 @@
+var { toNamespacedPath } = require('path'); toNamespacedPath()

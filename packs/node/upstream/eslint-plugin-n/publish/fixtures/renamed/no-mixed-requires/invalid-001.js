@@ -1,0 +1,1 @@
+var fs = require('fs'), fgf = 42

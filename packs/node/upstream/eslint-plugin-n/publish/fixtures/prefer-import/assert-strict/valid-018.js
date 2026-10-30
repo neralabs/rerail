@@ -1,0 +1,1 @@
+({ strict: assert } = require("node:assert"));

@@ -1,0 +1,1 @@
+require('trace_events')

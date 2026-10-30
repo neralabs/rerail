@@ -1,0 +1,1 @@
+function yiui() { 'use strict'; const c = 0 }

@@ -1,0 +1,1 @@
+'multi-ok/a.js'

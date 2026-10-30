@@ -1,0 +1,1 @@
+const wh = async () => { for await (const v of twcptDfbtyjb()) { /* ... */ } }

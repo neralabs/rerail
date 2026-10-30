@@ -1,0 +1,1 @@
+var { Resolver } = require('dns'); Resolver

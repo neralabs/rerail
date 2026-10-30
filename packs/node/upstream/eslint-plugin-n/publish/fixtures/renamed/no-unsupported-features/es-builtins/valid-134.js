@@ -1,0 +1,1 @@
+function qowo() { Promise }

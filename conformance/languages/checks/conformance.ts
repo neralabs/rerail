@@ -5,7 +5,7 @@
  * fail it once shipped, and must show it stays silent somewhere it should.
  */
 import type { LoadedPack } from "../pack.js";
-import type { RuleRow, T4Report } from "../report.js";
+import { renameVacuity, type RuleRow, type T4Report } from "../report.js";
 import { SAMPLES_SOURCE } from "../runner.js";
 import type { Check } from "./check.js";
 
@@ -82,8 +82,9 @@ function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
     ...(disagrees ? [`${renamed.fp} unexplained FP${point(renamed.falsePositives[0])} and ${renamed.fn} unexplained FN${point(renamed.falseNegatives[0])} on rename variants: the rule matches the test cases' names or literals, not the construct`] : []),
     ...(renamed.engineFailures > 0 ? [`${renamed.engineFailures} engine failure(s) on rename variants`] : []),
   ];
-  if (problems.length === 0 && renamed.tp === 0 && renamed.renamedAway > 0) {
-    if (renamed.exempt !== undefined) return { id, ok: true, detail: `n/a: exempt in gates.yaml (${renamed.exempt}); no finding survives on its ${renamed.units} rename variant unit(s)${notes}` };
+  const vacuity = renameVacuity(renamed);
+  if (problems.length === 0 && vacuity !== false) {
+    if (vacuity === "exempt") return { id, ok: true, detail: `n/a: exempt in gates.yaml (${renamed.exempt}); no finding survives on its ${renamed.units} rename variant unit(s)${notes}` };
     return {
       id,
       ok: false,
