@@ -1,1 +1,0 @@
-class D {@fyjvevcie() set ohe(value: string) {}} // allow: methods

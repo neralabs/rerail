@@ -1,1 +1,0 @@
-class B {static get ntc(): string {}} // allow: functions

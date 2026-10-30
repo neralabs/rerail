@@ -1,1 +1,0 @@
-const C = class {@gypugpprx() set lrw(value: string) {}}; // allow: overrideMethods

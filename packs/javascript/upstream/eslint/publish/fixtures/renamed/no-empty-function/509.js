@@ -1,1 +1,0 @@
-var Q = class {static set srl(value) {}}; // allow: arrowFunctions

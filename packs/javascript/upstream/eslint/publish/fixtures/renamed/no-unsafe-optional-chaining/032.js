@@ -1,1 +1,0 @@
-[kap.hts = law?.hts] = [];

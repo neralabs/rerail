@@ -1,1 +1,0 @@
-class D {@kkyjslcft() static get vkj(): string {}} // allow: setters

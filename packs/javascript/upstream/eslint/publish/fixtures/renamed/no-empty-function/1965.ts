@@ -1,1 +1,0 @@
-class G extends T { override async xba(zumzg: string) {} } // allow: constructors

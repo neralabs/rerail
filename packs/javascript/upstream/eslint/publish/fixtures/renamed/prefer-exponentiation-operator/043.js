@@ -1,1 +1,0 @@
-class H extends Math.pow(b, c) {}

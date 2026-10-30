@@ -1,1 +1,0 @@
-Object.defineProperties(y, {s: {value: 0}})

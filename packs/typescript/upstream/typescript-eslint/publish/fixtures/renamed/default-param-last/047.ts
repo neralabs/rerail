@@ -1,1 +1,0 @@
-function ygu(m = 1, n: number, ...r) {}

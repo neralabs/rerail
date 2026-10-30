@@ -1,1 +1,0 @@
-const C = class {static get men(): string {}}; // allow: getters

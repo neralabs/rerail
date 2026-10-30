@@ -1,3 +1,0 @@
-class R {*vpc() {
-    // empty
-}}

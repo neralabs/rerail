@@ -1,1 +1,0 @@
-const gyr = async (): Promise<void> => {}; // allow: arrowFunctions

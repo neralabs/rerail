@@ -1,1 +1,0 @@
-const K = class { @odnfwzcho() wkp() { /* empty */ } }

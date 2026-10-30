@@ -1,1 +1,0 @@
-vir.f = vir?.f + k

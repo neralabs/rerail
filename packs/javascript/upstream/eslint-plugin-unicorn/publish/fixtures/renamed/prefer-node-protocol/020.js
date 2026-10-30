@@ -1,1 +1,0 @@
-export * as lk from "fs";

@@ -1,1 +1,0 @@
-class A { *spl(ysmfz: string) {} } // allow: constructors

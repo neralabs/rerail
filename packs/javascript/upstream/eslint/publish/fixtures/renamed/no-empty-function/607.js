@@ -1,1 +1,0 @@
-const abg = async () => {}; // allow: generatorFunctions

@@ -1,1 +1,0 @@
-import { a as foo, b } from 'module'; alert(b);

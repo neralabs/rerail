@@ -1,1 +1,0 @@
-const A = class {@bvehpuscm() static get vjl(): string { ale(); }};

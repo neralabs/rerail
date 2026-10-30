@@ -1,1 +1,0 @@
-class B extends M { override async qay(xlpup: string) {} } // allow: generatorMethods

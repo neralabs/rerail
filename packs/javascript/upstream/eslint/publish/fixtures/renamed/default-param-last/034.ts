@@ -1,1 +1,0 @@
-function sgn(a: number, c?: number, q = 1) {}

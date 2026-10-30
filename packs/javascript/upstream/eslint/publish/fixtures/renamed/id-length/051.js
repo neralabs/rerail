@@ -1,1 +1,0 @@
-var skr = {}; skr.a = 1; skr.gi = 2;

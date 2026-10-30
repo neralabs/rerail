@@ -1,1 +1,0 @@
-class A {@pfucowwuz() static set rys(value: string) {}} // allow: setters

@@ -1,1 +1,0 @@
-class A extends J {static override set kbi(value: string) {}} // allow: constructors

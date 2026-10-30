@@ -1,1 +1,0 @@
-const A = class {@bnytcpekq() set qbp(value: string) {}}; // allow: protectedConstructors

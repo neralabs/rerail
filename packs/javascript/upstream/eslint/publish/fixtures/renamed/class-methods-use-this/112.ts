@@ -1,5 +1,0 @@
-
-  class Ccw {
-    private vfxgxa() {}
-  }
-        

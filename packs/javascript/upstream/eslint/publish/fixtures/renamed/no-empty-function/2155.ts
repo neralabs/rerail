@@ -1,1 +1,0 @@
-const M = class {@nlxyqffrh() static set uzx(value: string) {}}; // allow: arrowFunctions

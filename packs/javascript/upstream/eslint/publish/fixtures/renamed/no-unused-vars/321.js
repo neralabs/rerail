@@ -1,1 +1,0 @@
-function s({ s: s1 }) {} s();

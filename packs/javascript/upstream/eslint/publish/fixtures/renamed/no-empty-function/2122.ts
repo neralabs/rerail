@@ -1,1 +1,0 @@
-class K {@llbhubyen() set pxz(value: string) {}} // allow: asyncFunctions

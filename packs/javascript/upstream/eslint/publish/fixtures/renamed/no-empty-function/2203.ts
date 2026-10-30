@@ -1,1 +1,0 @@
-class F extends G {override get stx(): string {}} // allow: decoratedFunctions

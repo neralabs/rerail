@@ -1,1 +1,0 @@
-class M { protected constructor() {} } // allow: getters

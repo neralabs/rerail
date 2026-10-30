@@ -1,1 +1,0 @@
-let v; for (v of ppdou) { v; }

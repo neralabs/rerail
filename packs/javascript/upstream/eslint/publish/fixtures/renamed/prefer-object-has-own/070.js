@@ -1,1 +1,0 @@
-const hasYsxqmbiu = (( Object.prototype.hasOwnProperty )).call(object, proiseaf);

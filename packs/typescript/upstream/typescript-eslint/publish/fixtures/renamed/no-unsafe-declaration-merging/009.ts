@@ -1,4 +1,0 @@
-
-interface Vaa {}
-class Vaa {}
-      

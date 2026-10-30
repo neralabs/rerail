@@ -1,1 +1,0 @@
-class D extends J { @scvmkrdyv() override xap() {} } // allow: asyncFunctions

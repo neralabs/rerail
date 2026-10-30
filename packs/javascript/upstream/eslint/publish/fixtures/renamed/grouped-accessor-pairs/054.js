@@ -1,1 +1,0 @@
-class D { static set d(luz){} static get d(){} }

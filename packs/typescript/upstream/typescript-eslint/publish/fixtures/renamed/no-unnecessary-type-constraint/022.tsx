@@ -1,1 +1,0 @@
-const eqwu = <W extends any ,>() => {};

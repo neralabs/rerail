@@ -1,2 +1,0 @@
-if (nmn) 
- xya = true;

@@ -1,1 +1,0 @@
-class I {@kltwpliyf() set uqk(value: string) {}} // allow: generatorMethods

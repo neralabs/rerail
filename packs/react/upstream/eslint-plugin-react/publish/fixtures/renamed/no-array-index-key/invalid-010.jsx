@@ -1,1 +1,0 @@
-fob.forEach((cja, g) => { cje.push(<Fob key={g} />); })

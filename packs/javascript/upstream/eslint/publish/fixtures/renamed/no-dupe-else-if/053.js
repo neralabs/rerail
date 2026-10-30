@@ -1,1 +1,0 @@
-if (c && k || w)  {} else if (c && k || w) {}

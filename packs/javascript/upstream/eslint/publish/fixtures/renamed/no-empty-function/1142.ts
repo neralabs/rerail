@@ -1,1 +1,0 @@
-const pkl = function*(wyumd: string) {}; // allow: overrideMethods

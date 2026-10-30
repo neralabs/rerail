@@ -1,1 +1,0 @@
-;(function() { var akb = 1; var akn = 2; })(); (function() { var akb = 1; var akn = 2; })()

@@ -1,1 +1,0 @@
-class Z { private constructor() {} } // allow: functions

@@ -1,1 +1,0 @@
-class D { static { let q; let s; } }

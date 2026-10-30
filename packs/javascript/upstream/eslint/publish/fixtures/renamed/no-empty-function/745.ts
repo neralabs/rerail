@@ -1,1 +1,0 @@
-const xlc = {get dbf(): string { /* empty */ }};

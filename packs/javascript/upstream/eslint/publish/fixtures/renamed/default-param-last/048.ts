@@ -1,1 +1,0 @@
-const wxb = (e: number) => {};

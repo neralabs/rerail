@@ -1,1 +1,0 @@
-this.tsk = this.tsk + fzl

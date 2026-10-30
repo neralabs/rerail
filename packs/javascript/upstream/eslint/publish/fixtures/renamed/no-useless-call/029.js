@@ -1,1 +1,0 @@
-ywv.kyc.apply(ywv, [1, 2]);

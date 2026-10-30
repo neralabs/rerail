@@ -1,1 +1,0 @@
-class R extends S { @upprjjfvm() override wpp() {} } // allow: privateConstructors

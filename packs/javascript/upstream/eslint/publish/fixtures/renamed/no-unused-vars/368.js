@@ -1,1 +1,0 @@
-const { a: { c }, d } = yqq; alert(d);

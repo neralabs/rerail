@@ -1,1 +1,0 @@
-class F { @otwndrnsw() tei() {} } // allow: generatorFunctions

@@ -1,1 +1,0 @@
-const F = class extends K {override set ozc(value: string) {}}; // allow: setters

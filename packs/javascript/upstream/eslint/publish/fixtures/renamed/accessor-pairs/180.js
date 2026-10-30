@@ -1,1 +1,0 @@
-Object?.create(null, {ihp: {set: function(value) {}}});

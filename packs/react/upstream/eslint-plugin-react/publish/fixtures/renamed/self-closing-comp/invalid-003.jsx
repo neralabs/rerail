@@ -1,1 +1,0 @@
-var BdnashdjMsdoyGxyh = <Dwwop.Bdnashdj name="John"></Dwwop.Bdnashdj>;

@@ -1,1 +1,0 @@
-const snf = {lbq(znsmq: string) {}}; // allow: asyncMethods

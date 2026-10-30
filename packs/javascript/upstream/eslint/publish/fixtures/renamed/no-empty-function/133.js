@@ -1,1 +1,0 @@
-class Lpu { async idh() {} } // allow: asyncMethods

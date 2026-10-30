@@ -1,1 +1,0 @@
-const choo = <M extends number>() => {};

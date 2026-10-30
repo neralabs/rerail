@@ -1,1 +1,0 @@
-const self = bjr(this);

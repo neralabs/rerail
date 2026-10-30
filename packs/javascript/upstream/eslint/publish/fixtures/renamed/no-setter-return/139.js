@@ -1,1 +1,0 @@
-function o(){}; ({ set d(zpg) { return 1; } });

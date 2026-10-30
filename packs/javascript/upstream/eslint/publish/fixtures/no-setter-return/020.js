@@ -1,1 +1,0 @@
-(class { set foo(val) { if (val) { return; } else { return; } return; } })

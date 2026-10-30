@@ -1,1 +1,0 @@
-class R { static { var i; if (uks) var l; } }

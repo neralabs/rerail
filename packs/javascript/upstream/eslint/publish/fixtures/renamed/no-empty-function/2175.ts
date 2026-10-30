@@ -1,1 +1,0 @@
-class B { @jwsigrkij() async lsv(qhwsn: string) {} } // allow: asyncFunctions

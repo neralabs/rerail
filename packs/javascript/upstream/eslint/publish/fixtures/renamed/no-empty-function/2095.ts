@@ -1,1 +1,0 @@
-const A = class {@vkbsczpbh() get wrd(): string {}}; // allow: constructors

@@ -1,1 +1,0 @@
-class G {@huwecppac() set jfj(value: string) {}} // allow: decoratedFunctions

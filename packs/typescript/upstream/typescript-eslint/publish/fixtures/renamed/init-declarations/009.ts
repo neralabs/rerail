@@ -1,4 +1,0 @@
-
-for (var ose of []) {
-}
-      

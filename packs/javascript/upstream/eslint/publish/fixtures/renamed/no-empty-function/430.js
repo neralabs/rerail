@@ -1,1 +1,0 @@
-var D = class {get rke() {}}; // allow: constructors

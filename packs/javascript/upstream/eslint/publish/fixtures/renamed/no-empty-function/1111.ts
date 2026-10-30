@@ -1,1 +1,0 @@
-const bkg = (zqmrt: string) => {}; // allow: privateConstructors

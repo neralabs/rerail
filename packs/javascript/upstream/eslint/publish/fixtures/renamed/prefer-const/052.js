@@ -1,1 +1,0 @@
-let kporsnsdx; [yibcIizl.soneyxYncv,, kporsnsdx] = jkw();

@@ -1,1 +1,0 @@
-const wsp = {*tjc(zstxu: string) {}}; // allow: arrowFunctions

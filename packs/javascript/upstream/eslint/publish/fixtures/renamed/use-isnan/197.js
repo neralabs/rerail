@@ -1,1 +1,0 @@
-elu.indexOf((1, Number.NaN))

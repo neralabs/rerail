@@ -1,1 +1,0 @@
-const {promises} = require('dns'); promises.hbbgea()

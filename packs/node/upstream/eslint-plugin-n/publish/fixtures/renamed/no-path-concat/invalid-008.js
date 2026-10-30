@@ -1,1 +1,0 @@
-var fyygIynt = __dirname + "/" + "foo.js";

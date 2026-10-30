@@ -1,1 +1,0 @@
-const H = class {private static syt() {}}; // allow: overrideMethods

@@ -1,1 +1,0 @@
-class K {set nth(value: string) {}} // allow: setters

@@ -1,1 +1,0 @@
-class O { @unhxqyqjm() vds() {} } // allow: protectedConstructors

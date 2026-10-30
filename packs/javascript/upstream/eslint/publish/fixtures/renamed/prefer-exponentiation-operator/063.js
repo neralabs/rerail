@@ -1,1 +1,0 @@
-new L(Math.pow(b, e), lne)

@@ -1,1 +1,0 @@
-ajn.setTimeout('hi')

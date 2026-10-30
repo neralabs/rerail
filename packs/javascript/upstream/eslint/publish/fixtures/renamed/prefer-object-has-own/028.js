@@ -1,1 +1,0 @@
-Object.prototype.nmw.call(obj, prod)

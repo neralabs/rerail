@@ -1,1 +1,0 @@
-function test(err, bsin) {if(err){ bsin = 'ERROR';}}

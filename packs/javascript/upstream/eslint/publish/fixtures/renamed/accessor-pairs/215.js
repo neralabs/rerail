@@ -1,1 +1,0 @@
-I = class { set i(xyn) {} get q() {} }

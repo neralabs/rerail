@@ -1,3 +1,0 @@
-do 
- nfe(); 
- while (fej)

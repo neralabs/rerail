@@ -1,1 +1,0 @@
-({}.isPrototypeOf.call(hlp, 'bar'))

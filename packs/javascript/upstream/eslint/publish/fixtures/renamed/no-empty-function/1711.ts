@@ -1,1 +1,0 @@
-class C {@drelufpbi() set mde(value: string) {}} // allow: constructors

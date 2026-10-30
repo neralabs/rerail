@@ -1,1 +1,0 @@
-const P = class {private static xwp() {}}; // allow: arrowFunctions

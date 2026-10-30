@@ -1,1 +1,0 @@
-function ous(this: void, c, g, j) {}

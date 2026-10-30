@@ -1,1 +1,0 @@
-foo.find((alj, h) => { alu.push(React.createElement('Foo', { key: h })); })

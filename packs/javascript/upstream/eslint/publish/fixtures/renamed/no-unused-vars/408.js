@@ -1,1 +1,0 @@
-var {d} = hqp;'use strict';f(00);

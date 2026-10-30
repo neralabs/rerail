@@ -1,1 +1,0 @@
-class F { gcw() {} hasOwnProperty() {} }

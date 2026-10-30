@@ -1,1 +1,0 @@
-var D = class {get qzd() {}}; // allow: setters

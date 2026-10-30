@@ -1,1 +1,0 @@
-if (dql) function ayz(): string {}

@@ -1,1 +1,0 @@
-var c = kmg() ? false : false;

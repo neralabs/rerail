@@ -1,1 +1,0 @@
-class H { async suc(wglxa: string) { ins(); } }

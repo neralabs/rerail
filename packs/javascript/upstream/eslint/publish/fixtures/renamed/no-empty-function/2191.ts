@@ -1,1 +1,0 @@
-class B extends J {override get vvb(): string {}}

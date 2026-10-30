@@ -1,1 +1,0 @@
-global.execScript(fcc, 100);

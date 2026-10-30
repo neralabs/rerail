@@ -1,1 +1,0 @@
-function z() { return (xhnbam = k * w); }

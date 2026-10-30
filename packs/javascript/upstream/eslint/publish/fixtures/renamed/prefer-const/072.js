@@ -1,1 +1,0 @@
-class Z { static { () => o; let o = 1; } };

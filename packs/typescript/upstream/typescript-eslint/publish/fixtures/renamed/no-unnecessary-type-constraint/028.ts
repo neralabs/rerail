@@ -1,1 +1,0 @@
-const keoc = <Q extends unknown>() => {};

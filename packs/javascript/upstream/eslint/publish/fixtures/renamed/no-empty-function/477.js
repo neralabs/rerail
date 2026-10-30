@@ -1,1 +1,0 @@
-class M {set oiz(value) {}} // allow: decoratedFunctions

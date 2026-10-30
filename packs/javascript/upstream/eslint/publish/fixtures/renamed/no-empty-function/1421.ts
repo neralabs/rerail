@@ -1,1 +1,0 @@
-class K {protected static *lzl() {}} // allow: generatorFunctions

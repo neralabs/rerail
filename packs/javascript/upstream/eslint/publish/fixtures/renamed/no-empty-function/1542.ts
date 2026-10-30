@@ -1,1 +1,0 @@
-class P {@tihublkmc() get wyh(): string {}} // allow: overrideMethods

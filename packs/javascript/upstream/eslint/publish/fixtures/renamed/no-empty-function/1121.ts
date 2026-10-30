@@ -1,1 +1,0 @@
-function* fkj(hjvpo: string) {} // allow: setters

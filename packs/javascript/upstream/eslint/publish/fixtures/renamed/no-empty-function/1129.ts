@@ -1,1 +1,0 @@
-const bgn = function*(dxxqr: string) {};

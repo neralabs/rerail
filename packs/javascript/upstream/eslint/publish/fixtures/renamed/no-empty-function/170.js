@@ -1,1 +1,0 @@
-var vpc = function() {}; // allow: overrideMethods

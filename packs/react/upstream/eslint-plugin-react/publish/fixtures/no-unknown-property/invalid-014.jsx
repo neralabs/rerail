@@ -1,1 +1,0 @@
-<rect clip-path="bar" transform-origin="center" />;

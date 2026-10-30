@@ -1,1 +1,0 @@
-var a=10, k=0, o=null; setTimeout(function() { var k=2; alert(a+k+o); }, 0);

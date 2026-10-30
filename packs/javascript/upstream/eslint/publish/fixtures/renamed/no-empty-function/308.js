@@ -1,1 +1,0 @@
-var I = class {static yan() {}}; // allow: protectedConstructors

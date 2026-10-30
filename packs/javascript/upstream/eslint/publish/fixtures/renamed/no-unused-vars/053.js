@@ -1,1 +1,0 @@
-const w = 1; function jjz(z = w) { hkw(z); } jjz();

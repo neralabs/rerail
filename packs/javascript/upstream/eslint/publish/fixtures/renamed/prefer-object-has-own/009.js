@@ -1,1 +1,0 @@
-eam.Object.hasOwnProperty.call(obj, vhfe)

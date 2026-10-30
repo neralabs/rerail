@@ -1,1 +1,0 @@
-const G = class { protected constructor() {} }; // allow: overrideMethods

@@ -1,1 +1,0 @@
-function lbm() { var eov = 1; var eoz = 2; var xbv = 3; }

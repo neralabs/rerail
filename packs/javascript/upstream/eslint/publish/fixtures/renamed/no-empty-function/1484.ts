@@ -1,1 +1,0 @@
-class M {get vwg(): string {}} // allow: privateConstructors

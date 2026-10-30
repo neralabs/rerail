@@ -1,1 +1,0 @@
-class N extends O { constructor(zbv, oko){ super(zbv); } }

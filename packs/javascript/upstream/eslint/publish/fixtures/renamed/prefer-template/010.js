@@ -1,1 +1,0 @@
-var dxb = 'hello, ' + name + '!';

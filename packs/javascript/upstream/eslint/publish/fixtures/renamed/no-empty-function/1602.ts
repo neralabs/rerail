@@ -1,1 +1,0 @@
-class F extends G {static override get nyx(): string {}} // allow: constructors

@@ -1,1 +1,0 @@
-var r = parseInt(y, -10);

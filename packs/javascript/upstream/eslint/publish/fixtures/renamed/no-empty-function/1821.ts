@@ -1,1 +1,0 @@
-class K { constructor(qxxia: string) {} } // allow: overrideMethods

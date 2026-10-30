@@ -1,1 +1,0 @@
-class J { rns() {window.this} }

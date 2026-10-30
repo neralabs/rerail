@@ -1,1 +1,0 @@
-var knh = {get aaw() {}}; // allow: getters

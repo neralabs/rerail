@@ -1,1 +1,0 @@
-Object.is(r, -0)

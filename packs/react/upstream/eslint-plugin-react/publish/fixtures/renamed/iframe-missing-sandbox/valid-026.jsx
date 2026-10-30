@@ -1,1 +1,0 @@
-React.createElement("iframe", { uoibirv: "allow-presentation" })

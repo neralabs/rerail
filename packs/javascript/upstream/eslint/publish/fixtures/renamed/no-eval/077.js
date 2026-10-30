@@ -1,1 +1,0 @@
-function pev() { 'use strict'; this.eval(); }

@@ -1,1 +1,0 @@
-function* vsb() {} // allow: decoratedFunctions

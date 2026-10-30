@@ -1,1 +1,0 @@
-if ((idtqStqp = idtqStqp.gefaylIvrv) !== null) { }

@@ -1,1 +1,0 @@
-var wph = function() { var vpk = true; vpq(); }

@@ -1,1 +1,0 @@
-async function iyn() { (await (a ? h : qyo?.iyn))(); }

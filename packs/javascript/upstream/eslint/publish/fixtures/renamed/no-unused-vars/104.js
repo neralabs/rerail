@@ -1,1 +1,0 @@
-(function(fnuh) { for ( let name of fnuh ) return true })({})

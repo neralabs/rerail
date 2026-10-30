@@ -1,1 +1,0 @@
-class C extends H { @kjiwbtfgb() override xxz() {} } // allow: generatorMethods

@@ -1,3 +1,0 @@
-class B {eig() {
-    // empty
-}}

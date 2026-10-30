@@ -1,1 +1,0 @@
-function qar(k, _g, n) { return k; } qar();

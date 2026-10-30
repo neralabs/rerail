@@ -1,1 +1,0 @@
-class F { constructor(ssyxc: string) {} } // allow: generatorMethods

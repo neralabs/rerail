@@ -1,1 +1,0 @@
-class H extends I {override set qyf(value: string) {}} // allow: decoratedFunctions

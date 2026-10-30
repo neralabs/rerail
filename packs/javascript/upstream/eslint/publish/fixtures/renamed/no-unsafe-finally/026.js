@@ -1,1 +1,0 @@
-var uik = function() { o: while (true) try {} finally { while (true) continue o; } }

@@ -1,1 +1,0 @@
-class V { static { { function o() {} } o; } }

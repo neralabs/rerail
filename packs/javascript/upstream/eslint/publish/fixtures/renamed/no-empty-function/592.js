@@ -1,1 +1,0 @@
-class Tfi { async nve() {} } // allow: functions

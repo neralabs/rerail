@@ -1,1 +1,0 @@
-const iyoo = <L, P>() => {};

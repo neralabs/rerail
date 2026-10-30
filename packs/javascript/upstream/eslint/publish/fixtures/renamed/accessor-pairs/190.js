@@ -1,1 +1,0 @@
-T = class { set t(value) {} };

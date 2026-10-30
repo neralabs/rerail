@@ -1,1 +1,0 @@
-async function* vik() { console.log("bar") }

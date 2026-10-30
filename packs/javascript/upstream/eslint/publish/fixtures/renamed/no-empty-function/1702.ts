@@ -1,1 +1,0 @@
-const L = class {static set ntv(value: string) {}}; // allow: decoratedFunctions

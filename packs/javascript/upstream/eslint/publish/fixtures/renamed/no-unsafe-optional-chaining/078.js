@@ -1,1 +1,0 @@
-hbz <<= kjb?.jwd;

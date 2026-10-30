@@ -1,1 +1,0 @@
-K: for (var z = 0; z < 10; ++z) { syl(); if (k) continue; qna(); }

@@ -1,1 +1,0 @@
-function test(e, f, l, m) {}

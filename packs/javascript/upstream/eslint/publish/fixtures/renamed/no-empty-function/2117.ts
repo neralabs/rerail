@@ -1,1 +1,0 @@
-class A {@odjyzelvg() set rxl(value: string) {}} // allow: generatorFunctions

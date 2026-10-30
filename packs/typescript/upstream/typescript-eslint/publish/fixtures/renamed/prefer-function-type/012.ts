@@ -1,5 +1,0 @@
-
-type Etg = {
-  (): string;
-};
-      

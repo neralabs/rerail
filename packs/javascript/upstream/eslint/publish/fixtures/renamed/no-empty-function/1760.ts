@@ -1,1 +1,0 @@
-class F extends R {override set tqe(value: string) {}} // allow: methods

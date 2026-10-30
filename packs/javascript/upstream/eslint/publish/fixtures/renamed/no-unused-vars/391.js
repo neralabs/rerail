@@ -1,1 +1,0 @@
-import { a as ewd, b } from 'module'; alert(b);

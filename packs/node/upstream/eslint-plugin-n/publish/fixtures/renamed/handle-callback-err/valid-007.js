@@ -1,1 +1,0 @@
-var test = function(err, coak) {if(!err) { pkwj(); } else { adm(); }}

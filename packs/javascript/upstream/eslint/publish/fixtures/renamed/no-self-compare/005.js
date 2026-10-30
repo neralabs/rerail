@@ -1,1 +1,0 @@
-class D { #field; ftz() { this.#field === this['#field']; } }

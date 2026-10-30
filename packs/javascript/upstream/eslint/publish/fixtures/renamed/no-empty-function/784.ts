@@ -1,1 +1,0 @@
-class N extends O {override get ycn(): string { ony(); }}

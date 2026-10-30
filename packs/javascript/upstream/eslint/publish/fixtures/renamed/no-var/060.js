@@ -1,1 +1,0 @@
-function w() { try {} catch (c) { try {} catch (x) { var c = 1; } } }

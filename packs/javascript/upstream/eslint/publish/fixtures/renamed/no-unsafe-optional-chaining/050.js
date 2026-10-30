@@ -1,1 +1,0 @@
-fxj += wym?.hgy;

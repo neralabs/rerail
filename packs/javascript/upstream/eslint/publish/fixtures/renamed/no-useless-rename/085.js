@@ -1,1 +1,0 @@
-({wmj: kwm, kwo: kwo}) => {}

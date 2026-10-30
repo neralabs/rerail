@@ -1,1 +1,0 @@
-(class { get l(){} }, class { n(){} set l(rdt){} })

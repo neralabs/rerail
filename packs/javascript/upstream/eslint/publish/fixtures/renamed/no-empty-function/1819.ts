@@ -1,1 +1,0 @@
-class D { constructor(yhiyp: string) {} } // allow: protectedConstructors

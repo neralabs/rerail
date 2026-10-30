@@ -1,1 +1,0 @@
-var m = (err) => { if (err) { callback (err); } }

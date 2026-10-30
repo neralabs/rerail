@@ -1,1 +1,0 @@
-let {gal: {HTWI_WPES_AMARFYD_OHRO}} = process;

@@ -1,1 +1,0 @@
-var I = class {get vkr() {}}; // allow: functions

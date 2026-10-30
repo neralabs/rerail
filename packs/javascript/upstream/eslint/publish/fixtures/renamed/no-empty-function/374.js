@@ -1,1 +1,0 @@
-var V = class {static *yii() {}}; // allow: constructors

@@ -1,1 +1,0 @@
-foo.map((adi, h) => React.createElement('Foo', { key: `foo-${h}` }))

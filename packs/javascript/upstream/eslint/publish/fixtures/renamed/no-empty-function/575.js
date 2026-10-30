@@ -1,1 +1,0 @@
-async function p(){} // allow: decoratedFunctions

@@ -1,1 +1,0 @@
-const {eud: eud, ...vandp} = tbSpgkbk;

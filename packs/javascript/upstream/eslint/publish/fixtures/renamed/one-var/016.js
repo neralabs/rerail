@@ -1,1 +1,0 @@
-function ztg() { var d = [1, 2, 3]; var [e, o, p] = d; }

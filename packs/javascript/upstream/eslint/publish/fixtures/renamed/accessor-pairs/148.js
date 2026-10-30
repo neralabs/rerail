@@ -1,1 +1,0 @@
-var u = { get [e + l]() {}, set [e - l](nrc) {} };

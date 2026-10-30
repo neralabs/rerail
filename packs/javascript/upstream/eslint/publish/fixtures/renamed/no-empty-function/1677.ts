@@ -1,1 +1,0 @@
-const N = class {set qly(value: string) {}}; // allow: functions

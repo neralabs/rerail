@@ -1,1 +1,0 @@
-var C = class {ofw() {}}; // allow: constructors

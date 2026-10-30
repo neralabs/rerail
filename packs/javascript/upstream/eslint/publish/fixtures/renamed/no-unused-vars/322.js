@@ -1,1 +1,0 @@
-const { p: p1 = pQbnryrq } = vzi;

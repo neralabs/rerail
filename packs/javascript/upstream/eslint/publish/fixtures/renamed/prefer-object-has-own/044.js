@@ -1,1 +1,0 @@
-({}.hasOwnProperty(nkv, wwcn))

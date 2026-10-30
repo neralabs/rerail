@@ -1,1 +1,0 @@
-class C { protected ygh() {} } // allow: generatorFunctions

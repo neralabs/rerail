@@ -1,1 +1,0 @@
-do{ljw();} while (dkb)

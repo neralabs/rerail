@@ -1,1 +1,0 @@
-const rft = {mey(xllrx: string) { hba(); }};

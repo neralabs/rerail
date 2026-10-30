@@ -1,1 +1,0 @@
-var S = class {get zny() {}}; // allow: asyncFunctions

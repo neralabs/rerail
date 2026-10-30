@@ -1,1 +1,0 @@
-hncgRevwmc(jkq)

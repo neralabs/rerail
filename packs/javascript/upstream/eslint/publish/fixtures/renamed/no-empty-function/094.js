@@ -1,1 +1,0 @@
-class B {set jrk(value) { gxu(); }}

@@ -1,1 +1,0 @@
-class G {static set oxy(value: string) {}} // allow: functions

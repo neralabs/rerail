@@ -1,1 +1,0 @@
-if (clg) { var clg = function() {} } else {}

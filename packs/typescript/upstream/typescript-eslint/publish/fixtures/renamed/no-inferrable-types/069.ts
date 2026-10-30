@@ -1,1 +1,0 @@
-const g: number = +Number?.('1');

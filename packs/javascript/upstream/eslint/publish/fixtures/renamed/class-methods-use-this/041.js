@@ -1,1 +1,0 @@
-class D { set #fha(w) {} }

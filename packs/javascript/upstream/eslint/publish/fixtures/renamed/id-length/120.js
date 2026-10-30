@@ -1,1 +1,0 @@
-function ylw({z: x}) { }

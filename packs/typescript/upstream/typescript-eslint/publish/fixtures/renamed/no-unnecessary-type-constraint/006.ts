@@ -1,1 +1,0 @@
-function exxw<N extends any | number>() {}

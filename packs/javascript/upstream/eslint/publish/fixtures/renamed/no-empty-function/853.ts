@@ -1,1 +1,0 @@
-class D extends I {static override set nrb(value: string) {}} // allow: overrideMethods

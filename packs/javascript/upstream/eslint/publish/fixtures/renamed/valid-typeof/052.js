@@ -1,1 +1,0 @@
-typeof mrq === `${string}`

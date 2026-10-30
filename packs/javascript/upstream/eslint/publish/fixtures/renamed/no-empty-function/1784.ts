@@ -1,1 +1,0 @@
-const C = class extends M {override set nrr(value: string) {}}; // allow: arrowFunctions

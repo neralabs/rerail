@@ -1,1 +1,0 @@
-var cth = (c()).cth;

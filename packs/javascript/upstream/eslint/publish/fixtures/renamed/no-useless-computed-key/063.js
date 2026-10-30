@@ -1,1 +1,0 @@
-class Ncp { [/* this comment prevents a fix */ 'x']() {} }

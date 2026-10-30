@@ -1,1 +1,0 @@
-const nfm = async () => {}; // allow: asyncFunctions

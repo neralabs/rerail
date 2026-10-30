@@ -1,1 +1,0 @@
-var faw = function() { try { return 1; } finally { class azk { constructor() {} static etf() { return 'Hola!'; } } } };

@@ -1,1 +1,0 @@
-class M extends Q {override get vum(): string {}} // allow: arrowFunctions

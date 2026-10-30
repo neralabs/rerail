@@ -1,1 +1,0 @@
-const x = 1; function vkw(z = function() { lwp(x); }) { z(); } vkw();

@@ -1,1 +1,0 @@
-for (var gag in ase) if (gag) console.log(1); else console.log(2);

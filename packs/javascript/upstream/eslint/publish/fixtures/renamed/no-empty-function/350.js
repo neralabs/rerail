@@ -1,1 +1,0 @@
-class L {static *ngu() {}} // allow: protectedConstructors

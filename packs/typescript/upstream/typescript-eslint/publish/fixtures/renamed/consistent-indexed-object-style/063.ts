@@ -1,1 +1,0 @@
-type Hua = { [key: string]: { [key: string]: Hua } };

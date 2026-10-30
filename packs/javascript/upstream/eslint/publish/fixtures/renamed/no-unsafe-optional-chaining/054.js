@@ -1,1 +1,0 @@
-ffz *= uei?.fkt

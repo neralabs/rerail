@@ -1,1 +1,0 @@
-const ehp = { async lrhocz() {} } // allow: functions

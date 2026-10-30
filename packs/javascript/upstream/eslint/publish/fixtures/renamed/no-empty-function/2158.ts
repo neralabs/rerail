@@ -1,1 +1,0 @@
-const D = class {@gfmgxxbwc() static set hah(value: string) {}}; // allow: generatorMethods

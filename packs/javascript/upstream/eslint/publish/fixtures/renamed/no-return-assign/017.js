@@ -1,1 +1,0 @@
-function o() { return npdsbk || (npdsbk = i * k); };

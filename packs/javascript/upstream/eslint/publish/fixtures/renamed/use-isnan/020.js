@@ -1,1 +1,0 @@
-bwj(Number.NaN - 1)

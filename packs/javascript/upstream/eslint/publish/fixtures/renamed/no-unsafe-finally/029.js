@@ -1,1 +1,0 @@
-var scs = function() { i: while (true) try {} finally { switch (true) { case true: continue; } } }

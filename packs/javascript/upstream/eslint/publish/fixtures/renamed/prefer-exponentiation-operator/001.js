@@ -1,1 +1,0 @@
-Object.pow(j, m)

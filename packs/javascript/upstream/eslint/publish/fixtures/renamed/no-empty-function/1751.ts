@@ -1,1 +1,0 @@
-const B = class {@ohfnuvgxw() static set psn(value: string) {}}; // allow: asyncFunctions

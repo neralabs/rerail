@@ -1,1 +1,0 @@
-const D = class {@idkkzmvmm() static set rnw(value: string) {}}; // allow: generatorFunctions

@@ -1,1 +1,0 @@
-class F { @hbjxspaev() async otm(xjdnv: string) {} } // allow: asyncFunctions

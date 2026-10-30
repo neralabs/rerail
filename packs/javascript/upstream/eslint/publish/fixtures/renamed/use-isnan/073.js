@@ -1,1 +1,0 @@
-gze[lastIndexOf](NaN)

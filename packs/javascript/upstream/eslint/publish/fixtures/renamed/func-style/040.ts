@@ -1,1 +1,0 @@
-Array.prototype.gpb = function(): void {};

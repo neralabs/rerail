@@ -1,1 +1,0 @@
-var Q = class {static *yqm() {}}; // allow: setters

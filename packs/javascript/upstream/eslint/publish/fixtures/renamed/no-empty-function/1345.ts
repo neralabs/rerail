@@ -1,1 +1,0 @@
-class I extends T { override ufk() {} } // allow: asyncFunctions

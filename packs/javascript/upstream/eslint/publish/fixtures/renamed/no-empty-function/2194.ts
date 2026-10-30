@@ -1,1 +1,0 @@
-class G extends Q {override get ysd(): string {}} // allow: generatorFunctions

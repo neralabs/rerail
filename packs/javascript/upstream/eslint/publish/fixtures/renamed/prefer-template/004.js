@@ -1,1 +1,0 @@
-var nep = 'bar' + 'baz';

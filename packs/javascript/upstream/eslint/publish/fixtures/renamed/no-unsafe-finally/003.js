@@ -1,1 +1,0 @@
-var rlk = function() { try { return 1 } catch(err) { return 2 } finally { function b(t) { return t } } }

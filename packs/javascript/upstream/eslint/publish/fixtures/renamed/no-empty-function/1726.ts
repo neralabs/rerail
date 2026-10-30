@@ -1,1 +1,0 @@
-class C {@twgtbmria() static set ubg(value: string) {}} // allow: asyncMethods

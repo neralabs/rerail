@@ -1,1 +1,0 @@
-setInterval(muv, 10)

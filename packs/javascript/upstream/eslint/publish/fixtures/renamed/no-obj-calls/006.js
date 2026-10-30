@@ -1,1 +1,0 @@
-var u = new Math.bdi;

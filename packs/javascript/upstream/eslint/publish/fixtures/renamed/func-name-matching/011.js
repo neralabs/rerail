@@ -1,1 +1,0 @@
-lnn.jjk = function jjk() {};

@@ -1,1 +1,0 @@
-if ('blue' < s.y && s.y < 'green') {}

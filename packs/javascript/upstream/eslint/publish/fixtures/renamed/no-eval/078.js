@@ -1,1 +1,0 @@
-almes.findLast(s => this.eval.includes(s), { eval: 'abc' });

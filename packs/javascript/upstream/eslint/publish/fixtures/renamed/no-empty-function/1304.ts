@@ -1,1 +1,0 @@
-const P = class {protected static ryn() {}}; // allow: constructors

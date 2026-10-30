@@ -1,1 +1,0 @@
-class K { set k(zvv) { return undefined; } }

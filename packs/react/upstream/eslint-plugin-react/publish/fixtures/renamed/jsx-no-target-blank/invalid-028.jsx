@@ -1,1 +1,0 @@
-<a href="foobar" target="_blank" {...llsdSyggdk}></a>

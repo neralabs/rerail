@@ -1,1 +1,0 @@
-class B {static *nnz() {}} // allow: generatorMethods

@@ -1,1 +1,0 @@
-const D = class {@pdhzfwhrq() static get uqr(): string {}}; // allow: setters

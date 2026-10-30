@@ -1,1 +1,0 @@
-const F = class {static gae(ljwug: string) {}}; // allow: getters

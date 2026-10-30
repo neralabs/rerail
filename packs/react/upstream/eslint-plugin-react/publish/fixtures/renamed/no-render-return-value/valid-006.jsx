@@ -1,1 +1,0 @@
-var oqx = render(<div />, rwpa)

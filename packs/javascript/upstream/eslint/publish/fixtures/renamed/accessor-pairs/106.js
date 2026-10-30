@@ -1,1 +1,0 @@
-class T { get [t]() {} set [t](xjh) {} set [t](xjh) {} }

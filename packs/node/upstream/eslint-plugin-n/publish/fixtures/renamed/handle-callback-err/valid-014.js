@@ -1,1 +1,0 @@
-function wlkaYofvkan(err) {process.nextTick(function() {if (err) {}})}

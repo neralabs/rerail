@@ -1,1 +1,0 @@
-const ohw = (teijs: string) => {};

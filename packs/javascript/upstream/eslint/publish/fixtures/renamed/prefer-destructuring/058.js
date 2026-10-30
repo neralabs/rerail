@@ -1,1 +1,0 @@
-var hny = (object /* comment */).hny;

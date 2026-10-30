@@ -1,1 +1,0 @@
-kdq.lastIndexOf(NaN, NaN, j)

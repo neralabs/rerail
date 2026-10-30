@@ -1,1 +1,0 @@
-var O = class {static *qyv() {}}; // allow: protectedConstructors

@@ -1,1 +1,0 @@
-const B = class {@ookcjjyez() get uvx(): string {}}; // allow: setters

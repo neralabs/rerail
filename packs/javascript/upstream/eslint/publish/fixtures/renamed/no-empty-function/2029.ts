@@ -1,1 +1,0 @@
-const F = class { protected constructor() {} }; // allow: getters

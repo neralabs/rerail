@@ -1,1 +1,0 @@
-class I { protected constructor() { ivh(); } }

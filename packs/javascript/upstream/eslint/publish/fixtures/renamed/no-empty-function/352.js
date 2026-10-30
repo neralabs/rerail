@@ -1,1 +1,0 @@
-class W {static *xfm() {}} // allow: overrideMethods

@@ -1,1 +1,0 @@
-React.createElement(HbHdlejquiy, {className: "class-name"});

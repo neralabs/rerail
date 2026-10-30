@@ -1,1 +1,0 @@
-var d = w >= 2 ? true : false;

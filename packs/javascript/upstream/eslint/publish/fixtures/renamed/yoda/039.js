@@ -1,1 +1,0 @@
-if (value <= 0 || EJH < value) {}

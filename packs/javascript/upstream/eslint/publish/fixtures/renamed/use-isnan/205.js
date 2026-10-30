@@ -1,1 +1,0 @@
-kkf.lastIndexOf(Number.NaN, b)

@@ -1,1 +1,0 @@
-function foo() { let a = 1, b = false; var c = true; }

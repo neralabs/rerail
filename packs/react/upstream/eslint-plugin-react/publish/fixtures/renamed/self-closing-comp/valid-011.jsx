@@ -1,1 +1,0 @@
-var GtageXpia = <div>{' '}</div>;

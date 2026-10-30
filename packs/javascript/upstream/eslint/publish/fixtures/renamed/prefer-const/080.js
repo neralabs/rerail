@@ -1,1 +1,0 @@
-(function() { for (let y of [1,2,3]) { xgg(y); } })();

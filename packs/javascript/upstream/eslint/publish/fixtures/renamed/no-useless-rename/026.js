@@ -1,1 +1,0 @@
-import {foo as eja} from 'foo';

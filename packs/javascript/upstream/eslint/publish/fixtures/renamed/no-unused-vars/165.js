@@ -1,1 +1,0 @@
-function v() { var t = 1; return function(){ v(++t); }; }

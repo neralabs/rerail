@@ -1,1 +1,0 @@
-function wat(...imzk) { }

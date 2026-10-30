@@ -1,1 +1,0 @@
-React.createElement("button", {type: cqtksbruw ? "button" : "reset"})

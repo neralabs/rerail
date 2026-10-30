@@ -1,1 +1,0 @@
-j; class T { static {} } var j;

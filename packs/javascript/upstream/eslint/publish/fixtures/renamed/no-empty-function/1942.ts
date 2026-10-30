@@ -1,1 +1,0 @@
-class J { async lfr(mqdnu: string) {} } // allow: decoratedFunctions

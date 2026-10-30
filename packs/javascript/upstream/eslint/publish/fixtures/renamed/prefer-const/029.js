@@ -1,1 +1,0 @@
-let g; function wtg() { if (g) {} g = plg(); }

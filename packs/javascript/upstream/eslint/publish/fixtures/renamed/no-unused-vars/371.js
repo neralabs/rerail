@@ -1,1 +1,0 @@
-const { a: { c: { l: { s } }, p } } = zlq; alert(p);

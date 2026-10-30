@@ -1,1 +1,0 @@
-function ysk() { let a = 1, p = false; var u = true; }

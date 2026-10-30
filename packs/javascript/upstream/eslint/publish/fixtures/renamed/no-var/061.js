@@ -1,1 +1,0 @@
-function z() { try {} catch (q) { for (var q of []) {} } }

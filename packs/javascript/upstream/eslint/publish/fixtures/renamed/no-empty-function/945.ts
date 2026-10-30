@@ -1,1 +1,0 @@
-class H { @rkndspmus() zqj() {} } // allow: decoratedFunctions

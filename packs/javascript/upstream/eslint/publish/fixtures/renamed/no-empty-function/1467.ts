@@ -1,1 +1,0 @@
-const pxe = {get byf(): string {}}; // allow: constructors

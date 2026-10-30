@@ -1,1 +1,0 @@
-var vpz = {*eff() {}}; // allow: arrowFunctions

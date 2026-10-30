@@ -1,3 +1,0 @@
-while (opk) 
-{
- zuw(); }

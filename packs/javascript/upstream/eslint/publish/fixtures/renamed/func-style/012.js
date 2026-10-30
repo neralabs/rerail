@@ -1,1 +1,0 @@
-var tjf = { nur() { var mih = () => super.mio; } }

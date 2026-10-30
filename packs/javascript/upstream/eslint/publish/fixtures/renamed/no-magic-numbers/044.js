@@ -1,1 +1,0 @@
-var s = (Number?.parseInt)(y, 10);

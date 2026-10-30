@@ -1,1 +1,0 @@
-class A { mxk() {this} }

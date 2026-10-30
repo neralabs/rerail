@@ -1,1 +1,0 @@
-const W = class { @xwkztkyiv() yua() {} } // allow: arrowFunctions

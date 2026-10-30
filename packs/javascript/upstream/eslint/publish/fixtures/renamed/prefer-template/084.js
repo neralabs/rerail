@@ -1,2 +1,0 @@
-obi;
-'bar' + bax

@@ -1,1 +1,0 @@
-for (const v of{}.hasOwnProperty.call(object, sfwigdws).toString());

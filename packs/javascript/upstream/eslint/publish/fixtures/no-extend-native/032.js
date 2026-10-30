@@ -1,1 +1,0 @@
-function foo() { Object.prototype.p = 0 }

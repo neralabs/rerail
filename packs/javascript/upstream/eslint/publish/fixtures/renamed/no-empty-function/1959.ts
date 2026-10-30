@@ -1,1 +1,0 @@
-class K extends P { override async sqz(wiboy: string) {} } // allow: arrowFunctions

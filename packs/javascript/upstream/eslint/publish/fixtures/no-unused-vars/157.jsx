@@ -1,1 +1,0 @@
-const components = { Button: () => <button /> }; <components.Button />;

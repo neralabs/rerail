@@ -1,1 +1,0 @@
-const few = async function(zfnkr: string) {} // allow: generatorFunctions

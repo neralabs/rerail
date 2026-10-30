@@ -1,1 +1,0 @@
-class A {protected static *plx() {}} // allow: generatorMethods

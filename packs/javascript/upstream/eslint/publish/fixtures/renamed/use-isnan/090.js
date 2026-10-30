@@ -1,1 +1,0 @@
-hvs[indexOf](Number.NaN)

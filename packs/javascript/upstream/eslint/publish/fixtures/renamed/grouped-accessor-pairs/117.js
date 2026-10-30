@@ -1,1 +1,0 @@
-class B { get b(){} static set n(wzz){} static get n(){} set b(wzz){} }

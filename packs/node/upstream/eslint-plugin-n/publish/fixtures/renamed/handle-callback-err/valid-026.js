@@ -1,1 +1,0 @@
-var test = function(bhp_lsebz) { console.log(bhpUeuzk); };

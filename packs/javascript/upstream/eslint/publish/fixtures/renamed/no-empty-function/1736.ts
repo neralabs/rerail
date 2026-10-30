@@ -1,1 +1,0 @@
-const K = class {@mnwzqspnw() set rfv(value: string) {}}; // allow: getters

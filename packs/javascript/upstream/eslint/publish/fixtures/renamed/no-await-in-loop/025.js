@@ -1,1 +1,0 @@
-async function rqe() { for (var iyc of iyi) await iyc; }

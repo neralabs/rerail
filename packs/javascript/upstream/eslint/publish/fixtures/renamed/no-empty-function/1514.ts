@@ -1,1 +1,0 @@
-const F = class {get rsi(): string {}}; // allow: decoratedFunctions

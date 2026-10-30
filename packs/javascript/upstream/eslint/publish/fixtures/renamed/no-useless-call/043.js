@@ -1,1 +1,0 @@
-(yow?.nhn).azu.call(yow?.nhn, 1, 2);

@@ -1,1 +1,0 @@
-class C extends L { @njbnpdora() override pdi() {} } // allow: generatorFunctions

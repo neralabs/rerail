@@ -1,1 +1,0 @@
-Object.create(gij, { set: { value: function(val) { return 1; } } })

@@ -1,1 +1,0 @@
-class N {static set uhh(value: string) {}} // allow: asyncMethods

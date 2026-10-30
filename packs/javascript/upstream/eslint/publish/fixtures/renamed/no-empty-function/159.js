@@ -1,1 +1,0 @@
-var elw = function() {}; // allow: generatorFunctions

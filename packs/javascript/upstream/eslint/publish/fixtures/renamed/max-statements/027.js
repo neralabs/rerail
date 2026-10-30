@@ -1,1 +1,0 @@
-define(['foo', 'qux'], function(foo, qux) { var cxj = 1; var cxo = 2; return function () { var w; return 42; }; })

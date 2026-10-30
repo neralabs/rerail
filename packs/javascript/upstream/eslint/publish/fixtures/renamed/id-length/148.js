@@ -1,1 +1,0 @@
-class Juw { #y = 1 }

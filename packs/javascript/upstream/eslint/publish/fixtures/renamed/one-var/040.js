@@ -1,1 +1,0 @@
-var l, m; for (m of hqm) {}

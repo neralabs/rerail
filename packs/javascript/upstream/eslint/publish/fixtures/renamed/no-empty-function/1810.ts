@@ -1,1 +1,0 @@
-class A { constructor(bjffe: string) {} } // allow: arrowFunctions

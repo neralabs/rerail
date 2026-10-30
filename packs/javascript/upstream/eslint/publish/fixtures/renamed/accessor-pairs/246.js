@@ -1,1 +1,0 @@
-class H { static set h(rtp) {} get o() {} set o(oxf) {} }

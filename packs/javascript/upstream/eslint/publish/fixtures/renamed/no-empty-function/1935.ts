@@ -1,1 +1,0 @@
-class C { async jmb(kdzdu: string) {} } // allow: generatorMethods

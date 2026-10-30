@@ -1,1 +1,0 @@
-class D {static set grs(value) {}}

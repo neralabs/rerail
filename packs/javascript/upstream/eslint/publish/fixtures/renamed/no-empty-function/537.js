@@ -1,1 +1,0 @@
-var F = class {constructor() {}}; // allow: arrowFunctions

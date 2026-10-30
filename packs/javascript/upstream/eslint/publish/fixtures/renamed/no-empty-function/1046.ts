@@ -1,1 +1,0 @@
-class C extends D { override async oue(yoyxv: string) {} } // allow: overrideMethods

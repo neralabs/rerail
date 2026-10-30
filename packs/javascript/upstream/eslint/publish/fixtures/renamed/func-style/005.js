@@ -1,1 +1,0 @@
-var object = { bqf: function(){} };

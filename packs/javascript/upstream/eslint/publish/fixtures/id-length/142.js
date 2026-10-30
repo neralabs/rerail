@@ -1,1 +1,0 @@
-var {prop: x} = foo;

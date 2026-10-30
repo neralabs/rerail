@@ -1,1 +1,0 @@
-var twq = {*ctl() {}}; // allow: setters

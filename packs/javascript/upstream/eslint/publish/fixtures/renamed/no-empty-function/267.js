@@ -1,1 +1,0 @@
-class B {dee() {}} // allow: decoratedFunctions

@@ -1,1 +1,0 @@
-pnc.hni = function hni(name) {};

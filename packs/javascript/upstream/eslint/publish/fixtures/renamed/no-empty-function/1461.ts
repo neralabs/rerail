@@ -1,1 +1,0 @@
-const wms = {get cma(): string {}}; // allow: functions

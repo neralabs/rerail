@@ -1,1 +1,0 @@
-setTimeout(klzeva, klz + 'bar')

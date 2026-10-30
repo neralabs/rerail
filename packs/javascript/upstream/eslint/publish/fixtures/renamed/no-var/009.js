@@ -1,1 +1,0 @@
-var viy = urk; let zxzkc = ysjp;

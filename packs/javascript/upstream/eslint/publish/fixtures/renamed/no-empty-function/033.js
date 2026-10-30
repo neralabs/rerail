@@ -1,1 +1,0 @@
-var huc = {gpw() {}}; // allow: methods

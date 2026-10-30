@@ -1,1 +1,0 @@
-nie.apply(null, auen);

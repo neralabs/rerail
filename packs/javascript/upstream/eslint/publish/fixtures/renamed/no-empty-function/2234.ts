@@ -1,1 +1,0 @@
-const J = class extends K {static override get vnc(): string {}}; // allow: methods

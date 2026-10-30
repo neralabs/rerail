@@ -1,1 +1,0 @@
-var idb = {acl: function() {}}; // allow: asyncMethods

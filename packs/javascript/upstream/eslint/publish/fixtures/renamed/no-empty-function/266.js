@@ -1,1 +1,0 @@
-class D {waf() {}} // allow: protectedConstructors

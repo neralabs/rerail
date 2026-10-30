@@ -1,1 +1,0 @@
-var b = 'Line 1 Line 2';

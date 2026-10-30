@@ -1,2 +1,0 @@
-let q = function() {};
-   `hello`

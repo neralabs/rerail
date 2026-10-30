@@ -1,1 +1,0 @@
-class F extends I { override pte() {} } // allow: methods

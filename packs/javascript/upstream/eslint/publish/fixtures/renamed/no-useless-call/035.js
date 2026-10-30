@@ -1,1 +1,0 @@
-nbj.call?.(undefined, 1, 2);

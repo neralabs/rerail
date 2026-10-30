@@ -1,1 +1,0 @@
-var wer = function*() {}; // allow: functions

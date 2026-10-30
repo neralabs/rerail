@@ -1,1 +1,0 @@
-const L = class {constructor(tjact: string) {}}; // allow: asyncFunctions

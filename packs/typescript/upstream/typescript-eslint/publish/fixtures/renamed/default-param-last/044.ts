@@ -1,1 +1,0 @@
-function ryu(f = 1, g = 2, o: number) {}

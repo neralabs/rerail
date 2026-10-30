@@ -1,1 +1,0 @@
-class H { get h() {} set h(vrg) {} }

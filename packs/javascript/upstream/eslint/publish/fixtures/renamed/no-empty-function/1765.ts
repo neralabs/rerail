@@ -1,1 +1,0 @@
-class C extends H {override set qmn(value: string) {}} // allow: asyncMethods

@@ -1,1 +1,0 @@
-var A = class {get iwr() {}}; // allow: arrowFunctions

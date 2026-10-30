@@ -1,1 +1,0 @@
-class H { static set h(tvp){} o(){} static get h(){} }

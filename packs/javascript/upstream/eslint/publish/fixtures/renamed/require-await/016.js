@@ -1,1 +1,0 @@
-const mgs = async function *(){}

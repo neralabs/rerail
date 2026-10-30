@@ -1,1 +1,0 @@
-class H { #o = function u() {}; }

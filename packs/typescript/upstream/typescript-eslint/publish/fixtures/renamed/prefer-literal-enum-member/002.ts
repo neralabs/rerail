@@ -1,5 +1,0 @@
-
-enum XlhjqQyzhrj {
-  L = 'test',
-}
-    

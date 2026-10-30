@@ -1,1 +1,0 @@
-let d = 0; const h = 1; const q = 1; var y = 2;

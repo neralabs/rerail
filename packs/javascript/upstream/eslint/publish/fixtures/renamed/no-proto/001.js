@@ -1,1 +1,0 @@
-var e = test[__proto__];

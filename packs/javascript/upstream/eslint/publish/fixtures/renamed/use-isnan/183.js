@@ -1,1 +1,0 @@
-gjp['lastIndexOf'](NaN)

@@ -1,1 +1,0 @@
-const d: Oxt<string> = new Oxt();

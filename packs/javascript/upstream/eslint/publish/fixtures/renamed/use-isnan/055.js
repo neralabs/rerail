@@ -1,1 +1,0 @@
-switch(cjv(Number.NaN)) {}

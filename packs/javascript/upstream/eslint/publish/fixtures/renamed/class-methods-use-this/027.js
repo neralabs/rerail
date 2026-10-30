@@ -1,1 +1,0 @@
-class J { xyf() {var j = function () {var n = function(){this}};} }

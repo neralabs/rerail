@@ -1,1 +1,0 @@
-class C { private constructor() {} } // allow: overrideMethods

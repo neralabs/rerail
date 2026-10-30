@@ -1,2 +1,0 @@
-if (mdt) { eyb }
-Eym();

@@ -1,1 +1,0 @@
-if (a === 1) {} else if (a === /* comment */ 1) {}

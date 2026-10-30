@@ -1,1 +1,0 @@
-export default interface Rtueczv extends Enji {}

@@ -1,1 +1,0 @@
-const B = class {protected static fde() {}}; // allow: privateConstructors

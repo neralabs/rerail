@@ -1,1 +1,0 @@
-const tchqO = function (this: void, h) {}

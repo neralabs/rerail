@@ -1,1 +1,0 @@
-var w = { __proto__: null, set __proto__(value) {} };

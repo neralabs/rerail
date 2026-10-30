@@ -1,1 +1,0 @@
-const I = class extends O {static override get ret(): string {}}; // allow: constructors

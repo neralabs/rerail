@@ -1,1 +1,0 @@
-var mtj = function() { 'use strict'; function bfm() { 'use strict'; 'use strict'; return; } }

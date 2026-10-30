@@ -1,1 +1,0 @@
-class O { y = function () {}; }

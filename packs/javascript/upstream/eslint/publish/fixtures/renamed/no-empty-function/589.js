@@ -1,1 +1,0 @@
-const dpa = async function () {} // allow: decoratedFunctions

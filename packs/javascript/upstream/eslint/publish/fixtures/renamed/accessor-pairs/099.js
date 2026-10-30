@@ -1,1 +1,0 @@
-class I { get i() {} j() {} set i(sln) {} }

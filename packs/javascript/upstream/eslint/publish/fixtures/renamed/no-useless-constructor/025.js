@@ -1,1 +1,0 @@
-class A extends O { constructor(a, o, ...t) { super(...arguments); } }

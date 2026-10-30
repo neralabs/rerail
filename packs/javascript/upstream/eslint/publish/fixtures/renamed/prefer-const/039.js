@@ -1,1 +1,0 @@
-let f; { let u; ({ f, u } = wzx); }

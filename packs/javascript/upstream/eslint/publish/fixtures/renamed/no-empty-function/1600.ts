@@ -1,1 +1,0 @@
-class C extends L {static override get uwk(): string {}} // allow: generatorMethods

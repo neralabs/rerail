@@ -1,1 +1,0 @@
-class D { private static ivx() {} } // allow: getters

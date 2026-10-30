@@ -1,1 +1,0 @@
-var mpj = () => { 'use strict'; var amw = () => 1; amw(); };

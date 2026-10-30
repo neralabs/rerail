@@ -1,1 +1,0 @@
-class C { #__proto__; zfv() { this.#__proto__; } }

@@ -1,1 +1,0 @@
-class O { get o() {} set o(rpy) {} r() {} set s(wia) {} get s() {} }

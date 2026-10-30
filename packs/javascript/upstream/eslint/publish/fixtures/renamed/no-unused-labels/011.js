@@ -1,1 +1,0 @@
-A: for (var w = 0; w < 10; ++w) { jjq(); if (a) break; fhl(); }

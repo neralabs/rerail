@@ -1,1 +1,0 @@
-switch (a) { case 1: console.error(foo) }

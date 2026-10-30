@@ -1,1 +1,0 @@
-function orq() { if (true) {} else { for(;;) {} } }

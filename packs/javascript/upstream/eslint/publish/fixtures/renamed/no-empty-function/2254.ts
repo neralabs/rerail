@@ -1,1 +1,0 @@
-class I extends K {override set rpa(value: string) {}} // allow: protectedConstructors

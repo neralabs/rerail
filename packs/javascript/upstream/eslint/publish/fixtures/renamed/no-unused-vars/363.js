@@ -1,1 +1,0 @@
-const [{n}, a] = anubz; alert(a);

@@ -1,1 +1,0 @@
-const ggf = { async jyobsx(yfvgz: string) {} } // allow: asyncMethods

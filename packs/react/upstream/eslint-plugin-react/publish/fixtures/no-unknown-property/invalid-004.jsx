@@ -1,1 +1,0 @@
-<div someProp="bar"></div>;

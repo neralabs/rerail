@@ -1,1 +1,0 @@
-for(;Math.pow(e, l);){}

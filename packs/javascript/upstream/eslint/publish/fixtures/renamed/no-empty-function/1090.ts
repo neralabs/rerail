@@ -1,1 +1,0 @@
-const jfe = {fci: function(rricc: string) {}}; // allow: methods

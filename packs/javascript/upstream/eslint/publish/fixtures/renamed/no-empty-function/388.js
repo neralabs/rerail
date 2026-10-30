@@ -1,1 +1,0 @@
-var dal = {get aiz() {}}; // allow: constructors

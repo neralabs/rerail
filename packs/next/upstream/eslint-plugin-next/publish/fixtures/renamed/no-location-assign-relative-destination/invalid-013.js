@@ -1,1 +1,0 @@
-location.assign(`/users/${gi}/profile`)

@@ -1,1 +1,0 @@
-class C {get imq() {}} // allow: getters

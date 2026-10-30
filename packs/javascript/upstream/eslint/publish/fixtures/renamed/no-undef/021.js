@@ -1,1 +1,0 @@
-function ojc() { var [g, i=4] = [1, 2]; return {g, i}; }

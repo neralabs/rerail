@@ -1,1 +1,0 @@
-if (n) { for (;;); } else zie();

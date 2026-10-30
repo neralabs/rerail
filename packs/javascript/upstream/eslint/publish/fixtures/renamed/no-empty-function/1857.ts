@@ -1,1 +1,0 @@
-const P = class {constructor(zminy: string) {}}; // allow: asyncMethods

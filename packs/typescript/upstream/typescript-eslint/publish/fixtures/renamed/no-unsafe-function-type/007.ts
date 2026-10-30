@@ -1,5 +1,0 @@
-
-class Moykv implements Function {
-  // ...
-}
-      

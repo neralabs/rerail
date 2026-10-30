@@ -1,1 +1,0 @@
-parseInt(ewz, 2);

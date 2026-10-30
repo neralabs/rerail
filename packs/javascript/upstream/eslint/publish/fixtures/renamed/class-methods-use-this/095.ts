@@ -1,1 +1,0 @@
-class Lbe implements Bbk { private override set qlkwsv(y: number) {} }

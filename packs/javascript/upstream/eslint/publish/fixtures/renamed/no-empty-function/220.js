@@ -1,1 +1,0 @@
-var vmu = function*() {}; // allow: constructors

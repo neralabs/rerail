@@ -1,1 +1,0 @@
-const [r = w => w] = [].map(w => w);

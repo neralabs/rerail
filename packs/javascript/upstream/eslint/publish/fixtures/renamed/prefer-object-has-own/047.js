@@ -1,1 +1,0 @@
-({}.ngt.call(rnl, ybgs))

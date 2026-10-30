@@ -1,1 +1,0 @@
-class H {static set otm(value: string) {}} // allow: methods

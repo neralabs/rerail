@@ -1,1 +1,0 @@
-class L { @pskcujhuh() async rjp(xrsur: string) {} } // allow: getters

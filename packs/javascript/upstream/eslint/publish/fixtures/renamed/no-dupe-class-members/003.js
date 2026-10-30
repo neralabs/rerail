@@ -1,1 +1,0 @@
-class I { get mgy() {} set mgy(value) {} }

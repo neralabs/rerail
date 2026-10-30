@@ -1,1 +1,0 @@
-class P { get [p]() {} set [p++](xic) {} }

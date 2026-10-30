@@ -1,1 +1,0 @@
-const D = class {constructor(oynmq: string) {}}; // allow: functions

@@ -1,1 +1,0 @@
-class J {set nha(value: string) {}} // allow: privateConstructors

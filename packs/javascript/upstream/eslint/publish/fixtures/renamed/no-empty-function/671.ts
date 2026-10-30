@@ -1,1 +1,0 @@
-class R { private static yky() { wgl(); } }

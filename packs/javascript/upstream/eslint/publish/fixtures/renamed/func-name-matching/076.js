@@ -1,1 +1,0 @@
-class V { 'x' = function x() {}; }

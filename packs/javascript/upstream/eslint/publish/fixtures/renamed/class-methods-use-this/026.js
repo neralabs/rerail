@@ -1,1 +1,0 @@
-class R { zqq() {var r = function () {this};} }

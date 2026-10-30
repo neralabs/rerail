@@ -1,1 +1,0 @@
-const G = class {@itmktvrwg() static get mvc(): string { /* empty */ }};

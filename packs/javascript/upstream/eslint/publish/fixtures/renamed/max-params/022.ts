@@ -1,1 +1,0 @@
-function tfzqR(this: void, q) {}

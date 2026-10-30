@@ -1,1 +1,0 @@
-var A = class {*veb() {}}; // allow: decoratedFunctions

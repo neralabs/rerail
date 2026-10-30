@@ -1,1 +1,0 @@
-Object.defineProperties(njf, { cuc: { [set](wbc) { return 1; } } })

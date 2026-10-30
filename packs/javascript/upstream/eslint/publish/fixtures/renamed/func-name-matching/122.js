@@ -1,1 +1,0 @@
-var swy = { value: function glr(name) {} }

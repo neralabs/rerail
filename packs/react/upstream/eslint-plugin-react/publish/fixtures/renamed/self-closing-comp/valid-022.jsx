@@ -1,1 +1,0 @@
-var UarmeLenu = <div>&nbsp;</div>;

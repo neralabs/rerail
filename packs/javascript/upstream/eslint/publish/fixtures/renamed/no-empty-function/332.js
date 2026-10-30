@@ -1,1 +1,0 @@
-class G {*zhj() {}} // allow: constructors

@@ -1,1 +1,0 @@
-const x: Zwp/* comment */ <string> = new Zwp /* another */();

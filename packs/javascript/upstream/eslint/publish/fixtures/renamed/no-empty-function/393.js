@@ -1,1 +1,0 @@
-var xzd = {get eps() {}}; // allow: decoratedFunctions

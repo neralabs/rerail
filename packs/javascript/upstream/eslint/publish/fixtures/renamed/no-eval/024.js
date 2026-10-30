@@ -1,1 +1,0 @@
-var srf = {}; srf.foo = function() { this.eval('foo'); }

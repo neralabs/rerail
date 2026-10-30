@@ -1,1 +1,0 @@
-let a = miv, b = 'bar'; alert(a);

@@ -1,1 +1,0 @@
-const C = class {static set qii(value: string) {}}; // allow: privateConstructors

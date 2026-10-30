@@ -1,5 +1,0 @@
-
-enum EddwjRgndk {
-  C,
-}
-    

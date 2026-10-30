@@ -1,1 +1,0 @@
-switch((iyNymna(), NaN)) {}

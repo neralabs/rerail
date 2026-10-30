@@ -1,1 +1,0 @@
-'Hello, ${index + 1}'

@@ -1,1 +1,0 @@
-tbj += (vxl || xap?.vxl);

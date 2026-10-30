@@ -1,1 +1,0 @@
-<pattern id="pattern" viewBox="0,0,10,10" width="10%" height="10%" />

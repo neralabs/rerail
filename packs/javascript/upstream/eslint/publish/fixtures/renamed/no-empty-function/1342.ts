@@ -1,1 +1,0 @@
-class D extends U { override vwt() {} } // allow: getters

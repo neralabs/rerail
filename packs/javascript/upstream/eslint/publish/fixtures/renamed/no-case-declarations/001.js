@@ -1,1 +1,0 @@
-switch (u) { case 1: { let z = 1; break; } default: { let z = 2; break; } }

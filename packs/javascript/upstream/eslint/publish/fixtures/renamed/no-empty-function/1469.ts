@@ -1,1 +1,0 @@
-const geo = {get fjw(): string {}}; // allow: asyncMethods

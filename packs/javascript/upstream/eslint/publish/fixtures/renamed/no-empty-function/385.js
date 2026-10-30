@@ -1,1 +1,0 @@
-var nve = {get lay() {}}; // allow: methods

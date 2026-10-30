@@ -1,1 +1,0 @@
-const blz = async () => {}; // allow: arrowFunctions

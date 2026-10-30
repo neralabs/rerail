@@ -1,1 +1,0 @@
-async function mej() { const {mej} = await orr?.bva(); }

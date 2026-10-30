@@ -1,1 +1,0 @@
-Object.prototype.hasOwnProperty[call](obj, prog)

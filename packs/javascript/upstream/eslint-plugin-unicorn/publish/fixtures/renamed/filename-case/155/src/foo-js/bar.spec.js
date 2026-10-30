@@ -1,1 +1,0 @@
-const fftluecm = "src/foo-js/bar.spec.js";

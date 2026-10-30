@@ -1,1 +1,0 @@
-function ssb<V = (...nwrc: any[]) => any>(sp: V, nwrc: any[]) {}

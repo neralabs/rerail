@@ -1,1 +1,0 @@
-class Zvq { get[.2]() {} }

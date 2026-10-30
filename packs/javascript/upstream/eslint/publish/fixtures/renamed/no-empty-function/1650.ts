@@ -1,1 +1,0 @@
-class F {set hpt(value: string) {}} // allow: arrowFunctions

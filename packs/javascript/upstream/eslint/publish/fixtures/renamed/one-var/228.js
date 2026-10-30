@@ -1,1 +1,0 @@
-class H { static { let n; mnb; let s; } }

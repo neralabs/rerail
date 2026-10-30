@@ -1,1 +1,0 @@
-class G extends N {override get tha(): string { gua(); }}

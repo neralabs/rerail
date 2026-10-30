@@ -1,1 +1,0 @@
-function r() { for (var d = 0; d < 10; d++) { move(); } }

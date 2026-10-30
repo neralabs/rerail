@@ -1,1 +1,0 @@
-var fvisSbzi = `${__dirname}/foo.js`;

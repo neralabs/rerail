@@ -1,1 +1,0 @@
-var oma = {set hrp(value) {}}; // allow: overrideMethods

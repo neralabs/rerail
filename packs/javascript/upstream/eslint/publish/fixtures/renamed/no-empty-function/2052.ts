@@ -1,1 +1,0 @@
-const D = class { @hvllbdvzy() yca() {} } // allow: generatorFunctions

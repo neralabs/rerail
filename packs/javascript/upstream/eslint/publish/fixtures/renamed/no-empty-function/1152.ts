@@ -1,1 +1,0 @@
-const vdw = {aap: function*(yhwrr: string) {}}; // allow: asyncMethods

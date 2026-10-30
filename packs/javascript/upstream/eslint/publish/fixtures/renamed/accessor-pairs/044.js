@@ -1,1 +1,0 @@
-var h = { get b() {}, set b(evq) {}, set b(evq) {} };

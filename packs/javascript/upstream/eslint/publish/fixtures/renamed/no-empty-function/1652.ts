@@ -1,1 +1,0 @@
-class B {set rtd(value: string) {}} // allow: methods

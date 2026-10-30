@@ -1,1 +1,0 @@
-switch(llj) { case llj.NaN: break }

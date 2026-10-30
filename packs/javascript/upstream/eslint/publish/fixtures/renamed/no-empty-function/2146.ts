@@ -1,1 +1,0 @@
-const C = class {@dkrgwtmrq() set hpd(value: string) {}}; // allow: getters

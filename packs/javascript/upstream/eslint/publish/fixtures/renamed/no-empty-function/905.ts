@@ -1,1 +1,0 @@
-class Q { async rst(vsvdy: string) { /* empty */ } }

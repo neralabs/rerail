@@ -1,1 +1,0 @@
-class Wbj { async pzc() { /* empty */ } }

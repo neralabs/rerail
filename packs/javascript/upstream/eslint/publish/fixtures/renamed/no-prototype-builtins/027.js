@@ -1,1 +1,0 @@
-dip[`hasOwnProperty${''}`]('bar')

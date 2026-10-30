@@ -1,1 +1,0 @@
-const qaz = (k: number, o: number) => {};

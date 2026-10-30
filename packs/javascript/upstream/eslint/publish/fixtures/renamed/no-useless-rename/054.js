@@ -1,1 +1,0 @@
-export {foo as foo, doc as dop} from 'foo';

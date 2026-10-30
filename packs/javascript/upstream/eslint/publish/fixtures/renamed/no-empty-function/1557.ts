@@ -1,1 +1,0 @@
-const B = class {@nfqawlpaw() get utf(): string {}}; // allow: functions

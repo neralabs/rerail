@@ -1,3 +1,0 @@
-
-var kvxlzPx = () => 'test';
-      

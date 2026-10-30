@@ -1,1 +1,0 @@
-G: for (var g in ncl) { for (;;) { switch (g) { case 0: break G; } } }

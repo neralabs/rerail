@@ -1,5 +1,0 @@
-
-const src = class {
-  constructor();
-};
-    

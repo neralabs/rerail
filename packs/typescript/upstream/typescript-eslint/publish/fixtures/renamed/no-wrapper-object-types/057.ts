@@ -1,1 +1,0 @@
-interface DwRfylqlyac extends Number {}

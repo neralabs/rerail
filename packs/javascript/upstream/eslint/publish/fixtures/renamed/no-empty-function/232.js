@@ -1,1 +1,0 @@
-var qpt = {jzz: function*() {}}; // allow: getters

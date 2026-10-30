@@ -1,1 +1,0 @@
-for (var s in n) { if (s) { d(); } l(); }

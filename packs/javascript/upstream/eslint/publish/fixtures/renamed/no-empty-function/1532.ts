@@ -1,1 +1,0 @@
-class J {@mpyfxrfqg() get ymy(): string {}} // allow: arrowFunctions

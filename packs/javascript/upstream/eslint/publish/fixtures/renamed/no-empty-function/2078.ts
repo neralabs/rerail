@@ -1,1 +1,0 @@
-class K {@oddphebqn() static get xke(): string {}} // allow: generatorFunctions

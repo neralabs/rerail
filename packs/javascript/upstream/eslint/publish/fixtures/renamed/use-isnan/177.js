@@ -1,1 +1,0 @@
-switch(igt) { case auj: break; case NaN: break; case aur: break; case Number.NaN: break; }

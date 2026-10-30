@@ -1,1 +1,0 @@
-var x = { set [`abc`](tzm) {} };

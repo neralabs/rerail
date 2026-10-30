@@ -1,1 +1,0 @@
-switch (c) { case 1: const f = 1; break; }

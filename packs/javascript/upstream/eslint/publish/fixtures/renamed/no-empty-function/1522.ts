@@ -1,1 +1,0 @@
-const M = class {static get teq(): string {}}; // allow: setters

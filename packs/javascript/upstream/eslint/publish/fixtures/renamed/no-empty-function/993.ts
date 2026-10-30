@@ -1,1 +1,0 @@
-class B { @cpjwtlmtu() async kjy(mguiy: string) { /* empty */ } }

@@ -1,1 +1,0 @@
-dzm -= sal?.pfd;

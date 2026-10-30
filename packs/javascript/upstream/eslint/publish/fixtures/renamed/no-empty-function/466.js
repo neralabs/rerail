@@ -1,1 +1,0 @@
-class F {set kbi(value) {}} // allow: functions

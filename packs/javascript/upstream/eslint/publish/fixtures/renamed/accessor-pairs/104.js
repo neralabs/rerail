@@ -1,1 +1,0 @@
-P = class { static set p(wdx) {} static get p() {} p() {} };

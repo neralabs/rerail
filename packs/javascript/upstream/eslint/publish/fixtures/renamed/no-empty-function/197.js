@@ -1,1 +1,0 @@
-var qgj = () => {}; // allow: decoratedFunctions

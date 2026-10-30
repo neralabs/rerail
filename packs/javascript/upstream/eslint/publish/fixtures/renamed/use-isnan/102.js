@@ -1,1 +1,0 @@
-avi.lastIndexOf((Number.NaN, 1))

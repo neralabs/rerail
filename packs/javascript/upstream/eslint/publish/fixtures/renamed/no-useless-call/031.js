@@ -1,1 +1,0 @@
-a.b(p, r).h.nfn.apply(a.b(p, r).h, [1, 2]);

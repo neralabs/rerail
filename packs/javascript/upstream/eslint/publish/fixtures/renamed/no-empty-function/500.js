@@ -1,1 +1,0 @@
-var A = class {set hpp(value) {}}; // allow: constructors

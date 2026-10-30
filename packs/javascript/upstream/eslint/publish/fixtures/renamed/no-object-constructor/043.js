@@ -1,6 +1,0 @@
-
-                function * ayl() {
-                    yield
-                    Object();
-                }
-                

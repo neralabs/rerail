@@ -1,1 +1,0 @@
-const A = class {static qpw(syznz: string) {}}; // allow: asyncFunctions

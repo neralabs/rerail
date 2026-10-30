@@ -1,1 +1,0 @@
-class G { constructor(ndfvt: string) {} } // allow: generatorFunctions

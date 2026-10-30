@@ -1,1 +1,0 @@
-class K extends Q {static override set sfs(value: string) {}} // allow: privateConstructors

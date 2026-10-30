@@ -1,1 +1,0 @@
-class A {static *cji(uolxv: string) {}} // allow: overrideMethods

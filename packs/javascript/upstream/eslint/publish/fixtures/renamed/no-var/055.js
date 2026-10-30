@@ -1,1 +1,0 @@
-function test() { var z = w; var w = 1; }

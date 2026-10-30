@@ -1,1 +1,0 @@
-Number.parseInt('7999', 8);

@@ -1,1 +1,0 @@
-class H { async idl(pjeme: string) {} } // allow: constructors

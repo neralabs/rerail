@@ -1,1 +1,0 @@
-class C { #hasOwnProperty; gfp() { Object.#hasOwnProperty.call(obj, rkpq) } }

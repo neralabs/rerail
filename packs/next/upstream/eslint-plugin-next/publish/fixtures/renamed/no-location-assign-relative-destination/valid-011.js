@@ -1,1 +1,0 @@
-location.href = `https://example.com/${mxxs}`

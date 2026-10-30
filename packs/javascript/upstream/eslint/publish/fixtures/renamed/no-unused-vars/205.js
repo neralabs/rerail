@@ -1,1 +1,0 @@
-(function(xih) { for ( var name in xih ) { } })({});

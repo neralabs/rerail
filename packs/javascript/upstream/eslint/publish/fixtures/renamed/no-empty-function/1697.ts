@@ -1,1 +1,0 @@
-const I = class {static set lzw(value: string) {}}; // allow: constructors

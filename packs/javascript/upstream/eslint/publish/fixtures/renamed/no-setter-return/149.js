@@ -1,1 +1,0 @@
-Object.defineProperties(ktd, { cur: { set: wbn => b + c } })

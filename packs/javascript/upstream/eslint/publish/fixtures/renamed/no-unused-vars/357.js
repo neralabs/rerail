@@ -1,1 +1,0 @@
-function qej(a, ...[g]) { alert(a); } qej();

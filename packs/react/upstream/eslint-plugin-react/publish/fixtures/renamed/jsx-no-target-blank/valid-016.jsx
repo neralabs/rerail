@@ -1,1 +1,0 @@
-<a {...sxpsqnQhmah} target="_blank" rel="noreferrer" href="https://example.com">s</a>

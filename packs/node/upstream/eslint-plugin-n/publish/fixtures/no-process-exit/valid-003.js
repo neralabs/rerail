@@ -1,1 +1,0 @@
-f(process.exit)

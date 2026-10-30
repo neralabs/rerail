@@ -1,1 +1,0 @@
-const Component = () => <Cotbias.Provider value={100}></Cotbias.Provider>

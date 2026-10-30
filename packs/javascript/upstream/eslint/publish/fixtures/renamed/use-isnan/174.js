@@ -1,1 +1,0 @@
-switch(jbx) { case Number.NaN: }

@@ -1,1 +1,0 @@
-function* zf() { zrr ? zrr : yield slj }

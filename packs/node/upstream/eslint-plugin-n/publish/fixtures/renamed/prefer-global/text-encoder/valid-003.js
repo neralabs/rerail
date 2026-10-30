@@ -1,1 +1,0 @@
-var { TextEncoder } = require('util'); var k = new TextEncoder(s)

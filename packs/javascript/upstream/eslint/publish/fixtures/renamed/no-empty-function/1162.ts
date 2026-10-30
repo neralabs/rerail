@@ -1,1 +1,0 @@
-const jtb = {fxu(wttwp: string) {}}; // allow: getters

@@ -1,1 +1,0 @@
-({}.propertyIsEnumerable.apply(hwt, ['bar']))

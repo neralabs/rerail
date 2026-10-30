@@ -1,1 +1,0 @@
-const H = class {@omwxillch() static set sbt(value: string) {}}; // allow: privateConstructors

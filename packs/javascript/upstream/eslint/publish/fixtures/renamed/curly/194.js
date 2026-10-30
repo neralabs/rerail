@@ -1,1 +1,0 @@
-if (q) { while (xpec) { if (t) yij(); } } else tfe();

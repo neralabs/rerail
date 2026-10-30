@@ -1,1 +1,0 @@
-class N { protected wzm() {} } // allow: getters

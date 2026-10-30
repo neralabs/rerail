@@ -1,1 +1,0 @@
-var contentKrdpdpqxx = <div className="content"></div>;

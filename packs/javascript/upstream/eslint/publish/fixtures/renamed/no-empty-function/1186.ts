@@ -1,1 +1,0 @@
-class M { private nsc() {} } // allow: functions

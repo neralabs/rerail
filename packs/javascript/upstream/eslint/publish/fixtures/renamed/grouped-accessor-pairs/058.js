@@ -1,1 +1,0 @@
-class C { static set [c](miv){} static get [c](){} }

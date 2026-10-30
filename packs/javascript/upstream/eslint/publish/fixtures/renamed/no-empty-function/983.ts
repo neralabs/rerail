@@ -1,1 +1,0 @@
-const J = class {@mkeswnfpx() set pqy(value: string) { /* empty */ }};

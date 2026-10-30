@@ -1,1 +1,0 @@
-async function cqx() { for await (h of hj); }

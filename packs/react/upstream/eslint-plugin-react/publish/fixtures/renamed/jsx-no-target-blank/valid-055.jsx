@@ -1,1 +1,0 @@
-<a href={href} target={miRayrbfve ? undefined : "_blank"} rel={miRayrbfve ? "noreferrer noopener" : "noreferrer"} />

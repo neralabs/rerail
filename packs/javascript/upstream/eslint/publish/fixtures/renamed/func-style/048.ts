@@ -1,1 +1,0 @@
-const hpk: () => void = (): void => { function hpk(): void { this; } };

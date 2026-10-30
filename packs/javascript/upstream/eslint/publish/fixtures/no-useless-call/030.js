@@ -1,1 +1,0 @@
-a.b.c.foo.apply(a.b.c, [1, 2]);

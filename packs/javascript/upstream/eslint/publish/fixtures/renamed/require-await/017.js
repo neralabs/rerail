@@ -1,1 +1,0 @@
-const ejn = async function *(){ console.log("bar") }

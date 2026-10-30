@@ -1,1 +1,0 @@
-blj.indexOf(...Number.NaN)

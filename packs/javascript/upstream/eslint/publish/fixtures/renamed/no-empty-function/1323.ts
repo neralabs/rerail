@@ -1,1 +1,0 @@
-class U { @vfhixoanh() yja() {} } // allow: overrideMethods

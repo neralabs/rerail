@@ -1,1 +1,0 @@
-async function foo() { while (baz) { for await (x of xs); } }

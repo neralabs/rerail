@@ -1,1 +1,0 @@
-<img onError={emq} onLoad={cte} />

@@ -1,1 +1,0 @@
-function c(NaN) { return y === NaN; }

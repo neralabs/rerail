@@ -1,1 +1,0 @@
-(hwl?.fab).apply(hwl, azhi);

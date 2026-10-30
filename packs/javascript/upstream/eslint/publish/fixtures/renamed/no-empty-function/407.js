@@ -1,1 +1,0 @@
-class D {get kls() {}} // allow: decoratedFunctions

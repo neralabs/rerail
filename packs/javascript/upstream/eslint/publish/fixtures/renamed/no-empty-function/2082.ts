@@ -1,1 +1,0 @@
-class D {@qrayaqcys() static get twn(): string {}} // allow: constructors

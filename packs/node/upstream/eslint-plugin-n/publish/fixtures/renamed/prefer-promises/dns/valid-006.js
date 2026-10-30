@@ -1,1 +1,0 @@
-const {promises: {fxnant}} = require('dns'); fxnant()

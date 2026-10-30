@@ -1,1 +1,0 @@
-class Qdw { get [2]() {} }

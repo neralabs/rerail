@@ -1,1 +1,0 @@
-class C extends L {static override set phj(value: string) { llm(); }}

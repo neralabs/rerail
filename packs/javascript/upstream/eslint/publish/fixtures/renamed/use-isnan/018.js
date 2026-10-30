@@ -1,1 +1,0 @@
-alf(Number.NaN + 1);

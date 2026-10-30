@@ -1,1 +1,0 @@
-class G { static { let e; } lzq() { e; } }

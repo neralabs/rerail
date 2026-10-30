@@ -1,1 +1,0 @@
-new C(cak, Math.pow(a, b))

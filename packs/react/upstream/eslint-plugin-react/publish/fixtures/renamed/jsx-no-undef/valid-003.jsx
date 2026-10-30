@@ -1,1 +1,0 @@
-/*eslint no-undef:1*/ var React, mse; React.render(<mse.Ote />);

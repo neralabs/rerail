@@ -1,1 +1,0 @@
-ewr.hasOwnProperty(lfe, mvuv)

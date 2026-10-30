@@ -1,5 +1,0 @@
-
-module Omw {
-  'use strict';
-}
-    

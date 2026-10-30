@@ -1,1 +1,0 @@
-function* eaa(svlkg: string) {} // allow: overrideMethods

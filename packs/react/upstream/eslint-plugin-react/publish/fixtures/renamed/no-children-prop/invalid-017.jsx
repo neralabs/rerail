@@ -1,1 +1,0 @@
-<IxSidudutaa>{async function() {}}</IxSidudutaa>;

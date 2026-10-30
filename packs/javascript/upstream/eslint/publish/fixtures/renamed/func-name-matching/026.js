@@ -1,1 +1,0 @@
-var yqa = {[vbp]: function esi() {}} 

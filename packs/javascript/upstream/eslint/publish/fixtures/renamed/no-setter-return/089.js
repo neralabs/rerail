@@ -1,1 +1,0 @@
-Object.defineProperties(ege, cja, { cjl: { set(ypi) { return 1; } } })

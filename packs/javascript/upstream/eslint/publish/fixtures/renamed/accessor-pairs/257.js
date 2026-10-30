@@ -1,1 +1,0 @@
-class C { c() {} get c() {} }

@@ -1,4 +1,0 @@
-
-function MyComponent() {
-  useEffect(() => {}, ['foo']);
-}

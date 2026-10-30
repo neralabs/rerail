@@ -1,1 +1,0 @@
-<Gjd tsyth="javascript:"></Gjd>

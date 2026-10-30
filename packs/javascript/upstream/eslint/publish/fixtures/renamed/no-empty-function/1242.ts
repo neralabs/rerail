@@ -1,1 +1,0 @@
-class K { protected static psd() {} } // allow: functions

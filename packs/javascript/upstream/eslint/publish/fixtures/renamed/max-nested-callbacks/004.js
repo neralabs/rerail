@@ -1,1 +1,0 @@
-kr(() => {}, function(){}, function(){});

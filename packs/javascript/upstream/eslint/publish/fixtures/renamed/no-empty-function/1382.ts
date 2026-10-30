@@ -1,1 +1,0 @@
-class M { *nwe(vyptj: string) {} } // allow: setters

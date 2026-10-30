@@ -1,1 +1,0 @@
-(class { set cdc(pvt) { var cdc = (pvt) => 1; } })

@@ -1,1 +1,0 @@
-var w = { set h(pmj) {} };

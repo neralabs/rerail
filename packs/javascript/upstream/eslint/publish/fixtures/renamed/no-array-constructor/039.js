@@ -1,4 +1,0 @@
-
-                function ymd() {}
-                Array()
-                

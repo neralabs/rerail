@@ -1,1 +1,0 @@
-class B {protected static *qee() {}} // allow: privateConstructors

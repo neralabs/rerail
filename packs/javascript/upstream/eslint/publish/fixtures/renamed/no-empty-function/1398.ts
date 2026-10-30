@@ -1,1 +1,0 @@
-class A {static *fpg(nueto: string) {}} // allow: asyncFunctions

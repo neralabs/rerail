@@ -1,1 +1,0 @@
-aki /= (gmk?.bae ?? akn)

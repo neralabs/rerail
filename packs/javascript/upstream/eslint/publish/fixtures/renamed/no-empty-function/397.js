@@ -1,1 +1,0 @@
-class O {get tit() {}} // allow: arrowFunctions

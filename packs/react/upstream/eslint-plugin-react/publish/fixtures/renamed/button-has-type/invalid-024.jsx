@@ -1,1 +1,0 @@
-React.createElement("button", {type: cpwayzplg ? "reset" : "button"})

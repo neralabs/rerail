@@ -1,1 +1,0 @@
-switch (vdr) {/* empty */}

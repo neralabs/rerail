@@ -1,1 +1,0 @@
-function *pxc() { yield++n < 1 }

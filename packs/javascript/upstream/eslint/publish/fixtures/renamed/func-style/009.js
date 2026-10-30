@@ -1,1 +1,0 @@
-var upy = function() { this; }.bind(this);

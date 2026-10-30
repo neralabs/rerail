@@ -1,1 +1,0 @@
-class F extends W { @wuzuihcjg() override xjx() {} } // allow: generatorFunctions

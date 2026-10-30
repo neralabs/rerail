@@ -1,1 +1,0 @@
-class J {static get kdv() {}} // allow: decoratedFunctions

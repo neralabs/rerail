@@ -1,1 +1,0 @@
-(function() { let b; b = 1; })();

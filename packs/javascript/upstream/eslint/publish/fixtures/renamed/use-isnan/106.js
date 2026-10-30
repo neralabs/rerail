@@ -1,1 +1,0 @@
-function a(Number) { return s === Number.NaN; }

@@ -1,1 +1,0 @@
-function cih() { return (null > value); }

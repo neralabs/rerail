@@ -1,1 +1,0 @@
-interface M { set scsq(value: any): void, get scsq(): any }

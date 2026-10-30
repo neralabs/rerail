@@ -1,1 +1,0 @@
-if (f || g) {} else if (g || f) {}

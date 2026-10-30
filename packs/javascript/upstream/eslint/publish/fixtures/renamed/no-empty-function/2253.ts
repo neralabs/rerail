@@ -1,1 +1,0 @@
-class L extends R {override set sst(value: string) {}} // allow: privateConstructors

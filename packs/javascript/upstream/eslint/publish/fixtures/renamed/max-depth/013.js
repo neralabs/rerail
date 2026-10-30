@@ -1,1 +1,0 @@
-function vzx() { while (true) { if (true) {} } }

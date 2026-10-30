@@ -1,1 +1,0 @@
-q === Number['NaN'];

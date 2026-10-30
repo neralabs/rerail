@@ -1,1 +1,0 @@
-function p(kog, kon) { return kog + kon; }; p();

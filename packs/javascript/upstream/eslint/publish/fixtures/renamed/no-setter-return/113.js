@@ -1,1 +1,0 @@
-(class { set i(yjk) { return 1; } })

@@ -1,1 +1,0 @@
-class Txk { get[2]() {} }

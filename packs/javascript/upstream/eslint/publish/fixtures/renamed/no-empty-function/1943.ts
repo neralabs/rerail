@@ -1,1 +1,0 @@
-class H { async kct(ytfjx: string) {} } // allow: overrideMethods

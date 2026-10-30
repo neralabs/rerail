@@ -1,1 +1,0 @@
-<button type={ffvnsnejk ? "button" : "submit"}/>

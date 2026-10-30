@@ -1,1 +1,0 @@
-var gza = `hello, ${name}!`;

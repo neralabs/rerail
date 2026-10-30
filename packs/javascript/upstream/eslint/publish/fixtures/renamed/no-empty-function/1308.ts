@@ -1,1 +1,0 @@
-const I = class {protected static qtj() {}}; // allow: protectedConstructors

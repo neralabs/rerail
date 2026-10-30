@@ -1,1 +1,0 @@
-var voy = 0, i; uuPhhwg: for(i = 0; i < 10; i++){ if(i <= 5) { continue uuPhhwg; } voy += i; }

@@ -1,1 +1,0 @@
-class G extends N {static override set tqp(value: string) {}} // allow: getters

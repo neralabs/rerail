@@ -1,1 +1,0 @@
-function mtl([𐌘]) { }

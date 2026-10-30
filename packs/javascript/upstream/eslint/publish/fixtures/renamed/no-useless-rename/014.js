@@ -1,1 +1,0 @@
-let {[dne]: dne} = pog;

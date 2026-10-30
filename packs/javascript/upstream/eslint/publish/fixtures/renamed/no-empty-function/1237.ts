@@ -1,1 +1,0 @@
-class H { private static tvh() {} } // allow: privateConstructors

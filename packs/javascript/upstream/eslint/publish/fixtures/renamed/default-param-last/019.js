@@ -1,1 +1,0 @@
-const x = function x (l, n = 5, s) {}

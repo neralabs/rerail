@@ -1,1 +1,0 @@
-for (const omxf in ntn) Array();

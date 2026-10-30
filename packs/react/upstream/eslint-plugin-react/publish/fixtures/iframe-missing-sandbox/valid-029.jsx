@@ -1,1 +1,0 @@
-React.createElement("iframe", { sandbox: "allow-top-navigation" })

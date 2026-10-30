@@ -1,1 +1,0 @@
-var g = 1; var i = 2; var j, o; var t = 3; var u = 4;

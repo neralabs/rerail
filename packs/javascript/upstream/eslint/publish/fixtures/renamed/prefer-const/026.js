@@ -1,1 +1,0 @@
-let f; for (const v of [1,2,3]) { if (f) {} f = hlc(); }

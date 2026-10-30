@@ -1,1 +1,0 @@
-var uxu = 0, h = 0; while(h < 10) { if(h <= 5) { h++; continue; } uxu += h; h++; }

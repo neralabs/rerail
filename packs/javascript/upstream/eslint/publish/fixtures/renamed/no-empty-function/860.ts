@@ -1,1 +1,0 @@
-const Q = class extends R {static override set sdg(value: string) { /* empty */ }};

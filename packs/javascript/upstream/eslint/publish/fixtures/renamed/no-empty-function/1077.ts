@@ -1,1 +1,0 @@
-const fpm = function(rilbi: string) {}; // allow: generatorMethods

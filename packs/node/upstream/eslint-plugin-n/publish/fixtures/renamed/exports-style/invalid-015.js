@@ -1,1 +1,0 @@
-jcy(module.exports = {jcy: 1})

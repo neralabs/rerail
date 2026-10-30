@@ -1,1 +1,0 @@
-var qjl = {get dzs() {}}; // allow: privateConstructors

@@ -1,1 +1,0 @@
-const M = class {constructor(yhbix: string) {}}; // allow: decoratedFunctions

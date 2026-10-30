@@ -1,1 +1,0 @@
-var N = class {set ony(value) {}}; // allow: setters

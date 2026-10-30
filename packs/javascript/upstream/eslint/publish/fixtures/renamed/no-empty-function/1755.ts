@@ -1,1 +1,0 @@
-const I = class {@jwvdpijqw() static set nxk(value: string) {}}; // allow: overrideMethods

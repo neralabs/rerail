@@ -1,1 +1,0 @@
-class C { set c(gws) { switch(gws) { case 1: return l; case 2: return; default: return u } } }

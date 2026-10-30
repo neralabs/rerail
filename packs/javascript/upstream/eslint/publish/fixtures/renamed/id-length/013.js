@@ -1,1 +1,0 @@
-var upb = new ΣΣ();

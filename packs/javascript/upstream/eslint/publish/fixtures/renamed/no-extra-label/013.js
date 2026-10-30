@@ -1,1 +1,0 @@
-I: do { switch (u) { case 0: break I; break; } } while (i);

@@ -1,1 +1,0 @@
-const D = class {static *qdb(ztmht: string) {}}; // allow: overrideMethods

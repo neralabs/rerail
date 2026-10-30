@@ -1,1 +1,0 @@
-var J = class {static set sei(value) {}}; // allow: protectedConstructors

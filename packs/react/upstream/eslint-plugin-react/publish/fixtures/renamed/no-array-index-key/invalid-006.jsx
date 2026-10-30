@@ -1,1 +1,0 @@
-ekc.map((agt, i) => React.cloneElement(xfroOvtap, { ...xfroOvtap.props, key: i }))

@@ -1,1 +1,0 @@
-class D { *fkw(jpbkb: string) {} }

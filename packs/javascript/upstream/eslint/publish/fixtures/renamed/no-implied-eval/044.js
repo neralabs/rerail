@@ -1,1 +1,0 @@
-global.setTimeout(dlf, 100);

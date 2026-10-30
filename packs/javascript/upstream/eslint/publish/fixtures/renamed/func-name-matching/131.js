@@ -1,1 +1,0 @@
-(Object?.defineProperties)(ekx, { ayo: { value: function ayp() {} } })

@@ -1,1 +1,0 @@
-var wpf = {oxl() {}}; // allow: functions

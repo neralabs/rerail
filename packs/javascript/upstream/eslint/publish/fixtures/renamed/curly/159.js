@@ -1,1 +1,0 @@
-if (snk) { while (dvq) {} } else {}

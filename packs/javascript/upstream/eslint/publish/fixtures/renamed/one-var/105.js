@@ -1,1 +1,0 @@
-class O { static { if (zcp) { var m; } } } var a; 

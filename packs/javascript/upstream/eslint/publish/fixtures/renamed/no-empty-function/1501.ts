@@ -1,1 +1,0 @@
-class N {static get zsy(): string {}} // allow: overrideMethods

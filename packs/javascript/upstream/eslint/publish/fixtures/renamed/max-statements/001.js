@@ -1,1 +1,0 @@
-function qps() { var hig = 1; function xkd () { var teFlath = 2; } return 3; }

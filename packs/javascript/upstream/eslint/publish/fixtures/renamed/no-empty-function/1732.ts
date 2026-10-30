@@ -1,1 +1,0 @@
-const C = class {@qjukizmtf() set tuk(value: string) {}}; // allow: arrowFunctions

@@ -1,1 +1,0 @@
-Object.create(lvm, aud, { aus: { set(txj) { return 1; } } })

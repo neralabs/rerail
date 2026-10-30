@@ -1,1 +1,0 @@
-var mjy = function() { return; };

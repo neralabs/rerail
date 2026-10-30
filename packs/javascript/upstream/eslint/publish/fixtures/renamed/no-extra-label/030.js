@@ -1,1 +1,0 @@
-Y: while(true) { break /**/Y; }

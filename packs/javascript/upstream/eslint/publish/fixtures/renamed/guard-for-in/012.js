@@ -1,1 +1,0 @@
-for (var y in w) ntl();

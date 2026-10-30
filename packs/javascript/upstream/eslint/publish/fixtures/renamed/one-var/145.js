@@ -1,1 +1,0 @@
-function sbs() { const b = 1, l = 2; }

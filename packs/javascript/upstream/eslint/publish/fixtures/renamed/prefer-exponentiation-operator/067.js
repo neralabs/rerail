@@ -1,1 +1,0 @@
-b * Math.pow(d, l)

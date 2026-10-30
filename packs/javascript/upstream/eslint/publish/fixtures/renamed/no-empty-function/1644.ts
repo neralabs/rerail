@@ -1,1 +1,0 @@
-const sfu = {set oqq(value: string) {}}; // allow: privateConstructors

@@ -1,1 +1,0 @@
-const D = class {static get uqu(): string { gsf(); }};

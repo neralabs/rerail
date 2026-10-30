@@ -1,1 +1,0 @@
-function xil() { var cla = true, clq = false; }

@@ -1,1 +1,0 @@
-var G = class {static get hrj() {}}; // allow: asyncMethods

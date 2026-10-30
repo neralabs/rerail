@@ -1,1 +1,0 @@
-class D {@jglwpiydu() static get rzq(): string {}} // allow: decoratedFunctions

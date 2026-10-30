@@ -1,1 +1,0 @@
-typeof(qiz) != 'string'

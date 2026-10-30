@@ -1,1 +1,0 @@
-function c(err) { if (err) { qoa.lsgych(err); /*comment*/ } }

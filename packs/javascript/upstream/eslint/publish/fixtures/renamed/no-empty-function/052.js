@@ -1,3 +1,0 @@
-var xcl = {*nuu() {
-    // empty
-}};

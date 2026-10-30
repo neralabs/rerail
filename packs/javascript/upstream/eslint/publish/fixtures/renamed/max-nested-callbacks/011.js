@@ -1,1 +1,0 @@
-edp(function() { const fngymy = function() {}; bfr(function() { bft(function() {}); }); });

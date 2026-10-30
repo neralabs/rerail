@@ -1,1 +1,0 @@
-class Mvg {} class Deg {} class Dew {}

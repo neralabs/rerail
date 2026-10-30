@@ -1,1 +1,0 @@
-class P {@tgieqsota() get yvl(): string { /* empty */ }}

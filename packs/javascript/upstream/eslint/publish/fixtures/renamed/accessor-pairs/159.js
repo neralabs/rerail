@@ -1,1 +1,0 @@
-var u = { get o() {}, set k(tiu) {}, set o(owu) {} };

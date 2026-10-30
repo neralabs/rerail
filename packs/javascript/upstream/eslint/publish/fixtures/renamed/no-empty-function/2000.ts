@@ -1,1 +1,0 @@
-const C = class { private constructor() {} }; // allow: generatorFunctions

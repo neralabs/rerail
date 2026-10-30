@@ -1,1 +1,0 @@
-class Oju { override accessor quntyr = () => {} }

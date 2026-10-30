@@ -1,1 +1,0 @@
-class F extends J {override set tfa(value: string) {}} // allow: generatorFunctions

@@ -1,1 +1,0 @@
-U = class { static get u() {} static get u() {} };

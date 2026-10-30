@@ -1,1 +1,0 @@
-var n = 3; //A comment inline with code

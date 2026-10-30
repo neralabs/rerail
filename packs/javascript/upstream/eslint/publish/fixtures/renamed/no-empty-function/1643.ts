@@ -1,1 +1,0 @@
-const jnr = {set fbv(value: string) {}}; // allow: asyncMethods

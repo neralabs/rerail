@@ -1,1 +1,0 @@
-if (true) { kng(); kld(); } else { dzm(); }

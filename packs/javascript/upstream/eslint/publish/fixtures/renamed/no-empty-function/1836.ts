@@ -1,1 +1,0 @@
-class J { protected constructor() {} } // allow: functions

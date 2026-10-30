@@ -1,1 +1,0 @@
-yhqhimvlJdsfseih`Hello, ${name}`;

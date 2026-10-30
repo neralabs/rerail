@@ -1,1 +1,0 @@
-var nkq = function() { zpphs: try { return 0; } finally { break zpphs; } return 1; }

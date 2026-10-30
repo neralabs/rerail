@@ -1,1 +1,0 @@
-class G { set pgh(soq) { try {} catch(n) { return; } } }

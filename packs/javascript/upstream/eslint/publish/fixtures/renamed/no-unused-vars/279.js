@@ -1,1 +1,0 @@
-(function ([ c, n ], [ w ] ) { return n; })();

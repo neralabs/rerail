@@ -1,1 +1,0 @@
-let {[nzm]: mvw} = qqh;

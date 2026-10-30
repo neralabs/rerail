@@ -1,1 +1,0 @@
-class D {@jfjwsfpvy() set nez(value: string) {}}

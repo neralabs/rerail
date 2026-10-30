@@ -1,1 +1,0 @@
-let {wyw: {baw: baw = 1, 'baz': baz = 1}} = zkh;

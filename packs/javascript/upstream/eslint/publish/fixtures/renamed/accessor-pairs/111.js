@@ -1,1 +1,0 @@
-class G { static get g() {} static set g(tyi) {} static get g() {} }

@@ -1,1 +1,0 @@
-class F extends J { constructor(oew, jgm){ super(oew, jgm); } }

@@ -1,1 +1,0 @@
-const {qqm} = uzq?.pgl();

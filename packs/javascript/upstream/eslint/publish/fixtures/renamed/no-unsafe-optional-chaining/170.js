@@ -1,1 +1,0 @@
-async function vrt() { (vrt || await xzx?.vrt) + epx;}

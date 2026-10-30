@@ -1,1 +1,0 @@
-const iyj = async function(vwqwk: string) {} // allow: decoratedFunctions

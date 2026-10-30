@@ -1,1 +1,0 @@
-const [udz] = wis?.tym;

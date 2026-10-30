@@ -1,1 +1,0 @@
-class W {private static *xbq() {}} // allow: getters

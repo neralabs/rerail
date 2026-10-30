@@ -1,1 +1,0 @@
-for ( var { qjf } in eyz ) { }

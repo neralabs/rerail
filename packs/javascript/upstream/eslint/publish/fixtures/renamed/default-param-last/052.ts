@@ -1,1 +1,0 @@
-const vyv = (d: number, j: number, n?: number) => {};

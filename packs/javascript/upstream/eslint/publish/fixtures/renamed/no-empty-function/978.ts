@@ -1,1 +1,0 @@
-class B {@jbgheywfq() static set tts(value: string) { /* empty */ }}

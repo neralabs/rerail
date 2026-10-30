@@ -1,1 +1,0 @@
-var M = class {constructor() {}}; // allow: methods

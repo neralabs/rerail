@@ -1,1 +1,0 @@
-class M extends R { override vqv() {} } // allow: asyncFunctions

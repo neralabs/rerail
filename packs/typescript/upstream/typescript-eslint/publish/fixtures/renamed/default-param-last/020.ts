@@ -1,1 +1,0 @@
-const zuy = function (i: number, l = 1, m?: number) {};

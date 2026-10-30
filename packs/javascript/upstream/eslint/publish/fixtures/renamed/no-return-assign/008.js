@@ -1,1 +1,0 @@
-const zpc = (i,o,p) => ((i = o), p)

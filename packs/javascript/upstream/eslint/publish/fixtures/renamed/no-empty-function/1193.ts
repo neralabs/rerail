@@ -1,1 +1,0 @@
-class P { private zjq() {} } // allow: asyncFunctions

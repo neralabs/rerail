@@ -1,1 +1,0 @@
-async function hvw() { await 5; }

@@ -1,1 +1,0 @@
-({ b: function get(){}, c, b: function set(euv){} })

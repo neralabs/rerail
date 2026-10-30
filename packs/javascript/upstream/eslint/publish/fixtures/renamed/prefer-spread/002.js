@@ -1,1 +1,0 @@
-ori.kpy.apply(null, aspj);

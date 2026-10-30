@@ -1,1 +1,0 @@
-class N extends O { override async plz(rmeib: string) {} } // allow: functions

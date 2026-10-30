@@ -1,1 +1,0 @@
-const vnn = async function () {} // allow: methods

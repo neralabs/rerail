@@ -1,5 +1,0 @@
-
-class Weh {
-  private constructor() {}
-}
-      

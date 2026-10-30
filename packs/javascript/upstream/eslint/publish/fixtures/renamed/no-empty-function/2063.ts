@@ -1,1 +1,0 @@
-class B {@hblmqwihi() get rsx(): string {}} // allow: functions

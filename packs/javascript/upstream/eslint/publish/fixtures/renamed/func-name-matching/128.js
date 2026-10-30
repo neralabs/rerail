@@ -1,1 +1,0 @@
-Object?.defineProperty(igz, 'bar', { value: function bar() {} })

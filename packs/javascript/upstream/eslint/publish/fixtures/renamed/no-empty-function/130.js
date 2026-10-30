@@ -1,1 +1,0 @@
-class Nbw { async fht() { fht(); } }

@@ -1,1 +1,0 @@
-setTimeout(lyndvj, 'buzz')

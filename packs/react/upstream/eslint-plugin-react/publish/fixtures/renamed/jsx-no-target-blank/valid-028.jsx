@@ -1,1 +1,0 @@
-<a target={targetRvkzf} href="/absolute/path"></a>

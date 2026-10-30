@@ -1,1 +1,0 @@
-import { foo as z } from 'module';

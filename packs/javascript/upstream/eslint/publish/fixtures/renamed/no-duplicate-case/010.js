@@ -1,1 +1,0 @@
-var s = [1,2]; switch(s.toString()){case ([1,2]).toString():break; case ([1]).toString():break; default:break;}

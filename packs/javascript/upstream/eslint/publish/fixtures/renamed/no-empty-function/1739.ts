@@ -1,1 +1,0 @@
-const H = class {@ptnavfmqb() set rcm(value: string) {}}; // allow: asyncMethods

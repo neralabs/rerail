@@ -1,1 +1,0 @@
-const dke = cdb ? cdn: globalThis.Temporal; dke();

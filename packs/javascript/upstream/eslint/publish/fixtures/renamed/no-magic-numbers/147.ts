@@ -1,1 +1,0 @@
-type Tmd = { nzm: 42 };

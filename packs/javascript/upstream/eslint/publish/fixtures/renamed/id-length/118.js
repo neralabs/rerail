@@ -1,1 +1,0 @@
-function rjw(...w) { }

@@ -1,4 +1,0 @@
-
-let b: string;
-b! ?? '';
-    

@@ -1,1 +1,0 @@
-(function(lnfn) { let name; for ( name of lnfn ) { return; } })({});

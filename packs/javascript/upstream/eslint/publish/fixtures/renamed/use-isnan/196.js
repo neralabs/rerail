@@ -1,1 +1,0 @@
-ahf.indexOf((1, NaN))

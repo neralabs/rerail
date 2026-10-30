@@ -1,1 +1,0 @@
-let vhp, mmd; let d = true; let m = true;

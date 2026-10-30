@@ -1,1 +1,0 @@
-function hdt() {} // allow: decoratedFunctions

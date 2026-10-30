@@ -1,1 +1,0 @@
-class I { get i(){} i; set i(osu){} }

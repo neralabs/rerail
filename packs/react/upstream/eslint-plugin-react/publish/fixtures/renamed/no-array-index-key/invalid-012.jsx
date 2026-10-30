@@ -1,1 +1,0 @@
-dbh.some((cbf, g) => { cbs.push(<Dbh key={g} />); })

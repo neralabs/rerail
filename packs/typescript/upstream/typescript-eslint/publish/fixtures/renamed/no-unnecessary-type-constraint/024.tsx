@@ -1,1 +1,0 @@
-const qnou = <V extends any = unknown>() => {};

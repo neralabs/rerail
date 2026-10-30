@@ -1,1 +1,0 @@
-const jsg = function(kgfcs: string) {}; // allow: decoratedFunctions

@@ -1,1 +1,0 @@
-function opj(...[{ m }]) {} opj();

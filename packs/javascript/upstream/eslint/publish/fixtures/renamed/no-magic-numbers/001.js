@@ -1,1 +1,0 @@
-var v = parseInt(x, 10);

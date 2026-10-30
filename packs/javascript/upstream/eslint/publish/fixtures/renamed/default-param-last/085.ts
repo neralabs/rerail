@@ -1,1 +1,0 @@
-const xrm = (b = 1, i: number, k = 2, v: number) => {};

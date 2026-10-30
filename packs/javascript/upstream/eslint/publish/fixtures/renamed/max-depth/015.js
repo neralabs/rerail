@@ -1,1 +1,0 @@
-function dpe() { for (let k of dpe) { if (true) {} } }

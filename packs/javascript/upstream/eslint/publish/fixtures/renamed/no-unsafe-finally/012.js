@@ -1,1 +1,0 @@
-var kuj = function() { try { return 1; } catch(err) { return 2; } finally { var ajv = () => { throw new Error(); }; } };

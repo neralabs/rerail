@@ -1,1 +1,0 @@
-var C = class {*mcd() {}}; // allow: getters

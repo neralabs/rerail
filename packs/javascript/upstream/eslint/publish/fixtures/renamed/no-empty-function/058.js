@@ -1,1 +1,0 @@
-class C {static *hvn() { fxm(); }}

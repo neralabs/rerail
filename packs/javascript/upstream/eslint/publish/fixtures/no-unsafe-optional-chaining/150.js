@@ -1,1 +1,0 @@
-(obj?.foo && obj?.baz).bar

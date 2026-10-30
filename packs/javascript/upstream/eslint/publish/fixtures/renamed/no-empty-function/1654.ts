@@ -1,1 +1,0 @@
-class G {set kqn(value: string) {}} // allow: getters

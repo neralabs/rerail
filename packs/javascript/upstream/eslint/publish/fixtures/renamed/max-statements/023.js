@@ -1,1 +1,0 @@
-function vtp() { var mxb = 1; if (true) { while (false) { var wsp = null; } } return 3; }

@@ -1,1 +1,0 @@
-var cru = (/* comment */ object.cru);

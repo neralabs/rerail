@@ -1,1 +1,0 @@
-type ydcwLvuulajPogkj = void | Promise<void>;

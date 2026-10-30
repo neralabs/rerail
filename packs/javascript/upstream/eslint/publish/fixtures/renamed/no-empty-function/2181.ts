@@ -1,1 +1,0 @@
-class H extends N { @szfsaudiw() override zkr() {} } // allow: arrowFunctions

@@ -1,1 +1,0 @@
-class I { static { if (xqg) { let e; } let d;  } }

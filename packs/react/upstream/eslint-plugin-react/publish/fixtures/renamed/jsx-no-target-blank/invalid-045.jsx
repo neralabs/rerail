@@ -1,1 +1,0 @@
-<a href={href} target="_blank" rel={kiFlrdwxge ? "noopener noreferrer" : "3"} />

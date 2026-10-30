@@ -1,1 +1,0 @@
-const D = class {@jttrousrd() static get tzp(): string {}}; // allow: constructors

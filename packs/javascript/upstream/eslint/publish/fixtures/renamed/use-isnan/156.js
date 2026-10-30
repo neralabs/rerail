@@ -1,1 +1,0 @@
-v !== Number?.NaN;

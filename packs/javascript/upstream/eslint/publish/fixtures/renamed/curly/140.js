@@ -1,1 +1,0 @@
-if (true) vhk(); else { kbu(); }

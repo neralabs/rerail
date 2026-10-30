@@ -1,1 +1,0 @@
-var test = function(bkh_rjtdo) { console.log(bkh_rjtdo); };

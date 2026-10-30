@@ -1,1 +1,0 @@
-class B {@ehtxcqwuc() set mes(value: string) {}} // allow: functions

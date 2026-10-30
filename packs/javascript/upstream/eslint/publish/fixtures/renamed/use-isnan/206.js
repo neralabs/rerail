@@ -1,1 +1,0 @@
-ihe.lastIndexOf(NaN, NaN)

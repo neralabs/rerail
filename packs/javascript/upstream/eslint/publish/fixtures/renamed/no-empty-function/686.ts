@@ -1,1 +1,0 @@
-const A = class {static jvd(ncdqq: string) {}}; // allow: methods

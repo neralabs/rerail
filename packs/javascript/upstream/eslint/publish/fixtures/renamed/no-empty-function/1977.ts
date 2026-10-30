@@ -1,1 +1,0 @@
-const kdi = async (): Promise<void> => {}; // allow: constructors
