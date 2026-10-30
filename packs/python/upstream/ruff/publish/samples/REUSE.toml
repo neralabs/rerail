@@ -1,0 +1,122 @@
+# Licensing of the staged samples only; never archived (scripts/samples/pack.ts).
+version = 1
+
+[[annotations]]
+path = "conan-conan-internal-util-__init__.py-1a6cd4951cb0/**"
+SPDX-FileCopyrightText = "conan-io/conan contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "conan-test-integration-workspace-test_workspace_ref_parse.py-25cfdc496c5d/**"
+SPDX-FileCopyrightText = "conan-io/conan contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "dask-dask-array-tests-test_numpy_compat.py-2a7f8e712656/**"
+SPDX-FileCopyrightText = "dask/dask contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "dask-dask-bag-__init__.py-478f5a91ce54/**"
+SPDX-FileCopyrightText = "dask/dask contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "dask-dask-dataframe-_pyarrow_compat.py-217b2ee3879f/**"
+SPDX-FileCopyrightText = "dask/dask contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "dask-dask-tests-test_context.py-6e1a0a0025e6/**"
+SPDX-FileCopyrightText = "dask/dask contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "dask-dask-tests-test_datasets.py-402b695a7901/**"
+SPDX-FileCopyrightText = "dask/dask contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "dask-dask-tests-test_hashing.py-04a626c90518/**"
+SPDX-FileCopyrightText = "dask/dask contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "django-django-middleware-csp.py-0b286b71d5d7/**"
+SPDX-FileCopyrightText = "django/django contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = "dvc-dvc-commands-queue-stop.py-24f9b1a4d0f9/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-fs-dvc_path.py-0a4beb765a72/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-repo-du.py-4054814135dd/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-repo-experiments-save.py-2c74ce29364b/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-repo-trie.py-239de43f97bf/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-testing-benchmarks-cli-commands-test_checkout.py-123ad456d785/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-utils-studio.py-11b2efa4a153/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-dvc-utils-threadpool.py-2ec7b09c7c87/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "dvc-tests-unit-utils-serialize-test_toml.py-1bafad309bac/**"
+SPDX-FileCopyrightText = "iterative/dvc contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "modin-modin-core-dataframe-pandas-interchange-dataframe_protocol-exception.py-18b2fc7bb6fe/**"
+SPDX-FileCopyrightText = "modin-project/modin contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = "pydantic-benchmarks-corpus-anthropic-anthropic-types-beta-beta_web_fetch_tool_20260209.py-09687aa45003/**"
+SPDX-FileCopyrightText = "pydantic/pydantic contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pydantic-corpus-openai-openai-types-beta-threads-runs-code_interpreter_tool_call_delta.py-091c78f0c078/**"
+SPDX-FileCopyrightText = "pydantic/pydantic contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pydantic-tests-benchmarks-corpus-mcp-mcp_types-version.py-0ce766b9b6ca/**"
+SPDX-FileCopyrightText = "pydantic/pydantic contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pydantic-tests-benchmarks-corpus-openai-openai-types-responses-namespace_tool.py-0a683edba321/**"
+SPDX-FileCopyrightText = "pydantic/pydantic contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "pydantic-tests-benchmarks-corpus-openai-openai-types-vector_store.py-04fc531b1de6/**"
+SPDX-FileCopyrightText = "pydantic/pydantic contributors"
+SPDX-License-Identifier = "MIT"
