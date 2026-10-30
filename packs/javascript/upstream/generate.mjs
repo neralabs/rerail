@@ -18,10 +18,12 @@
 // espree, or the TypeScript-family extension of its filename. Code that does not parse is left out, and so is code
 // over MAX_CASE_BYTES: ESLint's performance stress cases (prefer-template's 1 MB string literal), which exhaust the
 // engine's per-file AST work budget once every pack rule runs on the file. Each kept file is one analysis unit. Columns are ESLint's, converted from UTF-16 code units to code points, 1-based.
-// `source.units` names each file's origin, the rule whose test file it came from. Each such file also gets a rename
-// variant, renamed/<rule>/<n>.<ext> (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`): its identifiers
-// and string and number literal contents renamed, in the original's language, linted like any file, and marked
-// `renamedFrom` the original.
+// `source.units` names each file's origin, the rule whose test file it came from, and the case's own language where it
+// differs from ESLint's defaults for its extension (`languageOptions`, scripts/pack-data/eslint-expected.mjs
+// `unitLanguage`), which the conformance runner evaluates it under. Each such file also gets a rename variant,
+// renamed/<rule>/<n>.<ext> (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`): its identifiers renamed,
+// order-preserving, its literals kept, in the original's language, linted like any file, and marked `renamedFrom` the
+// original.
 // eslint/provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`) record each kept file as
 // extracted from its rule's tests/lib/rules/<rule>.js, each rename variant as renamed from its original, and
 // fixtures.expected.json as Rerail's.
@@ -30,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { isVariantPath, unitLanguage, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
 import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
 import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
@@ -307,7 +309,9 @@ for (const path of linted.unparsed.filter(path => !isVariantPath(path))) {
   count.unparsed = (count.unparsed ?? 0) + 1;
 }
 const kept = files.filter(file => !unparsedSet.has(file));
-const recorded = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);
+// Each file's own language, as ESLint linted it, rides along in `source.units` for the conformance runner.
+const fileLanguages = new Map(languages.flatMap(({ files: members, languageOptions }) => members.map(member => [member, unitLanguage(member, languageOptions)])));
+const recorded = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings, fileLanguages);
 const { files: units, units: origin, findings } = recorded;
 writeJson(join(HERE, TOOL, "fixtures.expected.json"), {
   tool: TOOL,

@@ -453,7 +453,7 @@ function writeLicenseAndProvenance(upstream, cases, copies, recorded) {
   // A variant's package files are copies of its original's (Rerail's, or upstream test data verbatim), not renamed.
   const variant = (_path, entry) => {
     const original = byPath.get(entry.renamedFrom);
-    if (original !== undefined) return { ...entry, detail: `derived from ${original.testFile} ${original.origin} (\`${entry.renamedFrom}\` with its names and literals renamed)` };
+    if (original !== undefined) return { ...entry, detail: `derived from ${original.testFile} ${original.origin} (\`${entry.renamedFrom}\` with its names renamed (literals and the names' order kept))` };
     const { source, from, how } = originals.get(entry.renamedFrom);
     return { source, ...(from === undefined ? {} : { from }), how, detail: variantCopy(entry.renamedFrom) };
   };

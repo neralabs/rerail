@@ -1,0 +1,478 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "eslint-vars-on-top",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Declare var variables at the top of their function, script or static block; it matches how var is hoisted.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "declaration": {
+            "any": [
+              {
+                "kind": "variable_declaration"
+              },
+              {
+                "kind": "lexical_declaration"
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "variable_declaration"
+                    },
+                    {
+                      "kind": "lexical_declaration"
+                    },
+                    {
+                      "regex": "^declare\\s+(?:var|let|const)\\b",
+                      "not": {
+                        "kind": "program"
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "variable_declaration"
+                          },
+                          {
+                            "kind": "lexical_declaration"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "regex": "^declare\\s+(?:var|let|const)\\b",
+                "not": {
+                  "kind": "program"
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "variable_declaration"
+                    },
+                    {
+                      "kind": "lexical_declaration"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "prologue": {
+            "any": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "kind": "expression_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "not": {
+                    "follows": {
+                      "regex": "[\\s\\S]",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "sequence_expression"
+                  }
+                }
+              }
+            ]
+          },
+          "statement": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[{}]$"
+                }
+              ]
+            }
+          },
+          "var": {
+            "any": [
+              {
+                "kind": "variable_declaration",
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "export_statement"
+                      },
+                      {
+                        "regex": "^declare\\s",
+                        "not": {
+                          "kind": "program"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "variable_declaration"
+                    },
+                    {
+                      "regex": "^declare\\s+var\\b",
+                      "not": {
+                        "kind": "program"
+                      },
+                      "has": {
+                        "kind": "variable_declaration",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "regex": "^declare\\s+var\\b",
+                    "not": {
+                      "kind": "program"
+                    },
+                    "has": {
+                      "kind": "variable_declaration",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "export_statement",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "function-body": {
+            "kind": "statement_block",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "method_definition"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "var-not-on-top",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "var"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "program"
+                    },
+                    {
+                      "matches": "function-body"
+                    }
+                  ]
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "matches": "statement"
+                    },
+                    {
+                      "not": {
+                        "matches": "declaration"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "matches": "prologue"
+                          }
+                        },
+                        {
+                          "follows": {
+                            "stopBy": "end",
+                            "all": [
+                              {
+                                "matches": "statement"
+                              },
+                              {
+                                "not": {
+                                  "matches": "prologue"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vars-on-top",
+        "message": "All 'var' declarations must be at the top of the function scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "var-not-on-top-static-block",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "var"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "statement_block",
+                  "inside": {
+                    "kind": "class_static_block",
+                    "stopBy": "neighbor"
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "all": [
+                    {
+                      "matches": "statement"
+                    },
+                    {
+                      "not": {
+                        "matches": "declaration"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vars-on-top",
+        "message": "Move this var declaration to the top of its static block.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "var-in-nested-position",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "kind": "variable_declaration"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "program"
+                      },
+                      {
+                        "kind": "export_statement"
+                      },
+                      {
+                        "matches": "function-body"
+                      },
+                      {
+                        "kind": "statement_block",
+                        "inside": {
+                          "kind": "class_static_block",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "regex": "^declare\\s+var\\b",
+                        "not": {
+                          "kind": "program"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "program"
+                            },
+                            {
+                              "kind": "export_statement"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vars-on-top",
+        "message": "All 'var' declarations must be at the top of the function scope.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "var-in-for-in-head",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "regex": "^var$",
+            "inside": {
+              "kind": "for_in_statement",
+              "stopBy": "neighbor"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "vars-on-top",
+        "message": "Declare this loop variable with var at the top of the function and reuse it in the for-in head.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "vars-on-top"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/nursery/useVarsOnTop"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

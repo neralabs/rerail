@@ -1786,6 +1786,59 @@ mod tests {
         );
     }
 
+    /// `static`, `get` and `set` before a name on the next line are the method's own tokens, as
+    /// ECMAScript and TypeScript read a class member: `static get⏎a(){}` is a static getter `a`
+    /// (Patch 16 in `grammars/tree-sitter-javascript/PATCHES.md`, Patch 28 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn a_name_after_a_line_break_follows_static_get_and_set() {
+        let source = "class A { static set a(foo){} b(){} static get \n a(){}\n}\n\
+                      class B { static\nget\nb(){} get\nc(){} static get = 1; static get\n= 2; static async\n d(){} }\n";
+        for dialect in [
+            GrammarDialect::JavaScript,
+            GrammarDialect::TypeScript,
+            GrammarDialect::Tsx,
+        ] {
+            let root = dialect.ast_grep(source);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let members = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind().ends_with("_definition"))
+                .map(|node| {
+                    let tokens = node
+                        .children()
+                        .filter(|child| !child.is_named())
+                        .map(|child| child.kind().into_owned())
+                        .filter(|kind| matches!(kind.as_str(), "static" | "get" | "set" | "async"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let name = node
+                        .field("name")
+                        .or_else(|| node.field("property"))
+                        .expect("a member has a name");
+                    format!("{}:{tokens}:{}", node.kind(), name.text())
+                })
+                .map(|member| member.replace("public_field_definition", "field_definition"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                members,
+                [
+                    "method_definition:static set:a",
+                    "method_definition::b",
+                    "method_definition:static get:a",
+                    "method_definition:static get:b",
+                    "method_definition:get:c",
+                    "field_definition:static:get",
+                    "field_definition:static:get",
+                    "field_definition:static:async",
+                    "method_definition::d",
+                ],
+                "{dialect:?}"
+            );
+        }
+    }
+
     /// A destructuring assignment's target may be parenthesized, comments and all (Patch 6 in
     /// `grammars/tree-sitter-javascript/PATCHES.md`).
     #[test]

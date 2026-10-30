@@ -35,6 +35,7 @@ impl Adapter for Vue {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = <Ecma as Adapter>::DECLARATION_FILES;
+    const STRIPS_BOM: bool = <Ecma as Adapter>::STRIPS_BOM;
     type Scope = Ecma;
     type Value = Ecma;
     type Arguments = Ecma;

@@ -183,18 +183,6 @@ describe("the summary", () => {
     expect(renderComment(summary)).not.toContain("Nothing blocks.");
   });
 
-  it("lists a shipped rule passing a check vacuously, without blocking, and the comment shows it", async () => {
-    setUnits({ "clean.py": { rules: ["EX101"] } });
-    const { verdict } = await judge();
-    const vacuous = { id: "holds-under-rename", ok: true, vacuous: true as const, detail: "vacuous: no finding of the rule survives on its 2 rename variant unit(s)" };
-    const rule = verdict.rules[0]!;
-    const withVacuous = { ...verdict, rules: [{ ...rule, gates: { ...rule.gates, conformance: [...rule.gates.conformance.filter(check => check.id !== vacuous.id), vacuous] } }] };
-    const summary = summarize([], [withVacuous], UNGATED);
-    expect(summary.vacuous).toEqual([{ toolPack: "valid/examplelint", rule: "assert-used", check: "holds-under-rename", why: vacuous.detail }]);
-    expect(summary.blocking.filter(row => row.rule === "assert-used")).toEqual([]);
-    expect(renderComment(summary)).toContain("### Passing without evidence");
-  });
-
   it("puts a shrinks check's list path in the why, not the Pack column", () => {
     const detail = "1 entr(ies) the base lacks (plain/b): the list may only shrink";
     expect(ungatedRow({ id: "shrinks:conformance/languages/ungated-rules.json", ok: false, detail })).toEqual({

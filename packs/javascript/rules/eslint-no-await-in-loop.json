@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-await-in-loop",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid await inside loops; start the independent operations together and await them at once with Promise.all.",
   "scope": { "include": ["**/*"], "exclude": [] },
@@ -12,7 +12,7 @@
         "ast": {
           "language": "typescript",
           "utils": {
-            "for-await": { "kind": "for_in_statement", "has": { "regex": "^await$" } },
+            "for-await": { "kind": "for_in_statement", "has": { "regex": "^await$", "follows": { "regex": "^for$" } } },
             "boundary": {
               "any": [
                 { "kind": "function_declaration" },
@@ -35,10 +35,16 @@
           },
           "rule": {
             "any": [
-              { "kind": "await_expression" },
-              { "matches": "for-await" }
-            ],
-            "matches": "looped"
+              {
+                "any": [
+                  { "kind": "await_expression" },
+                  { "matches": "for-await" },
+                  { "kind": "using_declaration", "has": { "regex": "^await$" } }
+                ],
+                "matches": "looped"
+              },
+              { "regex": "^await$", "inside": { "kind": "for_in_statement", "stopBy": "neighbor" }, "precedes": { "regex": "^using$" } }
+            ]
           }
         }
       },

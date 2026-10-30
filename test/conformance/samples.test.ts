@@ -336,7 +336,7 @@ describe("rename variants", () => {
     expect(failingChecks(report)).toEqual(["holds-under-rename"]);
   });
 
-  it("count a variant the renaming took every finding of the rule from, without failing: vacuous, reported", async () => {
+  it("fail a rule the renaming took every finding from: vacuous, blocking", async () => {
     // renamed/asserts.py is asserts.py with its asserts gone: examplelint reports the original, not the variant.
     const fixtures = join(directory, "upstream", "examplelint", "fixtures");
     mkdirSync(join(fixtures, "renamed"), { recursive: true });
@@ -344,9 +344,58 @@ describe("rename variants", () => {
     setUnits({ "asserts.py": { rules: ["EX101"] }, "renamed/asserts.py": { rules: ["EX101"], renamedFrom: "asserts.py" } }, ["renamed/asserts.py"]);
     const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
     expect(fixturesRow(report).renamed).toMatchObject({ units: 1, tp: 0, fp: 0, fn: 0, renamedAway: 1 });
-    expect(reportFailures(report)).toEqual([]);
+    expect(reportFailures(report)).toEqual(["assert-used (fixtures): the renaming took every finding from its 1 rename variant(s) and none survives"]);
     const check = conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(entry => entry.id === "holds-under-rename");
-    expect(check).toEqual({ id: "holds-under-rename", ok: true, vacuous: true, detail: "vacuous: no finding of the rule survives on its 1 rename variant unit(s); 1 variant(s) lost every finding of the rule (renamed away)" });
+    expect(check).toEqual({
+      id: "holds-under-rename",
+      ok: false,
+      detail: "vacuous: no finding of the rule survives on its 1 rename variant unit(s); 1 variant(s) lost every finding of the rule (renamed away): the rule matches the test cases' names, not the construct; fix the rule",
+    });
+  });
+
+  it("pass a rule the renaming took every finding from when gates.yaml gives its rename_exempt reason", async () => {
+    // The vacuous case above, with examplelint's gates.yaml exempting EX101 (the upstream rule the port names).
+    const fixtures = join(directory, "upstream", "examplelint", "fixtures");
+    mkdirSync(join(fixtures, "renamed"), { recursive: true });
+    writeFileSync(join(fixtures, "renamed", "asserts.py"), "z = 1\n");
+    setUnits({ "asserts.py": { rules: ["EX101"] }, "renamed/asserts.py": { rules: ["EX101"], renamedFrom: "asserts.py" } }, ["renamed/asserts.py"]);
+    const gates = (facts: string) => `adapter: bandit
+rerail:
+  pack: valid
+  project: examplelint
+upstream:
+  name: example/examplelint
+  repository: https://github.com/example/examplelint
+  commit: ${"a".repeat(40)}
+  version: 1.0.0
+  license: Apache-2.0
+  recommended_configs: [default]
+  runtime: examplelint-1.0.0
+  lints: [".py"]
+popularity:
+  observed_on: 2026-10-06
+  evidence: [a fake upstream]
+rules:
+  EX101:
+    deprecated: null
+    recommended: null
+${facts}`;
+    const holds = (report: T4Report) => conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(entry => entry.id === "holds-under-rename");
+    // A gates.yaml without the reason changes nothing: still vacuous, still blocking.
+    writeFileSync(join(directory, "upstream", "examplelint", "gates.yaml"), gates(""));
+    const blocked = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(fixturesRow(blocked).renamed?.exempt).toBeUndefined();
+    expect(reportFailures(blocked)).toEqual(["assert-used (fixtures): the renaming took every finding from its 1 rename variant(s) and none survives"]);
+    expect(holds(blocked)?.ok).toBe(false);
+    writeFileSync(join(directory, "upstream", "examplelint", "gates.yaml"), gates("    rename_exempt: reports the very names the variants rename\n"));
+    const exempt = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
+    expect(fixturesRow(exempt).renamed).toMatchObject({ units: 1, tp: 0, renamedAway: 1, exempt: "reports the very names the variants rename" });
+    expect(reportFailures(exempt)).toEqual([]);
+    expect(holds(exempt)).toEqual({
+      id: "holds-under-rename",
+      ok: true,
+      detail: "n/a: exempt in gates.yaml (reports the very names the variants rename); no finding survives on its 1 rename variant unit(s); 1 variant(s) lost every finding of the rule (renamed away)",
+    });
   });
 });
 

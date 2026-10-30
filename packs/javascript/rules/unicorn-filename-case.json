@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "unicorn-filename-case",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Name JavaScript files in kebab-case, ignoring leading underscores and dots; consistent names are easier to find and import.",
+  "description": "Name JavaScript files and the folders holding them in kebab-case, ignoring leading underscores; consistent names are easier to find and import.",
   "scope": {
     "include": [
       "**/*.js",
@@ -39,13 +39,13 @@
       "forbid": {
         "regex": {
           "source": "file.path",
-          "pattern": "(?:^|/)[._]*(?:[^/]*[A-Z ]|[^/._][^/]*_)[^/]*$"
+          "pattern": "^(?:[^/]*/)*?(?:(?:_+(?:[A-Z-]|[^A-Za-z0-9_/-]-|[^/_][^/]*?(?:[A-Z_]|--|[^A-Za-z0-9_/-]-|-[^A-Za-z0-9_-]))|(?:[A-Z-]|[^A-Za-z0-9_/$-]-|[^/_$][^/]*?(?:[A-Z_]|--|[^A-Za-z0-9_/-]-|-[^A-Za-z0-9_-])))[^/]*/|(?:_+(?:[A-Z-]|[^A-Za-z0-9_/.-]-|[^/_.][^/.]*?(?:[A-Z_]|--|[^A-Za-z0-9_/.-]-|-(?:[^A-Za-z0-9_-]|$)))|(?:[A-Z-]|[^A-Za-z0-9_/.$-]-|[^/_.$][^/.]*?(?:[A-Z_]|--|[^A-Za-z0-9_/.-]-|-(?:[^A-Za-z0-9_-]|$))))[^/]*$)"
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "file.start",
         "code": "unicorn/filename-case",
-        "message": "Rename this file to kebab-case, for example cart-total.js."
+        "message": "Rename this file or folder to kebab-case, for example cart-total.js."
       }
     }
   ]

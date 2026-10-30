@@ -10,7 +10,7 @@ fixes here instead of upstream.
 | File | Origin |
 | --- | --- |
 | `LICENSE` | upstream, verbatim |
-| `common/scanner.h` | upstream with Patches 6, 7, 12, 13, 20, 21, 23 and 24 |
+| `common/scanner.h` | upstream with Patches 6, 7, 12, 13, 20, 21, 23, 24 and 28 |
 | `typescript/src/scanner.c`, `tsx/src/scanner.c` | upstream, verbatim |
 | `common/tree_sitter/{alloc,array,parser}.h` | written by `tree-sitter generate` 0.27.0 (one copy for both grammars) |
 | `typescript/src/grammar.json`, `tsx/src/grammar.json` | regenerated from the patched `common/define-grammar.js` |
@@ -1921,3 +1921,109 @@ files above, compared with Patches 1 to 26 alone: 285 files that failed to parse
 fail as before; 456 trees change. 440 of them now hold a tagged template with type arguments: the 285, 153 files whose
 tagged templates were read as comparisons, and 2 that still fail elsewhere. The other 16 are error recovery in files
 that fail either way.
+
+## Patch 28: a name on the line after `static`, `get` or `set` is the member's
+
+Upstream issue: none open (present at tag `v0.23.2` and at HEAD `75b3874`). The JavaScript grammar's Patch 16 is the
+same change there.
+
+Why: TypeScript reads `static`, `get` and `set` before a member's name as modifiers whatever line the name is on
+(`nextTokenCanFollowModifier`: `static` and `get`/`set` look past a line break, the other modifiers do not), as
+ECMAScript does: `static get⏎a() {}` is a static getter `a`, `get⏎a(): number` in an interface a getter signature.
+Upstream's scanner inserts a semicolon at a line break before an identifier, so it read each as a field named `get`
+(or `static`) and a method `a`, with no error: `static get⏎a(){}` held no getter, and a rule about accessors missed
+it. tree-sitter-javascript lexes `static get⏎` as one token for this case alone; the TypeScript grammar's own
+`method_definition` dropped even that. A never-returned external token, `_member_name_here`, now marks the places
+after `static`, `get` and `set` in `method_definition`, `method_signature` and `abstract_method_signature`; after a
+line break there, the scanner inserts no semicolon before a token that starts a property name (an identifier
+character, `\`, `#`, `[`, a quote or a non-ASCII character). Any other token (`=`, `(`, `;`, `}`, `:`) goes on as
+before, so `get⏎= 3` and `static get = 1` stay fields, and `public⏎y` stays a field `public` and a field `y`, as
+TypeScript reads it.
+
+```diff
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -13,6 +13,9 @@
+       $._jsx_closing_tag_lt,
+       // Never returned: valid right after `return` and `yield` (see return_statement, yield_expression).
+       $._no_line_terminator_here,
++      // Never returned: valid after a member's `static`, `get` or `set`, where a name on the next line is the member's
++      // (see method_definition).
++      $._member_name_here,
+     ]),
+ 
+     supertypes: ($, previous) => previous.concat([
+@@ -547,11 +550,11 @@
+ 
+       method_signature: $ => seq(
+         optional($.accessibility_modifier),
+-        optional('static'),
++        optional(seq('static', optional($._member_name_here))),
+         optional($.override_modifier),
+         optional('readonly'),
+         optional('async'),
+-        optional(choice('get', 'set', '*')),
++        optional(choice(seq(choice('get', 'set'), optional($._member_name_here)), '*')),
+         field('name', $._property_name),
+         optional('?'),
+         $._call_signature,
+@@ -561,7 +564,7 @@
+         optional($.accessibility_modifier),
+         'abstract',
+         optional($.override_modifier),
+-        optional(choice('get', 'set', '*')),
++        optional(choice(seq(choice('get', 'set'), optional($._member_name_here)), '*')),
+         field('name', $._property_name),
+         optional('?'),
+         $._call_signature,
+@@ -653,11 +656,11 @@
+ 
+       method_definition: $ => prec.left(seq(
+         optional($.accessibility_modifier),
+-        optional('static'),
++        optional(seq('static', optional($._member_name_here))),
+         optional($.override_modifier),
+         optional('readonly'),
+         optional('async'),
+-        optional(choice('get', 'set', '*')),
++        optional(choice(seq(choice('get', 'set'), optional($._member_name_here)), '*')),
+         field('name', $._property_name),
+         optional('?'),
+         $._call_signature,
+--- a/common/scanner.h
++++ b/common/scanner.h
+@@ -19,6 +19,8 @@
+     JSX_CLOSING_TAG_LT,
+     // Never returned: valid right after `return` and `yield`, which take no operand after a line break.
+     NO_LINE_TERMINATOR_HERE,
++    // Never returned: valid after a member's `static`, `get` or `set`, where a name on the next line is the member's.
++    MEMBER_NAME_HERE,
+ };
+ 
+ static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
+@@ -223,6 +225,16 @@
+     // would continue it.
+     if (valid_symbols[ARROW_BODY_END]) {
+         return lexer->lookahead != ',' && lexer->lookahead != ':' && lexer->lookahead != ';';
++    }
++
++    // After a member's `static`, `get` or `set`, a property name on the next line is the member's, as TypeScript reads
++    // a class or type member (`static get⏎a() {}` is a static getter `a`, `get⏎a() {}` a getter): no semicolon there.
++    // Any other token (`=`, `(`, `;`, `}`) goes on as before.
++    if (valid_symbols[MEMBER_NAME_HERE] &&
++        (is_identifier_char(lexer->lookahead) || lexer->lookahead == '\\' || lexer->lookahead == '#' ||
++         lexer->lookahead == '[' ||
++         lexer->lookahead == '"' || lexer->lookahead == '\'' || lexer->lookahead > 0x7f)) {
++        return false;
+     }
+ 
+     switch (lexer->lookahead) {
+```
+
+Node kinds and field names are unchanged. TypeScript 5.9.3 reads every case above as the patched grammar does: in a
+class, `static⏎x = 1` (a static field), `get⏎[k]() {}`, `set⏎"s"(v) {}`, `public⏎y = 2` (two fields), `get⏎= 3` and
+`static⏎{ }` (a static block); `abstract get⏎a(): number`; and in an interface `get⏎a(): number`, `set⏎b(v: number)`
+and `get: number`. Upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's `foo++!`).
+Each generated parser has 117 more states (6,019 for TypeScript and 6,306 for TSX, from 5,902 and 6,189). Over the
+10,341 `.ts` and 1,258 `.tsx` files of every pack's fixtures and samples, compared with Patches 1 to 27 alone, no
+named tree changes and no file gains or loses an error.

@@ -17,7 +17,9 @@
 // (.test.tsx with JSX, or the TypeScript-family extension of its filename after `.test`). Code that does not parse is left out. Each kept file is
 // one analysis unit. Rerail's own cases (AUTHORED, below) are written beside them as fixtures/<rule>/rerail-<name>.test.ts,
 // linted the same way, and listed as Rerail's in UPSTREAM.md beside this generator. `source.units` names each upstream
-// case's origin, the rule whose test file it came from (Rerail's cases have none); each such case also gets a rename
+// case's origin, the rule whose test file it came from (Rerail's cases have none), and its own parserOptions where they
+// differ from the extension's (`languageOptions`, eslint-expected.mjs `unitLanguage`), which the conformance runner
+// evaluates it under; each such case also gets a rename
 // variant under fixtures/renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted in the
 // original's language and marked `renamedFrom` it.
 // provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`, run after UPSTREAM.md is
@@ -33,6 +35,7 @@ import {
   isVariantPath,
   lint,
   pinnedRequire,
+  unitLanguage,
   withOrigins,
   writeExpectedFindings,
   writeRenameVariants,
@@ -804,7 +807,9 @@ async function recordFixtures() {
   if (mismatches.length > 0) throw new Error(`AUTHORED cases the plugin reports otherwise:\n  ${mismatches.join("\n  ")}`);
   const unparsed = new Set(linted.skipped.map(({ path }) => path));
   const kept = files.filter(file => !unparsed.has(file)).sort();
-  const recorded = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
+  // Each file's own parser options, as ESLint linted it, ride along in `source.units` for the conformance runner.
+  const fileLanguages = new Map(languages.flatMap(({ files: members, languageOptions }) => members.map(member => [member, unitLanguage(member, languageOptions)])));
+  const recorded = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings, fileLanguages);
   const { files: units, units: origin, findings } = recorded;
   writeAuthoredRecord([...authored].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)));
   writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);

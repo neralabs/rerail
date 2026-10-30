@@ -1,5 +1,10 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
-use crate::code_rule_dsl::matcher::{Reading, Separator, Source, StringCase, Trans, Transform};
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+};
+use crate::code_rule_dsl::matcher::{
+    Digits, Reading, Separator, Source, StringCase, Trans, Transform,
+};
 use crate::code_rule_dsl::model::Limits;
 use ast_grep_core::meta_var::MetaVariable;
 use napi::Result;
@@ -83,23 +88,13 @@ fn variable(value: Option<&Value>, path: &str) -> Result<MetaVariable> {
 fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Result<Trans> {
     let Value::Object(entry) = value else {
         return Err(invalid(format!(
-            "{path} must be an object with one of replace, substring, convert, line, lines or count; \
-             the string form is not supported"
+            "{path} must be an object with one of {}; the string form is not supported",
+            Trans::kinds_listed()
         )));
     };
-    reject_unknown(
-        entry,
-        &[
-            "replace",
-            "substring",
-            "convert",
-            "line",
-            "lines",
-            "count",
-            "rewrite",
-        ],
-        path,
-    )?;
+    let mut keys = Trans::KINDS.to_vec();
+    keys.push("rewrite");
+    reject_unknown(entry, &keys, path)?;
     if entry.contains_key("rewrite") {
         return Err(invalid(format!(
             "{path}/rewrite: rewrite is not supported yet; use replace, substring or convert"
@@ -107,7 +102,8 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
     }
     let [(kind, body)] = entry.iter().collect::<Vec<_>>()[..] else {
         return Err(invalid(format!(
-            "{path} must hold exactly one of replace, substring, convert, line, lines or count"
+            "{path} must hold exactly one of {}",
+            Trans::kinds_listed()
         )));
     };
     let at = format!("{path}/{kind}");
@@ -169,6 +165,44 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
             Trans::Line {
                 source: source(body, &at, limits, reading)?,
                 end,
+            }
+        }
+        "toPrecision" => {
+            reject_unknown(body, &["source", "default", "value", "digits"], &at)?;
+            gate(
+                &at,
+                with_adapter!(reading.family, A => <<A as Adapter>::Value as ValueRules>::feature(
+                    ValueFeature::ToPrecision
+                )),
+            )?;
+            let digits = match body.get("digits") {
+                Some(Value::Number(number)) => match number.as_u64() {
+                    Some(digits @ 1..=100) => Digits::Fixed(digits as u32),
+                    _ => {
+                        return Err(invalid(format!(
+                            "{at}/digits must be an integer from 1 to 100, or a `$NAME` variable"
+                        )));
+                    }
+                },
+                Some(Value::String(_)) => {
+                    match variable(body.get("digits"), &format!("{at}/digits"))? {
+                        variable @ MetaVariable::Capture(..) => Digits::Variable(variable),
+                        _ => {
+                            return Err(invalid(format!(
+                                "{at}/digits: the digits are one text (`$NAME`), not a `$$$` list"
+                            )));
+                        }
+                    }
+                }
+                _ => {
+                    return Err(invalid(format!(
+                        "{at}/digits is required: an integer from 1 to 100, or a `$NAME` variable"
+                    )));
+                }
+            };
+            Trans::ToPrecision {
+                source: source(body, &at, limits, reading)?,
+                digits,
             }
         }
         "lines" | "count" => {
@@ -272,27 +306,40 @@ pub(super) fn compile_transform(
             )));
         }
     }
+    // Depth first over every variable a step reads (its source, and `toPrecision`'s digits), each
+    // step after the steps it reads.
+    fn visit<'a>(
+        name: &'a str,
+        parsed: &'a BTreeMap<String, Trans>,
+        path: &str,
+        stack: &mut Vec<&'a str>,
+        done: &mut BTreeSet<&'a str>,
+        steps: &mut Vec<(String, Trans)>,
+    ) -> Result<()> {
+        let Some(trans) = parsed.get(name) else {
+            return Ok(());
+        };
+        if done.contains(name) {
+            return Ok(());
+        }
+        if stack.contains(&name) {
+            return Err(invalid(format!(
+                "{path}/{name}: `{name}` has a cyclic dependency"
+            )));
+        }
+        stack.push(name);
+        for source in trans.source_names() {
+            visit(source, parsed, path, stack, done, steps)?;
+        }
+        stack.pop();
+        done.insert(name);
+        steps.push((name.to_owned(), trans.clone()));
+        Ok(())
+    }
     let mut steps = Vec::with_capacity(parsed.len());
     let mut done = BTreeSet::new();
     for name in parsed.keys() {
-        let mut stack = Vec::new();
-        let mut next = name.as_str();
-        while !done.contains(next) {
-            let Some(trans) = parsed.get(next) else {
-                break;
-            };
-            if stack.contains(&next) {
-                return Err(invalid(format!(
-                    "{path}/{next}: `{next}` has a cyclic dependency"
-                )));
-            }
-            stack.push(next);
-            next = trans.source_name();
-        }
-        for key in stack.into_iter().rev() {
-            done.insert(key);
-            steps.push((key.to_owned(), parsed[key].clone()));
-        }
+        visit(name, &parsed, path, &mut Vec::new(), &mut done, &mut steps)?;
     }
     Ok(Transform {
         steps,
