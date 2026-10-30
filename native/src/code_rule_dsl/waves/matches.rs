@@ -44,6 +44,9 @@ pub(in crate::code_rule_dsl) struct Chunk {
 }
 
 pub(in crate::code_rule_dsl) struct Wave {
+    /// Where the labels and root programs run: the CPU or Metal, compiled now or in the
+    /// background (`compilation`).
+    backend: ExecutionBackend,
     names: Vec<String>,
     plans: Vec<Arc<AnchorPlan>>,
     lowered: LoweredWave,
@@ -57,9 +60,10 @@ fn invalid(error: impl std::fmt::Debug) -> StoreError {
 }
 
 impl Wave {
-    pub(in crate::code_rule_dsl) fn new(clauses: &[Clause]) -> StoreResult<Self> {
+    pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
         let matchers = clauses.iter().map(|clause| &clause.matcher).collect::<Vec<_>>();
         Ok(Self {
+            backend,
             names: clauses.iter().map(|clause| clause.name.clone()).collect(),
             plans: clauses.iter().map(|clause| Arc::clone(&clause.plan)).collect(),
             lowered: LoweredWave::new(&matchers).map_err(invalid)?,
@@ -118,7 +122,7 @@ impl Wave {
         let grid = vec![vec![true; programs.len()]; views.len()];
         let limits = vec![u32::MAX; programs.len()];
         let demand =
-            PackedDemand::new(ExecutionBackend::CpuJit, programs, views, anchors, grid, limits).map_err(invalid)?;
+            PackedDemand::new(self.backend, programs, views, anchors, grid, limits).map_err(invalid)?;
         self.chunks.push(Chunk { candidates });
         Ok(Some(demand))
     }

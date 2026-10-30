@@ -112,21 +112,27 @@ fn ingested(default: usize) -> (ContentStore, Vec<String>) {
 
 #[test]
 fn the_wave_finds_ws_matches_from_the_prefilters_candidates() {
-    gate(8, Limits::default());
+    gate(8, Limits::default(), ExecutionBackend::CpuJit);
+}
+
+/// In the background mode the first chunks run on the interpreter, with the same matches.
+#[test]
+fn the_wave_runs_while_its_programs_compile() {
+    gate(4, Limits { chunk_bytes: 1, ..Limits::default() }, ExecutionBackend::CpuBackground);
 }
 
 /// Chunks of one document each: a chunk's batch maps its files to its own documents.
 #[test]
 fn the_wave_runs_chunk_by_chunk() {
-    gate(4, Limits { chunk_bytes: 1, ..Limits::default() });
+    gate(4, Limits { chunk_bytes: 1, ..Limits::default() }, ExecutionBackend::CpuJit);
 }
 
-fn gate(default: usize, limits: Limits) {
+fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
     let (store, paths) = ingested(default);
     let (clauses, grammars) = clauses();
     let documents = documents(&store, WS, &paths).unwrap();
     assert_eq!(documents.len(), paths.len(), "every fixture has core facts");
-    let mut wave = Wave::new(&clauses).unwrap();
+    let mut wave = Wave::new(&clauses, backend).unwrap();
     let program = wave.program();
     let backing = Backing::default();
     let scope = backing.enter(&store);
@@ -212,7 +218,7 @@ fn gate(default: usize, limits: Limits) {
 fn the_wave_is_one_evaluation_on_metal() {
     let (store, paths) = ingested(15);
     let (clauses, grammars) = clauses();
-    let wave = Wave::new(&clauses).unwrap();
+    let wave = Wave::new(&clauses, ExecutionBackend::MetalBackground).unwrap();
     let tapes = paths.iter().map(|path| Families::stored(&store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
     let candidates = wave.candidates(&store, &tapes).unwrap();
     let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
