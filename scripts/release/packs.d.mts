@@ -26,6 +26,8 @@ export function releasePacks(
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
     assertPublic(name: string, version: string): Promise<void>;
+    readNext(name: string): Promise<string | null>;
+    distTag(name: string, version: string, tag: string): void;
     tag(tag: string): void;
     log(line: string): void;
   },

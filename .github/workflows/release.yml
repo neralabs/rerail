@@ -7,13 +7,14 @@ name: Release
 # A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag: `v1.2.3` -> latest,
 # `v1.2.3-beta.N` -> beta, `v1.2.3-next.N` -> next. The tag must equal package.json's version. Merging the Release
 # pull request makes the tag: release-pr.yml tags the version it set (docs/distribution-model.md, "Release
-# channels"). After publishing, the dist-tags job lists core's dist-tags in the run summary and fails if the channel's
-# dist-tag is not the version just published.
+# channels"). A version published under `latest` moves `next` up to it too, unless `next` is already at a newer
+# preview, so `next` never trails `latest`. After publishing, the dist-tags job lists core's dist-tags in the run
+# summary and fails if the channel's dist-tag is not the version just published, or `next` is older than `latest`.
 #
 # `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
 # can be installed and checked by hand. With `latest`, it builds nothing and points core's `latest` dist-tag at that
-# released version, to put core back, behind the same `release` environment approval and with trusted publishing,
-# so no npm login is needed.
+# released version, to put core back (raising `next` to it as well, should `next` be older), behind the same `release`
+# environment approval and with trusted publishing, so no npm login is needed.
 #
 # package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
 
@@ -170,9 +171,11 @@ jobs:
 
   # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
   # publish credential, so no npm token exists anywhere. npmjs must list this repository,
-  # `release.yml`, and the `release` environment as the package's trusted publisher.
+  # `release.yml`, and the `release` environment as the package's trusted publisher, allowing `npm dist-tag` as well
+  # as `npm publish` (a `latest` release moves `next` up).
   # `--provenance` makes npm attach a provenance attestation and fail the publish when it cannot generate one (for
-  # example, if this repository is ever made private again), so no release reaches npm without one.
+  # example, if this repository is ever made private again), so no release reaches npm without one. The job can be run
+  # again after a failure: a version npm already has is not published again, and `next` is only ever moved up.
   publish:
     name: Publish to npmjs
     needs: [metadata, package, windows-install, unix-install]
@@ -189,11 +192,17 @@ jobs:
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm CLI 11.5.1 or newer.
+      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`) 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
-          npm install --global "npm@^11.5.1"
+          npm install --global "npm@^11.21.0"
           npm --version
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Download release tarball
         uses: actions/download-artifact@v8
@@ -205,10 +214,22 @@ jobs:
         env:
           PACKAGE_TARBALL: release/${{ needs.package.outputs.tarball }}
           RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
-          npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance
+          if npm view "@neralabs/rerail@${RELEASE_VERSION}" version --registry https://registry.npmjs.org > /dev/null 2>&1; then
+            echo "::notice::@neralabs/rerail@${RELEASE_VERSION} is already on npm (a re-run): not published again"
+          else
+            npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance
+          fi
+
+      # A preview (`next`, `beta`) leaves `next` alone; a stable release moves it up, unless it is at a newer preview.
+      - name: Keep next from trailing latest
+        if: needs.metadata.outputs.channel == 'latest'
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: node scripts/release/raise-next.mjs "@neralabs/rerail@${RELEASE_VERSION}"
 
   # Reads core's dist-tags back from npm, which for this restricted package needs a read token: the read-only
   # NPM_PACKS_READ_TOKEN, which must cover @neralabs/rerail as well as the packs.
@@ -246,7 +267,8 @@ jobs:
           RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
         run: node scripts/release/dist-tags-check.mjs
 
-  # Puts core back: points `latest` at a version this repository released (its tag exists) and npm has. Trusted
+  # Puts core back: points `latest` at a version this repository released (its tag exists) and npm has, and `next` there
+  # too should `next` be older, so it never trails `latest` (a put-back to an older version leaves `next` alone). Trusted
   # publishing, as for publish: core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
   put-back:
     name: Point latest at ${{ inputs.latest }}
@@ -291,6 +313,11 @@ jobs:
         env:
           VERSION: ${{ inputs.latest }}
         run: npm dist-tag add "@neralabs/rerail@${VERSION}" latest --registry https://registry.npmjs.org
+
+      - name: Keep next from trailing latest
+        env:
+          VERSION: ${{ inputs.latest }}
+        run: node scripts/release/raise-next.mjs "@neralabs/rerail@${VERSION}"
 
       - name: Authenticate npm to read core
         env:

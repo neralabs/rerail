@@ -1,14 +1,15 @@
 // scripts/release/core.mjs, core-paths.mjs and dist-tags.mjs: when core is released (what it ships changed since its
-// last tag), the version it takes, the changelog and version edits the Release pull request makes, the tag guard, and
-// the check of a release's dist-tags.
+// last tag), the version it takes, the changelog and version edits the Release pull request makes, the tag guard,
+// `next` kept from trailing `latest`, and the check of a release's dist-tags.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import semver from "semver";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { PLUGIN_PINS, changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
-import { distTagReport, parseDistTagList, parseExpectation } from "../../scripts/release/dist-tags.mjs";
+import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -149,12 +150,19 @@ describe("distTagReport", () => {
   const expected = ["@neralabs/rerail@0.1.0", "@neralabs/rerail-pack-python@0.1.5:next", "@neralabs/rerail-pack-react@0.1.5"].map(parseExpectation);
 
   it("passes a package whose dist-tag is the version just published, and fails one that is not or could not be read", () => {
-    const distTags = { "@neralabs/rerail": { latest: "0.1.0", next: "0.1.0-next.4" }, "@neralabs/rerail-pack-python": { latest: "0.1.3", held: "0.1.3", next: "0.1.5" }, "@neralabs/rerail-pack-react": null };
+    const distTags = { "@neralabs/rerail": { latest: "0.1.0", next: "0.1.0" }, "@neralabs/rerail-pack-python": { latest: "0.1.3", held: "0.1.3", next: "0.1.5" }, "@neralabs/rerail-pack-react": null };
     const report = distTagReport(expected, (name) => distTags[name]);
     expect(report.failures).toEqual(["@neralabs/rerail-pack-react: its dist-tags could not be read from npm"]);
-    expect(report.table).toContain("| `@neralabs/rerail` | 0.1.0 | `latest` ✅ | `latest`: 0.1.0, `next`: 0.1.0-next.4 |");
+    expect(report.table).toContain("| `@neralabs/rerail` | 0.1.0 | `latest` ✅ | `latest`: 0.1.0, `next`: 0.1.0 |");
     const stale = distTagReport([expected[0]], () => ({ latest: "0.1.0-next.4" }));
     expect(stale.failures).toEqual(["@neralabs/rerail: latest is 0.1.0-next.4, not the 0.1.0 just published"]);
+  });
+
+  it("fails a package whose next is older than its latest, and passes one with no next or a newer one", () => {
+    const trailing = distTagReport([expected[0]], () => ({ latest: "0.1.0", next: "0.1.0-next.4" }));
+    expect(trailing.failures).toEqual(["@neralabs/rerail: next is 0.1.0-next.4, older than latest 0.1.0; a release under latest must move next up to it"]);
+    expect(distTagReport([expected[0]], () => ({ latest: "0.1.0" })).failures).toEqual([]);
+    expect(distTagReport([expected[0]], () => ({ latest: "0.1.0", next: "0.1.1-next.1" })).failures).toEqual([]);
   });
 
   it("reads npm dist-tag ls output", () => {
@@ -165,5 +173,43 @@ describe("distTagReport", () => {
     expect(expected[0]).toEqual({ name: "@neralabs/rerail", version: "0.1.0", tag: "latest" });
     expect(expected[1]).toEqual({ name: "@neralabs/rerail-pack-python", version: "0.1.5", tag: "next" });
     expect(() => parseExpectation("@neralabs/rerail")).toThrow("is not <name>@<version>");
+  });
+});
+
+describe("compareVersions and nextTrails", () => {
+  const versions = ["0.1.0-alpha", "0.1.0-alpha.1", "0.1.0-alpha.beta", "0.1.0-beta", "0.1.0-beta.2", "0.1.0-beta.11", "0.1.0-next.4", "0.1.0-rc.1", "0.1.0", "0.1.1", "0.1.10", "0.2.0-next.1", "0.2.0", "1.0.0", "1.0.0+build.5", "10.0.0"];
+
+  it("orders versions as semver does, prereleases below their release and build metadata ignored", () => {
+    for (const a of versions) {
+      for (const b of versions) expect(Math.sign(compareVersions(a, b)), `${a} vs ${b}`).toBe(semver.compare(a, b));
+    }
+    expect(() => compareVersions("0.1", "0.1.0")).toThrow("0.1 is not a semantic version");
+  });
+
+  it("moves next when it is unset or older, never when it is the version or newer", () => {
+    expect(nextTrails(null, "0.1.4")).toBe(true);
+    expect(nextTrails(undefined, "0.1.4")).toBe(true);
+    expect(nextTrails("0.1.3", "0.1.4")).toBe(true);
+    expect(nextTrails("0.1.0-next.4", "0.1.0")).toBe(true);
+    expect(nextTrails("0.1.4", "0.1.4")).toBe(false);
+    expect(nextTrails("0.1.5-next.1", "0.1.4")).toBe(false);
+  });
+});
+
+describe("raiseNext", () => {
+  const run = async (next, version) => {
+    const moved = [];
+    const line = await raiseNext("@neralabs/rerail", version, { readNext: async () => next, distTag: (name, at, tag) => void moved.push(`${name}@${at} ${tag}`) });
+    return { moved, line };
+  };
+
+  it("points a trailing next at the version and says what it was", async () => {
+    expect(await run("0.1.0-next.4", "0.1.0")).toEqual({ moved: ["@neralabs/rerail@0.1.0 next"], line: "pointed next at @neralabs/rerail@0.1.0 (it was 0.1.0-next.4)" });
+    expect(await run(null, "0.1.0")).toEqual({ moved: ["@neralabs/rerail@0.1.0 next"], line: "pointed next at @neralabs/rerail@0.1.0 (it was not set)" });
+  });
+
+  it("leaves a next already at the version, as a re-run finds it, or at a newer preview", async () => {
+    expect(await run("0.1.0", "0.1.0")).toEqual({ moved: [], line: "@neralabs/rerail@0.1.0: next is 0.1.0, not older; left there" });
+    expect((await run("0.1.1-next.1", "0.1.0")).moved).toEqual([]);
   });
 });

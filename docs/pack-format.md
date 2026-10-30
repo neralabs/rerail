@@ -478,15 +478,18 @@ them; core's `v*` release (`release.yml`) is separate.
    - `npm pack`, then a check that the tarball holds only `package.json` and what `files` publishes, and no
      validation material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
    - `npm publish --access public --tag latest` with npm trusted publishing (the `release` environment, so a
-     reviewer approves the run), a check that an anonymous reader gets the version, and the tag.
-     Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used
-     from then on. A pack held at an older `latest` (step 3) is published under `next` instead, and its hold stays.
+     reviewer approves the run), a check that an anonymous reader gets the version, `next` moved up to it, and the
+     tag. Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is
+     used from then on. `next` never trails `latest`: it is pointed at the version too, unless it is already at a
+     newer one, so the `next` update channel gets the release as well. A pack held at an older `latest` (step 3) is
+     published under `next` instead, and its hold stays.
 
    Packs are published one by one, and any failed run can be run again: a version already tagged is skipped, and
-   one the registry already has without its tag (a run that failed after publishing) is checked and tagged, not
-   published again. The run's **Published dist-tags** job then lists each published pack's dist-tags in the run
-   summary and fails if one's `latest` (`next` for a held pack) is not the version just published. A pull request
-   that touches packs runs the gate and the packing as a dry run.
+   one the registry already has without its tag (a run that failed after publishing) is checked, has its `next`
+   moved up and is tagged, not published again. The run's **Published dist-tags** job then lists each published
+   pack's dist-tags in the run summary and fails if one's `latest` (`next` for a held pack) is not the version just
+   published, or its `next` is older than its `latest`. A pull request that touches packs runs the gate and the
+   packing as a dry run.
 3. **Put back.** To put an older released version back, run the workflow from `main` (Actions → Release packs → Run
    workflow) with the pack's id and that version. Its first job lists, in the run summary, what it will move, and its
    promote job, once a reviewer approves the `release` environment, points the pack's `latest` at that version and

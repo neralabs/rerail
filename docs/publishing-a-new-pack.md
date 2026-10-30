@@ -74,14 +74,14 @@ node scripts/release/packs-publish.mjs /tmp/rule-packs
 - npm prints "Authenticate your account at: <url>". Open the URL and approve it. One approval covers every pack in
   the run.
 - For each pack the script publishes it as public under the `latest` dist-tag, checks that an anonymous reader
-  gets the version, and pushes the release tag to GitHub.
+  gets the version, points `next` at it too (`next` never trails `latest`), and pushes the release tag to GitHub.
 - It's safe to run again after a failure. A version that's already tagged is skipped. A version npm already has but
   that has no tag is checked and tagged, not published again.
 
 ## 4. Check the result
 
 ```sh
-npm dist-tag ls @neralabs/rerail-pack-<id>        # latest: <version>
+npm dist-tag ls @neralabs/rerail-pack-<id>        # latest: <version>, next: <version>
 npm access get status @neralabs/rerail-pack-<id>  # private
 git ls-remote --tags origin "refs/tags/@neralabs/rerail-pack-<id>@*"
 ```

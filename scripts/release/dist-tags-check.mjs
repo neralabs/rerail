@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // After a release run publishes, lists each published package's npm dist-tags in the run summary and fails unless
-// the dist-tag it was published under (`latest` unless named) points at the version just published (distTagReport in
-// dist-tags.mjs). It reads them with `npm dist-tag ls`, which sees a publish straight away; a package not there yet
-// is still read again, for up to about two minutes, before the check fails.
+// the dist-tag it was published under (`latest` unless named) points at the version just published, and its `next` is
+// not older than its `latest` (distTagReport in dist-tags.mjs). It reads them with `npm dist-tag ls`, which sees a
+// publish straight away; a package not there yet is still read again, for up to about two minutes, before the check
+// fails.
 //
 //   node scripts/release/dist-tags-check.mjs <name>@<version>[:<dist-tag>] ...   (or $RELEASED, the same, space-separated)
 import { appendFileSync } from "node:fs";
