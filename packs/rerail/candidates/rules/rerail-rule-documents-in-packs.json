@@ -1,0 +1,71 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-rule-documents-in-packs",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep code and conversation rules in a pack's rules or candidates folder and rule drafts out of the repository; engine test inputs belong under fixtures.",
+  "scope": {
+    "include": [
+      "**/*.json"
+    ],
+    "exclude": [
+      "packs/*/rules/*.json",
+      "packs/*/candidates/rules/*.json",
+      "packs/*/candidates/**/rules/*.json",
+      "fixtures/packs/**",
+      "fixtures/*/compile/examples/*.json",
+      "fixtures/host/benchmark/resolves/*.json",
+      "fixtures/host/benchmark/usage/*.json",
+      "fixtures/host/code-rule-dsl/*.json",
+      "fixtures/host/constraint-code-rules/*.json",
+      "**/node_modules/**",
+      "**/target/**",
+      "**/*.expected.json",
+      "native/grammars/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "rule-draft",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A\\s*\\{\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*(?:\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*,\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*\"rule\"\\s*:\\s*\\{|\"rule\"\\s*:\\s*\\{(?s:.*)\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*[,}])"
+        }
+      },
+      "violation": {
+        "code": "RULE_DRAFT_IN_REPOSITORY",
+        "anchor": "witness.start",
+        "message": "Keep rule drafts in a temp folder outside the repo; to add this rule, save only its rule object as packs/<pack>/candidates/rules/<id>.json. A recorded API response may stay."
+      }
+    },
+    {
+      "id": "code-rule-outside-pack",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A\\s*\\{\\s*(?:(?:\"(?:description|id|mode)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"revision\"\\s*:\\s*\\d+|\"scope\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})\\s*,\\s*)*(?:\"clauses\"\\s*:(?s:.*?))?(?P<FORMAT>\"format\")\\s*:\\s*\"rerail\\.policy/v1\""
+        }
+      },
+      "violation": {
+        "code": "CODE_RULE_OUTSIDE_PACK",
+        "anchor": "capture.FORMAT",
+        "message": "Save this rule as packs/<pack>/candidates/rules/<id>.json (rules/ once it ships). An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
+      }
+    },
+    {
+      "id": "conversation-rule-outside-pack",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A\\s*\\{\\s*(?:(?:\"(?:id|mode|reference)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"(?:action|repeat)\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})\\s*,\\s*)*(?:\"match\"\\s*:(?s:.*?))?(?P<SAMPLE>\"sample\")\\s*:\\s*\\{\\s*(?:\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*,\\s*)*\"source\"\\s*:\\s*\"(?:tool:[^\"]*|user-input|assistant-text)\"\\s*(?:,\\s*\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*)*\\}"
+        }
+      },
+      "violation": {
+        "code": "CONVERSATION_RULE_OUTSIDE_PACK",
+        "anchor": "capture.SAMPLE",
+        "message": "Save this conversation rule as packs/<pack>/candidates/rules/<id>.json. An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
+      }
+    }
+  ]
+}

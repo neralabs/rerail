@@ -1,0 +1,79 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-pack-data-helper-copies",
+  "revision": 1,
+  "mode": "log",
+  "description": "Import the shared pack-data helpers in an upstream generator instead of defining a copy of one, and fake the upstream test working directory only through the shared helper.",
+  "scope": {
+    "include": [
+      "packs/*/upstream/**/*.mjs",
+      "packs/*/upstream/**/*.js",
+      "packs/*/upstream/**/*.cjs",
+      "packs/*/upstream/**/*.ts"
+    ],
+    "exclude": [
+      "packs/complexity/**",
+      "**/tests/**",
+      "**/fixtures/**",
+      "**/publish/**",
+      "**/samples/**",
+      "**/*.test.*"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "owned-helper-copy",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^(?:export[ \\t]+)?(?:async[ \\t]+)?(?:function\\*?|const|let|var)[ \\t]+(?:codePointColumn|withUpstreamTestCwd|UPSTREAM_TEST_CWD|assertKnownReportRules|assertPortableCase|machineDirectories|pinnedRequire|gitHead|assertCommit|findingsOf|writeExpectedFindings|unitKey|withOrigins|writeRenameVariants|isVariantPath|RENAMED_DIRECTORY)\\b",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "PACK_DATA_HELPER_COPY",
+        "anchor": "witness.span",
+        "message": "Import this from scripts/pack-data/eslint-expected.mjs and adapt each call to its parameters instead of defining it here; if it must work differently, rename it to say how."
+      }
+    },
+    {
+      "id": "unowned-helper-copy",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^(?:export[ \\t]+)?(?:const|let|var|function)[ \\t]+(?:ECMA_EXTENSIONS|splitLines)\\b",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "PACK_DATA_UNOWNED_HELPER_COPY",
+        "anchor": "witness.span",
+        "message": "Other generators define this same helper and none is shared yet; if you change it, change theirs too, or move one copy into scripts/pack-data/eslint-expected.mjs."
+      }
+    },
+    {
+      "id": "own-cwd-pin",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "any": [
+              {
+                "pattern": "process.chdir($$$A)"
+              },
+              {
+                "pattern": "process.cwd = $V"
+              },
+              {
+                "pattern": "Object.defineProperty(process, \"cwd\", $$$A)"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PACK_DATA_OWN_CWD_PIN",
+        "anchor": "witness.span",
+        "message": "If this sets the working directory upstream tests see, use withUpstreamTestCwd from scripts/pack-data/eslint-expected.mjs; to run a command elsewhere, pass it a cwd option instead."
+      }
+    }
+  ]
+}

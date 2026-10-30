@@ -1,0 +1,68 @@
+{
+  "id": "rerail-pack-data-through-publish",
+  "mode": "steer",
+  "match": {
+    "all": [
+      {
+        "any": [
+          {
+            "all": [
+              {
+                "field": "input.command",
+                "regex": "(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:npm|pnpm|yarn|bun)\\s[^\\n;&|]*\\bfixtures:push(?:[\\s\"')`]|$)"
+              },
+              {
+                "not": {
+                  "field": "input.command",
+                  "regex": "^\\s*(?:(?:timeout\\s+\\S+|[A-Za-z_]\\w*=\\S*)[ \\t]+)*(?:npm[ \\t]+(?:run|run-script)[ \\t]+fixtures:push[ \\t](?:[^\\n;&|<>]*[ \\t])?--|(?:pnpm|yarn|bun)[ \\t]+(?:run[ \\t]+)?fixtures:push|(?:node[ \\t]+)?\\S*pack-fixtures\\.mjs)(?:[ \\t][^\\n;&|<>]*)?[ \\t]--dry-run(?:[ \\t][^\\n;&|<>]*)?(?:[ \\t]+2>&1)?(?:[ \\t]*\\|[ \\t]*(?:tail|head|grep)\\b[^\\n;&|]*)?[ \\t]*$"
+                }
+              }
+            ]
+          },
+          {
+            "all": [
+              {
+                "field": "input.command",
+                "regex": "(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:(?:node|bun|tsx|deno|npx)\\s[^\\n;&|]*?)?[\"']?\\S*pack-fixtures\\.mjs[\"']?(?:\\s+--?[A-Za-z][\\w-]*(?:[=\\s][^\\s;&|-]\\S*)?)*\\s+(?:push|upload|samples\\s+push)(?:[\\s\"')`]|$)"
+              },
+              {
+                "not": {
+                  "field": "input.command",
+                  "regex": "^\\s*(?:(?:timeout\\s+\\S+|[A-Za-z_]\\w*=\\S*)[ \\t]+)*(?:npm[ \\t]+(?:run|run-script)[ \\t]+fixtures:push[ \\t](?:[^\\n;&|<>]*[ \\t])?--|(?:pnpm|yarn|bun)[ \\t]+(?:run[ \\t]+)?fixtures:push|(?:node[ \\t]+)?\\S*pack-fixtures\\.mjs)(?:[ \\t][^\\n;&|<>]*)?[ \\t]--dry-run(?:[ \\t][^\\n;&|<>]*)?(?:[ \\t]+2>&1)?(?:[ \\t]*\\|[ \\t]*(?:tail|head|grep)\\b[^\\n;&|]*)?[ \\t]*$"
+                }
+              }
+            ]
+          },
+          {
+            "field": "input.command",
+            "regex": "(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s[^\\n;&|]*\\bs3\\s+(?:cp|mv|sync)\\s[^\\n;&|]*\\s[\"']?s3://nera-test-fixtures(?:/rerail/[^\\s\"']*|/rerail|/)?[\"']?(?:\\s+--?[\\w-]+(?:[=\\s][^\\s;&|<>-]\\S*)?)*\\s*(?:$|[;&|)\"'\\n<>]|\\d+>)"
+          },
+          {
+            "field": "input.command",
+            "regex": "(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s[^\\n;&|]*\\bs3api\\s+(?:put-object|copy-object|create-multipart-upload|upload-part(?:-copy)?)(?:\\s[^\\n;&|]*)?\\s--bucket[=\\s]+[\"']?nera-test-fixtures\\b[^\\n;&|]*\\s--key[=\\s]+[\"']?rerail/"
+          },
+          {
+            "field": "input.command",
+            "regex": "(?:^|[;&|(`\\n{]|\\bthen\\s|\\bdo\\s|\\b(?:bash|sh|zsh)\\s+-[A-Za-z]*c\\s+[\"']?)\\s*(?:(?:env|time|command|exec|nohup|sudo|timeout|gtimeout|nice|caffeinate|xargs)\\s+(?:-\\S+\\s+|\\d\\S*\\s+)*|aws-vault\\s+exec\\s+\\S+\\s+(?:-\\S+\\s+)*--\\s+|op\\s+run\\s+(?:-\\S+\\s+)*--\\s+|[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*aws\\s[^\\n;&|]*\\bs3api\\s+(?:put-object|copy-object|create-multipart-upload|upload-part(?:-copy)?)(?:\\s[^\\n;&|]*)?\\s--key[=\\s]+[\"']?rerail/[^\\n;&|]*\\s--bucket[=\\s]+[\"']?nera-test-fixtures\\b"
+          }
+        ]
+      },
+      {
+        "not": {
+          "field": "input.command",
+          "regex": "\\bgit\\s+commit\\b|\\bgh\\s+(?:pr|issue|release)\\s+(?:create|edit|comment)\\b|<<-?\\s*['\"]?[A-Za-z_]\\w*|^\\s*(?:rg|grep|egrep|git\\s+grep|sed|awk)\\s"
+        }
+      }
+    ]
+  },
+  "sample": {
+    "source": "tool:*",
+    "boundary": "tool-call"
+  },
+  "action": {
+    "content": "Pack data reaches S3 through review: stage it in publish/ with fixtures:stage and commit it; a maintainer dispatches pack-data-publish. Restore locks this rewrote from HEAD. Repair S3 only if asked."
+  },
+  "repeat": {
+    "mode": "always"
+  }
+}

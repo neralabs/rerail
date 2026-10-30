@@ -1,7 +1,12 @@
 # Rerail repository rule pack, candidates
 
-These are the rules being considered for the pack, and the history behind each. None is written yet. This file is not
-published; the pack's [README](../README.md) covers the rules it ships.
+These are the rules being considered for the pack, and the history behind each. This file is not published; the
+pack's [README](../README.md) covers the rules it ships, which are none yet.
+
+Each candidate is drafted in [`rules/`](rules/), 35 documents in all: a candidate whose parts need different modes
+became two. Every draft passed `rerail rules test` (valid, every case right, none unchecked) and was run against the
+history below, and all but one were also reviewed by a second agent. A draft moves to the pack's `rules/` once it is
+approved. Until then it is never shipped and never runs.
 
 ## How the candidates were found
 

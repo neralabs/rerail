@@ -1,0 +1,195 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-ui-api-precedence",
+  "revision": 1,
+  "mode": "log",
+  "description": "Show what the rules API says decides each rule setting in the dashboard, rather than ranking or building those deciders in the page; the engine owns precedence.",
+  "scope": {
+    "include": [
+      "ui/**/*.js"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "ranks-settings",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "any": [
+              {
+                "kind": "variable_declarator",
+                "has": {
+                  "field": "name",
+                  "regex": "(?i)^(?:owner|source|decider|setting)_?(?:rank|order)$|^rank(?:Of)?$"
+                }
+              },
+              {
+                "kind": "function_declaration",
+                "has": {
+                  "field": "name",
+                  "regex": "(?i)^(?:owner|source|decider|setting)?_?rank(?:Of)?$|outranks?"
+                }
+              },
+              {
+                "kind": "binary_expression",
+                "regex": "^[\\w$.?]*\\bfolder\\??\\.length\\s*(?:[!=]==?|[<>]=?)\\s*\\(?[\\w$]+\\??\\.folder\\??\\.length\\b"
+              },
+              {
+                "kind": "call_expression",
+                "regex": "\\bfolder\\??\\.startsWith\\(\\s*[\\w$]+\\??\\.folder\\b|^folderContains\\("
+              },
+              {
+                "kind": "binary_expression",
+                "regex": "^(?:[\\w$.?]*?(?:\\b[\\w$]*Source|\\bsource|\\b[\\w$]*[dD]ecider|\\bd)(?:\\??\\.?\\[[^\\]\\n]*\\])?\\??\\.(?:by|target)|target)\\s*[!=]==?\\s*[\"'`](?:checkout|repository|rule|pack)[\"'`]$|^[\"'`](?:checkout|repository|rule|pack)[\"'`]\\s*[!=]==?\\s*(?:[\\w$.?]*?(?:\\b[\\w$]*Source|\\bsource|\\b[\\w$]*[dD]ecider|\\bd)(?:\\??\\.?\\[[^\\]\\n]*\\])?\\??\\.(?:by|target)|target)$",
+                "not": {
+                  "inside": {
+                    "kind": "ternary_expression",
+                    "has": {
+                      "field": "consequence",
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "subscript_expression",
+                "regex": "folder\\??\\.length\\s*-\\s*[\\w$]+\\??\\.folder\\??\\.length\\s*\\)\\s*\\[\\s*0\\s*\\]$"
+              },
+              {
+                "kind": "switch_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "value",
+                      "regex": "\\.by\\)?$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "switch_body",
+                      "has": {
+                        "kind": "switch_case",
+                        "has": {
+                          "kind": "return_statement",
+                          "regex": "^return\\s+-?\\d"
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call_expression",
+                "regex": "\\.indexOf\\(\\s*[\\w$.?]+\\.by\\s*\\)$"
+              },
+              {
+                "kind": "object",
+                "all": [
+                  {
+                    "has": {
+                      "kind": "pair",
+                      "regex": "^[\"']?checkout[\"']?\\s*:\\s*-?\\d"
+                    }
+                  },
+                  {
+                    "has": {
+                      "kind": "pair",
+                      "regex": "^[\"']?repository[\"']?\\s*:\\s*-?\\d"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UI_RANKS_SETTINGS",
+        "anchor": "witness.span",
+        "message": "Take what decides this from the API's `…Source` deciders, not by ranking owners, folder depth or rule over pack here. Showing a decider as text is fine; if the API lacks the answer, add it there."
+      }
+    },
+    {
+      "id": "builds-decider",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "kind": "object",
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "pair",
+                          "has": {
+                            "field": "key",
+                            "regex": "^by$"
+                          }
+                        },
+                        {
+                          "kind": "shorthand_property_identifier",
+                          "regex": "^by$"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "pair",
+                          "has": {
+                            "field": "key",
+                            "regex": "^(?:folder|packId)$"
+                          }
+                        },
+                        {
+                          "kind": "shorthand_property_identifier",
+                          "regex": "^(?:folder|packId)$"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "regex": "^by$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "value",
+                        "regex": "^[\"'`](?:pack-start|rule-default)[\"'`]$"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UI_BUILDS_DECIDER",
+        "anchor": "witness.span",
+        "message": "Show the decider the API returns instead of building one here. Where a second click must weigh the first before the page refreshes, keep it until the settings write returns deciders."
+      }
+    }
+  ]
+}

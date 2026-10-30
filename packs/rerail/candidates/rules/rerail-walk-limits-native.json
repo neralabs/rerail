@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-walk-limits-native",
+  "revision": 1,
+  "mode": "log",
+  "description": "Pass a Rust repository walk its skipped folders and file and byte limits in the host's index options instead of restating them; budgets for other inputs may differ.",
+  "scope": {
+    "include": [
+      "native/src/**/*.rs"
+    ],
+    "exclude": [
+      "**/tests.rs",
+      "**/*_tests.rs",
+      "**/tests/**",
+      "**/test_support/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "ignored-folders",
+      "forbid": {
+        "regex": {
+          "pattern": "\\[[^\\]\\[;()]{0,400}?\"(?:node_modules|__pycache__)\"[^\\]\\[;()]{0,400}?\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\\[[^\\]\\[;()]{0,400}?\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"[^\\]\\[;()]{0,400}?\"(?:node_modules|__pycache__)\"|matches!\\s*\\(\\s*[^,;{}]{1,120},\\s*(?:\"[^\"\\n]*\"\\s*\\|\\s*){0,15}(?:\"(?:node_modules|__pycache__)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:node_modules|__pycache__)\")|(?:\"(?:node_modules|__pycache__)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:node_modules|__pycache__)\")(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\)?\\s*(?:if\\b[^=;{}]{0,80})?=>|(?:(?:==|!=)\\s*\"(?:node_modules|__pycache__)\"|\"(?:node_modules|__pycache__)\"\\s*(?:==|!=))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:==|!=)\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"\\s*(?:==|!=)|\\.starts_with\\(\\s*['\"]\\.['\"]\\s*\\))|(?:(?:==|!=)\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"\\s*(?:==|!=)|\\.starts_with\\(\\s*['\"]\\.['\"]\\s*\\))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:==|!=)\\s*\"(?:node_modules|__pycache__)\"|\"(?:node_modules|__pycache__)\"\\s*(?:==|!=))",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "WALK_FOLDERS_RESTATED",
+        "anchor": "witness.span",
+        "message": "Thread the host's RepositoryIndexOptions.ignored_directories into this walk instead of naming skipped folders here; leave names not about a repository walk, or in a test corpus loader."
+      }
+    },
+    {
+      "id": "walk-limits",
+      "forbid": {
+        "regex": {
+          "pattern": "(?i:\\b\\w*(?:max|limit|budget|cap|bound|ceiling)\\w*(?:files|entries|bytes)\\w*|\\b\\w*(?:files?|entr(?:y|ies)|bytes)\\w*(?:max|limit|budget|cap|bound|ceiling)\\w*)\\s*(?::\\s*[\\w<>\\[\\]&' ]{1,40})?\\s*[=:]\\s*(?:100_?000|32_?000_?000|512\\s*\\*\\s*1024\\s*\\*\\s*1024|1024\\s*\\*\\s*1024\\s*\\*\\s*512|512\\s*<<\\s*20|1\\s*<<\\s*29|536_?870_?912|0x2000_?0000)(?:_?[ui](?:8|16|32|64|128|size))?\\b",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "WALK_LIMIT_RESTATED",
+        "anchor": "witness.span",
+        "message": "Thread the host's RepositoryIndexOptions (max_files, max_source_bytes, max_file_bytes) into this walk instead of restating its bound; leave a bound that is not the repository walk's alone."
+      }
+    }
+  ]
+}

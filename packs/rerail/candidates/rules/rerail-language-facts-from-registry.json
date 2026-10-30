@@ -1,0 +1,448 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-language-facts-from-registry",
+  "revision": 1,
+  "mode": "log",
+  "description": "Take file suffixes and language names from the language registry or its generated tables, not a hand-kept list in shared engine or host code; a family's own modules may keep theirs.",
+  "scope": {
+    "include": [
+      "native/src/**/*.rs",
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "native/src/code_rule_dsl/language/**",
+      "native/src/build_languages.rs",
+      "**/*tests.rs",
+      "**/tests/**",
+      "**/test_support.rs",
+      "**/*.test.ts",
+      "**/*.generated.ts",
+      "**/*.generated.rs",
+      "native/src/build_identity.rs",
+      "native/src/code_rule_dsl/tape/corpus_parity.rs",
+      "native/src/code_rule_dsl/value/eslint_rules.rs",
+      "native/src/code_rule_dsl/value/rules.rs",
+      "native/src/code_rule_dsl/compile/parse/ruff.rs",
+      "native/src/code_rule_dsl/compile/binds/ruff.rs",
+      "native/src/code_rule_dsl/compile/binds/eslint.rs",
+      "native/src/code_rule_dsl/compile/format_args/php.rs",
+      "native/src/code_rule_dsl/compile/format_args/ruff.rs",
+      "native/src/code_rule_dsl/suppress/ruff.rs",
+      "native/src/code_rule_dsl/lines/eslint.rs",
+      "native/src/code_rule_dsl/embed/test_script.rs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "rust-hand-kept-language-list",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "array_expression",
+                    "count": {
+                      "has": {
+                        "matches": "fact",
+                        "stopBy": "end"
+                      },
+                      "min": 2
+                    },
+                    "not": {
+                      "inside": {
+                        "kind": "array_expression",
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "or_pattern",
+                    "not": {
+                      "any": [
+                        {
+                          "inside": {
+                            "kind": "or_pattern"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "matches": "suffix-arm",
+                            "stopBy": "end"
+                          }
+                        }
+                      ]
+                    },
+                    "count": {
+                      "has": {
+                        "matches": "fact",
+                        "stopBy": "end"
+                      },
+                      "min": 2
+                    }
+                  },
+                  {
+                    "kind": "macro_invocation",
+                    "regex": "^(?:matches|vec)!",
+                    "count": {
+                      "has": {
+                        "matches": "fact",
+                        "stopBy": "end"
+                      },
+                      "min": 2
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "let_declaration"
+                      },
+                      {
+                        "kind": "binary_expression",
+                        "not": {
+                          "inside": {
+                            "kind": "binary_expression"
+                          }
+                        }
+                      }
+                    ],
+                    "count": {
+                      "has": {
+                        "matches": "suffix-call",
+                        "stopBy": "end"
+                      },
+                      "min": 2
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "test-item",
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "fact": {
+              "kind": "string_literal",
+              "regex": "^\"(?:\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)|python|typescript|javascript|blade|rust|ecma)\"$"
+            },
+            "suffix": {
+              "kind": "string_literal",
+              "regex": "^\"\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)\"$"
+            },
+            "language": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "^\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"$"
+                },
+                {
+                  "kind": "scoped_identifier",
+                  "regex": "(?:^|::)(?:GrammarDialect|CodeRuleLanguage)::[A-Z][A-Za-z0-9_]*$"
+                }
+              ]
+            },
+            "suffix-call": {
+              "kind": "call_expression",
+              "regex": "\\.(?:ends_with|strip_suffix)\\(\\s*\"\\.(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)\"\\s*\\)$"
+            },
+            "suffix-arm": {
+              "kind": "match_arm",
+              "all": [
+                {
+                  "has": {
+                    "field": "pattern",
+                    "has": {
+                      "matches": "suffix",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "language"
+                      },
+                      {
+                        "has": {
+                          "matches": "language",
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "match_expression",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "value",
+                      "regex": "(?i)(?:ext|suffix|path|name|rsplit|extension)"
+                    }
+                  }
+                }
+              ]
+            },
+            "cfg-test": {
+              "kind": "attribute_item",
+              "regex": "^#\\[cfg\\((?:test|all\\(test\\b[^\\]]*)\\)\\]$"
+            },
+            "test-item": {
+              "any": [
+                {
+                  "kind": "mod_item"
+                },
+                {
+                  "kind": "function_item"
+                },
+                {
+                  "kind": "impl_item"
+                }
+              ],
+              "follows": {
+                "matches": "cfg-test",
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "attribute_item"
+                      },
+                      {
+                        "kind": "line_comment"
+                      },
+                      {
+                        "kind": "block_comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:(?:python|ecma|php|blade|vue|rust|sql)(?:\\.rs$|/)|(?:python|php|rust)_[a-z_]+(?:\\.rs$|/)|phpdoc(?:\\.rs$|/)|arguments_sql\\.rs$|suppress/(?:biome|clippy|eslint|noqa|nosec|oxlint|phpcs|phpstan|psalm|sqlfluff)\\.rs$|literal/(?:annotation|brace|percent|offsets|semantic|printf|scanf|eslint_directive)\\.rs$|embed/[a-z_]+\\.rs$|code_rule_dsl/(?:import_target/|npm_ignore/|module_graph(?:\\.rs$|/)|package_manifest\\.rs$|module_path\\.rs$|identifier(?:\\.rs$|/)))"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "HAND_KEPT_LANGUAGE_LIST",
+        "anchor": "witness.span",
+        "message": "Take these from the registry (label_of_path, the tables language.rs includes) or move this code into its family's module; formats outside the registry and a resolver's probe order may stay."
+      }
+    },
+    {
+      "id": "rust-suffix-to-language-arm",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "suffix-arm"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "test-item",
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          },
+          "utils": {
+            "fact": {
+              "kind": "string_literal",
+              "regex": "^\"(?:\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)|python|typescript|javascript|blade|rust|ecma)\"$"
+            },
+            "suffix": {
+              "kind": "string_literal",
+              "regex": "^\"\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)\"$"
+            },
+            "language": {
+              "any": [
+                {
+                  "kind": "string_literal",
+                  "regex": "^\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"$"
+                },
+                {
+                  "kind": "scoped_identifier",
+                  "regex": "(?:^|::)(?:GrammarDialect|CodeRuleLanguage)::[A-Z][A-Za-z0-9_]*$"
+                }
+              ]
+            },
+            "suffix-call": {
+              "kind": "call_expression",
+              "regex": "\\.(?:ends_with|strip_suffix)\\(\\s*\"\\.(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)\"\\s*\\)$"
+            },
+            "suffix-arm": {
+              "kind": "match_arm",
+              "all": [
+                {
+                  "has": {
+                    "field": "pattern",
+                    "has": {
+                      "matches": "suffix",
+                      "stopBy": "end"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "field": "value",
+                    "any": [
+                      {
+                        "matches": "language"
+                      },
+                      {
+                        "has": {
+                          "matches": "language",
+                          "stopBy": "end"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "match_expression",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "value",
+                      "regex": "(?i)(?:ext|suffix|path|name|rsplit|extension)"
+                    }
+                  }
+                }
+              ]
+            },
+            "cfg-test": {
+              "kind": "attribute_item",
+              "regex": "^#\\[cfg\\((?:test|all\\(test\\b[^\\]]*)\\)\\]$"
+            },
+            "test-item": {
+              "any": [
+                {
+                  "kind": "mod_item"
+                },
+                {
+                  "kind": "function_item"
+                },
+                {
+                  "kind": "impl_item"
+                }
+              ],
+              "follows": {
+                "matches": "cfg-test",
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "attribute_item"
+                      },
+                      {
+                        "kind": "line_comment"
+                      },
+                      {
+                        "kind": "block_comment"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:(?:python|ecma|php|blade|vue|rust|sql)(?:\\.rs$|/)|embed/[a-z_]+\\.rs$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SUFFIX_TO_LANGUAGE_ARM",
+        "anchor": "witness.span",
+        "message": "Map this file suffix to its language with label_of_path, which reads the registry's suffixes, instead of a match arm here; a suffix the registry does not list may stay."
+      }
+    },
+    {
+      "id": "host-hand-kept-language-list",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "array",
+                "count": {
+                  "has": {
+                    "matches": "fact"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "kind": "union_type",
+                "not": {
+                  "inside": {
+                    "kind": "union_type"
+                  }
+                },
+                "count": {
+                  "has": {
+                    "kind": "literal_type",
+                    "has": {
+                      "matches": "fact"
+                    },
+                    "stopBy": "end"
+                  },
+                  "min": 2
+                }
+              },
+              {
+                "kind": "object",
+                "count": {
+                  "has": {
+                    "kind": "pair",
+                    "has": {
+                      "field": "value",
+                      "matches": "fact"
+                    }
+                  },
+                  "min": 2
+                }
+              }
+            ]
+          },
+          "utils": {
+            "fact": {
+              "kind": "string",
+              "regex": "^[\"'](?:\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)|python|typescript|javascript|blade|rust|ecma)[\"']$"
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)src/(?:engine/code-rule/|code-rule[^/]*\\.ts$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "HOST_HAND_KEPT_LANGUAGE_LIST",
+        "anchor": "witness.span",
+        "message": "Take these suffixes or language names from the registry (CODE_RULE_DIALECT_SUFFIXES, SOURCE_LANGUAGES, LANGUAGE_REGISTRY) instead of listing them; lists of formats outside the registry may stay."
+      }
+    }
+  ]
+}
