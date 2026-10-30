@@ -1,13 +1,15 @@
 # Rerail rule packs
 
-Rule packs for Rerail. Each pack is published to npm as its own package, versioned and released separately from
-the core package at the repository root.
+Rule packs for Rerail. Each published pack is its own npm package, versioned and released separately from the core
+package at the repository root.
 
-> Status: pre-release (below 1.0.0). Every pack here is published to npm, public like core, and core ships none
-> of them: set-up and `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs
-> here: `python`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql` and
-> `complexity`. Every rule document Rerail ships lives in a pack; core has no rules of its own, and lists the packs
-> by name only (`src/engine/catalog/pack-list.generated.ts`).
+> Status: pre-release (below 1.0.0). Every pack here is published to npm, public like core, except a private one
+> (`"private": true` in its `package.json`; today `rerail`), which is never published, is left out of core's pack
+> list, and is installed from a checkout with `rerail packs add packs/<id>`. Core ships none of them: set-up and
+> `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs here: `python`, `php`, `blade`, `rust`,
+> `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `sql`, `complexity` and `rerail`. Every rule document
+> Rerail ships lives in a pack; core has no rules of its own, and lists the published packs by name only
+> (`src/engine/catalog/pack-list.generated.ts`).
 
 - [docs/pack-format.md](../docs/pack-format.md): the layout and the validation contract every pack here passes.
 - [conformance/README.md](../conformance/README.md#the-gate): the conformance check (`npm run test:conformance`), the gate every
@@ -24,8 +26,9 @@ npx vitest run test/engine/catalog/packs.test.ts -t "pack python"   # one pack
 npm run test:conformance                                            # the conformance check
 ```
 
-A pull request that changes a pack adds a changeset (`npx changeset`); see
-[versioning](../docs/pack-format.md#versioning-and-release). Pack versions and changelogs are never edited by hand.
+A pull request that changes a published pack adds a changeset (`npx changeset`); a private pack takes none, and CI
+refuses a changeset naming one; see [versioning](../docs/pack-format.md#versioning-and-release). Pack versions and
+changelogs are never edited by hand.
 A pull request that adds or changes pack data stages it into the tool-pack's tracked `upstream/<tool>/publish/`
 directory (`npm run fixtures:stage -- --pack <id> --tool <tool>`); a maintainer runs the publish workflow
 (`pack-data-publish.yml`) for it, a code owner approves the upload, and the workflow commits the new locks and removes
@@ -34,13 +37,13 @@ directory (`npm run fixtures:stage -- --pack <id> --tool <tool>`); a maintainer 
 
 ## Pack layout
 
-Each pack lives in `packs/<id>/`:
+Each pack lives in `packs/<id>/`. A private pack publishes none of it:
 
 | Path | Contents | Published |
 | --- | --- | --- |
 | `package.json` | npm package `@neralabs/rerail-pack-<id>`; core version range as a peer dependency; no dependencies | yes |
 | `pack.json` | The pack (`rerail.rule-pack/v1`): match, and each rule's document, title, group, mode and examples | yes |
-| `rules/<id>.json` | Code-rule documents (`rerail.policy/v1`), each named for its rule id ([rule ids](../docs/pack-format.md#packjson)) | yes |
+| `rules/<id>.json` | Rule documents, each named for its rule id ([rule ids](../docs/pack-format.md#packjson)): code rules (`rerail.policy/v1`) or [conversation rules](../docs/pack-format.md#packjson) | yes |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md`: per upstream repository, its source, the patterns of the files taken and how, and what is not copied ([format](../docs/pack-format.md#upstreammd)) | yes |
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the ports, declared divergences, ports under evaluation (scored and reported, never gated) with `candidates/README.md`, what each candidate is waiting on and its rule details, which `README.md` leaves out, and per tool `upstream/<tool>/` with its generator, `gates.yaml` and the locks of its pack data. The tool's copied tests, expected findings and samples are not in git: one archive each in S3, which `test-data.lock` and `samples.lock` name and `npm run fixtures:pull` fetches ([pack data](../docs/pack-format.md#pack-data)) | no |

@@ -4,6 +4,9 @@
 // published files it changes, the changelog entry a changeset becomes (changeset-changelog.mjs), and the rule summary
 // a released pack's changelog section opens with (pack-changelog.mjs).
 
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import changelog from "../../scripts/release/changeset-changelog.mjs";
 import { NAMED_RULES, packRuleChanges, packRuleNotes, packRules, releasedPackSection } from "../../scripts/release/pack-changelog.mjs";
@@ -19,13 +22,56 @@ import {
   planPacks,
   planPromotions,
   promotePacks,
+  privateChangesetFailures,
   promotionRequest,
+  publishedPacks,
   readChangesets,
   releasePacks,
   syncPackLockfile,
 } from "../../scripts/release/packs.mjs";
 
 const pack = (id, version) => ({ id, name: `@neralabs/rerail-pack-${id}`, version });
+const privatePack = (id, version) => ({ ...pack(id, version), private: true });
+
+describe("listPacks and publishedPacks", () => {
+  const packsDirectory = mkdtempSync(join(tmpdir(), "release-packs-"));
+  for (const [id, extra] of [["open", {}], ["closed", { private: true }]]) {
+    mkdirSync(join(packsDirectory, id));
+    writeFileSync(join(packsDirectory, id, "package.json"), JSON.stringify({ name: `@neralabs/rerail-pack-${id}`, version: "0.1.0", ...extra }));
+  }
+
+  it("lists every pack with whether it is private, and publishes only the others", () => {
+    expect(listPacks(packsDirectory)).toEqual([
+      { ...privatePack("closed", "0.1.0") },
+      { ...pack("open", "0.1.0"), private: false },
+    ]);
+    expect(publishedPacks(packsDirectory).map((entry) => entry.id)).toEqual(["open"]);
+    expect(planPacks(publishedPacks(packsDirectory), [])).toEqual({ publish: [], first: ["open"] });
+  });
+});
+
+describe(".changeset/config.json", () => {
+  it("pins that changesets never version or tag a private pack", () => {
+    const config = JSON.parse(readFileSync(join(import.meta.dirname, "../../.changeset/config.json"), "utf8"));
+    expect(config.privatePackages).toEqual({ version: false, tag: false });
+  });
+});
+
+describe("privateChangesetFailures", () => {
+  const changeset = (file, ...ids) => ({ file, text: `---\n${ids.map((id) => `"@neralabs/rerail-pack-${id}": patch`).join("\n")}\n---\n\nSummary.\n` });
+  const packs = [pack("open", "0.1.0"), privatePack("closed", "0.1.0")];
+
+  it("refuses a changeset naming a private pack, alone or beside a published one", () => {
+    expect(privateChangesetFailures([changeset("a.md", "closed"), changeset("b.md", "open", "closed"), changeset("c.md", "open")], packs)).toEqual([
+      "a.md: @neralabs/rerail-pack-closed is private and never released, so no changeset names it",
+      "b.md: @neralabs/rerail-pack-closed is private and never released, so no changeset names it",
+    ]);
+  });
+
+  it("passes the repository's pending changesets", () => {
+    expect(privateChangesetFailures(readChangesets(), listPacks())).toEqual([]);
+  });
+});
 
 describe("changesetSummary and the changelog generator", () => {
   const text = '---\n"@neralabs/rerail-pack-blade": patch\n---\n\nBlade pack: ships 7 rules.\n\nThree go back to candidates.\n';
@@ -278,6 +324,11 @@ describe("missingChangesets", () => {
   it("passes a published change once any changeset of the pull request names the pack", () => {
     expect(missingChangesets(["packs/php/pack.json", "packs/vue/LICENSE"], [changeset("php", "vue")], packs)).toEqual([]);
   });
+
+  it("passes a private pack's changes with no changeset, since it is never released", () => {
+    const closed = [{ id: "own", name: "@neralabs/rerail-pack-own", files, private: true }];
+    expect(missingChangesets(["packs/own/rules/a.json", "packs/own/package.json"], [], closed)).toEqual([]);
+  });
 });
 
 describe("manifestChanged", () => {
@@ -334,14 +385,15 @@ describe("gateFailures", () => {
 });
 
 describe("packIds", () => {
-  const packs = [pack("a", "0.1.0"), pack("b", "0.1.0")];
+  const packs = [pack("a", "0.1.0"), pack("b", "0.1.0"), privatePack("p", "0.1.0")];
 
-  it("names every pack for --all", () => {
+  it("names every published pack for --all", () => {
     expect(packIds(["--all"], packs)).toEqual(["a", "b"]);
   });
 
-  it("refuses an id that is not a pack", () => {
+  it("refuses an id that is not a pack, and a private pack, which is never packed for npm", () => {
     expect(() => packIds(["a", "c"], packs)).toThrow("not a pack under packs/: c");
+    expect(() => packIds(["p"], packs)).toThrow("private, never packed for npm: p");
   });
 });
 

@@ -23,7 +23,10 @@ Recommendations match the repository's files and dependency manifests against ea
 
 ## The packs
 
-Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)).
+Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)), except
+a private pack (`"private": true` in its `package.json`): it is never published and is not in
+`src/engine/catalog/pack-list.generated.ts`; install it from a checkout with `rerail packs add packs/<id>`, and set-up
+then offers it from that copy.
 
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
@@ -39,6 +42,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Node.js | framework | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | 23 (21) | `*.vue` files |
 | React | framework | 40 (21) | a `react` dependency, or `*.jsx` files |
+| Rerail repository | repository | 0 | never yet, as it ships no rules; written for this repository (`packs/*/pack.json` files). Private: never published, so install it from a checkout with `rerail packs add packs/rerail`. See `packs/rerail/README.md`. |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.

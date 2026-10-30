@@ -45,7 +45,7 @@ Reject the deployment when anything does not follow from the PR: the run then co
 
 - Migrations: `src/engine/storage/` (the Rerail database in users' repos, its schema and `migrations.ts`) and `native/src/content_store/schema.rs` (the content store's schema and version floor). Check that existing databases still open, nothing is lost, and an older binary still refuses a store it can't read.
 - CI and deployment: `.github/` (workflows, actions, Dependabot; always high-risk for the reviewer, except the issue forms and the pull request template, which are text people fill in), `scripts/release/` and `.changeset/config.json`. Check that checks still gate and that a release publishes what it should, where it should.
-- Packaging: the root `package.json` and `Cargo.toml`, `native/Cargo.toml`, `native/build.rs`, `scripts/build/`, `tsconfig.build.json`, `packs/*/package.json`, and the agent plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`). Check what the packages contain, their versions and their entry points.
+- Packaging: the root `package.json` and `Cargo.toml`, `native/Cargo.toml`, `native/build.rs`, `scripts/build/`, `tsconfig.build.json`, `packs/*/package.json`, and the agent plugin manifests (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`). Check what the packages contain, their versions and their entry points. Adding or removing `"private": true` in a pack's `package.json` decides whether it ever reaches npm: making one public needs its changeset, `publishConfig` and the [first-publish runbook](docs/publishing-a-new-pack.md); making a published one private strands its npm versions.
 - `src/setup/`: installs rerail into users' agents.
 - `LICENSES/` and `scripts/check/licence-allowlist.json`: licensing.
 

@@ -65,6 +65,7 @@ export {
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
+export { engineRegexIssues } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export {
@@ -146,6 +147,6 @@ export {
   steerFeedback,
   workLinks,
 } from "./storage/schema.js";
-export { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
+export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";

@@ -2,16 +2,17 @@
 
 A rule pack is a directory under `packs/`: rule documents plus the evidence that they behave.
 `test/engine/catalog/packs.test.ts` validates each one against the [validation contract](#the-validation-contract), and
-the [release workflow](#release) publishes each on its own.
+the [release workflow](#release) publishes each on its own, except a [private](#packagejson) one, which is never
+published and is installed from a checkout with `rerail packs add packs/<id>`.
 
-Core ships no packs and has no rules of its own. Set-up and `rerail packs add` install packs from npm into
-`$RERAIL_HOME/packs`, and core reads them from there. To start a pack, see
+Core ships no packs and has no rules of its own. Set-up and `rerail packs add` install the published packs from npm
+into `$RERAIL_HOME/packs`, and core reads them from there. To start a pack, see
 [language packs](language-packs.md#start-a-pack).
 
 <details>
 <summary>How core lists packs</summary>
 
-Core lists packs by name only, in `src/engine/catalog/pack-list.generated.ts`
+Core lists published packs by name only, in `src/engine/catalog/pack-list.generated.ts`
 ([rule packs](rule-packs.md#installing-packs)). Like every By Rerail rule, a pack's rules run only in repositories that
 add them or the pack.
 
@@ -51,7 +52,7 @@ packs/<id>/
 ├── README.md           what the pack covers, for people: the rules it ships, never a candidate's details
 ├── LICENSE, NOTICE     the pack's licence and notice
 ├── rules/
-│   └── <rule id>.json  code-rule documents (rerail.policy/v1), each named for its id
+│   └── <rule id>.json  rule documents, each named for its id: code rules (rerail.policy/v1) or conversation rules
 ├── licenses/
 │   └── <project>/      upstream LICENSE (verbatim) and UPSTREAM.md (per repository: source, path patterns taken, not copied)
 │
@@ -90,6 +91,8 @@ packs/<id>/
 - **`peerDependencies`**: the core range. A pack has no `dependencies`.
 - **`files`**: the pack and its licence records. Validation material never reaches npm.
 - **`repository`**: this repository and the pack's directory. `publishConfig.access` is `public`, like core.
+- **`private`**: `true` makes a pack that is never published. It needs no `publishConfig`; `false` is refused (a
+  published pack omits `private`).
 
 <details>
 <summary>Why these fields</summary>
@@ -103,6 +106,9 @@ packs/<id>/
 - `conformance.json`, `divergences.json`, `upstream/` and `candidates/` are validation material: they stay in the
   repository, which keeps copied upstream tests out of the package.
 - npm trusted publishing requires the repository it publishes from, hence `repository`.
+- A private pack: npm refuses to publish it, Changesets never versions it, the release scripts leave it out, and the
+  pack list does not name it, so set-up never fetches it. It still passes every check, and is installed from a
+  checkout with `rerail packs add packs/<id>`.
 - The schema is `rulePackPackageSchema` in `src/engine/catalog/rule-packs.ts`.
 
 </details>
@@ -176,6 +182,13 @@ packs/<id>/
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
     pair per rule.
+
+**Conversation rules.** A pack may also ship a conversation rule: the rule object of
+[rule-schema.ts](../src/engine/catalog/rule-schema.ts) (`id`, `mode`, `match`, `sample`, `action`, optional `repeat`)
+as its document, with no `format`. It steers on the coding agent's session rather than on code. Its examples take no
+`path`: `text` is the command the coding agent runs for a rule that samples tool calls (`tool:*` is tried as
+`tool:Bash`, the command as the call's `input.command`), and the sampled text otherwise. Its schema has no
+`description`, so check 8 leaves it out; say what it does in the pack's README.
 
 </details>
 
@@ -469,7 +482,7 @@ the pulled layout, a tool directory lacks its `test-data.lock`, a lock does not 
 
 ## Rule text
 
-A rule document has text for two readers: people, and the coding agent.
+A code-rule document has text for two readers: people, and the coding agent.
 
 - **`description`** is for people browsing the dashboard and rule catalog. The agent never reads it.
 - **`violation.message`**, one per clause, is for the agent, which reads it inside the steer block Rerail writes:
@@ -569,14 +582,14 @@ To see every false positive and false negative of one ported rule:
 
 | # | Check | Fails when |
 |---|---|---|
-| 1 | Rules | A rule document or candidate is unlisted, missing, misnamed or doesn't compile; an id breaks the [id rule](#packjson) |
+| 1 | Rules | A rule document or candidate is unlisted, missing, misnamed or doesn't compile (a conversation rule: doesn't parse, or has a pattern the engine refuses); an id breaks the [id rule](#packjson) |
 | 2 | Proof | A rule has neither `examples` nor a port entry in `conformance.json` |
-| 3 | Examples | An example isn't caught, or doesn't pass, as it says |
+| 3 | Examples | An example isn't caught, or doesn't pass, as it says (a conversation rule: doesn't fire, or fires) |
 | 4 | Ports | A shipped port disagrees with its expected findings outside `divergences.json`; suppression data is missing or stale |
-| 5 | Package | `package.json`, its `license` or a README's rule details are wrong |
+| 5 | Package | `package.json` (`public` or `"private": true`), its `license` or a README's rule details are wrong |
 | 6 | Licences | Provenance records are malformed or disagree with the pulled test data |
-| 7 | Manifest | `pack.json` has no valid `match`; core's generated pack list lacks the pack or is stale |
-| 8 | Text | A description fails a machine-checkable [description](#description) criterion |
+| 7 | Manifest | `pack.json` has no valid `match`; core's generated pack list lacks a published pack, names a private one, or is stale |
+| 8 | Text | A code rule's description fails a machine-checkable [description](#description) criterion |
 
 <details>
 <summary>Where the checks run</summary>
@@ -616,11 +629,13 @@ conformance check (`npm run test:conformance`), not here.
    - Every file in `rules/` is listed in `pack.json`, and every listed `document` exists. Each rule's `id` is lowercase
      letters, digits and dashes; its `document` is `rules/<id>.json` and carries the same `id`.
    - Each document is a valid code rule (`rerail.policy/v1`, the host's schema) and compiles in the engine with core's
-     `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it.
+     `native/src/code_rule_dsl/capabilities.json`, as the catalog compiles it; or a valid conversation rule (a JSON
+     object with a `match` and no `format`, `parseConversationRule`) whose every pattern the engine accepts
+     (`engineRegexIssues`).
    - Candidates need not compile. Every rule document under `candidates/` (each JSON file in a `rules/` directory
      there, and any file there whose `format` names a policy, such as the older `tempo.policy/v1`) must be
-     `rerail.policy/v1`, sit in a `rules/` directory and be named `<id>.json` (`candidates/rules/<id>.json`,
-     `candidates/probes/rules/<id>.json`).
+     `rerail.policy/v1` or a conversation rule, sit in a `rules/` directory and be named `<id>.json`
+     (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`).
    - Every port in the pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its
      document's `id`. Check 4 loads only the root `conformance.json`, so check 1 also fails a `conformance.json` under
      `candidates/` that does not parse (`packSchema`) or has a port whose document does not exist.
@@ -629,7 +644,9 @@ conformance check (`npm run test:conformance`), not here.
    examples and a candidate's in `conformance.json`. Each is evaluated alone through the engine, as a one-file
    repository at its `path` (`evaluateExample` in `conformance/pack-validation.ts`). The path must be in the rule's
    scope, and evaluation must produce no engine failure. A violation counts when its code is one of the rule's
-   clauses' codes. A candidate's pair is held to the same against its document under `candidates/`.
+   clauses' codes. A candidate's pair is held to the same against its document under `candidates/`. A conversation
+   rule's examples are matched alone through the conversation engine (`ConversationRuleRegistry`, repeat ignored),
+   built as [Conversation rules](#packjson) says: the caught one must fire the rule, the passes one must not.
 
 </details>
 
@@ -681,8 +698,8 @@ conformance check (`npm run test:conformance`), not here.
 <details>
 <summary>Exact conditions: checks 5 to 8</summary>
 
-5. **Package.** The npm name is `@neralabs/rerail-pack-<id>`, `publishConfig.access` is `public`, there are no
-   `dependencies`, and `repository` is
+5. **Package.** The npm name is `@neralabs/rerail-pack-<id>`, `publishConfig.access` is `public` unless `private` is
+   `true`, `private` is never `false`, there are no `dependencies`, and `repository` is
    `{ "type": "git", "url": <the root package.json's repository url>, "directory": "packs/<id>" }`.
    - `files` publishes `pack.json`, `rules`, `LICENSE` and, when present, `licenses`. No entry may cover
      `conformance.json`, `divergences.json`, `upstream` or `candidates`.
@@ -706,14 +723,14 @@ conformance check (`npm run test:conformance`), not here.
    `reuse lint` and `node scripts/check/check-licenses.mjs` are repository-wide CI gates, not part of check 6.
    Structure metric 7 (`npm run check:structure`) checks the rule documents' REUSE licence.
 7. **Manifest.** `match` must be present and pass the schema: without it set-up never recommends the pack. For a
-   directory under `packs/`, `src/engine/catalog/pack-list.generated.ts` lists the pack's id and equals what
-   `npm run generate:packs` writes. Fixture packs elsewhere are unpublished, so no list names them; `listed: true`
-   checks the list for them too.
-8. **Text.** Every description, shipped and candidate (not probes), meets the machine-checkable
+   directory under `packs/`, `src/engine/catalog/pack-list.generated.ts` equals what `npm run generate:packs` writes
+   and lists the pack's id, or, for a private pack, doesn't. Fixture packs elsewhere are unpublished, so no list names
+   them; `listed: true` checks the list for them too.
+8. **Text.** Every code-rule description, shipped and candidate (not probes), meets the machine-checkable
    [description](#description) criteria (`textFailures`): present, one sentence ending in a period, at most 200
    characters, no backticks, no upstream tool named outside quoted text (`'…'` or `` `…` ``). Messages are not
    checked; the [message](#message) criteria are for review. Check 1 covers a message's `$` placeholders: a message
-   naming a capture its clause doesn't bind does not compile.
+   naming a capture its clause doesn't bind does not compile. A conversation rule has no description and is left out.
 
 </details>
 
@@ -766,6 +783,10 @@ changesets, bumps each pack and writes its `CHANGELOG.md`.
   Release pull request when what it ships changes, with notes pending in `.changelog/` ([release](release.md#release)).
 - **New pack:** its first pull request adds it at `0.1.0` with a `patch` changeset for its initial rules, so its first
   release is `0.1.1`.
+- **Private pack:** never versioned (`privatePackages` in `.changeset/config.json` is pinned to
+  `{ "version": false, "tag": false }`), so it needs no changeset and none may name it: one naming only private packs
+  stays pending for ever, and one naming a private pack beside a published one makes `changeset version` fail. The
+  Changesets job and `npm test` refuse such a changeset (`privateChangesetFailures` in `scripts/release/packs.mjs`).
 
 </details>
 
@@ -794,7 +815,7 @@ Core's `v*` release (`release.yml`) is separate.
 
 1. **Version.** Each push to `main` with anything releasable opens or updates the **Release** pull request. Merging it
    is the release.
-2. **Publish.** On each push to `main`, every pack whose `package.json` version has no git tag
+2. **Publish.** On each push to `main`, every published pack (not private) whose `package.json` version has no git tag
    `@neralabs/rerail-pack-<id>@<version>` passes the publish gate and is published.
 3. **Put back.** Run the workflow from `main` (Actions → Release packs → Run workflow) with the pack's id and an older
    released version, to point `latest` back at it.
@@ -814,8 +835,8 @@ Core's `v*` release (`release.yml`) is separate.
 - Its description lists every package and version it releases, with changelog entries. Review it like any pull
   request.
 - A newer push cancels an older run; with nothing releasable, an open Release pull request is closed.
-- CI runs only licence and lint jobs on it: `release-packs.yml` validates and packs every pack on it, and `main` runs
-  everything after merge.
+- CI runs only licence and lint jobs on it: `release-packs.yml` validates and packs every published pack on it, and
+  `main` runs everything after merge.
 
 </details>
 
@@ -851,7 +872,8 @@ promote job points `latest` at that version and tags it `held` there.
 
 - Publishes and runs with no inputs leave a held pack's `latest` alone (the summary names it). Promoting the pack by
   id again, at its `package.json` version, releases the hold.
-- With no inputs, the workflow points `latest` at every pack's released version not yet `latest`, less any held.
+- With no inputs, the workflow points `latest` at every published pack's released version not yet `latest`, less any
+  held.
 - Each promotion moves `next` up to the version unless it is already newer, so a put-back leaves it. The promote job
   then lists each promoted pack's dist-tags, and fails if `latest` is not the version or `next` is older than
   `latest`.
@@ -884,7 +906,8 @@ The scripts are in `scripts/release/`. To check a pack's tarball locally:
 ### Publishing a new pack
 
 A pack's first version is published by hand; the workflow publishes later ones. Steps:
-[publishing-a-new-pack.md](publishing-a-new-pack.md).
+[publishing-a-new-pack.md](publishing-a-new-pack.md). To publish a private pack, remove `"private": true` in a pull
+request that adds its changeset and `publishConfig`, then follow those steps.
 
 <details>
 <summary>Why the first publish is manual</summary>
