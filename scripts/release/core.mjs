@@ -38,6 +38,9 @@ export function nextCoreVersion(current, changelog) {
   return named;
 }
 
+/** The notes of a release that had none: its changelog section, and its GitHub Release (github-release.mjs). */
+export const NO_CHANGELOG_ENTRIES = "No changelog entries were written for this release.";
+
 /**
  * The root CHANGELOG.md released as `version` on `date` (YYYY-MM-DD): its unreleased section's heading becomes
  * `## <version> (<date>)`. Without an unreleased section, a dated section saying so is added above the last release.
@@ -49,7 +52,7 @@ export function releaseChangelog(text, version, date) {
   if (section !== null && unreleasedVersion(section.heading) !== null) {
     return { text: `${text.slice(0, section.index)}${heading}${text.slice(section.index + section.length)}`, notes: true };
   }
-  const added = `${heading}\n\nNo changelog entries were written for this release.\n`;
+  const added = `${heading}\n\n${NO_CHANGELOG_ENTRIES}\n`;
   if (section === null) return { text: `${text.replace(/\n*$/u, "")}\n\n${added}`, notes: false };
   return { text: `${text.slice(0, section.index)}${added}\n${text.slice(section.index)}`, notes: false };
 }

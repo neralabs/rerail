@@ -20,6 +20,8 @@ name: Release packs
 # and releases the hold. With no inputs, every pack whose released version is not `latest` yet, less any pack held.
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
 # approval, moves them all (docs/pack-format.md, "Release").
+# Each pack version a push publishes gets its GitHub Release on its tag, with the version's CHANGELOG.md section as its
+# notes (the github-releases job).
 
 on:
   push:
@@ -320,6 +322,34 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           RELEASED: ${{ needs.publish.outputs.released }}
         run: node scripts/release/dist-tags-check.mjs
+
+  # The GitHub Release of each pack version the publish job released and tagged, once npm has it where it was
+  # published: its notes are the version's section of the pack's CHANGELOG.md (scripts/release/github-release.mjs), so
+  # release notes are written once, in the changelog. A pack's Release is never the repository's latest release (core's
+  # is), and is a pre-release only when the pack was held and published under `next`. Run again, it rewrites the
+  # notes of the Releases it made.
+  github-releases:
+    name: GitHub Releases
+    needs: [publish, dist-tags]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Create each GitHub Release from the pack's CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: ${{ needs.publish.outputs.released }}
+        run: node scripts/release/github-release.mjs
 
   first-publish:
     name: First publish needed

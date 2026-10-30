@@ -16,6 +16,9 @@ name: Release
 # so no npm login is needed.
 #
 # package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
+#
+# Once the dist-tag check passes, the github-release job makes the tag's GitHub Release, with the version's
+# CHANGELOG.md section as its notes.
 
 on:
   workflow_dispatch:
@@ -307,3 +310,30 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
           RELEASED: "@neralabs/rerail@${{ inputs.latest }}:latest"
         run: node scripts/release/dist-tags-check.mjs
+
+  # The GitHub Release of the tag, once npm has the version under its channel: its notes are the version's section of
+  # the tagged CHANGELOG.md (scripts/release/github-release.mjs), so release notes are written once, in the changelog.
+  # A `next` or `beta` release is a pre-release; a `latest` one becomes the repository's latest release. Run again, it
+  # rewrites the notes of the Release it made.
+  github-release:
+    name: GitHub Release
+    needs: [metadata, dist-tags]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - name: Create the GitHub Release from CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
+        run: node scripts/release/github-release.mjs
