@@ -1,0 +1,219 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d401-non-imperative-mood",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Start the first line of a function docstring with a verb in the imperative mood, such as Return instead of Returns.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "non-imperative-mood",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "property-name": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "property"
+                    ],
+                    "import": [
+                      "builtins.property",
+                      "enum.property",
+                      "functools.cached_property",
+                      "abc.abstractproperty",
+                      "types.DynamicClassAttribute"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "property-name"
+                  }
+                }
+              ]
+            },
+            "property-decorated": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "decorated_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "matches": "property-name"
+                      },
+                      {
+                        "kind": "call",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "follows": {
+                              "stopBy": "neighbor",
+                              "regex": "(?s)."
+                            }
+                          },
+                          "matches": "property-name"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "mood-owner": {
+              "kind": "function_definition",
+              "not": {
+                "any": [
+                  {
+                    "matches": "property-decorated"
+                  },
+                  {
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier",
+                      "regex": "^(?:runTest$|test)"
+                    }
+                  }
+                ]
+              }
+            },
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "block",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "mood-owner"
+                }
+              }
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "pattern": "$DOC"
+            },
+            "compare": {
+              "left": "N",
+              "op": "eq",
+              "right": "K",
+              "text": "source"
+            }
+          },
+          "transform": {
+            "T": {
+              "replace": {
+                "source": "$DOC",
+                "replace": "^\\s*(\\S+)[\\s\\S]*$",
+                "by": "$1"
+              }
+            },
+            "A": {
+              "replace": {
+                "source": "$T",
+                "replace": "[^\\p{Alphabetic}\\p{N}]",
+                "by": ""
+              }
+            },
+            "N": {
+              "replace": {
+                "source": "$A",
+                "replace": "^(?i:(?:(?:a(?:cce(?:pt|ss)|d(?:dd|just)|ggregat(?:e)?|llow|pp(?:end|ly)|rchive|ss(?:ert|ign)|ttempt|uth(?:enticat(?:e)?|oriz(?:e)?))|b(?:reak|uild)|c(?:a(?:che|l(?:culat(?:e)?|l)|ncel|pture)|h(?:ange|eck)|l(?:ea(?:n|r)|ose)|o(?:llect|m(?:bine|mit(?:t)?|p(?:are|ute))|n(?:fi(?:gure|rm)|nect|struct|trol|vert)|py|unt)|reate|ustom(?:iz(?:e)?)?)|d(?:e(?:c(?:lare|o(?:de|rat(?:e)?)?)|fine|le(?:gat(?:e)?|te)|precat(?:e)?|rive|scribe|te(?:ct|rmine))|isplay|ownload|rop(?:p)?|ump)|e(?:m(?:it(?:t)?|pty)|n(?:able|c(?:apsulat(?:e)?|o(?:de)?)|d|sure|umer(?:at(?:e)?)?)|stablish|valuat(?:e)?|x(?:amine|ecute|it|p(?:and|ect|ort)|t(?:end|ract)))|f(?:e(?:ed|tch)|i(?:l(?:l|ter)|n(?:al(?:iz(?:e)?)?|d)|re|x)|lag(?:g)?|or(?:ce|mat(?:t)?|ward))|g(?:e(?:nerate|t(?:t)?)|ive|roup)|h(?:andle|elp|old)|i(?:dentify|mp(?:lement|ort)|n(?:dicat(?:e)?|itia(?:li(?:s(?:e)?|z(?:e)?)|t(?:e)?)|put(?:t)?|s(?:ert|tantiat(?:e)?)|tercept|voke)|terat(?:e)?)|join|keep|l(?:aunch|ist(?:en)?|o(?:ad|g(?:g)?|ok))|m(?:a(?:ke|n(?:age|ipulat(?:e)?)|p(?:p)?|rk|tch)|erge|o(?:ck|dify|nitor|ve))|no(?:rmaliz(?:e)?|te)|o(?:btain|pen|utput(?:t)?|ver(?:ri(?:de)?|write))|p(?:a(?:ckage|d(?:d)?|r(?:s(?:e)?|tial)|ss)|er(?:form|sist)|ick|lot(?:t)?|o(?:ll|pulat(?:e)?|st)|r(?:epare|int|o(?:cess|duce|vi(?:de)?))|u(?:blish|ll|t(?:t)?))|query|r(?:ais(?:e)?|e(?:cord|f(?:er(?:r)?|resh)|gister|load|move|n(?:ame|der)|p(?:l(?:ace|y)|ort|resent)|qu(?:est|ire)|s(?:et|olve)|t(?:rieve|urn))|o(?:ll(?:back)?|und)|unn)|s(?:a(?:mple|ve)|can(?:n)?|e(?:arch|lect|nd|r(?:iali(?:s(?:e)?|z(?:e)?)|ve)|t(?:t)?)|how|imulat(?:e)?|ource|p(?:ecify|lit(?:t)?)|t(?:art|ep(?:p)?|o(?:pp|re)|ripp)|u(?:b(?:mit(?:t)?|scribe)|m(?:m)?)|wap(?:p)?|ync(?:hroni(?:s(?:e)?|z(?:e)?))?)|t(?:ake|e(?:ar|st)|ime|r(?:ans(?:form|late|mit(?:t)?)|uncate|y)|urn|weak)|u(?:p(?:date|load)|se)|v(?:ali(?:dat(?:e)?)?|erify|iew)|w(?:a(?:it|lk)|r(?:ap(?:p)?|ite))|yield)(?:(?:ing)s?|(?:d|e(?:d|s)|s))|(?:a(?:ggreg|ppli|rchiv|uth(?:ent|or))|c(?:a(?:ch|lcul|ncell|ptur)|hang|o(?:m(?:bin|p(?:ar|ut))|n(?:figur|troll)|pi)|reat)|d(?:e(?:c(?:lar|o(?:d|r))|fin|le(?:g|t)|prec|riv|scrib|termin)|ispla)|e(?:mpti|n(?:abl|c(?:apsul|od)|sur)|valu|x(?:amin|ecut))|forc|generat|handl|i(?:dentif(?:i)?|n(?:dic|iti(?:al)?|stanti|vok)|ter)|m(?:an(?:ag|ipul)|erg|odif(?:i)?)|normal|over(?:rid|writ)|p(?:ackag|opul|r(?:epar|o(?:duc|vid)))|queri|re(?:gist|mov|nam|pl(?:ac|i)?|quir|solv|triev)|s(?:ampl|er(?:ial|v)|imul|ourc|pecif(?:i)?|ubscrib|ynchron)|tr(?:anslat|i|uncat)?|updat|v(?:alid|erif(?:i)?))(?:(?:ing)s?|(?:e(?:d|s)|ie(?:d|s)|s|ying)?)|(?:clos|fir|giv|m(?:ak|ov)|not|repres|s(?:av|tor)|t(?:ak|im)|us|writ)(?:(?:ing)s?|e(?:d|e|s))|(?:cop|empt|instant|quer)(?:ie(?:d|s)|ying)|(?:run|st(?:op|rip))(?:s)|init(?:(?:ing)s?|(?:e(?:d|s)|ie(?:d|s)|s|ying))|read(?:(?:ing)s?|(?:e(?:d|s)|s))|go(?:(?:ing)s?|ed)|add(?:e(?:d|s)|s)|liste(?:(?:ing)s?|(?:d|s)?)|(?:a(?:djust|ggregat(?:e)?|llow|ppend|rchiv(?:e)?|ttempt|uth(?:ent(?:icat)?|orize)?)|c(?:a(?:lculate|ncel(?:l)?|ptur(?:e)?)|lose|o(?:m(?:bin(?:e)?|mit|p(?:ar(?:e)?|ut(?:e)?))|n(?:figur(?:e)?|trol(?:l)?))|ustomiz(?:e)?)|d(?:e(?:c(?:lar(?:e)?|o(?:d(?:e)?|rat(?:e)?))|fin(?:e)?|le(?:gat(?:e)?|t(?:e)?)|precat(?:e)?|riv(?:e)?|scrib(?:e)?|termin(?:e)?)|isplay|ownload)|e(?:mit|n(?:abl(?:e)?|c(?:apsulat(?:e)?|od(?:e)?)|sur(?:e)?|umerate)|stablish|valuat(?:e)?|x(?:amin(?:e)?|ecute|it|p(?:and|ect|ort)|tend))|f(?:i(?:lter|naliz(?:e)?)|or(?:mat|ward))|generat(?:e)?|i(?:dentifi|n(?:dicat(?:e)?|itia(?:li(?:s(?:e)?|z)|t(?:e)?)|put|s(?:ert|tantiat(?:e)?)|vok(?:e)?)|terat(?:e)?)|listen|m(?:an(?:ag(?:e)?|ipulate)|o(?:difi|nitor))|normaliz(?:e)?|o(?:btain|pen|utput|ver(?:rid(?:e)?|writ(?:e)?))|p(?:a(?:ckag(?:e)?|rtial)|er(?:form|sist)|lot|opulat(?:e)?|r(?:epar(?:e)?|o(?:duc(?:e)?|vid(?:e)?))|ublish)|query|r(?:e(?:cord|fresh|load|mov(?:e)?|n(?:am(?:e)?|der)|p(?:l(?:ac(?:e)?|y)|ort)|qu(?:est|ir(?:e)?)|s(?:et|olv(?:e)?)|t(?:riev(?:e)?|urn))|ollback)|s(?:eriali(?:s(?:e)?|z(?:e)?)|imulat(?:e)?|ource|pecifi|ub(?:mit|scrib(?:e)?)|ynchroni(?:s(?:e)?|ze))|t(?:ake|r(?:ans(?:form|lat(?:e)?|mit)|uncat(?:e)?|y))|u(?:p(?:dat(?:e)?|load)|se)|v(?:alidat(?:e)?|erifi))(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on(?:al(?:ly)?)?|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|o(?:r|usly))s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|(?:appl(?:i|y)|c(?:hange|lea(?:n|r))|dropp|f(?:etch|ill|lagg|orc(?:e)?)|hold|initial|join|launch|m(?:ark|o(?:ck|v))|p(?:ass|ick|lott|ost)|r(?:e(?:gister|present)|o(?:ll|und)|unn)|s(?:av|cann|e(?:arch|t)|tart|ubmitt)|t(?:ak|e(?:ar|st)|ime|ri)|us|wait|yield)(?:(?:ative(?:ly)?|edly|i(?:ngly|sm|t(?:y|ies)|z(?:e(?:d|s)|ing)))s?|(?:ativeness|ful(?:ly|ness)?|ly|ness))|(?:a(?:ggreg|ssign)|confirm|de(?:cor|leg|prec)|e(?:ncapsul|valu)|i(?:n(?:dic|iti|stanti)|ter)|manipul|popul|simul|transl|valid)(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|(?:a(?:ccept|ssert)|con(?:nect|struct|vert)|detect|ex(?:ecut|tract)|i(?:mport|ntercept)|select)(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on(?:al(?:ly)?)?|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|(?:author|custom|final|normal|s(?:erial|ynchron))(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|(?:empti|fix|help|not)(?:(?:edly|ingly)s?|(?:ful(?:ly|ness)?|ness))|(?:norm|seri)(?:al(?:it(?:y|ies)|ly)?)s?|(?:authoriz|synchroniz)(?:ation|e(?:dly|r)|ingly)s?|(?:gener|trunc)(?:(?:at(?:e(?:d|ly|s)|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))s?|ativeness)|(?:access|process)(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ness|ous(?:ness)?))|part(?:ially)s?|parti(?:al(?:it(?:y|ies)|ly))s?|instant(?:i(?:al(?:ly)?|ous))s?|enumerat(?:edly|i(?:ngly|on(?:al(?:ly)?)?)|or)s?|manipulat(?:(?:edly|i(?:ngly|on(?:al)?|v(?:e(?:ly)?|it(?:y|ies)))|or)s?|iveness)|calculat(?:(?:edly|i(?:ngly|onal(?:ly)?|v(?:e(?:ly)?|it(?:y|ies)))|or)s?|iveness)|form(?:(?:at(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))s?|ativeness)|enumer(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)|i(?:ng|on(?:al(?:ly)?)?)|or))|e(?:n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:ableness|i(?:bleness|veness)|ous(?:ness)?))|calcul(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ness|ous(?:ness)?))|refer(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|repres(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|tly)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ness|ous(?:ness)?))|implement(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on(?:al(?:ly)?)?|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|collect(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on(?:al(?:ly)?)?|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|regist(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?))|i(?:b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|on(?:al(?:ly)?)?|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|init(?:(?:a(?:b(?:ilit(?:y|ies)|l(?:e|y))|l(?:it(?:y|ies)|ly)?|n(?:c(?:e|ies|y)|t(?:ly)?)|t(?:e(?:d|ly|s)?|i(?:ng|on(?:al(?:ly)?)?|ve(?:ly)?)|or))|e(?:dly|n(?:c(?:e|ies|y)|t(?:ly)?)|r)|i(?:al(?:ly)?|b(?:ilit(?:y|ies)|l(?:e|y))|c(?:al(?:ly)?)?|ngly|o(?:n(?:al(?:ly)?)?|us)|sm|t(?:y|ies)|v(?:e(?:ly)?|it(?:y|ies))|z(?:e(?:d|s)?|ing))|ment|ously)s?|(?:a(?:bleness|tiveness)|ful(?:ly|ness)?|i(?:bleness|veness)|ly|ness|ous(?:ness)?))|(?:a(?:ction|lways|n|pi)?|b(?:as(?:e|ic)|usiness)|c(?:al(?:culation|lback)|o(?:llection|mmon|n(?:structor|venien(?:ce|t)))|u(?:rrent(?:ly)?|stom))|d(?:ata|escription|ict(?:ionary)?|oes|ummy)|example|f(?:a(?:ctory|lse)|inal|ormula|unction)|generic|h(?:andler|e(?:lper|re)|ook)|i(?:mp(?:lementation|ortantly)|nternal|t)|m(?:ain|ethod|odule)|n(?:ew|umber)|optional|placeholder|re(?:ference|sult)|s(?:ame|chema|etup|hould|imple|ome|pecial|t(?:a(?:ndard|tic)|ring)|ubclasses)|t(?:h(?:at|e(?:se)?|is)|rue)|u(?:ni(?:que|t)|tility)|w(?:hat|rapper))))$",
+                "by": "!"
+              }
+            },
+            "K": {
+              "replace": {
+                "source": "$DOC",
+                "replace": "^[\\s\\S]*$",
+                "by": "!"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D401",
+        "anchor": "witness.span",
+        "message": "Start this docstring's first line with an imperative verb (`Return`, not `Returns`); `$T` does not read as a command.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D401"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

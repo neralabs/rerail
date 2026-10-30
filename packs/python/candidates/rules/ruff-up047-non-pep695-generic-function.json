@@ -1,0 +1,461 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up047-non-pep695-generic-function",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare a generic function's type variables with type parameter syntax instead of module-level TypeVars; the variables are then scoped to the function.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-string": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[a-zA-Z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[a-zA-Z]*[bBfFtT]"
+                  }
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "tv-func": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.TypeVar",
+                "typing_extensions.TypeVar",
+                "_typeshed.TypeVar",
+                "typing.TypeVarTuple",
+                "typing_extensions.TypeVarTuple",
+                "_typeshed.TypeVarTuple",
+                "typing.ParamSpec",
+                "typing_extensions.ParamSpec",
+                "_typeshed.ParamSpec"
+              ]
+            }
+          },
+          "restricted-func": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.TypeVarTuple",
+                "typing_extensions.TypeVarTuple",
+                "_typeshed.TypeVarTuple",
+                "typing.ParamSpec",
+                "typing_extensions.ParamSpec",
+                "_typeshed.ParamSpec"
+              ]
+            }
+          },
+          "tv-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "tv-func"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "plain-string",
+                    "not": {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "positional"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "tv-sub": {
+            "kind": "subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "value",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.TypeVar",
+                  "typing_extensions.TypeVar",
+                  "_typeshed.TypeVar"
+                ]
+              }
+            }
+          },
+          "keyword-default": {
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "keyword_argument",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^default$"
+                }
+              }
+            }
+          },
+          "keyword-bound": {
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "keyword_argument",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^bound$"
+                }
+              }
+            }
+          },
+          "two-positional": {
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional",
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "positional"
+                }
+              }
+            }
+          },
+          "bad-call": {
+            "matches": "tv-call",
+            "any": [
+              {
+                "matches": "keyword-default"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "restricted-func"
+                },
+                "any": [
+                  {
+                    "matches": "keyword-bound"
+                  },
+                  {
+                    "matches": "two-positional"
+                  }
+                ]
+              }
+            ]
+          },
+          "tv-value": {
+            "any": [
+              {
+                "matches": "tv-call"
+              },
+              {
+                "matches": "tv-sub"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tv-value"
+                }
+              }
+            ]
+          },
+          "bad-value": {
+            "any": [
+              {
+                "matches": "bad-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-value"
+                }
+              }
+            ]
+          },
+          "tv-site": {
+            "kind": "assignment",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "left",
+              "kind": "identifier"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "kind": "type"
+              }
+            },
+            "inside": {
+              "stopBy": "end",
+              "kind": "expression_statement"
+            }
+          },
+          "tv-ref": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "matches": "tv-site"
+                },
+                "value": {
+                  "matches": "tv-value"
+                }
+              }
+            }
+          },
+          "bad-ref": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "matches": "tv-site"
+                },
+                "value": {
+                  "matches": "bad-value"
+                }
+              }
+            }
+          },
+          "anystr": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.AnyStr",
+                "typing_extensions.AnyStr",
+                "_typeshed.AnyStr"
+              ]
+            }
+          },
+          "annotation": {
+            "kind": "type",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "typed_parameter"
+                },
+                {
+                  "kind": "typed_default_parameter"
+                }
+              ]
+            }
+          },
+          "good-var": {
+            "any": [
+              {
+                "matches": "tv-ref",
+                "not": {
+                  "matches": "bad-ref"
+                }
+              },
+              {
+                "matches": "anystr",
+                "not": {
+                  "matches": "str-shadowed"
+                }
+              }
+            ]
+          },
+          "in-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation"
+            }
+          },
+          "str-shadowed": {
+            "inside": {
+              "stopBy": "end",
+              "follows": {
+                "stopBy": "end",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "identifier",
+                  "regex": "^(?:str|bytes)$",
+                  "binds": {
+                    "scope": [
+                      "module"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "generic-function",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.12"
+            }
+          },
+          "rule": {
+            "kind": "function_definition",
+            "regex": "^(?:async(?:\\s|\\\\\\r?\\n)+)?def(?:\\s|\\\\\\r?\\n)+(?P<span>\\w+(?:[ \\t\\f]|\\\\\\r?\\n)*(?:\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n|\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n|\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n|\\((?:[^()'\"#\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|#[^\\n]*\\n)*\\))*\\))*\\))*\\)|\\([\\s\\S]*?\\)))(?:\\s|\\\\\\r?\\n)*(?:->|:)",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "kind": "parameters",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "good-var",
+                    "all": [
+                      {
+                        "matches": "in-annotation"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "parameters",
+                    "kind": "parameters",
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "bad-ref",
+                      "all": [
+                        {
+                          "matches": "in-annotation"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "type_parameters",
+                    "kind": "type_parameter"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "kind": "function_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.span",
+        "code": "UP047",
+        "message": "Declare every TypeVar the signature uses in brackets after the function name (`def name[T: Bound, *Ts, **P](...)`), keeping each bound and constraint; never mix them with module-level TypeVars.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP047"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

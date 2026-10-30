@@ -1,0 +1,452 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt007-pytest-parametrize-values-wrong-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass pytest.mark.parametrize values as a list, and each row of several parameters as a tuple, not the other way round.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "parametrize": {
+            "any": [
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "parametrize"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pytest.mark.parametrize"
+                  ]
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "pos0": {
+            "matches": "positional",
+            "not": {
+              "any": [
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "positional"
+                  }
+                }
+              ]
+            }
+          },
+          "pos1": {
+            "matches": "positional",
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "matches": "positional"
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "list_splat"
+                  }
+                }
+              ]
+            }
+          },
+          "kw-names": {
+            "kind": "keyword_argument",
+            "has": {
+              "field": "name",
+              "regex": "^argnames$"
+            }
+          },
+          "kw-values": {
+            "kind": "keyword_argument",
+            "has": {
+              "field": "name",
+              "regex": "^argvalues$"
+            }
+          },
+          "param-call": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "parametrize"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "kw-names"
+                          },
+                          {
+                            "matches": "pos0"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "kw-values"
+                          },
+                          {
+                            "matches": "pos1"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "plain-str": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[bBfFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "[bBfFtT]"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-str"
+                }
+              }
+            ]
+          },
+          "multi-str": {
+            "any": [
+              {
+                "matches": "plain-str",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "value": {
+                  "regex": "[^ \\t\\f,][^,]*,[ \\t\\f,]*[^ \\t\\f,]"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "multi-str"
+                }
+              }
+            ]
+          },
+          "single-named": {
+            "matches": "plain-str",
+            "not": {
+              "matches": "multi-str"
+            }
+          },
+          "multi-call": {
+            "matches": "param-call",
+            "has": {
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "kw-names",
+                    "has": {
+                      "field": "value",
+                      "not": {
+                        "matches": "single-named"
+                      }
+                    }
+                  },
+                  {
+                    "matches": "pos0",
+                    "not": {
+                      "matches": "single-named"
+                    },
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "kw-names"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "values-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "kw-values",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "param-call"
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "pos1",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "matches": "param-call"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "kw-values"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "values-expr": {
+            "any": [
+              {
+                "matches": "values-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "values-expr"
+                }
+              }
+            ]
+          },
+          "multi-values-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "kw-values",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "multi-call"
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "pos1",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "matches": "multi-call"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "kw-values"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "multi-values-expr": {
+            "any": [
+              {
+                "matches": "multi-values-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "multi-values-expr"
+                }
+              }
+            ]
+          },
+          "row": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "tuple"
+                    },
+                    {
+                      "kind": "list"
+                    }
+                  ],
+                  "matches": "multi-values-expr"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "row"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "values-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "tuple",
+            "all": [
+              {
+                "matches": "values-expr"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT007",
+        "message": "Pass the parametrize values as a list, `[...]`, instead of a tuple.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT007"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "row-list",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "list",
+            "all": [
+              {
+                "matches": "row"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT007",
+        "message": "Write each row of parametrize values as a tuple, `(a, b)`, instead of a list; leave it if the names are one parameter and the list is that parameter's value.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT007"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

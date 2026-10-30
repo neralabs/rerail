@@ -1,0 +1,1969 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi036-bad-exit-annotation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare exit and aexit methods with the three standard arguments or star-args, annotated as object or as the exception type, exception and traceback each unioned with None.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "none-lit": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "type"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "none-lit"
+                }
+              }
+            ]
+          },
+          "object-like": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "builtins.object",
+                    "_typeshed.Unused"
+                  ],
+                  "global": [
+                    "object"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "object-like"
+                }
+              }
+            ]
+          },
+          "type-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "builtins.type",
+                "typing.Type",
+                "typing_extensions.Type",
+                "_typeshed.Type"
+              ],
+              "global": [
+                "type"
+              ]
+            }
+          },
+          "optional-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Optional",
+                "typing_extensions.Optional",
+                "_typeshed.Optional"
+              ]
+            }
+          },
+          "union-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Union",
+                "typing_extensions.Union",
+                "_typeshed.Union"
+              ]
+            }
+          },
+          "overload-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.overload",
+                    "typing_extensions.overload",
+                    "_typeshed.overload"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-ref"
+                }
+              }
+            ]
+          },
+          "base-exc": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "builtins.BaseException"
+                  ],
+                  "global": [
+                    "BaseException"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "type"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "base-exc"
+                }
+              }
+            ]
+          },
+          "traceback": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "types.TracebackType"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "traceback"
+                }
+              }
+            ]
+          },
+          "exc-type": {
+            "any": [
+              {
+                "kind": "generic_type",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "matches": "type-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "all": [
+                        {
+                          "count": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "type"
+                            },
+                            "min": 1,
+                            "max": 1
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type",
+                            "matches": "base-exc"
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "type-ref"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "subscript",
+                      "matches": "base-exc"
+                    }
+                  },
+                  {
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^[\\[\\],]$"
+                            }
+                          ]
+                        }
+                      },
+                      "min": 2,
+                      "max": 2
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "exc-type"
+                }
+              }
+            ]
+          },
+          "body": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ]
+              }
+            }
+          },
+          "or-op": {
+            "kind": "binary_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^\\|$"
+            }
+          },
+          "slot-left": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "all": [
+                    {
+                      "matches": "or-op"
+                    },
+                    {
+                      "matches": "body"
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "type",
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "type"
+                  }
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "union_type",
+                  "all": [
+                    {
+                      "matches": "body"
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "union_type"
+                              },
+                              {
+                                "matches": "or-op"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "slot-left"
+                }
+              }
+            ]
+          },
+          "slot-right": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "all": [
+                    {
+                      "matches": "or-op"
+                    },
+                    {
+                      "matches": "body"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "none-lit"
+                  }
+                }
+              },
+              {
+                "kind": "type",
+                "follows": {
+                  "stopBy": "end",
+                  "kind": "type",
+                  "matches": "none-lit"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "union_type",
+                  "matches": "body"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "slot-right"
+                }
+              }
+            ]
+          },
+          "slot-optional": {
+            "any": [
+              {
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type"
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "all": [
+                          {
+                            "matches": "body"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "optional-ref"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "subscript",
+                  "kind": "subscript",
+                  "all": [
+                    {
+                      "matches": "body"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "value",
+                        "matches": "optional-ref"
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[\\[\\],]$"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 2,
+                        "max": 2
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "slot-optional"
+                }
+              }
+            ]
+          },
+          "slot-union": {
+            "any": [
+              {
+                "kind": "type",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type"
+                        },
+                        "min": 2,
+                        "max": 2
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type",
+                        "matches": "none-lit"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "generic_type",
+                        "all": [
+                          {
+                            "matches": "body"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "union-ref"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "all": [
+                    {
+                      "matches": "body"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "value",
+                        "matches": "union-ref"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "none-lit"
+                      }
+                    },
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[\\[\\],]$"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 3,
+                        "max": 3
+                      }
+                    }
+                  ]
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "kind": "subscript"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "all": [
+                    {
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "regex": "^[(),]$"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 2,
+                        "max": 2
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "none-lit"
+                      }
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "type"
+                          }
+                        ]
+                      }
+                    },
+                    "any": [
+                      {
+                        "kind": "subscript",
+                        "all": [
+                          {
+                            "matches": "body"
+                          },
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "value",
+                              "matches": "union-ref"
+                            }
+                          },
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "regex": "^[\\[\\],]$"
+                                    }
+                                  ]
+                                }
+                              },
+                              "min": 2,
+                              "max": 2
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^,$"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "type_parameter",
+                        "all": [
+                          {
+                            "count": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "type"
+                              },
+                              "min": 1,
+                              "max": 1
+                            }
+                          },
+                          {
+                            "not": {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "regex": "^,$"
+                              }
+                            }
+                          }
+                        ],
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "generic_type",
+                          "all": [
+                            {
+                              "matches": "body"
+                            },
+                            {
+                              "has": {
+                                "stopBy": "neighbor",
+                                "matches": "union-ref"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "type"
+                    }
+                  ],
+                  "matches": "slot-union"
+                }
+              }
+            ]
+          },
+          "non-none-element": {
+            "any": [
+              {
+                "matches": "slot-left"
+              },
+              {
+                "matches": "slot-right"
+              },
+              {
+                "matches": "slot-optional"
+              },
+              {
+                "matches": "slot-union"
+              }
+            ]
+          },
+          "splat": {
+            "any": [
+              {
+                "kind": "keyword_separator"
+              },
+              {
+                "kind": "list_splat_pattern"
+              },
+              {
+                "kind": "dictionary_splat_pattern"
+              },
+              {
+                "kind": "typed_parameter",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "list_splat_pattern"
+                    },
+                    {
+                      "kind": "dictionary_splat_pattern"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "vararg": {
+            "any": [
+              {
+                "kind": "list_splat_pattern"
+              },
+              {
+                "kind": "typed_parameter",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "list_splat_pattern"
+                }
+              }
+            ]
+          },
+          "positional": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "default_parameter"
+              },
+              {
+                "kind": "typed_default_parameter"
+              },
+              {
+                "kind": "typed_parameter",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier"
+                }
+              }
+            ],
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "matches": "splat"
+              }
+            }
+          },
+          "bare-parameter": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "typed_parameter",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier"
+                }
+              }
+            ]
+          },
+          "class-member": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "body",
+                    "kind": "class_definition"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "matches": "class-member"
+                }
+              }
+            ]
+          },
+          "exit-kind": {
+            "kind": "function_definition",
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^__exit__$"
+                    }
+                  },
+                  {
+                    "not": {
+                      "regex": "^async\\b"
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "regex": "^__aexit__$"
+                    }
+                  },
+                  {
+                    "regex": "^async\\b"
+                  }
+                ]
+              }
+            ]
+          },
+          "overloaded": {
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-ref"
+                }
+              }
+            }
+          },
+          "exit-method": {
+            "matches": "exit-kind",
+            "all": [
+              {
+                "matches": "class-member"
+              },
+              {
+                "not": {
+                  "matches": "overloaded"
+                }
+              }
+            ]
+          },
+          "short-list": {
+            "kind": "parameters",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional"
+              },
+              "max": 3
+            }
+          },
+          "exit-shape": {
+            "kind": "parameters",
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "splat"
+                  }
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "positional"
+                  },
+                  "min": 4,
+                  "max": 4
+                }
+              }
+            ]
+          },
+          "named-overload": {
+            "kind": "decorated_definition",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "decorator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "overload-ref"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "definition",
+                  "kind": "function_definition",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "pattern": "$NAME"
+                  }
+                }
+              }
+            ]
+          },
+          "usable-overload": {
+            "matches": "named-overload",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "definition",
+              "all": [
+                {
+                  "matches": "exit-kind"
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "parameters",
+                    "matches": "exit-shape"
+                  }
+                }
+              ]
+            }
+          },
+          "overload-pair": {
+            "kind": "block",
+            "all": [
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "named-overload"
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "usable-overload"
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              }
+            ]
+          },
+          "loose-none": {
+            "kind": "type",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "none-lit"
+                },
+                {
+                  "matches": "object-like"
+                }
+              ]
+            }
+          },
+          "loose-exc-2": {
+            "kind": "type",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "exc-type"
+                },
+                {
+                  "matches": "object-like"
+                }
+              ]
+            }
+          },
+          "loose-exc-3": {
+            "kind": "type",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "base-exc"
+                },
+                {
+                  "matches": "object-like"
+                }
+              ]
+            }
+          },
+          "loose-exc-4": {
+            "kind": "type",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "matches": "traceback"
+                },
+                {
+                  "matches": "object-like"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "missing-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "parameters",
+            "all": [
+              {
+                "matches": "short-list"
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "vararg"
+                  }
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "field": "parameters",
+              "matches": "exit-method",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "pattern": "$M"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Give `$M` three positional parameters after `self` (exception type, exception, traceback) or `*args: object`; the interpreter always passes those three.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "star-args-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "not": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[()]$"
+                },
+                {
+                  "matches": "object-like"
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "kind": "typed_parameter",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "list_splat_pattern"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "parameters",
+                      "matches": "short-list",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "parameters",
+                        "matches": "exit-method",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "pattern": "$M"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Annotate the star-args of `$M` as `object`; they only receive the exception type, exception and traceback, which the method need not read through their types.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "extra-positional-without-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "bare-parameter",
+            "nthChild": {
+              "position": "n+5",
+              "ofRule": {
+                "matches": "positional"
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "parameters",
+                "matches": "exit-method",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "pattern": "$M"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Give every positional parameter of `$M` beyond the exception type, exception and traceback a default value; the interpreter passes only those three.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "keyword-only-without-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "bare-parameter",
+            "follows": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "keyword_separator"
+                },
+                {
+                  "matches": "vararg"
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "parameters",
+                "matches": "exit-method",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "pattern": "$M"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Give every keyword-only parameter of `$M` a default value; the interpreter passes only the three positional arguments.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "first-argument-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^[()]$"
+                    },
+                    {
+                      "matches": "object-like"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "matches": "exc-type"
+                      },
+                      {
+                        "matches": "non-none-element"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ],
+                "all": [
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 2,
+                      "ofRule": {
+                        "matches": "positional"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "parameters",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "parameters",
+                        "matches": "exit-method",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "pattern": "$M"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Annotate the first argument of `$M` as `type[BaseException] | None`, or as `object`; the interpreter passes `None` when no exception occurred.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "second-argument-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^[()]$"
+                    },
+                    {
+                      "matches": "object-like"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "matches": "base-exc"
+                      },
+                      {
+                        "matches": "non-none-element"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ],
+                "all": [
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 3,
+                      "ofRule": {
+                        "matches": "positional"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "parameters",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "parameters",
+                        "matches": "exit-method",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "pattern": "$M"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Annotate the second argument of `$M` as `BaseException | None`, or as `object`; the interpreter passes `None` when no exception occurred.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "third-argument-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "regex": "^[()]$"
+                    },
+                    {
+                      "matches": "object-like"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "matches": "traceback"
+                      },
+                      {
+                        "matches": "non-none-element"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "any": [
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  }
+                ],
+                "all": [
+                  {
+                    "matches": "positional"
+                  },
+                  {
+                    "nthChild": {
+                      "position": 4,
+                      "ofRule": {
+                        "matches": "positional"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "parameters",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "parameters",
+                        "matches": "exit-method",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "pattern": "$M"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI036",
+        "message": "Annotate the third argument of `$M` as `types.TracebackType | None`, or as `object`; the interpreter passes `None` when no exception occurred.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unrecognized-overload",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "function_definition",
+            "all": [
+              {
+                "matches": "exit-kind"
+              },
+              {
+                "matches": "overloaded"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "decorated_definition",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "matches": "overload-pair",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "body",
+                      "kind": "class_definition"
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "parameters",
+                  "pattern": "$PARAMS",
+                  "kind": "parameters",
+                  "all": [
+                    {
+                      "matches": "exit-shape"
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "positional"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "matches": "positional"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "not": {
+                                    "matches": "loose-none"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "positional"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 3,
+                                  "ofRule": {
+                                    "matches": "positional"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "not": {
+                                    "matches": "loose-none"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "positional"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 4,
+                                  "ofRule": {
+                                    "matches": "positional"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "not": {
+                                    "matches": "loose-none"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "positional"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "matches": "positional"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "not": {
+                                    "matches": "loose-exc-2"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "positional"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 3,
+                                  "ofRule": {
+                                    "matches": "positional"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "not": {
+                                    "matches": "loose-exc-3"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "all": [
+                              {
+                                "matches": "positional"
+                              },
+                              {
+                                "nthChild": {
+                                  "position": 4,
+                                  "ofRule": {
+                                    "matches": "positional"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "typed_parameter"
+                                  },
+                                  {
+                                    "kind": "typed_default_parameter"
+                                  }
+                                ]
+                              },
+                              {
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type",
+                                  "not": {
+                                    "matches": "loose-exc-4"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.PARAMS",
+        "code": "PYI036",
+        "message": "Annotate the three arguments after `self` of these `$NAME` overloads as either `None, None, None` or `type[BaseException], BaseException, types.TracebackType`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI036"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

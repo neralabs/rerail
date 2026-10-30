@@ -1,0 +1,223 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-rse102-unnecessary-paren-on-raise-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove the empty parentheses when raising an exception class; raise instantiates the class itself.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "unnecessary-paren-on-raise",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raised": {
+              "any": [
+                {
+                  "follows": {"stopBy": {"not": {"kind": "line_continuation"}}, "regex": "^raise$"},
+                  "inside": {"stopBy": "neighbor", "kind": "raise_statement"}
+                },
+                {"inside": {"stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised"}}
+              ]
+            },
+            "lowercase-name": {"regex": "^_?\\p{Lowercase}"},
+            "win-error": {"resolves": {"import": ["ctypes.WinError"]}},
+            "class-of": {
+              "params": ["E", "K"],
+              "rule": {
+                "pattern": "$E",
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "resolves": {"binding": {"stopAtGlobal": true, "site": {"kind": "class_definition", "pattern": "$K"}}}
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "has": {"stopBy": "neighbor", "pattern": "$I", "matches": {"class-of": {"E": "$I", "K": "$K"}}}
+                  },
+                  {"kind": "attribute", "matches": {"member-class": {"E": "$E", "S": "$K"}}}
+                ]
+              }
+            },
+            "member-class": {
+              "params": ["E", "S"],
+              "rule": {
+                "kind": "attribute",
+                "pattern": "$E",
+                "all": [
+                  {"has": {"field": "object", "pattern": "$O", "matches": {"class-of": {"E": "$O", "K": "$P"}}}},
+                  {"has": {"field": "attribute", "pattern": "$N"}},
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "class_definition",
+                        "pattern": "$Q",
+                        "compare": {"left": "Q", "op": "eq", "right": "P", "text": "node"},
+                        "has": {
+                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                          "kind": "class_definition",
+                          "has": {
+                            "field": "name",
+                            "pattern": "$ND",
+                            "compare": {"left": "ND", "op": "eq", "right": "N", "text": "tokens"},
+                            "binds": {"latest": true}
+                          },
+                          "pattern": "$S"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "member-def": {
+              "params": ["E"],
+              "rule": {
+                "kind": "attribute",
+                "pattern": "$E",
+                "all": [
+                  {"has": {"field": "object", "pattern": "$O", "matches": {"class-of": {"E": "$O", "K": "$P"}}}},
+                  {"has": {"field": "attribute", "pattern": "$N"}},
+                  {
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "module",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "class_definition",
+                        "pattern": "$Q",
+                        "compare": {"left": "Q", "op": "eq", "right": "P", "text": "node"},
+                        "has": {
+                          "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                          "kind": "function_definition",
+                          "has": {
+                            "field": "name",
+                            "pattern": "$ND",
+                            "compare": {"left": "ND", "op": "eq", "right": "N", "text": "tokens"},
+                            "binds": {"latest": true}
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "callee": {
+              "any": [
+                {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "callee"}},
+                {
+                  "kind": "identifier",
+                  "any": [
+                    {"resolves": {"global": true}},
+                    {
+                      "not": {"matches": "nonlocal-name"},
+                      "resolves": {"binding": {"stopAtGlobal": true, "site": {"kind": "class_definition"}}}
+                    },
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "not": {"matches": "nonlocal-name"},
+                            "resolves": {"binding": {"stopAtGlobal": true, "site": {"kind": "function_definition"}}}
+                          },
+                          {"matches": "lowercase-name"},
+                          {"matches": "win-error"}
+                        ]
+                      }
+                    }
+                  ],
+                  "pattern": "$NM"
+                },
+                {
+                  "kind": "attribute",
+                  "pattern": "$CAL",
+                  "any": [
+                    {"matches": {"member-class": {"E": "$CAL", "S": "$MS"}}},
+                    {
+                      "not": {
+                        "any": [
+                          {"matches": {"member-def": {"E": "$CAL"}}},
+                          {"has": {"field": "attribute", "matches": "lowercase-name"}},
+                          {"matches": "win-error"}
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "not": {
+                    "any": [
+                      {"kind": "identifier"},
+                      {"kind": "attribute"},
+                      {"kind": "parenthesized_expression"},
+                      {"kind": "comment"},
+                      {"kind": "line_continuation"},
+                      {"regex": "^[()]$"}
+                    ]
+                  }
+                }
+              ]
+            },
+            "nonlocal-name": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "function_definition",
+                "has": {
+                  "stopBy": {"any": [{"kind": "function_definition"}, {"kind": "class_definition"}]},
+                  "kind": "nonlocal_statement",
+                  "has": {
+                    "kind": "identifier",
+                    "pattern": "$NL",
+                    "compare": {"left": "NL", "op": "eq", "right": "NM", "text": "tokens"}
+                  }
+                },
+                "pattern": "$F"
+              },
+              "resolves": {
+                "binding": {
+                  "stopAtGlobal": true,
+                  "site": {
+                    "not": {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "function_definition",
+                        "pattern": "$G",
+                        "compare": {"left": "G", "op": "eq", "right": "F", "text": "node"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {"any": [{"kind": "comment"}, {"kind": "line_continuation"}, {"regex": "^[()]$"}]}
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "call",
+              "matches": "raised",
+              "has": {"stopBy": "neighbor", "field": "function", "matches": "callee"}
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RSE102",
+        "message": "Remove the empty parentheses so the class is raised directly; keep them if the callee is a function that returns the exception.",
+        "suppress": {"noqa": {"codes": ["RSE102"]}}
+      }
+    }
+  ]
+}

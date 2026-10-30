@@ -658,85 +658,6 @@
       "group": "Ruff"
     },
     {
-      "id": "ruff-b015-useless-comparison",
-      "document": "rules/ruff-b015-useless-comparison.json",
-      "title": "Ruff B015: Useless comparison",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-b018-useless-expression",
-      "document": "rules/ruff-b018-useless-expression.json",
-      "title": "Ruff B018: Useless expression",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-b035-static-key-dict-comprehension",
-      "document": "rules/ruff-b035-static-key-dict-comprehension.json",
-      "title": "Ruff B035: Static key dict comprehension",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-f402-import-shadowed-by-loop-var",
-      "document": "rules/ruff-f402-import-shadowed-by-loop-var.json",
-      "title": "Ruff F402: Import shadowed by loop var",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-f704-yield-outside-function",
-      "document": "rules/ruff-f704-yield-outside-function.json",
-      "title": "Ruff F704: Yield outside function",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-f722-forward-annotation-syntax-error",
-      "document": "rules/ruff-f722-forward-annotation-syntax-error.json",
-      "title": "Ruff F722: Forward annotation syntax error",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-sim102-collapsible-if",
-      "document": "rules/ruff-sim102-collapsible-if.json",
-      "title": "Ruff SIM102: Collapsible if",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim103-needless-bool",
-      "document": "rules/ruff-sim103-needless-bool.json",
-      "title": "Ruff SIM103: Needless bool",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim117-multiple-with-statements",
-      "document": "rules/ruff-sim117-multiple-with-statements.json",
-      "title": "Ruff SIM117: Multiple with statements",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim118-in-dict-keys",
-      "document": "rules/ruff-sim118-in-dict-keys.json",
-      "title": "Ruff SIM118: In dict keys",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim222-expr-or-true",
-      "document": "rules/ruff-sim222-expr-or-true.json",
-      "title": "Ruff SIM222: Expr or true",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-sim223-expr-and-false",
-      "document": "rules/ruff-sim223-expr-and-false.json",
-      "title": "Ruff SIM223: Expr and false",
-      "group": "Ruff"
-    },
-    {
-      "id": "ruff-w605-invalid-escape-sequence",
-      "document": "rules/ruff-w605-invalid-escape-sequence.json",
-      "title": "Ruff W605: Invalid escape sequence",
-      "group": "Ruff"
-    },
-    {
       "id": "bandit-b101-assert-used",
       "document": "rules/bandit-b101-assert-used.json",
       "title": "Bandit B101: Assert used",
@@ -1039,6 +960,417 @@
       "document": "rules/bandit-b702-use-of-mako-templates.json",
       "title": "Bandit B702: Use of mako templates",
       "group": "Bandit"
+    },
+    {
+      "id": "ruff-air302-airflow3-moved-to-provider",
+      "document": "rules/ruff-air302-airflow3-moved-to-provider.json",
+      "title": "Ruff AIR302: Airflow3 moved to provider",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-air311-airflow3-suggested-update",
+      "document": "rules/ruff-air311-airflow3-suggested-update.json",
+      "title": "Ruff AIR311: Airflow3 suggested update",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-air312-airflow3-suggested-to-move-to-provider",
+      "document": "rules/ruff-air312-airflow3-suggested-to-move-to-provider.json",
+      "title": "Ruff AIR312: Airflow3 suggested to move to provider",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann002-missing-type-args",
+      "document": "rules/ruff-ann002-missing-type-args.json",
+      "title": "Ruff ANN002: Missing type args",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann003-missing-type-kwargs",
+      "document": "rules/ruff-ann003-missing-type-kwargs.json",
+      "title": "Ruff ANN003: Missing type kwargs",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann201-missing-return-type-undocumented-public-function",
+      "document": "rules/ruff-ann201-missing-return-type-undocumented-public-function.json",
+      "title": "Ruff ANN201: Missing return type undocumented public function",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann202-missing-return-type-private-function",
+      "document": "rules/ruff-ann202-missing-return-type-private-function.json",
+      "title": "Ruff ANN202: Missing return type private function",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann204-missing-return-type-special-method",
+      "document": "rules/ruff-ann204-missing-return-type-special-method.json",
+      "title": "Ruff ANN204: Missing return type special method",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann205-missing-return-type-static-method",
+      "document": "rules/ruff-ann205-missing-return-type-static-method.json",
+      "title": "Ruff ANN205: Missing return type static method",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-ann206-missing-return-type-class-method",
+      "document": "rules/ruff-ann206-missing-return-type-class-method.json",
+      "title": "Ruff ANN206: Missing return type class method",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-c420-unnecessary-dict-comprehension-for-iterable",
+      "document": "rules/ruff-c420-unnecessary-dict-comprehension-for-iterable.json",
+      "title": "Ruff C420: Unnecessary dict comprehension for iterable",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-d102-undocumented-public-method",
+      "document": "rules/ruff-d102-undocumented-public-method.json",
+      "title": "Ruff D102: Undocumented public method",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-d104-undocumented-public-package",
+      "document": "rules/ruff-d104-undocumented-public-package.json",
+      "title": "Ruff D104: Undocumented public package",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-d105-undocumented-magic-method",
+      "document": "rules/ruff-d105-undocumented-magic-method.json",
+      "title": "Ruff D105: Undocumented magic method",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-d107-undocumented-public-init",
+      "document": "rules/ruff-d107-undocumented-public-init.json",
+      "title": "Ruff D107: Undocumented public init",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-d403-first-word-uncapitalized",
+      "document": "rules/ruff-d403-first-word-uncapitalized.json",
+      "title": "Ruff D403: First word uncapitalized",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-d418-overload-with-docstring",
+      "document": "rules/ruff-d418-overload-with-docstring.json",
+      "title": "Ruff D418: Overload with docstring",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-g001-logging-string-format",
+      "document": "rules/ruff-g001-logging-string-format.json",
+      "title": "Ruff G001: Logging string format",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-g002-logging-percent-format",
+      "document": "rules/ruff-g002-logging-percent-format.json",
+      "title": "Ruff G002: Logging percent format",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-g003-logging-string-concat",
+      "document": "rules/ruff-g003-logging-string-concat.json",
+      "title": "Ruff G003: Logging string concat",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-g004-logging-f-string",
+      "document": "rules/ruff-g004-logging-f-string.json",
+      "title": "Ruff G004: Logging f string",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-n803-invalid-argument-name",
+      "document": "rules/ruff-n803-invalid-argument-name.json",
+      "title": "Ruff N803: Invalid argument name",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth100-os-path-abspath",
+      "document": "rules/ruff-pth100-os-path-abspath.json",
+      "title": "Ruff PTH100: Os path abspath",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth101-os-chmod",
+      "document": "rules/ruff-pth101-os-chmod.json",
+      "title": "Ruff PTH101: Os chmod",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth102-os-mkdir",
+      "document": "rules/ruff-pth102-os-mkdir.json",
+      "title": "Ruff PTH102: Os mkdir",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth103-os-makedirs",
+      "document": "rules/ruff-pth103-os-makedirs.json",
+      "title": "Ruff PTH103: Os makedirs",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth104-os-rename",
+      "document": "rules/ruff-pth104-os-rename.json",
+      "title": "Ruff PTH104: Os rename",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth105-os-replace",
+      "document": "rules/ruff-pth105-os-replace.json",
+      "title": "Ruff PTH105: Os replace",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth106-os-rmdir",
+      "document": "rules/ruff-pth106-os-rmdir.json",
+      "title": "Ruff PTH106: Os rmdir",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth107-os-remove",
+      "document": "rules/ruff-pth107-os-remove.json",
+      "title": "Ruff PTH107: Os remove",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth108-os-unlink",
+      "document": "rules/ruff-pth108-os-unlink.json",
+      "title": "Ruff PTH108: Os unlink",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth109-os-getcwd",
+      "document": "rules/ruff-pth109-os-getcwd.json",
+      "title": "Ruff PTH109: Os getcwd",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth110-os-path-exists",
+      "document": "rules/ruff-pth110-os-path-exists.json",
+      "title": "Ruff PTH110: Os path exists",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth111-os-path-expanduser",
+      "document": "rules/ruff-pth111-os-path-expanduser.json",
+      "title": "Ruff PTH111: Os path expanduser",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth112-os-path-isdir",
+      "document": "rules/ruff-pth112-os-path-isdir.json",
+      "title": "Ruff PTH112: Os path isdir",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth113-os-path-isfile",
+      "document": "rules/ruff-pth113-os-path-isfile.json",
+      "title": "Ruff PTH113: Os path isfile",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth114-os-path-islink",
+      "document": "rules/ruff-pth114-os-path-islink.json",
+      "title": "Ruff PTH114: Os path islink",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth115-os-readlink",
+      "document": "rules/ruff-pth115-os-readlink.json",
+      "title": "Ruff PTH115: Os readlink",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth116-os-stat",
+      "document": "rules/ruff-pth116-os-stat.json",
+      "title": "Ruff PTH116: Os stat",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth117-os-path-isabs",
+      "document": "rules/ruff-pth117-os-path-isabs.json",
+      "title": "Ruff PTH117: Os path isabs",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth118-os-path-join",
+      "document": "rules/ruff-pth118-os-path-join.json",
+      "title": "Ruff PTH118: Os path join",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth119-os-path-basename",
+      "document": "rules/ruff-pth119-os-path-basename.json",
+      "title": "Ruff PTH119: Os path basename",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth120-os-path-dirname",
+      "document": "rules/ruff-pth120-os-path-dirname.json",
+      "title": "Ruff PTH120: Os path dirname",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth121-os-path-samefile",
+      "document": "rules/ruff-pth121-os-path-samefile.json",
+      "title": "Ruff PTH121: Os path samefile",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth122-os-path-splitext",
+      "document": "rules/ruff-pth122-os-path-splitext.json",
+      "title": "Ruff PTH122: Os path splitext",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pth123-builtin-open",
+      "document": "rules/ruff-pth123-builtin-open.json",
+      "title": "Ruff PTH123: Builtin open",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pyi011-typed-argument-default-in-stub",
+      "document": "rules/ruff-pyi011-typed-argument-default-in-stub.json",
+      "title": "Ruff PYI011: Typed argument default in stub",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pyi014-argument-default-in-stub",
+      "document": "rules/ruff-pyi014-argument-default-in-stub.json",
+      "title": "Ruff PYI014: Argument default in stub",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pyi021-docstring-in-stub",
+      "document": "rules/ruff-pyi021-docstring-in-stub.json",
+      "title": "Ruff PYI021: Docstring in stub",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-pyi054-numeric-literal-too-long",
+      "document": "rules/ruff-pyi054-numeric-literal-too-long.json",
+      "title": "Ruff PYI054: Numeric literal too long",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-slf001-private-member-access",
+      "document": "rules/ruff-slf001-private-member-access.json",
+      "title": "Ruff SLF001: Private member access",
+      "group": "Ruff",
+      "on": false
+    },
+    {
+      "id": "ruff-b015-useless-comparison",
+      "document": "rules/ruff-b015-useless-comparison.json",
+      "title": "Ruff B015: Useless comparison",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-f402-import-shadowed-by-loop-var",
+      "document": "rules/ruff-f402-import-shadowed-by-loop-var.json",
+      "title": "Ruff F402: Import shadowed by loop var",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-f704-yield-outside-function",
+      "document": "rules/ruff-f704-yield-outside-function.json",
+      "title": "Ruff F704: Yield outside function",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim102-collapsible-if",
+      "document": "rules/ruff-sim102-collapsible-if.json",
+      "title": "Ruff SIM102: Collapsible if",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim103-needless-bool",
+      "document": "rules/ruff-sim103-needless-bool.json",
+      "title": "Ruff SIM103: Needless bool",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim117-multiple-with-statements",
+      "document": "rules/ruff-sim117-multiple-with-statements.json",
+      "title": "Ruff SIM117: Multiple with statements",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim118-in-dict-keys",
+      "document": "rules/ruff-sim118-in-dict-keys.json",
+      "title": "Ruff SIM118: In dict keys",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim222-expr-or-true",
+      "document": "rules/ruff-sim222-expr-or-true.json",
+      "title": "Ruff SIM222: Expr or true",
+      "group": "Ruff"
+    },
+    {
+      "id": "ruff-sim223-expr-and-false",
+      "document": "rules/ruff-sim223-expr-and-false.json",
+      "title": "Ruff SIM223: Expr and false",
+      "group": "Ruff"
     }
   ]
 }

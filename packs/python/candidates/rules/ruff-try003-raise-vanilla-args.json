@@ -1,0 +1,96 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try003-raise-vanilla-args",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Build exception messages inside a custom exception class instead of passing message text at the raise site; the wording then stays consistent wherever it is raised.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raise-vanilla-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "not-implemented": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": {
+                    "global": ["NotImplementedError"],
+                    "import": ["builtins.NotImplementedError"]
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "not-implemented" } }
+              ]
+            },
+            "text-part": {
+              "kind": "string",
+              "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBtT]" } },
+              "any": [
+                { "value": { "regex": "\\s" } },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_content",
+                    "any": [
+                      { "regex": "\\s", "inside": { "stopBy": "neighbor", "kind": "string", "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[rR]" } } },
+                      {
+                        "regex": "^(?:[^\\\\\\s]|\\\\\\r?\\n|\\\\N\\{[^}]*\\}|\\\\[^\\sN])*(?:\\s|\\\\[^\\S\\r\\n]|\\\\(?:[ntrfv]|x(?i:20|09|0[a-d]|85|[aA]0)|(?:u|U0000)(?i:0020|0009|000[a-d]|0085|00[aA]0|1680|200[0-9a]|202[89f]|205f|3000)|0(?:11|12|13|14|15|40)|(?:11|12|13|14|15|40)(?:[^0-7]|$)|205|240))",
+                        "inside": { "stopBy": "neighbor", "kind": "string", "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[rR]" } } }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "message": {
+              "any": [
+                { "matches": "text-part" },
+                {
+                  "kind": "concatenated_string",
+                  "has": { "stopBy": "neighbor", "matches": "text-part" },
+                  "not": { "has": { "stopBy": "neighbor", "kind": "string", "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[tT]" } } }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "message" } }
+              ]
+            },
+            "raised": {
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "raise_statement" },
+                  "not": { "inside": { "stopBy": "neighbor", "kind": "raise_statement", "field": "cause" } }
+                },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "matches": "raised",
+            "not": { "has": { "stopBy": "neighbor", "field": "function", "matches": "not-implemented" } },
+            "has": {
+              "stopBy": "neighbor",
+              "field": "arguments",
+              "kind": "argument_list",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "message",
+                "not": { "follows": { "stopBy": "end", "regex": "^,$" } }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY003",
+        "message": "Define an exception class that builds this message itself (for example in `__init__`) and raise it with only the varying values. Leave it if a dedicated class would not help callers.",
+        "suppress": { "noqa": { "codes": ["TRY003"] } }
+      }
+    }
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pgh004-blanket-noqa",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name specific rule codes in noqa comments instead of suppressing every check, and put a colon before the codes; a blanket noqa hides unrelated problems.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "own-line": {
+            "not": {
+              "layout": {
+                "before": {
+                  "to": "token",
+                  "breaks": {
+                    "eq": 0
+                  }
+                }
+              }
+            }
+          },
+          "missing-colon": {
+            "kind": "comment",
+            "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+          },
+          "exempt-file": {
+            "kind": "comment",
+            "matches": "own-line",
+            "regex": "^[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$)))"
+          },
+          "enabled": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "module",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "exempt-file"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "blanket-noqa",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "^[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:]))",
+            "not": {
+              "matches": "missing-colon"
+            },
+            "matches": "enabled"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH004",
+        "message": "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing."
+      }
+    },
+    {
+      "id": "noqa-missing-colon",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "missing-colon"
+              },
+              {
+                "matches": "enabled"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "PGH004",
+        "message": "Add a colon after `noqa` before the codes, as in `# noqa: F401`; without it the comment silences every check on the line, not just those codes."
+      }
+    },
+    {
+      "id": "blanket-file-noqa",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "^[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:]))",
+            "matches": "own-line",
+            "all": [
+              {
+                "matches": "enabled"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PGH004",
+        "message": "Name the specific rule codes in this file-wide `noqa` comment, as in `# ruff: noqa: F401`, instead of silencing every check for the whole file."
+      }
+    }
+  ]
+}

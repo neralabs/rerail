@@ -1,0 +1,459 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf016-invalid-index-type",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Index list, tuple, string and bytes literals only with integers or slices; any other index type fails at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "template-string": {
+            "kind": "string",
+            "regex": "^[A-Za-z]*[tT]"
+          },
+          "checkable-value": {
+            "any": [
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "tuple"
+              },
+              {
+                "kind": "string",
+                "not": {
+                  "matches": "template-string"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "template-string"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "checkable-value"
+                }
+              }
+            ]
+          },
+          "bad-bound": {
+            "any": [
+              {
+                "pattern": "$B",
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  },
+                  {
+                    "kind": "float"
+                  },
+                  {
+                    "kind": "ellipsis"
+                  },
+                  {
+                    "kind": "list"
+                  },
+                  {
+                    "kind": "list_comprehension"
+                  },
+                  {
+                    "kind": "set"
+                  },
+                  {
+                    "kind": "set_comprehension"
+                  },
+                  {
+                    "kind": "dictionary"
+                  },
+                  {
+                    "kind": "dictionary_comprehension"
+                  },
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "kind": "generator_expression"
+                  },
+                  {
+                    "kind": "lambda"
+                  },
+                  {
+                    "kind": "integer",
+                    "regex": "[jJ]$"
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-bound"
+                }
+              }
+            ]
+          },
+          "bad-index": {
+            "any": [
+              {
+                "matches": "bad-bound"
+              },
+              {
+                "kind": "none",
+                "pattern": "$B"
+              },
+              {
+                "kind": "list_splat",
+                "pattern": "$B"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-index"
+                }
+              }
+            ]
+          },
+          "no-comma": {
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "regex": "^,$"
+              }
+            }
+          },
+          "tuple-span": {
+            "regex": "(?s)\\[(?:\\s|#[^\\n]*\\n)*(?<I>(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n)*\\])*\\])*\\])*(?:[^\\s\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n|\\[(?:[^\\[\\]#\"']|\"\"\"(?:[^\"\\\\]|\\\\.|\"{1,2}(?:[^\"\\\\]|\\\\.))*\"\"\"|\\'\\'\\'(?:[^'\\\\]|\\\\.|'{1,2}(?:[^'\\\\]|\\\\.))*\\'\\'\\'|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*\\'|#[^\\n]*\\n)*\\])*\\])*\\]))(?:\\s|#[^\\n]*\\n)*\\]$"
+          },
+          "checkable-subscript": {
+            "kind": "subscript",
+            "has": {
+              "field": "value",
+              "matches": "checkable-value"
+            }
+          },
+          "index-hit": {
+            "matches": "checkable-subscript",
+            "all": [
+              {
+                "matches": "no-comma"
+              },
+              {
+                "has": {
+                  "field": "subscript",
+                  "stopBy": "neighbor",
+                  "matches": "bad-index"
+                }
+              }
+            ]
+          },
+          "slice-hit": {
+            "kind": "slice",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "checkable-subscript",
+                  "all": [
+                    {
+                      "matches": "no-comma"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-bound"
+                }
+              }
+            ]
+          },
+          "tuple-hit": {
+            "matches": "checkable-subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "regex": "^,$"
+            }
+          },
+          "tuple-span-hit": {
+            "matches": "tuple-hit",
+            "all": [
+              {
+                "matches": "tuple-span"
+              }
+            ]
+          },
+          "tree-subscript": {
+            "kind": "subscript",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "checkable-value",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^\\[$"
+                }
+              }
+            }
+          },
+          "tree-index-hit": {
+            "matches": "tree-subscript",
+            "all": [
+              {
+                "matches": "no-comma"
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-index",
+                  "follows": {
+                    "stopBy": "end",
+                    "regex": "^\\[$"
+                  }
+                }
+              }
+            ]
+          },
+          "tree-slice-hit": {
+            "kind": "slice",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "tree-subscript",
+                  "all": [
+                    {
+                      "matches": "no-comma"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-bound"
+                }
+              }
+            ]
+          },
+          "index-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "tree-index-hit"
+                  },
+                  {
+                    "matches": "index-in-annotation"
+                  }
+                ]
+              }
+            }
+          },
+          "slice-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "tree-slice-hit"
+                  },
+                  {
+                    "matches": "slice-in-annotation"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-index",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "index-hit"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "RUF016",
+        "message": "Index this list, tuple, string or bytes literal with an integer or a slice; any other index type raises a TypeError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-index-in-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "index-in-annotation"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "RUF016",
+        "message": "Index this list, tuple, string or bytes literal with an integer or a slice; any other index type raises a TypeError.",
+        "each": "B",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-slice-bound",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "slice-hit"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "RUF016",
+        "message": "Use an integer (or None) for each bound and step of this slice; any other type raises a TypeError.",
+        "each": "B",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-slice-bound-in-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "slice-in-annotation"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.B",
+        "code": "RUF016",
+        "message": "Use an integer (or None) for each bound and step of this slice; any other type raises a TypeError.",
+        "each": "B",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-tuple-index-fallback",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "tuple-hit",
+            "pattern": "$V[$$$I]",
+            "not": {
+              "matches": "tuple-span"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.I",
+        "code": "RUF016",
+        "message": "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-tuple-index-span",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "tuple-span-hit"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.I",
+        "code": "RUF016",
+        "message": "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF016"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

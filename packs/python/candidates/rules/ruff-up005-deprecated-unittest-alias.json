@@ -1,0 +1,164 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up005-deprecated-unittest-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the current unittest assertion methods instead of their deprecated aliases; the aliases were removed in Python 3.12.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "deprecated-unittest-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "self-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^self$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "self-name"
+                  }
+                }
+              ]
+            },
+            "callee-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "call",
+                    "field": "function"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee-position"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "matches": "callee-position",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "object",
+                  "matches": "self-name"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "attribute",
+                  "kind": "identifier",
+                  "regex": "^(?:assertAlmostEquals|assertEquals|assertNotAlmostEquals|assertNotEquals|assertNotRegexpMatches|assertRaisesRegexp|assertRegexpMatches|assert_|failIf|failIfAlmostEqual|failIfEqual|failUnless|failUnlessAlmostEqual|failUnlessEqual|failUnlessRaises)$",
+                  "pattern": "$ALIAS"
+                }
+              }
+            ]
+          },
+          "transform": {
+            "T0": {
+              "replace": {
+                "source": "$ALIAS",
+                "replace": "^(?:assertAlmostEquals|failUnlessAlmostEqual)$",
+                "by": "assertAlmostEqual"
+              }
+            },
+            "T1": {
+              "replace": {
+                "source": "$T0",
+                "replace": "^(?:assertEquals|failUnlessEqual)$",
+                "by": "assertEqual"
+              }
+            },
+            "T2": {
+              "replace": {
+                "source": "$T1",
+                "replace": "^(?:assertNotAlmostEquals|failIfAlmostEqual)$",
+                "by": "assertNotAlmostEqual"
+              }
+            },
+            "T3": {
+              "replace": {
+                "source": "$T2",
+                "replace": "^(?:assertNotEquals|failIfEqual)$",
+                "by": "assertNotEqual"
+              }
+            },
+            "T4": {
+              "replace": {
+                "source": "$T3",
+                "replace": "^(?:assertNotRegexpMatches)$",
+                "by": "assertNotRegex"
+              }
+            },
+            "T5": {
+              "replace": {
+                "source": "$T4",
+                "replace": "^(?:assertRaisesRegexp)$",
+                "by": "assertRaisesRegex"
+              }
+            },
+            "T6": {
+              "replace": {
+                "source": "$T5",
+                "replace": "^(?:assertRegexpMatches)$",
+                "by": "assertRegex"
+              }
+            },
+            "T7": {
+              "replace": {
+                "source": "$T6",
+                "replace": "^(?:assert_|failUnless)$",
+                "by": "assertTrue"
+              }
+            },
+            "T8": {
+              "replace": {
+                "source": "$T7",
+                "replace": "^(?:failIf)$",
+                "by": "assertFalse"
+              }
+            },
+            "TARGET": {
+              "replace": {
+                "source": "$T8",
+                "replace": "^(?:failUnlessRaises)$",
+                "by": "assertRaises"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP005",
+        "message": "Replace `self.$ALIAS` with `self.$TARGET`; the alias is deprecated and was removed in Python 3.12. Leave it if this class defines its own `$ALIAS`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP005"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

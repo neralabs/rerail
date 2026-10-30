@@ -1,0 +1,58 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try002-raise-vanilla-class",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Raise a specific built-in or custom exception instead of the generic base exception classes; callers can then catch it without capturing unrelated errors.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raise-vanilla-class",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "vanilla-ref": {
+              "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+              "resolves": {
+                "global": ["Exception", "BaseException"],
+                "import": ["builtins.Exception", "builtins.BaseException"]
+              }
+            },
+            "vanilla": {
+              "any": [
+                { "matches": "vanilla-ref" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "vanilla" } }
+              ]
+            },
+            "raised": {
+              "any": [
+                {
+                  "inside": { "stopBy": "neighbor", "kind": "raise_statement" },
+                  "not": { "inside": { "stopBy": "neighbor", "kind": "raise_statement", "field": "cause" } }
+                },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised" } }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "raised",
+            "any": [
+              { "matches": "vanilla-ref" },
+              { "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "vanilla" } }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY002",
+        "message": "Raise a specific built-in exception such as `ValueError` or `RuntimeError`, or define a subclass, instead of `Exception`/`BaseException`, so callers can catch it precisely.",
+        "suppress": { "noqa": { "codes": ["TRY002"] } }
+      }
+    }
+  ]
+}

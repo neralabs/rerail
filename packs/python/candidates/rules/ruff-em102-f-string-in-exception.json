@@ -1,0 +1,160 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-em102-f-string-in-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Assign an f-string exception message to a variable before raising instead of building it inline; the traceback otherwise shows the message twice.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "f-string-in-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raised": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement"
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "raise_statement",
+                      "field": "cause"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "raised"
+                  }
+                }
+              ]
+            },
+            "typing-cast": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.cast",
+                      "typing_extensions.cast",
+                      "_typeshed.cast"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typing-cast"
+                  }
+                }
+              ]
+            },
+            "first-arg-of-raised-call": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "matches": "raised",
+                      "not": {
+                        "has": {
+                          "field": "function",
+                          "matches": "typing-cast"
+                        }
+                      }
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "first-arg-of-raised-call"
+                  }
+                }
+              ]
+            },
+            "f-string": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[^'\"]*[fF]"
+              }
+            },
+            "t-string": {
+              "kind": "string",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "^[^'\"]*[tT]"
+              }
+            }
+          },
+          "rule": {
+            "matches": "first-arg-of-raised-call",
+            "any": [
+              {
+                "matches": "f-string"
+              },
+              {
+                "kind": "concatenated_string",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "f-string"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "t-string"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "EM102",
+        "message": "Assign this f-string to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "EM102"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

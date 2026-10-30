@@ -1,0 +1,100 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt013-pytest-incorrect-pytest-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Import pytest as a plain module, without an alias or from-imports, and access its members through it; this keeps usage consistent across tests.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "import-as",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "aliased_import",
+            "any": [
+              {
+                "has": {
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "regex": "^pytest[\\s\\\\]*\\."
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "name",
+                      "kind": "dotted_name",
+                      "regex": "^pytest$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "alias",
+                      "kind": "identifier",
+                      "not": {
+                        "regex": "^pytest$"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "import_statement",
+              "pattern": "$S"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "PT013",
+        "message": "Drop the alias: write `import pytest` and use `pytest.xxx` (for example `pytest.mark`); keep the alias only if another name `pytest` in this file would clash.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT013"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-from",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "import_from_statement",
+            "has": {
+              "field": "module_name",
+              "kind": "dotted_name",
+              "regex": "^pytest(?:[\\s\\\\]*\\.|$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT013",
+        "message": "Replace this with `import pytest` and refer to each member as `pytest.<name>`, such as `pytest.fixture`; leave it if this repo imports pytest names directly on purpose.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT013"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

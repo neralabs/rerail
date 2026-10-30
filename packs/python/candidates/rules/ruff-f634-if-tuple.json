@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f634-if-tuple",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Don't use a tuple as an if or elif condition; a non-empty tuple is always true, so the branch always runs.",
   "scope": {
@@ -17,6 +17,16 @@
         "ast": {
           "language": "python",
           "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
             "non-empty-tuple": {
               "any": [
                 {
@@ -29,7 +39,7 @@
                           "regex": "^[(),]$"
                         },
                         {
-                          "kind": "comment"
+                          "matches": "trivia"
                         }
                       ]
                     }
@@ -47,12 +57,9 @@
             "branch-test": {
               "any": [
                 {
-                  "follows": {
-                    "stopBy": "neighbor",
-                    "regex": "^(if|elif)$"
-                  },
                   "inside": {
                     "stopBy": "neighbor",
+                    "field": "condition",
                     "any": [
                       {
                         "kind": "if_statement"

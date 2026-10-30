@@ -1,0 +1,365 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf023-unsorted-dunder-slots",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep the entries of a class's __slots__ in natural sorted order, with digit runs compared by number.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unsorted-dunder-slots",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "str-literal": {
+              "any": [
+                {
+                  "kind": "string",
+                  "regex": "^[rRuU]{0,2}['\"]"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "regex": "^[rRuU]{0,2}['\"]"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "str-literal"
+                  }
+                }
+              ]
+            },
+            "elem": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "regex": "^[\\[\\](){},]$"
+                  }
+                ]
+              }
+            },
+            "seq-display": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "expression_list"
+                },
+                {
+                  "kind": "set"
+                }
+              ]
+            },
+            "all-strings": {
+              "any": [
+                {
+                  "matches": "seq-display",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[\\[\\](){},]$"
+                          },
+                          {
+                            "matches": "str-literal"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "dictionary",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "regex": "^[\\[\\](){},]$"
+                          },
+                          {
+                            "kind": "pair",
+                            "has": {
+                              "field": "key",
+                              "matches": "str-literal"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "unsorted": {
+              "any": [
+                {
+                  "matches": "seq-display",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "str-literal",
+                    "pattern": "$Y",
+                    "follows": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "regex": "^[\\[\\](){},]$"
+                            }
+                          ]
+                        }
+                      },
+                      "matches": "str-literal",
+                      "pattern": "$X",
+                      "compare": {
+                        "left": "YT",
+                        "op": "lt",
+                        "right": "XT",
+                        "collation": "natural"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "dictionary",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "pattern": "$Y"
+                    },
+                    "follows": {
+                      "stopBy": {
+                        "kind": "pair"
+                      },
+                      "kind": "pair",
+                      "has": {
+                        "field": "key",
+                        "pattern": "$X"
+                      },
+                      "compare": {
+                        "left": "YT",
+                        "op": "lt",
+                        "right": "XT",
+                        "collation": "natural"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "slots-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__slots__$"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "tuple_pattern"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^[()]$"
+                        }
+                      ]
+                    },
+                    "matches": "slots-name"
+                  }
+                }
+              ]
+            },
+            "slots-value": {
+              "inside": {
+                "field": "right",
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "assignment",
+                "has": {
+                  "field": "left",
+                  "matches": "slots-name"
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assignment"
+                  }
+                },
+                "inside": {
+                  "kind": "class_definition",
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "transform": {
+            "YD": {
+              "replace": {
+                "source": "$Y",
+                "replace": "([0-9])\\s+([0-9])",
+                "by": "${1}\u0001${2}",
+                "value": true
+              }
+            },
+            "YS": {
+              "replace": {
+                "source": "$YD",
+                "replace": "\\s+",
+                "by": ""
+              }
+            },
+            "YA": {
+              "replace": {
+                "source": "$YS",
+                "replace": "([\ue000-\uffff])",
+                "by": "\ud7ff${1}"
+              }
+            },
+            "YU": {
+              "replace": {
+                "source": "$YA",
+                "replace": "_",
+                "by": "Zz\uffff"
+              }
+            },
+            "YT": {
+              "replace": {
+                "source": "$YU",
+                "replace": "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?",
+                "by": "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"
+              }
+            },
+            "XD": {
+              "replace": {
+                "source": "$X",
+                "replace": "([0-9])\\s+([0-9])",
+                "by": "${1}\u0001${2}",
+                "value": true
+              }
+            },
+            "XS": {
+              "replace": {
+                "source": "$XD",
+                "replace": "\\s+",
+                "by": ""
+              }
+            },
+            "XA": {
+              "replace": {
+                "source": "$XS",
+                "replace": "([\ue000-\uffff])",
+                "by": "\ud7ff${1}"
+              }
+            },
+            "XU": {
+              "replace": {
+                "source": "$XA",
+                "replace": "_",
+                "by": "Zz\uffff"
+              }
+            },
+            "XT": {
+              "replace": {
+                "source": "$XU",
+                "replace": "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?",
+                "by": "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"
+              }
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "slots-value"
+              },
+              {
+                "matches": "all-strings"
+              },
+              {
+                "matches": "unsorted"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF023",
+        "message": "Sort the entries of this `__slots__` in natural order (digit runs by number). Reordering is safe unless other code iterates `__slots__` and relies on the order.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF023"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

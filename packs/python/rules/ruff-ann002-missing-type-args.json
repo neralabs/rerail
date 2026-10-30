@@ -1,0 +1,227 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ann002-missing-type-args",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Annotate variadic positional parameters with the type of each extra argument so type checkers can verify calls.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-type-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "overload-expr": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.overload",
+                      "typing_extensions.overload",
+                      "_typeshed.overload"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "overload-expr"
+                  }
+                }
+              ]
+            },
+            "overload-decorated": {
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-expr"
+                }
+              }
+            },
+            "definition-statement": {
+              "any": [
+                {
+                  "kind": "function_definition"
+                },
+                {
+                  "kind": "class_definition"
+                },
+                {
+                  "kind": "decorated_definition"
+                }
+              ]
+            },
+            "holds-definition": {
+              "any": [
+                {
+                  "matches": "definition-statement"
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "matches": "definition-statement"
+                    },
+                    "matches": "definition-statement"
+                  }
+                }
+              ]
+            },
+            "last-definition-is-overload": {
+              "any": [
+                {
+                  "matches": "overload-decorated",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "function_definition",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$FN"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "decorated_definition",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "function_definition"
+                        }
+                      }
+                    ]
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "holds-definition",
+                    "not": {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "holds-definition"
+                      }
+                    },
+                    "all": [
+                      {
+                        "matches": "last-definition-is-overload"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "previous-overload": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "matches": "holds-definition"
+                    },
+                    "matches": "last-definition-is-overload"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "matches": "holds-definition"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ]
+                    },
+                    "matches": "previous-overload"
+                  }
+                }
+              ]
+            },
+            "overload-implementation": {
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "overload-decorated"
+                }
+              },
+              "matches": "previous-overload"
+            }
+          },
+          "rule": {
+            "kind": "list_splat_pattern",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "identifier",
+              "pattern": "$NAME"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "parameters",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "pattern": "$FN"
+                    }
+                  },
+                  {
+                    "not": {
+                      "matches": "overload-implementation"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ANN002",
+        "message": "Add a type annotation to `*$NAME` giving the type of each extra positional argument.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ANN002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

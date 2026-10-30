@@ -1,0 +1,430 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up026-deprecated-mock-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use the standard library unittest.mock instead of the separate mock package; it has been built into Python since version 3.3.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "import-mock",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name",
+                "regex": "^mock(\\s*\\.\\s*mock)?$",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_statement"
+                }
+              },
+              {
+                "kind": "aliased_import",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_statement"
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "dotted_name",
+                  "regex": "^mock(\\s*\\.\\s*mock)?$"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP026",
+        "message": "Import mock from the standard library with `from unittest import mock` (add `as NAME` if it is aliased). Keep the separate package only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP026"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-from-mock",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "import_from_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "module_name",
+              "kind": "dotted_name",
+              "regex": "^mock$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP026",
+        "message": "Import from `unittest.mock` instead of `mock`; `from mock import mock` becomes `from unittest import mock`. Keep the separate package only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP026"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "mock-attribute",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "mock-import": {
+              "any": [
+                {
+                  "kind": "import_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "dotted_name",
+                        "regex": "^mock(\\s*\\..*)?$"
+                      },
+                      {
+                        "kind": "aliased_import",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "name",
+                          "kind": "dotted_name",
+                          "regex": "^mock(\\s*\\..*)?$"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "import_from_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "module_name",
+                    "kind": "dotted_name",
+                    "regex": "^mock(\\s*\\..*)?$"
+                  }
+                }
+              ]
+            },
+            "body": {
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "function_definition"
+              }
+            },
+            "fn-import": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "body",
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "lambda"
+                      }
+                    ]
+                  },
+                  "matches": "mock-import"
+                }
+              }
+            },
+            "anywhere": {
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "matches": "mock-import"
+                }
+              }
+            },
+            "seen": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "mock-import"
+                        },
+                        {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "lambda"
+                              }
+                            ]
+                          },
+                          "has": {
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_definition"
+                                },
+                                {
+                                  "kind": "lambda"
+                                }
+                              ]
+                            },
+                            "matches": "mock-import"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "matches": "anywhere",
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "field": "body",
+                        "kind": "lambda"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "type",
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "neighbor",
+                              "kind": "type_alias_statement"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "module",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "kind": "future_import_statement",
+                                "regex": "\\bannotations\\b"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "body"
+                  },
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "module",
+                        "has": {
+                          "stopBy": {
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "lambda"
+                              }
+                            ]
+                          },
+                          "matches": "mock-import"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "follows": {
+                          "stopBy": "end",
+                          "any": [
+                            {
+                              "matches": "fn-import"
+                            },
+                            {
+                              "not": {
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "lambda"
+                                  }
+                                ]
+                              },
+                              "has": {
+                                "stopBy": {
+                                  "any": [
+                                    {
+                                      "kind": "function_definition"
+                                    },
+                                    {
+                                      "kind": "lambda"
+                                    }
+                                  ]
+                                },
+                                "matches": "fn-import"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "body",
+                        "inside": {
+                          "stopBy": "end",
+                          "matches": "body"
+                        }
+                      },
+                      "all": [
+                        {
+                          "inside": {
+                            "stopBy": "end",
+                            "kind": "module",
+                            "has": {
+                              "stopBy": {
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "lambda"
+                                  }
+                                ]
+                              },
+                              "matches": "fn-import"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "in-string"
+                    },
+                    {
+                      "kind": "attribute",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "attribute",
+                        "pattern": "mock.mock",
+                        "capture": "M"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "attribute",
+                "pattern": "$M",
+                "matches": "seen",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^mock$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "regex": "^[(\\s]*mock[\\s)]*$"
+                    }
+                  }
+                ],
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "field": "object",
+                  "kind": "attribute"
+                }
+              },
+              {
+                "matches": "in-string",
+                "all": [
+                  {
+                    "matches": "anywhere"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "UP026",
+        "message": "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`.",
+        "each": "M",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP026"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

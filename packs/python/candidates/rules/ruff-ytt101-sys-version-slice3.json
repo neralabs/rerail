@@ -1,0 +1,277 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt101-sys-version-slice3",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use sys.version_info instead of slicing the first three characters of sys.version; the slice truncates a two-digit minor version.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "sys-version-slice3",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "three-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 3
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "three-literal"
+                  }
+                }
+              ]
+            },
+            "upper-three-slice": {
+              "kind": "slice",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "three-literal",
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^:$"
+                        }
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^:$",
+                            "follows": {
+                              "stopBy": "end",
+                              "regex": "^:$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "slice-subscript": {
+              "kind": "subscript",
+              "all": [
+                {
+                  "has": {
+                    "field": "subscript",
+                    "matches": "upper-three-slice"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "subscripted": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "slice-subscript"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "subscripted"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "all": [
+                {
+                  "resolves": {
+                    "import": [
+                      "sys.version"
+                    ]
+                  }
+                },
+                {
+                  "matches": "subscripted"
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "splat-target": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "list_splat",
+                        "has": {
+                          "kind": "identifier",
+                          "resolves": {
+                            "import": [
+                              "sys"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^version$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "list_splat",
+                  "has": {
+                    "kind": "identifier",
+                    "resolves": {
+                      "import": [
+                        "sys.version"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "matches": "subscripted"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "splat-target",
+                "regex": "^\\*(?:[\\s\\\\]|#[^\\n]*\\n)*(?<C>[\\s\\S]*)$"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT101",
+        "message": "Use `sys.version_info[:2]` (a tuple) instead of `sys.version[:3]`; the slice truncates a two-digit minor version such as 3.10 to 3.1.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT101"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

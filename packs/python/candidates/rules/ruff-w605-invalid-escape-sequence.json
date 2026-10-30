@@ -1,0 +1,200 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-w605-invalid-escape-sequence",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Avoid invalid backslash escape sequences in Python strings; use a raw string or a doubled backslash instead.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "invalid-escape-sequence",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "cooked": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[rR]"
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "string_content",
+            "regex": "\\\\[\\n\\r\\\\'\"abfnrtv0-7xNuU]|(?<BS>\\\\[^\\n\\r\\\\'\"abfnrtv0-7xNuU])",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "cooked"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BS",
+        "code": "W605",
+        "message": "Invalid escape sequence: `$BS`",
+        "each": "BS",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-escape-sequence-before-field",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string",
+            "regex": "\\\\\\\\|(?<BS>\\\\\\{)[^{]",
+            "not": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[rR]"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "format_specifier"
+                      }
+                    ],
+                    "regex": "\\\\\\{"
+                  }
+                }
+              ]
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\\\$",
+              "precedes": {
+                "stopBy": "neighbor",
+                "kind": "interpolation"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BS",
+        "code": "W605",
+        "message": "Invalid escape sequence: `$BS`",
+        "each": "BS",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-escape-sequence-format-spec",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "cooked-field": {
+              "kind": "interpolation",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[rR]"
+                  }
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "format_specifier",
+            "regex": "\\{(?:[^{}]|\\{[^{}]*\\})*\\}|\\\\[\\n\\r\\\\'\"abfnrtv0-7xNuU]|(?<BS>\\\\[^\\n\\r\\\\'\"abfnrtv0-7xNuU])",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "cooked-field"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BS",
+        "code": "W605",
+        "message": "Double this backslash in the format spec, or make the string raw with an `rf` prefix.",
+        "each": "BS",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "invalid-escape-sequence-end-of-format-spec",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "interpolation",
+            "regex": "(?<BS>\\\\\\})$",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "format_specifier",
+              "regex": "(?:^|[^\\\\])(?:\\\\\\\\)*\\\\$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[rR]"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BS",
+        "code": "W605",
+        "message": "Invalid escape sequence: `$BS`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "W605"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

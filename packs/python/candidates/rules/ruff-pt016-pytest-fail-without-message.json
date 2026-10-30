@@ -1,0 +1,284 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt016-pytest-fail-without-message",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass a non-empty message to pytest.fail calls; a bare failure gives no hint why the test failed.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "fail-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "pytest.fail"
+              ]
+            }
+          },
+          "fail-callee": {
+            "any": [
+              {
+                "matches": "fail-ref",
+                "pattern": "$F"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "fail-callee"
+                }
+              }
+            ]
+          },
+          "fail-call": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "fail-callee"
+            }
+          },
+          "part-has-text": {
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "not": {
+                "regex": "^(\\\\\\r?\\n)+$"
+              }
+            }
+          },
+          "part-empty": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "[tTbB]"
+              }
+            },
+            "any": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[fF]"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "matches": "part-has-text"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "interpolation",
+                        "not": {
+                          "has": {
+                            "field": "expression",
+                            "matches": "empty-or-null"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[fF]"
+                  }
+                },
+                "value": {
+                  "eq": ""
+                }
+              }
+            ]
+          },
+          "empty-or-null": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "matches": "part-empty"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "matches": "part-empty"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "empty-or-null"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "pytest-fail-without-message",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "fail-call",
+            "all": [
+              {
+                "arguments": {
+                  "signature": [
+                    "reason"
+                  ],
+                  "mode": "syntactic",
+                  "absent": [
+                    "reason"
+                  ]
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "msg"
+                  ],
+                  "mode": "syntactic",
+                  "absent": [
+                    "msg"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PT016",
+        "message": "Add a message to `$F(...)` that says why the test is failing, so the failure report explains itself.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "pytest-fail-empty-reason",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "fail-call",
+            "arguments": {
+              "signature": [
+                "reason"
+              ],
+              "mode": "syntactic",
+              "bind": {
+                "R": "reason"
+              }
+            }
+          },
+          "constraints": {
+            "R": {
+              "matches": "empty-or-null"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PT016",
+        "message": "Give `$F(...)` a message that is not empty or `None`, saying why the test is failing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT016"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "pytest-fail-empty-msg",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "fail-call",
+            "arguments": {
+              "signature": [
+                "reason"
+              ],
+              "mode": "syntactic",
+              "absent": [
+                "reason"
+              ]
+            },
+            "all": [
+              {
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "msg"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "M": "msg"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "M": {
+              "matches": "empty-or-null"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PT016",
+        "message": "Give `$F(...)` a `msg=` value that is not empty or `None`, saying why the test is failing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT016"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

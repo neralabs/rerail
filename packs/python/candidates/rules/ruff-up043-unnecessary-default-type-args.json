@@ -1,0 +1,277 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up043-unnecessary-default-type-args",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Omit the trailing None type arguments from Generator and AsyncGenerator annotations; they are the defaults since Python 3.13.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "none": {
+            "any": [
+              {"kind": "none"},
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "none"}},
+              {"kind": "type", "has": {"stopBy": "neighbor", "matches": "none"}}
+            ]
+          },
+          "generator": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {
+                  "import": [
+                    "collections.abc.Generator",
+                    "typing.Generator",
+                    "_typeshed.Generator",
+                    "typing_extensions.Generator"
+                  ]
+                }
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "generator"}}
+            ]
+          },
+          "async-generator": {
+            "any": [
+              {
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {
+                  "import": [
+                    "collections.abc.AsyncGenerator",
+                    "typing.AsyncGenerator",
+                    "_typeshed.AsyncGenerator",
+                    "typing_extensions.AsyncGenerator"
+                  ]
+                }
+              },
+              {"kind": "parenthesized_expression", "has": {"stopBy": "neighbor", "matches": "async-generator"}}
+            ]
+          },
+          "element": {
+            "not": {
+              "any": [
+                {"kind": "comment"},
+                {"regex": "^[\\[\\](),]$"},
+                {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\[$"}}
+              ]
+            }
+          },
+          "sole": {
+            "all": [
+              {"not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^,$"}}},
+              {"count": {"follows": {"stopBy": "end", "matches": "element"}, "max": 0}}
+            ]
+          },
+          "tail-generator": {
+            "matches": "none",
+            "all": [
+              {"count": {"precedes": {"stopBy": "end", "matches": "element"}, "max": 0}},
+              {"count": {"follows": {"stopBy": "end", "matches": "element"}, "min": 1, "max": 2}}
+            ]
+          },
+          "tuple-generator": {
+            "any": [
+              {"kind": "tuple", "has": {"stopBy": "neighbor", "matches": "tail-generator"}},
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {"not": {"kind": "parenthesized_expression"}},
+                  "kind": "tuple",
+                  "has": {"stopBy": "neighbor", "matches": "tail-generator"}
+                }
+              }
+            ]
+          },
+          "defaulted-generator": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "generator",
+                  "precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\[$"}
+                },
+                "all": [
+                  {
+                    "any": [
+                      {"has": {"stopBy": "neighbor", "matches": "tail-generator"}},
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "tuple-generator",
+                          "all": [
+                            {"not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^,$"}}},
+                            {"count": {"follows": {"stopBy": "end", "matches": "element"}, "max": 0}}
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "has": {"stopBy": "neighbor", "matches": "generator"},
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "any": [
+                        {"has": {"stopBy": "neighbor", "matches": "tail-generator"}},
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type",
+                            "has": {"stopBy": "neighbor", "matches": "tuple-generator"},
+                            "all": [
+                              {"not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^,$"}}},
+                              {"count": {"follows": {"stopBy": "end", "matches": "element"}, "max": 0}}
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tail-async-generator": {
+            "matches": "none",
+            "all": [
+              {"count": {"precedes": {"stopBy": "end", "matches": "element"}, "max": 0}},
+              {"count": {"follows": {"stopBy": "end", "matches": "element"}, "min": 1, "max": 1}}
+            ]
+          },
+          "tuple-async-generator": {
+            "any": [
+              {"kind": "tuple", "has": {"stopBy": "neighbor", "matches": "tail-async-generator"}},
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {"not": {"kind": "parenthesized_expression"}},
+                  "kind": "tuple",
+                  "has": {"stopBy": "neighbor", "matches": "tail-async-generator"}
+                }
+              }
+            ]
+          },
+          "defaulted-async-generator": {
+            "any": [
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "async-generator",
+                  "precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^\\[$"}
+                },
+                "all": [
+                  {
+                    "any": [
+                      {"has": {"stopBy": "neighbor", "matches": "tail-async-generator"}},
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "tuple-async-generator",
+                          "all": [
+                            {"not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^,$"}}},
+                            {"count": {"follows": {"stopBy": "end", "matches": "element"}, "max": 0}}
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "generic_type",
+                "has": {"stopBy": "neighbor", "matches": "async-generator"},
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type_parameter",
+                      "any": [
+                        {"has": {"stopBy": "neighbor", "matches": "tail-async-generator"}},
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "type",
+                            "has": {"stopBy": "neighbor", "matches": "tuple-async-generator"},
+                            "all": [
+                              {"not": {"precedes": {"stopBy": {"not": {"kind": "comment"}}, "regex": "^,$"}}},
+                              {"count": {"follows": {"stopBy": "end", "matches": "element"}, "max": 0}}
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "default-args": {"any": [{"matches": "defaulted-generator"}, {"matches": "defaulted-async-generator"}]},
+          "forward-ref-excluded": {
+            "inside": {
+              "stopBy": "end",
+              "any": [{"kind": "generic_type"}, {"kind": "subscript"}],
+              "has": {
+                "stopBy": "neighbor",
+                "any": [{"kind": "identifier"}, {"kind": "attribute"}],
+                "resolves": {"import": ["typing.Literal", "typing_extensions.Literal"]}
+              }
+            }
+          },
+          "string-content": {"kind": "string", "not": {"any": [{"regex": "\\\\"}, {"matches": "forward-ref-excluded"}]}},
+          "direct-ref": {
+            "matches": "string-content",
+            "parse": {
+              "grammar": "annotation",
+              "has": {"stopBy": "end", "any": [{"matches": "default-args", "capture": "T"}, {"matches": "direct-ref"}]}
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "default-type-args-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {"path": {"regex": "\\.pyi$"}},
+          "rule": {"any": [{"matches": "default-args", "pattern": "$T"}, {"matches": "direct-ref"}]}
+        }
+      },
+      "violation": {
+        "anchor": "capture.T",
+        "each": "T",
+        "code": "UP043",
+        "message": "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults.",
+        "suppress": {"noqa": {"codes": ["UP043"]}}
+      }
+    },
+    {
+      "id": "default-type-args",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {"pythonVersion": {"min": "3.13"}},
+          "file": {"path": {"notRegex": "\\.pyi$"}},
+          "rule": {"any": [{"matches": "default-args", "pattern": "$T"}, {"matches": "direct-ref"}]}
+        }
+      },
+      "violation": {
+        "anchor": "capture.T",
+        "each": "T",
+        "code": "UP043",
+        "message": "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); Python 3.13 made them the defaults.",
+        "suppress": {"noqa": {"codes": ["UP043"]}}
+      }
+    }
+  ]
+}

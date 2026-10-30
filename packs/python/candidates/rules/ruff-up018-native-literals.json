@@ -1,0 +1,267 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up018-native-literals",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write the literal directly instead of calling str, bytes, int, float, bool or complex on a literal or with no arguments.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "not-argument": { "any": [{ "regex": "^[(),]$" }, { "kind": "comment" }, { "kind": "line_continuation" }] },
+          "plain-string": {
+            "any": [
+              { "kind": "string", "not": { "regex": "^[A-Za-z]*[fFtT]" } },
+              { "kind": "concatenated_string", "not": { "has": { "stopBy": "neighbor", "kind": "string", "regex": "^[A-Za-z]*[fFtT]" } } }
+            ]
+          },
+          "nested-fstring": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "string",
+              "regex": "^[A-Za-z]*[fF]",
+              "inside": { "stopBy": "end", "kind": "string", "regex": "^[A-Za-z]*[fF]" }
+            }
+          },
+          "callee-str": {
+            "any": [
+              { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["str"], "import": ["builtins.str"] } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee-str" } }
+            ]
+          },
+          "literal-str": {
+            "any": [
+              { "matches": "plain-string", "value": { "type": "str" } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "literal-str" } }
+            ]
+          },
+          "callee-bytes": {
+            "any": [
+              { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["bytes"], "import": ["builtins.bytes"] } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee-bytes" } }
+            ]
+          },
+          "literal-bytes": {
+            "any": [
+              { "matches": "plain-string", "value": { "type": "bytes" } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "literal-bytes" } }
+            ]
+          },
+          "callee-int": {
+            "any": [
+              { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["int"], "import": ["builtins.int"] } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee-int" } }
+            ]
+          },
+          "literal-int": {
+            "any": [
+              { "any": [{ "kind": "integer" }, { "kind": "float" }], "value": { "type": "int" } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "literal-int" } }
+            ]
+          },
+          "signed-int": {
+            "any": [
+              { "matches": "literal-int" },
+              {
+                "kind": "unary_operator",
+                "has": { "stopBy": "neighbor", "field": "operator", "regex": "^[+-]$" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "argument", "matches": "literal-int" } }]
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "signed-int" } }
+            ]
+          },
+          "callee-float": {
+            "any": [
+              { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["float"], "import": ["builtins.float"] } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee-float" } }
+            ]
+          },
+          "literal-float": {
+            "any": [
+              { "any": [{ "kind": "integer" }, { "kind": "float" }], "value": { "type": "float" } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "literal-float" } }
+            ]
+          },
+          "signed-float": {
+            "any": [
+              { "matches": "literal-float" },
+              {
+                "kind": "unary_operator",
+                "has": { "stopBy": "neighbor", "field": "operator", "regex": "^[+-]$" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "argument", "matches": "literal-float" } }]
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "signed-float" } }
+            ]
+          },
+          "callee-bool": {
+            "any": [
+              { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["bool"], "import": ["builtins.bool"] } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee-bool" } }
+            ]
+          },
+          "literal-bool": {
+            "any": [
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "literal-bool" } }
+            ]
+          },
+          "callee-complex": {
+            "any": [
+              { "any": [{ "kind": "identifier" }, { "kind": "attribute" }], "resolves": { "global": ["complex"], "import": ["builtins.complex"] } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "callee-complex" } }
+            ]
+          },
+          "literal-complex": {
+            "any": [
+              { "any": [{ "kind": "integer" }, { "kind": "float" }], "value": { "type": "complex" } },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "literal-complex" } }
+            ]
+          },
+          "signed-complex": {
+            "any": [
+              { "matches": "literal-complex" },
+              {
+                "kind": "unary_operator",
+                "has": { "stopBy": "neighbor", "field": "operator", "regex": "^[+-]$" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "argument", "matches": "literal-complex" } }]
+              },
+              { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "signed-complex" } }
+            ]
+          },
+          "unnested-call": { "kind": "call", "not": { "matches": "nested-fstring" } },
+          "empty-arguments": { "kind": "argument_list", "not": { "has": { "stopBy": "neighbor", "not": { "matches": "not-argument" } } } },
+          "single-argument": { "kind": "argument_list", "count": { "has": { "stopBy": "neighbor", "not": { "matches": "not-argument" } }, "min": 1, "max": 1 } },
+          "callee-builtin": {
+            "any": [
+              { "matches": "callee-str" },
+              { "matches": "callee-bytes" },
+              { "matches": "callee-int" },
+              { "matches": "callee-float" },
+              { "matches": "callee-bool" },
+              { "matches": "callee-complex" }
+            ]
+          },
+          "kw-object-str": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^object$" } },
+              { "has": { "stopBy": "neighbor", "field": "value", "matches": "literal-str" } }
+            ]
+          },
+          "kw-real-complex": {
+            "kind": "keyword_argument",
+            "all": [
+              { "has": { "stopBy": "neighbor", "field": "name", "regex": "^real$" } },
+              { "has": { "stopBy": "neighbor", "field": "value", "matches": "signed-complex" } }
+            ]
+          },
+          "empty-call": {
+            "matches": "unnested-call",
+            "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-builtin" },
+            "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "matches": "empty-arguments" } }]
+          },
+          "literal-call": {
+            "matches": "unnested-call",
+            "has": { "stopBy": "neighbor", "field": "arguments", "matches": "single-argument" },
+            "any": [
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-str" },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "has": { "stopBy": "neighbor", "any": [{ "matches": "literal-str" }, { "matches": "kw-object-str" }] }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bytes" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "literal-bytes" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-int" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "signed-int" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-float" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "signed-float" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-bool" },
+                "all": [{ "has": { "stopBy": "neighbor", "field": "arguments", "has": { "stopBy": "neighbor", "matches": "literal-bool" } } }]
+              },
+              {
+                "has": { "stopBy": "neighbor", "field": "function", "matches": "callee-complex" },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "has": { "stopBy": "neighbor", "any": [{ "matches": "signed-complex" }, { "matches": "kw-real-complex" }] }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "call-without-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "empty-call-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": { "stopBy": "end", "any": [{ "matches": "empty-call", "capture": "C" }, { "matches": "empty-call-in-string" }] }
+              }
+            }
+          },
+          "rule": { "any": [{ "matches": "empty-call", "pattern": "$C" }, { "matches": "empty-call-in-string" }] }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "UP018",
+        "message": "Replace this call with the empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex.",
+        "each": "C",
+        "suppress": { "noqa": { "codes": ["UP018"] } }
+      }
+    },
+    {
+      "id": "call-on-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "literal-call-in-string": {
+              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "parse": {
+                "grammar": "annotation",
+                "has": { "stopBy": "end", "any": [{ "matches": "literal-call", "capture": "C" }, { "matches": "literal-call-in-string" }] }
+              }
+            }
+          },
+          "rule": { "any": [{ "matches": "literal-call", "pattern": "$C" }, { "matches": "literal-call-in-string" }] }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "UP018",
+        "message": "Replace this call with the literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing.",
+        "each": "C",
+        "suppress": { "noqa": { "codes": ["UP018"] } }
+      }
+    }
+  ]
+}

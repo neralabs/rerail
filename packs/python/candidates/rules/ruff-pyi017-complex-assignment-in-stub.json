@@ -1,0 +1,75 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi017-complex-assignment-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Declare each name in a stub file with its own simple assignment instead of chained, unpacking, attribute or item assignments; a stub only declares names.",
+  "scope": {"include": ["**/*"], "exclude": []},
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "simple-target": {
+            "any": [
+              {"kind": "identifier"},
+              {
+                "kind": "tuple_pattern",
+                "not": {"has": {"stopBy": "neighbor", "regex": "^,$"}},
+                "has": {"stopBy": "neighbor", "matches": "simple-target"}
+              }
+            ]
+          },
+          "module-or-class-assignment": {
+            "kind": "assignment",
+            "not": {"any": [{"has": {"stopBy": "neighbor", "field": "type", "kind": "type"}}, {"inside": {"stopBy": "end", "kind": "function_definition"}}]},
+            "inside": {"stopBy": "neighbor", "kind": "expression_statement"}
+          }
+        }
+      }
+    },
+    {
+      "id": "attribute-target",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "module-or-class-assignment",
+            "has": {"stopBy": "neighbor", "field": "left", "any": [{"kind": "attribute"}, {"kind": "subscript"}]}
+          },
+          "file": {"path": {"regex": "\\.pyi$"}}
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI017",
+        "message": "Remove this attribute or item assignment from the stub; declare the name where it lives instead, for example `x: int` in the class body or module that defines `x`.",
+        "suppress": {"noqa": {"codes": ["PYI017"]}}
+      }
+    },
+    {
+      "id": "multiple-targets",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "matches": "module-or-class-assignment",
+            "not": {"has": {"stopBy": "neighbor", "field": "left", "any": [{"kind": "attribute"}, {"kind": "subscript"}]}},
+            "any": [
+              {"has": {"stopBy": "neighbor", "field": "left", "not": {"matches": "simple-target"}}},
+              {"has": {"stopBy": "neighbor", "field": "right", "kind": "assignment"}}
+            ]
+          },
+          "file": {"path": {"regex": "\\.pyi$"}}
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI017",
+        "message": "Split this into one declaration per name, for example `a: int` and `b: int` on separate lines, instead of chaining or unpacking assignment targets.",
+        "suppress": {"noqa": {"codes": ["PYI017"]}}
+      }
+    }
+  ]
+}

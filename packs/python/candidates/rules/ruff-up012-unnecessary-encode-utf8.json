@@ -1,0 +1,390 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up012-unnecessary-encode-utf8",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a bytes literal instead of encoding an ASCII string literal, and omit a redundant UTF-8 encoding argument; UTF-8 is already the default.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-text": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[A-Za-z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[A-Za-z]*[bBfFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-text"
+                }
+              }
+            ]
+          },
+          "f-text": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "^[A-Za-z]*[fF]"
+              },
+              {
+                "kind": "concatenated_string",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "regex": "^[A-Za-z]*[fF]"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "f-text"
+                }
+              }
+            ]
+          },
+          "string-only-escape": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[A-Za-z]*[rR]"
+                },
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence",
+                  "regex": "^\\\\(?:[NuU]|[4-7][0-7]{2})"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "string-only-escape"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "string-only-escape"
+                }
+              }
+            ]
+          },
+          "utf8-name": {
+            "matches": "plain-text",
+            "value": {
+              "type": "str",
+              "regex": "(?i)^(?:utf-8|utf8|utf_8|u8|utf|cp65001)$"
+            }
+          },
+          "arg-node": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[(),]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "encoding-arg": {
+            "any": [
+              {
+                "matches": "utf8-name"
+              },
+              {
+                "kind": "keyword_argument",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "regex": "^encoding$"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "utf8-name"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "no-args": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "arg-node"
+              }
+            }
+          },
+          "one-encoding-arg": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "arg-node"
+              },
+              "min": 1,
+              "max": 1
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "encoding-arg"
+            }
+          },
+          "bytes-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "bytes-encode"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "any": [
+                    {
+                      "matches": "no-args"
+                    },
+                    {
+                      "matches": "one-encoding-arg"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "default-argument-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "default-encode"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "matches": "one-encoding-arg"
+                }
+              }
+            ]
+          },
+          "bytes-encode": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^encode$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "matches": "plain-text",
+                      "value": {
+                        "regex": "^[\\x00-\\x7F]*$"
+                      },
+                      "not": {
+                        "matches": "string-only-escape"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bytes-encode"
+                }
+              }
+            ]
+          },
+          "default-encode": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "regex": "^encode$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "object",
+                      "any": [
+                        {
+                          "matches": "plain-text",
+                          "value": {
+                            "regex": "[^\\x00-\\x7F]"
+                          },
+                          "not": {
+                            "matches": "string-only-escape"
+                          }
+                        },
+                        {
+                          "matches": "f-text"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "default-encode"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bytes-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "pattern": "$CALL",
+                "matches": "bytes-call"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "bytes-call",
+                    "capture": "CALL"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "UP012",
+        "message": "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP012"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "default-encoding-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "call",
+                "pattern": "$CALL",
+                "matches": "default-argument-call"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "matches": "default-argument-call",
+                    "capture": "CALL"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "UP012",
+        "message": "Drop the UTF-8 argument and call `.encode()` with no arguments; UTF-8 is already the default encoding.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP012"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

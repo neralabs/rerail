@@ -1,0 +1,312 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c415-unnecessary-subscript-reversal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't reverse an iterable with a slice before passing it to set, sorted or reversed; each of them reorders or reverses it again anyway.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "one": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "eq": 1
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "one"
+                }
+              }
+            ]
+          },
+          "minus-one": {
+            "any": [
+              {
+                "kind": "unary_operator",
+                "regex": "^-",
+                "has": {
+                  "field": "argument",
+                  "matches": "one"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "minus-one"
+                }
+              }
+            ]
+          },
+          "reversal": {
+            "any": [
+              {
+                "kind": "subscript",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "field": "subscript",
+                  "kind": "slice",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^:$"
+                    },
+                    "min": 2,
+                    "max": 2
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^:$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      },
+                      "precedes": {
+                        "stopBy": "end",
+                        "regex": "^:$"
+                      }
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "minus-one"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "reversal"
+                }
+              }
+            ]
+          },
+          "lead": {
+            "any": [
+              {
+                "kind": "comment"
+              },
+              {
+                "kind": "line_continuation"
+              },
+              {
+                "regex": "^[(]$"
+              }
+            ]
+          },
+          "reversed-arg": {
+            "kind": "argument_list",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "reversal",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "not": {
+                    "matches": "lead"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "reorders-anyway",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "set",
+                      "sorted"
+                    ],
+                    "import": [
+                      "builtins.set",
+                      "builtins.sorted"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "list_splat",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "callee",
+                        "pattern": "$F"
+                      }
+                    },
+                    {
+                      "not": {
+                        "kind": "list_splat"
+                      },
+                      "matches": "callee",
+                      "pattern": "$F"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "matches": "reversed-arg"
+                }
+              }
+            ],
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C415",
+        "message": "Pass the iterable straight to `$F()` without the `[::-1]` slice, since `$F()` reorders the elements anyway; keep the slice only if `sorted()` must keep equal keys in reversed input order.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C415"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "reversed-of-reversal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "reversed"
+                    ],
+                    "import": [
+                      "builtins.reversed"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "list_splat",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "callee"
+                      }
+                    },
+                    {
+                      "not": {
+                        "kind": "list_splat"
+                      },
+                      "matches": "callee"
+                    }
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "matches": "reversed-arg"
+                }
+              }
+            ],
+            "regex": "(?s)^(?:\\*\\s*)?(?P<M>.*)$"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "C415",
+        "message": "`reversed()` of a `[::-1]` slice walks the original order: iterate the sequence itself (or `iter()` of it) instead of reversing it twice.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C415"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

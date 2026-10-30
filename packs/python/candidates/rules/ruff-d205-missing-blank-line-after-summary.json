@@ -1,0 +1,120 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d205-missing-blank-line-after-summary",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Separate a multi-line docstring's summary line from the description below it with exactly one blank line.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "missing-blank-line-after-summary",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "regex": "^[uUrR]*(?:\"{3}|'{3})",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "\\A\\s*\\S[^\\r\\n]*\\r?\\n(?:[^\\S\\r\\n]*\\r?\\n(?:[^\\S\\r\\n]*\\r?\\n)+)?[^\\S\\r\\n]*\\S|\\A\\s*\\S[^\\r\\n]*\\r(?:[^\\S\\r\\n]*\\r(?:[^\\S\\r\\n]*\\r)+)?[^\\S\\r\\n]*\\S"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D205",
+        "anchor": "witness.span",
+        "message": "Leave exactly one blank line between this docstring's summary line and the description; if the summary wraps onto a second line, shorten it to fit on one line instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D205"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

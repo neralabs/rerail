@@ -157,6 +157,13 @@
                     "matches": "error-within"
                   }
                 ]
+              },
+              {
+                "not": {
+                  "value": {
+                    "regex": "^(?:\\\\\\r?\\n)+\\S"
+                  }
+                }
               }
             ],
             "not": {

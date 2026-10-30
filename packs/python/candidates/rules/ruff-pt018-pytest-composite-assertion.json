@@ -1,0 +1,125 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt018-pytest-composite-assertion",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Split an assert that joins conditions with and, or negates conditions joined with or, into one assert per condition; a failure then names the one that failed.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pytest-composite-assertion",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "test": {
+              "follows": {
+                "stopBy": {
+                  "not": {
+                    "any": [
+                      {
+                        "kind": "comment"
+                      },
+                      {
+                        "kind": "line_continuation"
+                      }
+                    ]
+                  }
+                },
+                "regex": "^assert$"
+              }
+            },
+            "bool-op-and": {
+              "any": [
+                {
+                  "kind": "boolean_operator",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^and$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "bool-op-and"
+                  }
+                }
+              ]
+            },
+            "bool-op-or": {
+              "any": [
+                {
+                  "kind": "boolean_operator",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^or$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "bool-op-or"
+                  }
+                }
+              ]
+            },
+            "composite": {
+              "any": [
+                {
+                  "matches": "bool-op-and"
+                },
+                {
+                  "kind": "not_operator",
+                  "has": {
+                    "field": "argument",
+                    "matches": "bool-op-or"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "composite"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "assert_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "all": [
+                {
+                  "matches": "test"
+                },
+                {
+                  "matches": "composite"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT018",
+        "message": "Break this assertion into one `assert` per condition so a failure shows which one failed; for `not (a or b)`, write `assert not a` and `assert not b`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT018"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

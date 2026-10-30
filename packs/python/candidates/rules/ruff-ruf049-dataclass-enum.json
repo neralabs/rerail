@@ -1,0 +1,435 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf049-dataclass-enum",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid decorating an enum class with the dataclass decorator; the generated methods can make distinct members compare equal.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "dataclass-enum",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dataclass-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "dataclasses.dataclass"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dataclass-ref"
+                  }
+                }
+              ]
+            },
+            "attrs-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "attrs.define",
+                      "attrs.frozen",
+                      "attrs.mutable",
+                      "attr.define",
+                      "attr.frozen",
+                      "attr.mutable",
+                      "attr.s",
+                      "attr.attributes",
+                      "attr.attrs"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "attrs-ref"
+                  }
+                }
+              ]
+            },
+            "dataclass-decorator": {
+              "any": [
+                {
+                  "matches": "dataclass-ref"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "dataclass-ref"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dataclass-decorator"
+                  }
+                }
+              ]
+            },
+            "attrs-decorator": {
+              "any": [
+                {
+                  "matches": "attrs-ref"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "attrs-ref"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "attrs-decorator"
+                  }
+                }
+              ]
+            },
+            "enum-ref-q": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "enum.Enum",
+                  "enum.Flag",
+                  "enum.IntEnum",
+                  "enum.IntFlag",
+                  "enum.StrEnum",
+                  "enum.ReprEnum",
+                  "enum.CheckEnum"
+                ]
+              }
+            },
+            "enum-base-q": {
+              "any": [
+                {
+                  "matches": "enum-ref-q"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "enum-ref-q"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base-q"
+                  }
+                }
+              ]
+            },
+            "enum-ref": {
+              "any": [
+                {
+                  "matches": "enum-ref-q"
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "stopAtGlobal": true,
+                      "site": {
+                        "matches": "enum-class"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "pattern": "$AN"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "stopAtGlobal": true,
+                            "site": {
+                              "kind": "class_definition",
+                              "has": {
+                                "stopBy": "neighbor",
+                                "field": "body",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "class_definition",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "field": "name",
+                                        "pattern": "$MN",
+                                        "compare": {
+                                          "left": "MN",
+                                          "op": "eq",
+                                          "right": "AN"
+                                        },
+                                        "binds": {
+                                          "latest": true
+                                        }
+                                      },
+                                      "matches": "enum-class"
+                                    },
+                                    {
+                                      "kind": "decorated_definition",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "field": "definition",
+                                        "kind": "class_definition",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "name",
+                                          "pattern": "$MN",
+                                          "compare": {
+                                            "left": "MN",
+                                            "op": "eq",
+                                            "right": "AN"
+                                          },
+                                          "binds": {
+                                            "latest": true
+                                          }
+                                        },
+                                        "matches": "enum-class"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "enum-base": {
+              "any": [
+                {
+                  "matches": "enum-ref"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "enum-ref"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "enum-base"
+                  }
+                }
+              ]
+            },
+            "enum-class": {
+              "kind": "class_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "enum-base"
+                }
+              }
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "regex": "(?s)^(?P<DECO>@(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|#[^\\n]*|[^#'\"])*?[\\w)])[ \\t]*(?:#[^\\n]*)?$",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "dataclass-decorator"
+            },
+            "not": {
+              "follows": {
+                "stopBy": "end",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "dataclass-decorator"
+                    },
+                    {
+                      "matches": "attrs-decorator"
+                    }
+                  ]
+                }
+              }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "class_definition",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "pattern": "$CN"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "superclasses",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "matches": "enum-base",
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "identifier",
+                                  "pattern": "$BN",
+                                  "compare": {
+                                    "left": "BN",
+                                    "op": "eq",
+                                    "right": "CN"
+                                  }
+                                },
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "field": "value",
+                                    "all": [
+                                      {
+                                        "kind": "identifier",
+                                        "pattern": "$BN",
+                                        "compare": {
+                                          "left": "BN",
+                                          "op": "eq",
+                                          "right": "CN"
+                                        }
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "kind": "parenthesized_expression",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "any": [
+                                      {
+                                        "kind": "identifier",
+                                        "pattern": "$BN",
+                                        "compare": {
+                                          "left": "BN",
+                                          "op": "eq",
+                                          "right": "CN"
+                                        }
+                                      },
+                                      {
+                                        "kind": "subscript",
+                                        "has": {
+                                          "stopBy": "neighbor",
+                                          "field": "value",
+                                          "all": [
+                                            {
+                                              "kind": "identifier",
+                                              "pattern": "$BN",
+                                              "compare": {
+                                                "left": "BN",
+                                                "op": "eq",
+                                                "right": "CN"
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "matches": "enum-base-q"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.DECO",
+        "code": "RUF049",
+        "message": "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF049"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

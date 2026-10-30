@@ -1,0 +1,171 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up025-unicode-kind-prefix",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove the u prefix from string literals; all Python 3 strings are already Unicode.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "u-string": {
+            "kind": "string",
+            "regex": "^[uU]['\"]"
+          },
+          "whole-annotation": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    }
+                  ]
+                }
+              },
+              "kind": "type",
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "kind": "typed_parameter"
+                  },
+                  {
+                    "kind": "typed_default_parameter"
+                  },
+                  {
+                    "kind": "function_definition"
+                  }
+                ]
+              }
+            }
+          },
+          "type-alias-value": {
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    }
+                  ]
+                }
+              },
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "regex": "^(typing(_extensions)?\\.)?TypeAlias$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "unicode-kind-prefix",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "u-string",
+            "not": {
+              "all": [
+                {
+                  "matches": "whole-annotation"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "module",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "future_import_statement",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "regex": "^annotations$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP025",
+        "message": "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP025"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unicode-kind-prefix-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "matches": "u-string",
+            "not": {
+              "any": [
+                {
+                  "matches": "whole-annotation"
+                },
+                {
+                  "matches": "type-alias-value"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP025",
+        "message": "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP025"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

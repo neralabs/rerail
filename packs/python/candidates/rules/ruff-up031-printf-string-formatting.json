@@ -1,0 +1,412 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up031-printf-string-formatting",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Prefer an f-string or str.format() over printf-style percent formatting; it is more readable and avoids tuple-versus-value surprises.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-string": {
+            "any": [
+              { "kind": "string", "not": {"regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"} },
+              {
+                "kind": "concatenated_string",
+                "not": { "has": {"kind": "string", "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"} }
+              }
+            ]
+          },
+          "seg-err": { "kind": "string", "parse": {"grammar": "percentFormat", "has": {"kind": "error"}} },
+          "seg-nonconv": {
+            "kind": "string",
+            "parse": {
+              "grammar": "percentFormat",
+              "all": [
+                { "not": {"has": {"kind": "error"}} },
+                {
+                  "has": {
+                    "kind": "placeholder",
+                    "any": [
+                      { "has": {"any": [{"kind": "width"}, {"kind": "precision"}], "has": {"kind": "star"}} },
+                      { "has": {"kind": "conversion", "value": {"regex": "^[diuc]$"}} },
+                      { "has": {"kind": "mapping_key", "value": {"eq": ""}} },
+                      {
+                        "all": [
+                          { "has": {"kind": "conversion", "value": {"regex": "^[ar%]$"}} },
+                          { "has": {"any": [{"kind": "flags"}, {"kind": "width"}, {"kind": "precision"}]} }
+                        ]
+                      },
+                      { "all": [{"has": {"kind": "width"}}, {"has": {"kind": "conversion", "value": {"eq": "s"}}}] }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "seg-nonconv-dict": {
+            "any": [
+              { "matches": "seg-nonconv" },
+              {
+                "kind": "string",
+                "parse": {
+                  "grammar": "percentFormat",
+                  "all": [
+                    { "not": {"has": {"kind": "error"}} },
+                    { "has": {"kind": "placeholder", "not": {"has": {"kind": "mapping_key"}}} }
+                  ]
+                }
+              }
+            ]
+          },
+          "seg-bad": { "any": [{"matches": "seg-err"}, {"matches": "seg-nonconv"}] },
+          "seg-bad-dict": { "any": [{"matches": "seg-err"}, {"matches": "seg-nonconv-dict"}] },
+          "identifier-literal": {
+            "any": [
+              {
+                "any": [
+                  { "kind": "string", "regex": "^[rRuU]{0,2}['\"]" },
+                  {
+                    "kind": "concatenated_string",
+                    "not": { "has": {"kind": "string", "not": {"regex": "^[rRuU]{0,2}['\"]"}} }
+                  }
+                ],
+                "value": { "regex": "^[\\p{XID_Start}_]\\p{XID_Continue}*$" },
+                "not": {
+                  "value": {
+                    "regex": "^(False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$"
+                  }
+                }
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "identifier-literal"} }
+            ]
+          },
+          "clean-dict": {
+            "matches": "dict-keys-ok",
+            "all": [
+              {
+                "any": [
+                  { "layout": {"span": {"eq": 0}} },
+                  {
+                    "has": {
+                      "kind": "pair",
+                      "has": { "field": "key", "layout": {"before": {"to": "token", "breaks": {"min": 1}}} }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "r-dict": {
+            "any": [{"kind": "dictionary"}, {"kind": "parenthesized_expression", "has": {"matches": "r-dict"}}]
+          },
+          "r-clean-dict": {
+            "any": [{"matches": "clean-dict"}, {"kind": "parenthesized_expression", "has": {"matches": "r-clean-dict"}}]
+          },
+          "r-simple": {
+            "any": [
+              {
+                "any": [
+                  { "kind": "integer" },
+                  { "kind": "float" },
+                  { "kind": "true" },
+                  { "kind": "false" },
+                  { "kind": "none" },
+                  { "kind": "ellipsis" },
+                  { "kind": "identifier" },
+                  { "kind": "attribute" },
+                  { "kind": "subscript" },
+                  { "kind": "call" },
+                  { "kind": "tuple" },
+                  { "kind": "string", "not": {"regex": "^[A-Za-z]*[tT][A-Za-z]*['\"]"} },
+                  {
+                    "kind": "concatenated_string",
+                    "not": { "has": {"kind": "string", "regex": "^[A-Za-z]*[tT][A-Za-z]*['\"]"} }
+                  }
+                ]
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "r-simple"} }
+            ]
+          },
+          "first-nonconv": {
+            "any": [
+              {
+                "all": [
+                  { "matches": "plain-string" },
+                  {
+                    "any": [
+                      { "kind": "string", "matches": "seg-nonconv" },
+                      {
+                        "kind": "concatenated_string",
+                        "has": {
+                          "kind": "string",
+                          "matches": "seg-nonconv",
+                          "not": { "follows": {"stopBy": "end", "kind": "string", "matches": "seg-err"} }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "pattern": "$AT"
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "first-nonconv"} }
+            ]
+          },
+          "first-nonconv-dict": {
+            "any": [
+              {
+                "all": [
+                  { "matches": "plain-string" },
+                  {
+                    "any": [
+                      { "kind": "string", "matches": "seg-nonconv-dict" },
+                      {
+                        "kind": "concatenated_string",
+                        "has": {
+                          "kind": "string",
+                          "matches": "seg-nonconv-dict",
+                          "not": { "follows": {"stopBy": "end", "kind": "string", "matches": "seg-err"} }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "pattern": "$AT"
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "first-nonconv-dict"} }
+            ]
+          },
+          "good": {
+            "any": [
+              {
+                "all": [
+                  { "matches": "plain-string" },
+                  {
+                    "any": [
+                      { "kind": "string", "not": {"matches": "seg-bad"} },
+                      { "kind": "concatenated_string", "not": {"has": {"kind": "string", "matches": "seg-bad"}} }
+                    ]
+                  }
+                ],
+                "pattern": "$AT"
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "good"} }
+            ]
+          },
+          "good-dict": {
+            "any": [
+              {
+                "all": [
+                  { "matches": "plain-string" },
+                  {
+                    "any": [
+                      { "kind": "string", "not": {"matches": "seg-bad-dict"} },
+                      { "kind": "concatenated_string", "not": {"has": {"kind": "string", "matches": "seg-bad-dict"}} }
+                    ]
+                  }
+                ],
+                "pattern": "$AT"
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "good-dict"} }
+            ]
+          },
+          "dict-keys-ok": {
+            "kind": "dictionary",
+            "all": [
+              { "has": {"any": [{"kind": "pair"}, {"kind": "dictionary_splat"}]} },
+              {
+                "not": {
+                  "has": {
+                    "kind": "pair",
+                    "not": {
+                      "has": { "matches": "identifier-literal", "precedes": {"stopBy": "neighbor", "regex": "^:$"} }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "kind": "pair",
+                    "has": { "pattern": "$K1", "precedes": {"stopBy": "neighbor", "regex": "^:$"} },
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "pair",
+                      "has": { "pattern": "$K2", "precedes": {"stopBy": "neighbor", "regex": "^:$"} },
+                      "compare": { "left": "K1", "op": "eq", "right": "K2", "text": "value" }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "a-clean-dict": {
+            "any": [
+              { "matches": "dict-keys-ok" },
+              { "kind": "parenthesized_expression", "has": {"matches": "a-clean-dict"} }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "printf-string-formatting",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S % $R",
+            "any": [
+              {
+                "all": [
+                  { "has": {"field": "right", "matches": "r-simple"} },
+                  { "has": {"field": "left", "matches": "good"} }
+                ]
+              },
+              {
+                "all": [
+                  { "has": {"field": "right", "matches": "r-clean-dict"} },
+                  { "has": {"field": "left", "matches": "good-dict"} }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP031",
+        "message": "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly.",
+        "suppress": { "noqa": {"codes": ["UP031"]} }
+      }
+    },
+    {
+      "id": "printf-string-formatting-manual",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S % $R",
+            "any": [
+              {
+                "all": [
+                  { "not": {"has": {"field": "right", "matches": "r-dict"}} },
+                  { "has": {"field": "left", "matches": "first-nonconv"} }
+                ]
+              },
+              {
+                "all": [
+                  { "has": {"field": "right", "matches": "r-dict"} },
+                  { "has": {"field": "left", "matches": "first-nonconv-dict"} }
+                ]
+              },
+              {
+                "all": [
+                  { "has": {"field": "right", "matches": "r-dict"} },
+                  { "not": {"has": {"field": "right", "matches": "r-clean-dict"}} },
+                  { "has": {"field": "left", "matches": "good-dict"} }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.AT",
+        "code": "UP031",
+        "message": "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion.",
+        "suppress": { "noqa": {"codes": ["UP031"]} }
+      }
+    },
+    {
+      "id": "printf-string-formatting-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "binary_operator",
+                "pattern": "$S % $R",
+                "capture": "BIN",
+                "any": [
+                  {
+                    "all": [
+                      { "has": {"matches": "good", "precedes": {"stopBy": "neighbor", "regex": "^%$"}} },
+                      { "has": {"matches": "r-simple", "follows": {"stopBy": "neighbor", "regex": "^%$"}} }
+                    ]
+                  },
+                  {
+                    "all": [
+                      { "has": {"matches": "good-dict", "precedes": {"stopBy": "neighbor", "regex": "^%$"}} },
+                      { "has": {"matches": "a-clean-dict", "follows": {"stopBy": "neighbor", "regex": "^%$"}} }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.BIN",
+        "code": "UP031",
+        "message": "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly.",
+        "suppress": { "noqa": {"codes": ["UP031"]} }
+      }
+    },
+    {
+      "id": "printf-string-formatting-annotation-manual",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "binary_operator",
+                "pattern": "$S % $R",
+                "capture": "BIN",
+                "any": [
+                  {
+                    "all": [
+                      { "has": {"matches": "first-nonconv", "precedes": {"stopBy": "neighbor", "regex": "^%$"}} },
+                      { "not": {"has": {"matches": "r-dict", "follows": {"stopBy": "neighbor", "regex": "^%$"}}} }
+                    ]
+                  },
+                  {
+                    "all": [
+                      { "has": {"matches": "first-nonconv-dict", "precedes": {"stopBy": "neighbor", "regex": "^%$"}} },
+                      { "has": {"matches": "r-dict", "follows": {"stopBy": "neighbor", "regex": "^%$"}} }
+                    ]
+                  },
+                  {
+                    "all": [
+                      { "has": {"matches": "good-dict", "precedes": {"stopBy": "neighbor", "regex": "^%$"}} },
+                      { "has": {"matches": "r-dict", "follows": {"stopBy": "neighbor", "regex": "^%$"}} },
+                      { "not": {"has": {"matches": "a-clean-dict", "follows": {"stopBy": "neighbor", "regex": "^%$"}}} }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.AT",
+        "code": "UP031",
+        "message": "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion.",
+        "suppress": { "noqa": {"codes": ["UP031"]} }
+      }
+    }
+  ]
+}

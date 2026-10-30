@@ -1,0 +1,196 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt014-pytest-duplicate-parametrize-test-cases",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove duplicate test cases from pytest parametrize values; a repeated case runs the same test twice and covers nothing new.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "pytest-duplicate-parametrize-test-cases",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "parametrize-ref": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "pytest.mark.parametrize"
+                ]
+              }
+            },
+            "parametrize-callee": {
+              "any": [
+                {
+                  "matches": "parametrize-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "parametrize-callee"
+                  }
+                }
+              ]
+            },
+            "values": {
+              "all": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ],
+                  "pattern": "$L"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "call",
+                    "has": {
+                      "field": "function",
+                      "matches": "parametrize-callee"
+                    },
+                    "arguments": {
+                      "signature": [
+                        "argnames",
+                        "argvalues"
+                      ],
+                      "mode": "syntactic",
+                      "bind": {
+                        "V": "argvalues"
+                      }
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "pattern": "$L",
+                      "compare": {
+                        "left": "L",
+                        "op": "eq",
+                        "right": "V",
+                        "text": "node"
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "not": {
+                            "kind": "parenthesized_expression"
+                          }
+                        },
+                        "kind": "parenthesized_expression",
+                        "pattern": "$W",
+                        "compare": {
+                          "left": "W",
+                          "op": "eq",
+                          "right": "V",
+                          "text": "node"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "repeated-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "values"
+                  },
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "^[\\[\\](),]$"
+                        }
+                      ]
+                    },
+                    "pattern": "$F",
+                    "compare": {
+                      "left": "F",
+                      "op": "eq",
+                      "right": "E",
+                      "text": "structure"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "repeated-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$E",
+            "not": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "comment"
+                    },
+                    {
+                      "kind": "line_continuation"
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression"
+                }
+              ]
+            },
+            "matches": "repeated-slot"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PT014",
+        "message": "Remove this repeat of an earlier case in the parametrize values, or fix its values if it was meant to differ; keep it when the element is a call that yields a new object each time.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT014"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

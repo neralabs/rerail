@@ -1,0 +1,240 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi066-bad-version-info-order",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Put the branch for newer Python versions first in stub files that branch on the interpreter version, testing with a greater-or-equal comparison.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "has-else": {
+            "any": [
+              {
+                "kind": "if_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "else_clause"
+                }
+              },
+              {
+                "kind": "elif_clause",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "else_clause"
+                  }
+                }
+              }
+            ]
+          },
+          "test-position": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "condition",
+                  "matches": "has-else"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-position"
+                }
+              }
+            ]
+          },
+          "and-chain": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "test-position"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "and-chain"
+                }
+              }
+            ]
+          },
+          "or-chain": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "test-position"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "or-chain"
+                }
+              }
+            ]
+          },
+          "bool-value": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "and-chain"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "or-chain"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "bool-value"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bad-version-info-order",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "pattern": "$L < $R",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "nthChild": {
+                  "position": 3,
+                  "ofRule": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "matches": "test-position"
+          },
+          "constraints": {
+            "L": {
+              "resolves": {
+                "import": [
+                  "sys.version_info"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI066",
+        "message": "Rewrite `$L < $R` as `$L >= $R` and swap this branch's body with the code that runs otherwise, so the newer-version code comes first.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI066"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "bad-version-info-order-in-condition",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "pattern": "$L < $R",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "nthChild": {
+                  "position": 3,
+                  "ofRule": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "matches": "bool-value"
+          },
+          "constraints": {
+            "L": {
+              "resolves": {
+                "import": [
+                  "sys.version_info"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI066",
+        "message": "Restructure so a `$L >= $R` test selects the newer-version branch first, e.g. by nesting the rest of this condition inside it; flipping only `<` and the branches would change behaviour.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI066"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

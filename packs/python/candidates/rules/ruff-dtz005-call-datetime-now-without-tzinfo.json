@@ -1,0 +1,183 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz005-call-datetime-now-without-tzinfo",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Pass a real timezone to datetime.now; without one, or with None, it returns a naive local time with no zone information.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "callee": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "datetime.datetime.now"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "callee"
+        }
+       }
+      ]
+     },
+     "astz-safe": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^astimezone$"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^replace$"
+         },
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "call",
+          "matches": "astz-safe"
+         }
+        }
+       ]
+      }
+     },
+     "none-lit": {
+      "any": [
+       {
+        "kind": "none"
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "none-lit"
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "no-tz",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "tz"
+       ],
+       "absent": [
+        "tz"
+       ],
+       "mode": "syntactic"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ005",
+    "message": "Pass `tz=` with the zone you mean, such as `datetime.now(tz=datetime.timezone.utc)`, so the result is aware. Leave `now()` bare only where a naive local time is required.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ005"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "tz-none",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "matches": "astz-safe"
+      },
+      "arguments": {
+       "signature": [
+        "tz"
+       ],
+       "bind": {
+        "TZ": "tz"
+       },
+       "mode": "syntactic"
+      }
+     },
+     "constraints": {
+      "TZ": {
+       "matches": "none-lit"
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ005",
+    "message": "Replace `tz=None` with the zone you mean, such as `tz=datetime.timezone.utc`, so the result is aware. Keep `None` only where a naive local time is required.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ005"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

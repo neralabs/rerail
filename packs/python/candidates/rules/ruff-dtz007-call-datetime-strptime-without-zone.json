@@ -1,0 +1,470 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-dtz007-call-datetime-strptime-without-zone",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Make datetimes parsed from text timezone-aware, by parsing a UTC offset or attaching a timezone afterwards; naive datetimes can't be safely compared with aware ones.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "callee": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "import": [
+          "datetime.datetime.strptime"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "callee"
+        }
+       }
+      ]
+     },
+     "astz-safe": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "any": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^astimezone$"
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "field": "attribute",
+          "regex": "^replace$"
+         },
+         "inside": {
+          "stopBy": {
+           "not": {
+            "kind": "parenthesized_expression"
+           }
+          },
+          "kind": "call",
+          "matches": "astz-safe"
+         }
+        }
+       ]
+      }
+     },
+     "none-lit": {
+      "any": [
+       {
+        "kind": "none"
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "none-lit"
+        }
+       }
+      ]
+     },
+     "z-format": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "string",
+          "not": {
+           "any": [
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "kind": "interpolation"
+             }
+            },
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "kind": "string_start",
+              "regex": "^[A-Za-z]*[tT]"
+             }
+            }
+           ]
+          }
+         },
+         {
+          "kind": "concatenated_string",
+          "not": {
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "string",
+            "any": [
+             {
+              "has": {
+               "stopBy": "neighbor",
+               "kind": "interpolation"
+              }
+             },
+             {
+              "has": {
+               "stopBy": "neighbor",
+               "kind": "string_start",
+               "regex": "^[A-Za-z]*[tT]"
+              }
+             }
+            ]
+           }
+          }
+         }
+        ],
+        "value": {
+         "regex": "%z"
+        }
+       },
+       {
+        "any": [
+         {
+          "kind": "string",
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "interpolation"
+            }
+           },
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "string_content",
+             "regex": "%z"
+            }
+           }
+          ],
+          "not": {
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "string_start",
+            "regex": "^[A-Za-z]*[tT]"
+           }
+          }
+         },
+         {
+          "kind": "concatenated_string",
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "string",
+           "all": [
+            {
+             "has": {
+              "stopBy": "neighbor",
+              "kind": "interpolation"
+             }
+            }
+           ]
+          },
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "kind": "string",
+             "all": [
+              {
+               "has": {
+                "stopBy": "neighbor",
+                "kind": "string_content",
+                "regex": "%z"
+               }
+              }
+             ]
+            }
+           }
+          ],
+          "not": {
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "string",
+            "all": [
+             {
+              "has": {
+               "stopBy": "neighbor",
+               "kind": "string_start",
+               "regex": "^[A-Za-z]*[tT]"
+              }
+             }
+            ]
+           }
+          }
+         }
+        ]
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "z-format"
+        }
+       }
+      ]
+     },
+     "positional": {
+      "not": {
+       "any": [
+        {
+         "kind": "keyword_argument"
+        },
+        {
+         "kind": "dictionary_splat"
+        },
+        {
+         "kind": "comment"
+        },
+        {
+         "kind": "line_continuation"
+        }
+       ]
+      }
+     },
+     "zoned": {
+      "has": {
+       "stopBy": "neighbor",
+       "kind": "argument_list",
+       "has": {
+        "stopBy": "neighbor",
+        "nthChild": {
+         "position": 2,
+         "ofRule": {
+          "matches": "positional"
+         }
+        },
+        "matches": "positional",
+        "all": [
+         {
+          "matches": "z-format"
+         }
+        ]
+       }
+      }
+     },
+     "replace-tz-none": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "has": {
+        "stopBy": "neighbor",
+        "field": "attribute",
+        "regex": "^replace$"
+       },
+       "inside": {
+        "stopBy": {
+         "not": {
+          "any": [
+           {
+            "kind": "parenthesized_expression"
+           },
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "keyword_argument"
+           },
+           {
+            "kind": "dictionary_splat"
+           }
+          ]
+         }
+        },
+        "kind": "call",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "argument_list",
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "keyword_argument",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "name",
+           "regex": "^tzinfo$"
+          },
+          "all": [
+           {
+            "has": {
+             "stopBy": "neighbor",
+             "field": "value",
+             "matches": "none-lit"
+            }
+           }
+          ]
+         }
+        }
+       }
+      }
+     },
+     "replace-tz": {
+      "inside": {
+       "stopBy": {
+        "not": {
+         "kind": "parenthesized_expression"
+        }
+       },
+       "kind": "attribute",
+       "has": {
+        "stopBy": "neighbor",
+        "field": "attribute",
+        "regex": "^replace$"
+       },
+       "inside": {
+        "stopBy": {
+         "not": {
+          "any": [
+           {
+            "kind": "parenthesized_expression"
+           },
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "keyword_argument"
+           },
+           {
+            "kind": "dictionary_splat"
+           }
+          ]
+         }
+        },
+        "kind": "call",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "argument_list",
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "keyword_argument",
+          "has": {
+           "stopBy": "neighbor",
+           "field": "name",
+           "regex": "^tzinfo$"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "no-zone",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "any": [
+        {
+         "matches": "astz-safe"
+        },
+        {
+         "matches": "zoned"
+        }
+       ]
+      },
+      "all": [
+       {
+        "not": {
+         "matches": "replace-tz"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ007",
+    "message": "Make the result aware: parse a UTC offset with `%z`, else chain `.replace(tzinfo=...)` with the text's timezone (`.astimezone()` if it is local time); keep it naive only if that is intended.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ007"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "replace-tzinfo-none",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "kind": "call",
+      "has": {
+       "stopBy": "neighbor",
+       "field": "function",
+       "matches": "callee"
+      },
+      "not": {
+       "any": [
+        {
+         "matches": "astz-safe"
+        },
+        {
+         "matches": "zoned"
+        }
+       ]
+      },
+      "all": [
+       {
+        "matches": "replace-tz-none"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "DTZ007",
+    "message": "Pass the timezone the text is in to `tzinfo`, e.g. `datetime.timezone.utc`, instead of `None`; keep `None` only if a naive datetime is intended.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "DTZ007"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

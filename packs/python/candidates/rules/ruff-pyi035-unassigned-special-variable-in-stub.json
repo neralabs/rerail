@@ -1,0 +1,195 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi035-unassigned-special-variable-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Assign a value to the module-level exports list and the class slot and match-argument lists in stub files; they mean the same there as at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unassigned-dunder-all",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "special-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__all__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "special-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "assignment",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "special-name"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "kind": "type"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "pattern": "$_"
+                    }
+                  }
+                }
+              ]
+            },
+            "not": {
+              "inside": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI035",
+        "message": "Give `__all__` a value in this stub, such as `__all__: list[str] = [\"name\", ...]` listing the public names; it has the same meaning as at runtime.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI035"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unassigned-class-special-variable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "special-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^__(?:slots|match_args)__$"
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "special-name"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "assignment",
+              "pattern": "$NAME: $TYPE",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "special-name"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "right",
+                      "pattern": "$_"
+                    }
+                  }
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": {
+                "any": [
+                  {
+                    "kind": "function_definition"
+                  },
+                  {
+                    "kind": "class_definition"
+                  }
+                ]
+              },
+              "kind": "class_definition"
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI035",
+        "message": "Give `$NAME` a value in this stub, such as a tuple of strings; it has the same meaning as at runtime.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI035"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,450 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-perf102-incorrect-dict-iterator",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Iterate over a dict's keys or values instead of its items when a for loop uses only the key or only the value of each pair.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "elt": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[(),]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[(),]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                }
+              ]
+            }
+          },
+          "unused": {
+            "params": [
+              "N"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$N",
+                  "binds": {
+                    "used": false
+                  },
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        },
+                        {
+                          "kind": "module"
+                        }
+                      ]
+                    },
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      },
+                      {
+                        "kind": "module"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          },
+                          {
+                            "kind": "lambda"
+                          },
+                          {
+                            "kind": "list_comprehension"
+                          },
+                          {
+                            "kind": "set_comprehension"
+                          },
+                          {
+                            "kind": "dictionary_comprehension"
+                          },
+                          {
+                            "kind": "generator_expression"
+                          }
+                        ]
+                      },
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "kind": "dotted_name"
+                            }
+                          ],
+                          "pattern": "$N",
+                          "binds": {
+                            "latest": true,
+                            "used": false
+                          }
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "class_definition"
+                            }
+                          ],
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "pattern": "$N",
+                            "binds": {
+                              "latest": true,
+                              "used": false
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "elt",
+                      "not": {
+                        "matches": {
+                          "unused": {
+                            "N": "$C"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "keys-only": {
+            "any": [
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple_pattern",
+                  "matches": "keys-only"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "pattern_list"
+                  },
+                  {
+                    "kind": "tuple_pattern"
+                  }
+                ],
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elt"
+                  },
+                  "min": 2,
+                  "max": 2
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "matches": "elt"
+                        }
+                      },
+                      "matches": "elt",
+                      "not": {
+                        "matches": {
+                          "unused": {
+                            "N": "$B"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "matches": "elt"
+                        }
+                      },
+                      "matches": {
+                        "unused": {
+                          "N": "$A"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "values-only": {
+            "any": [
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple_pattern",
+                  "matches": "values-only"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "pattern_list"
+                  },
+                  {
+                    "kind": "tuple_pattern"
+                  }
+                ],
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "elt"
+                  },
+                  "min": 2,
+                  "max": 2
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "matches": "elt"
+                        }
+                      },
+                      "matches": {
+                        "unused": {
+                          "N": "$E"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "matches": "elt"
+                        }
+                      },
+                      "matches": "elt",
+                      "not": {
+                        "matches": {
+                          "unused": {
+                            "N": "$D"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-value",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "attribute",
+              "regex": "^items$"
+            },
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "field": "function",
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "arguments",
+                "kind": "argument_list",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "positional"
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "field": "right",
+                "kind": "for_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "keys-only"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PERF102",
+        "message": "The loop never uses the value: iterate `.keys()` and bind only the key. Leave it if this object is not a dict.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PERF102"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-key",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "attribute",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "attribute",
+              "regex": "^items$"
+            },
+            "inside": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "field": "function",
+              "kind": "call",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "arguments",
+                "kind": "argument_list",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "positional"
+                  }
+                }
+              },
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "field": "right",
+                "kind": "for_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "values-only"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PERF102",
+        "message": "The loop never uses the key: iterate `.values()` and bind only the value. Leave it if this object is not a dict.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PERF102"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

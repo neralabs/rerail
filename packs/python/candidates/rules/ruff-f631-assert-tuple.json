@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-f631-assert-tuple",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Don't use a tuple as an assert's condition; a non-empty tuple is always true, so the assert never fails.",
   "scope": {
@@ -17,6 +17,16 @@
         "ast": {
           "language": "python",
           "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
             "non-empty-tuple": {
               "any": [
                 {
@@ -29,7 +39,7 @@
                           "regex": "^[(),]$"
                         },
                         {
-                          "kind": "comment"
+                          "matches": "trivia"
                         }
                       ]
                     }
@@ -51,7 +61,11 @@
               "stopBy": "neighbor",
               "matches": "non-empty-tuple",
               "follows": {
-                "stopBy": "neighbor",
+                "stopBy": {
+                  "not": {
+                    "matches": "trivia"
+                  }
+                },
                 "regex": "^assert$"
               }
             }

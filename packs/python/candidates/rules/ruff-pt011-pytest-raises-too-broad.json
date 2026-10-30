@@ -1,0 +1,663 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt011-pytest-raises-too-broad",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Constrain pytest.raises for broad exceptions such as ValueError or OSError with a message match or a more specific exception; otherwise unrelated errors also pass.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "raises": {
+            "any": [
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "raises"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pytest.raises"
+                  ]
+                }
+              }
+            ]
+          },
+          "empty-part": {
+            "kind": "string",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "string_start",
+                "regex": "[tT]"
+              }
+            },
+            "any": [
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "interpolation"
+                  }
+                },
+                "value": {
+                  "eq": ""
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "interpolation"
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "string_content"
+                      },
+                      {
+                        "kind": "escape_sequence"
+                      },
+                      {
+                        "kind": "interpolation",
+                        "not": {
+                          "has": {
+                            "field": "expression",
+                            "matches": "empty-or-null"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "empty-or-null": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "matches": "empty-part"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "matches": "empty-part"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "empty-or-null"
+                }
+              }
+            ]
+          },
+          "none-p": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "none-p"
+                }
+              }
+            ]
+          },
+          "broad-call": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "raises"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "pos1"
+                        },
+                        {
+                          "kind": "keyword_argument",
+                          "has": {
+                            "field": "name",
+                            "regex": "^func$"
+                          }
+                        },
+                        {
+                          "kind": "keyword_argument",
+                          "has": {
+                            "field": "name",
+                            "regex": "^match$"
+                          },
+                          "not": {
+                            "has": {
+                              "field": "value",
+                              "matches": "empty-or-null"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "keyword_argument",
+                          "has": {
+                            "field": "name",
+                            "regex": "^check$"
+                          },
+                          "not": {
+                            "has": {
+                              "field": "value",
+                              "matches": "none-p"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "positional": {
+            "not": {
+              "any": [
+                {
+                  "kind": "keyword_argument"
+                },
+                {
+                  "kind": "dictionary_splat"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            }
+          },
+          "pos0": {
+            "matches": "positional",
+            "not": {
+              "any": [
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "positional"
+                  }
+                }
+              ]
+            }
+          },
+          "pos1": {
+            "matches": "positional",
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "matches": "positional"
+              }
+            },
+            "not": {
+              "any": [
+                {
+                  "kind": "list_splat"
+                },
+                {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "list_splat"
+                  }
+                }
+              ]
+            }
+          },
+          "exc-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "kind": "keyword_argument",
+                  "has": {
+                    "field": "name",
+                    "regex": "^expected_exception$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "broad-call"
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "pos0",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "has": {
+                        "field": "name",
+                        "regex": "^expected_exception$"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "matches": "broad-call"
+                  }
+                }
+              }
+            ]
+          },
+          "ann-empty-or-null": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string_start",
+                    "regex": "[tTfFbB]"
+                  }
+                },
+                "value": {
+                  "eq": ""
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ann-empty-or-null"
+                }
+              }
+            ]
+          },
+          "ann-pos1": {
+            "matches": "positional",
+            "all": [
+              {
+                "not": {
+                  "kind": "list_splat"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "positional"
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "list_splat"
+                  }
+                }
+              }
+            ]
+          },
+          "ann-args-ok": {
+            "kind": "argument_list",
+            "follows": {
+              "stopBy": "neighbor",
+              "matches": "raises"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "matches": "ann-pos1"
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^func$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^match$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    },
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "ann-empty-or-null",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "keyword_argument",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "identifier",
+                      "regex": "^check$",
+                      "precedes": {
+                        "stopBy": "neighbor",
+                        "regex": "^=$"
+                      }
+                    },
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "none-p",
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ann-slot": {
+            "any": [
+              {
+                "matches": "pos0",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "ann-args-ok",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "identifier",
+                        "regex": "^expected_exception$",
+                        "precedes": {
+                          "stopBy": "neighbor",
+                          "regex": "^=$"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^=$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "keyword_argument",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^expected_exception$",
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "regex": "^=$"
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "ann-args-ok"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "builtin",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "exc": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exc"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "pattern": "$X",
+                  "resolves": {
+                    "global": [
+                      "BaseException",
+                      "Exception",
+                      "ValueError",
+                      "OSError",
+                      "IOError",
+                      "EnvironmentError"
+                    ]
+                  }
+                }
+              ]
+            },
+            "ann-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence"
+                }
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "exc",
+                      "all": [
+                        {
+                          "matches": "ann-slot"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "ann-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "exc",
+                "all": [
+                  {
+                    "matches": "exc-slot"
+                  }
+                ]
+              },
+              {
+                "matches": "ann-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.X",
+        "code": "PT011",
+        "message": "Add `match=` with the expected message (or `check=` on pytest 8.4+) to `pytest.raises($X)`, or expect a more specific exception, so unrelated `$X` errors do not pass.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT011"
+            ]
+          }
+        },
+        "each": "X"
+      }
+    },
+    {
+      "id": "socket-error",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "exc": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exc"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$X",
+                  "resolves": {
+                    "import": [
+                      "socket.error"
+                    ]
+                  }
+                }
+              ]
+            },
+            "ann-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "end",
+                  "kind": "escape_sequence"
+                }
+              },
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "exc",
+                      "all": [
+                        {
+                          "matches": "ann-slot"
+                        }
+                      ]
+                    },
+                    {
+                      "matches": "ann-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "exc",
+                "all": [
+                  {
+                    "matches": "exc-slot"
+                  }
+                ]
+              },
+              {
+                "matches": "ann-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.X",
+        "code": "PT011",
+        "message": "`$X` is an alias of `OSError`; expect a specific subclass such as `ConnectionRefusedError`, or add `match=` (or `check=` on pytest 8.4+) so unrelated OS errors do not pass.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT011"
+            ]
+          }
+        },
+        "each": "X"
+      }
+    }
+  ]
+}
