@@ -153,9 +153,12 @@ interpreter.
   - **Recursive groups.** A group's rounds are encoded in the same command buffer. The count is
     the deepest node (or longest sibling run, where the group walks siblings) plus two, within
     the launch budget. A one-thread `label_round` kernel marks every round after one that changed
-    nothing as skipped, and every label kernel and `run_batch` return at once on that mark. A
-    group still changing at its last round reruns the clause with twice the rounds. That rerun is
-    counted, and none happened on the fixtures.
+    nothing as skipped, and every label kernel and `run_batch` return at once on that mark. The
+    decision is taken by thread 0 of each round's last `label_settle`, for the round before
+    (one changed flag per round parity), so it costs no launch. Deciding a round late only
+    spends a round that changes nothing. One `label_round` per group records whether the group
+    settled; a group still changing at its last round reruns the clause with more rounds. That
+    rerun is counted, and none happened on the fixtures.
   - **One command buffer per clause.** Every level's batch is built once and the workspace is
     sized before encoding, so the host never waits to grow it. The host's only work before the
     command buffer is building the batches and the label-domain root lists; after it, it reads
@@ -169,12 +172,12 @@ interpreter.
     ran as four batches of 15 (`RERAIL_S1_FROM`) to keep each run under two minutes, and the CPU
     gate against W is 87 of 87 exact on the same batches.
   - Each batch is one command buffer per clause, with 0 host waits for growth, reruns or
-    uploads. Launches average 57–112 per clause across the batches, at most 558.
+    uploads. Launches average 98, 66, 74 and 49 per clause across the four batches, under the
+    target of 100, and are at most 552 for one clause, under the budget of 600.
   - On 8 fixtures (164 matched nodes), likewise one command buffer per clause and no host
     waits.
-  - That run took 8,789 launches, about 101 per clause and at most 558 for one, against a
-    launch budget of 600. Metal took 15–23 s and the CPU 18–21 s over repeated runs (test wall
-    time, debug build, load 13–18).
+  - Metal took 15–23 s and the CPU 18–21 s over repeated 8-fixture runs (test wall time, debug
+    build, load 13–18).
   - Encoding 4 rounds first brings launches down to about 62 per clause, but 3 clauses then
     need a rerun (90 command buffers). One command buffer per clause was kept.
   - `metal_catches_a_widened_walk`: on 16 fixtures, widened clauses differ from W's matcher on
@@ -182,9 +185,10 @@ interpreter.
   - All gates take `RERAIL_S1_CLAUSE` (a clause-name filter), and `RERAIL_S1_FILES` and
     `RERAIL_S1_FROM` (n fixtures from the m-th). The default sample is every eighth fixture.
 - **Left for later (O23):**
-  - Launches average about 101 per clause, against the budget's target of under 100.
-    Recursive rounds skipped on the GPU still count as launches. Batching a wave's clauses (S4)
-    shares levels.
+  - A clause with a recursive group still takes up to 552 launches on the deeper fixtures. The
+    rounds are bounded by the tapes' depth, and a skipped round still counts. The under-100
+    target holds on average, not for each such clause; batching a wave's clauses (S4) shares
+    the rounds.
   - A label-domain program starts at every node, because its label is not known when the
     command buffer is encoded. Its first `SUPERTYPE` drops the others.
 

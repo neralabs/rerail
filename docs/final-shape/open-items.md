@@ -553,8 +553,8 @@ are equal on CPU and Metal (Bend's rule that every binding must give the same ke
     on the GPU once settled;
   - the parity gate passes for 87 of 87 clauses.
 - *Still open:*
-  - about 101 launches per clause (at most 558) against the target of under 100; skipped rounds
-    still count;
+  - launches average 49–98 per clause across the default sample's batches, but a clause with a
+    recursive group takes up to 552; skipped rounds still count;
   - label-domain programs start at every node;
   - each clause is its own evaluation until S4 batches a wave's clauses.
 

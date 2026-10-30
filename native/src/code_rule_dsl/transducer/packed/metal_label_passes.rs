@@ -93,6 +93,8 @@ struct Shape {
     target_count: u32,
     round: u32,
     finish: u32,
+    recursive: u32,
+    last_level: u32,
 }
 
 #[repr(C)]
@@ -247,12 +249,12 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
         .flat_map(|(_, levels)| levels)
         .map(launches)
         .sum::<usize>();
-    // Each round: its levels and its boundary; each group one finishing boundary.
+    // Each round: its levels; each group one finishing boundary.
     let per_round = plan
         .steps
         .iter()
         .filter(|(recursive, _)| *recursive)
-        .map(|(_, levels)| levels.iter().map(launches).sum::<usize>() + 1)
+        .map(|(_, levels)| levels.iter().map(launches).sum::<usize>())
         .sum::<usize>();
     let groups = plan.steps.iter().filter(|(recursive, _)| *recursive).count();
     // A recursive group walks one tree edge per round (`matcher::lower` admits recursion only
@@ -333,7 +335,7 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: usize) ->
         nodes,
         scratch: MappedBuffer::zeroed::<u32>(device, plan.labels * words)?,
         counts: MappedBuffer::zeroed::<u32>(device, (plan.counts * nodes).max(1))?,
-        flags: MappedBuffer::zeroed::<u32>(device, 4)?,
+        flags: MappedBuffer::zeroed::<u32>(device, 6)?,
         workspace: None,
         retained: Vec::new(),
         programs: Vec::new(),
@@ -350,20 +352,19 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: usize) ->
     for (recursive, levels) in &plan.steps {
         if !recursive {
             for level in levels {
-                runner.level(level)?;
+                runner.level(level, None)?;
             }
             continue;
         }
-        // Rounds as the CPU's, on the GPU: every member once per round; a round after one that
-        // changed nothing is skipped (`label_round`), and the group's end records whether it
-        // settled.
+        // Rounds as the CPU's, on the GPU: every member once per round; once a round changes
+        // nothing the rest are skipped (`label_settle`), and the group's end records whether it
+        // settled (`label_round`).
         for round in 0..rounds {
-            runner.boundary(round, false);
-            for level in levels {
-                runner.level(level)?;
+            for (at, level) in levels.iter().enumerate() {
+                runner.level(level, Some((round, at + 1 == levels.len())))?;
             }
         }
-        runner.boundary(rounds, true);
+        runner.boundary(rounds);
     }
     runner.flush()?;
     if runner.flag(0) != 0 {
@@ -481,12 +482,12 @@ impl Runner<'_> {
         self.outcome.dispatches += 1;
     }
 
-    /// A recursive group's round boundary (`label_round`).
-    fn boundary(&mut self, round: usize, finish: bool) {
+    /// A recursive group's end after `rounds` rounds (`label_round`).
+    fn boundary(&mut self, rounds: usize) {
         let (flags, head) = (self.flags.buffer.clone(), self.tapes.supertypes.buffer.clone());
         let shape = Shape {
-            round: round as u32,
-            finish: u32::from(finish),
+            round: rounds as u32,
+            finish: 1,
             ..self.shape()
         };
         self.kernel(2, &[(&flags, 0), (&head, 0)], shape, 1);
@@ -565,7 +566,8 @@ impl Runner<'_> {
 
     /// One dependency level: its programs in one dispatch, their results sunk, the derived
     /// labels, then every target settled.
-    fn level(&mut self, passes: &[Pass<'_>]) -> Result<(), Error> {
+    /// `round`: in a recursive group, the round and whether this is its last level.
+    fn level(&mut self, passes: &[Pass<'_>], round: Option<(usize, bool)>) -> Result<(), Error> {
         let programs = programs_of(passes);
         // How each target settles: from scratch, or computed by `label_settle` per word.
         let mut settles = Vec::new();
@@ -655,6 +657,9 @@ impl Runner<'_> {
         let settles = self.upload(&settles)?;
         let shape = Shape {
             target_count: target_count as u32,
+            round: round.map_or(0, |(round, _)| round as u32),
+            recursive: u32::from(round.is_some()),
+            last_level: u32::from(round.is_some_and(|(_, last)| last)),
             ..self.shape()
         };
         self.kernel(

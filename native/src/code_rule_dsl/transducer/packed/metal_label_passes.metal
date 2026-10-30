@@ -9,9 +9,9 @@ struct Result { uint taskOrdinal,localOrdinal,start,label,captureStart,captureCo
 struct FinalCapture { uint label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; };
 struct Arena { uint start,capacity,cursor; };
 struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; };
-struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish; };
-// flags: [0] a task failed, [1] the round changed a label, [2] the group settled (skip), [3] a
-// group did not settle within its encoded rounds.
+struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel; };
+// flags: [0] a task failed, [2] the group settled (skip), [3] a group did not settle within its
+// encoded rounds, [4 + round % 2] the round changed a label.
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch label `slot`), 2 and
 // 3 counts by root and by captured node (into count slot `slot`).
 struct Route { uint mode,slot; };
@@ -38,7 +38,16 @@ kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Res
 // Each of the level's targets takes its new bits: a complement's or a count's computed here (per
 // word), the others' from scratch. A change sets flags[1]; scratch is cleared.
 kernel void label_settle(device uint* labels [[buffer(0)]],device uint* scratch [[buffer(1)]],device atomic_uint* flags [[buffer(2)]],device const Op* ops [[buffer(3)]],device uint* counts [[buffer(4)]],constant Shape& shape [[buffer(5)]],uint tid [[thread_position_in_grid]]){
-  if(tid>=shape.targetCount*shape.words||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
+  if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
+  // A round's last settle decides for the round before it, whose changes are all in: one that
+  // changed nothing reached the fixpoint, so the rest of the group is skipped. Deciding a round
+  // late costs only a round that changes nothing.
+  if(tid==0u&&shape.recursive!=0u&&shape.lastLevel!=0u&&shape.round>0u){
+    uint previous=4u+(shape.round-1u)%2u;
+    if(atomic_load_explicit(&flags[previous],memory_order_relaxed)==0u){atomic_store_explicit(&flags[2],1u,memory_order_relaxed);atomic_fetch_or_explicit((device atomic_uint*)&labels[-2],0x80000000u,memory_order_relaxed);}
+    atomic_store_explicit(&flags[previous],0u,memory_order_relaxed);
+  }
+  if(tid>=shape.targetCount*shape.words)return;
   Op op=ops[tid/shape.words];uint index=tid%shape.words;
   uint at=op.target*shape.words+index;
   uint word=scratch[at];scratch[at]=0u;
@@ -50,17 +59,13 @@ kernel void label_settle(device uint* labels [[buffer(0)]],device uint* scratch 
     word=0u;
     for(uint bit=0u;bit<32u;bit++){uint node=index*32u+bit;if(node>=shape.nodeCount)break;uint count=counts[op.slot*shape.nodeCount+node];counts[op.slot*shape.nodeCount+node]=0u;if(count>=op.minimum&&count<=op.maximum)word|=1u<<bit;}
   }
-  if(labels[at]!=word){labels[at]=word;atomic_fetch_or_explicit(&flags[1],1u,memory_order_relaxed);}
+  if(labels[at]!=word){labels[at]=word;if(shape.recursive!=0u)atomic_fetch_or_explicit(&flags[4u+shape.round%2u],1u,memory_order_relaxed);}
 }
 
-// A recursive group's round boundary, one thread. Round 0 clears the skip; a later round whose
-// predecessor changed nothing sets it, in flags[2] and the label prefix head that `run_batch`
-// reads. `finish` ends the group: still changing there means it did not settle (flags[3]).
+// A recursive group's end, one thread: still changing in its last round, without having been
+// skipped, means it did not settle (flags[3]). Clears the skip and the changed flags.
 kernel void label_round(device uint* flags [[buffer(0)]],device uint* head [[buffer(1)]],constant Shape& shape [[buffer(2)]],uint tid [[thread_position_in_grid]]){
   if(tid!=0u)return;
-  if(shape.finish!=0u){if(flags[2]==0u&&flags[1]!=0u)flags[3]=1u;flags[2]=0u;flags[1]=0u;head[0]&=0x7fffffffu;return;}
-  if(shape.round==0u)flags[2]=0u;
-  else if(flags[2]==0u&&flags[1]==0u)flags[2]=1u;
-  flags[1]=0u;
-  if(flags[2]!=0u)head[0]|=0x80000000u;else head[0]&=0x7fffffffu;
+  if(flags[2]==0u&&flags[4u+(shape.round-1u)%2u]!=0u)flags[3]=1u;
+  flags[2]=0u;flags[4]=0u;flags[5]=0u;head[0]&=0x7fffffffu;
 }
