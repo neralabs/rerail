@@ -203,6 +203,17 @@ impl HashKey {
         Self::from_padded(HASH_GIT_SHA1, padded)
     }
 
+    /// A Git SHA-1 id's twenty bytes.
+    pub(crate) fn git_sha1_bytes(self) -> Option<[u8; 20]> {
+        (self.algorithm == HASH_GIT_SHA1).then(|| {
+            let mut bytes = [0_u8; 32];
+            for (chunk, lane) in bytes.chunks_exact_mut(8).zip(self.lanes) {
+                chunk.copy_from_slice(&lane.to_be_bytes());
+            }
+            bytes[..20].try_into().expect("twenty bytes")
+        })
+    }
+
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
         Self::from_padded(HASH_GIT_SHA256, bytes)
     }

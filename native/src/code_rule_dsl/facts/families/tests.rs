@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::facts::observe::{Push, push_root};
+use crate::code_rule_dsl::facts::observe::roots::{directory_root, git_root};
 use crate::code_rule_dsl::facts::overlay::{Limits, Overlay};
 use crate::content_store::{ContentStore, GitTree, GitTreeEntry};
 use std::cell::{Cell, RefCell};
@@ -53,29 +53,23 @@ impl<'g, G: Graph + ?Sized> World<'g, G> {
         }
     }
 
-    /// The first push: observe, then derive core, kinds and the rule from scratch.
+    /// The first push: every path is new, so its families are created; then the rule.
     fn start(&self, root: HashKey) {
-        push_root(self.graph, WS, root, 8, |_| unreachable!("nothing reads the names yet")).unwrap();
-        let mut families = self.families.borrow_mut();
-        let (core, _) = families.core(self.graph, WS, "a.py").unwrap();
-        self.graph.record_derivations(&[core]).unwrap();
-        let kinds = families.kinds(self.graph, WS, "a.py").unwrap();
-        self.graph.record_derivations(&[kinds]).unwrap();
-        drop(families);
+        let ingested = self.families.borrow_mut().push(self.graph, WS, root, 8, |_| unreachable!("nothing reads the names yet")).unwrap();
+        assert_eq!(ingested.created, 4, "tape, core, prefilter and kinds of a.py");
         self.graph.record_derivations(&[self.rule()]).unwrap();
     }
 
-    fn push(&self, root: HashKey) -> (Push, Parses) {
-        *self.families.borrow_mut() = Families::default();
-        let push = push_root(self.graph, WS, root, 8, |frontier| {
-            let mut records = self.families.borrow_mut().recompute(self.graph, frontier)?;
-            if frontier.iter().any(|d| d.output == RULE) {
-                records.push(self.rule());
-            }
-            Ok(records)
-        })
-        .unwrap();
-        (push, self.families.borrow().parses)
+    fn push(&self, root: HashKey) -> (Ingested, Parses) {
+        let mut families = Families::default();
+        let ingested = families
+            .push(self.graph, WS, root, 8, |frontier| {
+                Ok(if frontier.iter().any(|d| d.output == RULE) { vec![self.rule()] } else { Vec::new() })
+            })
+            .unwrap();
+        let parses = families.parses;
+        *self.families.borrow_mut() = families;
+        (ingested, parses)
     }
 }
 
@@ -84,18 +78,33 @@ fn check(graph: &(impl Graph + ?Sized), roots: &[HashKey]) {
     world.start(roots[0]);
     assert_ne!(graph.binding(&kinds_name(WS, "a.py")).unwrap(), Some(ABSENT));
 
-    // A rename keeps every kind's count: core re-runs and changes, kinds re-runs and cuts off.
-    let (push, parses) = world.push(roots[1]);
-    assert_eq!((push.work.waves, push.work.rerun, push.work.changed), (2, 2, 1));
-    assert_eq!((parses.parsed, parses.reused), (1, 1), "the kinds wave reads the core wave's facts");
+    // A rename keeps every kind's count: the tape, core and prefilter re-run and change, kinds
+    // re-runs and cuts off.
+    let (ingested, parses) = world.push(roots[1]);
+    let work = ingested.push.work;
+    assert_eq!((work.waves, work.rerun, work.changed, ingested.created), (3, 4, 3, 0));
+    assert_eq!(
+        (parses.parsed, parses.decoded, parses.reused),
+        (1, 0, 3),
+        "one encode; core and prefilter take the tape wave's tape, kinds the core wave's facts"
+    );
     assert_eq!(world.rule_runs.get(), 1);
 
     // A call adds kinds: the histogram changes and the rule runs.
-    let (push, _) = world.push(roots[2]);
-    assert_eq!((push.work.waves, push.work.rerun, push.work.changed), (3, 3, 3));
+    let (ingested, _) = world.push(roots[2]);
+    let work = ingested.push.work;
+    assert_eq!((work.waves, work.rerun, work.changed), (4, 5, 5));
     assert_eq!(world.rule_runs.get(), 2);
-    assert!(world.families.borrow().facts.is_empty(), "the kinds wave took every wave's facts");
-    for output in [core_name(WS, "a.py"), kinds_name(WS, "a.py"), RULE.to_owned()] {
+    let families = world.families.borrow();
+    assert!(families.facts.is_empty() && families.tapes.is_empty(), "every wave's readers took its tapes and facts");
+    drop(families);
+    for output in [
+        tape_name(WS, "a.py"),
+        core_name(WS, "a.py"),
+        prefilter_name(WS, "a.py"),
+        kinds_name(WS, "a.py"),
+        RULE.to_owned(),
+    ] {
         assert!(graph.derivation_valid(&output).unwrap(), "{output}");
     }
 }
@@ -116,4 +125,90 @@ fn the_families_propagate_the_same_over_the_overlay() {
     check(&overlay, &roots);
     overlay.flush().unwrap();
     assert!(store.derivation_valid(RULE).unwrap());
+}
+
+/// Pushes the directory `dir` as `WS`'s new root through fresh families.
+fn push_directory(store: &ContentStore, dir: &std::path::Path) -> (Ingested, Parses) {
+    let root = directory_root(store, dir).unwrap();
+    let mut families = Families::default();
+    let ingested = families.push(store, WS, root, 8, |_| Ok(Vec::new())).unwrap();
+    assert!(families.tapes.is_empty() && families.facts.is_empty(), "readers took every tape and facts");
+    (ingested, families.parses)
+}
+
+fn rows(store: &ContentStore, sql: &str) -> i64 {
+    store.query_rows(sql, [], |row| row.get(0)).unwrap()[0]
+}
+
+/// 06 S3's check: one blob edit re-encodes exactly one tape, and its unchanged kinds cut off.
+#[test]
+fn a_directory_edit_reencodes_one_tape_and_its_unchanged_kinds_cut_off() {
+    let dir = temp("tree");
+    std::fs::create_dir_all(dir.join("pkg")).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    std::fs::write(dir.join("pkg/b.py"), "def f():\n    return 2\n").unwrap();
+    std::fs::write(dir.join("c.py"), "import os\n").unwrap();
+    std::fs::write(dir.join("notes.unknown"), "not a language\n").unwrap();
+    let store = ContentStore::open(&temp("ingest").with_extension("sqlite")).unwrap();
+
+    // Cold: every path is new; each Python file gets its four derivations and its rows.
+    let (cold, parses) = push_directory(&store, &dir);
+    assert_eq!((cold.created, cold.push.work.rerun, parses.parsed), (12, 0, 3));
+    assert_eq!(rows(&store, "SELECT count(*) FROM prefilter_sets"), 3);
+    let kinds = store.binding(&kinds_name(WS, "a.py")).unwrap();
+
+    // A rename in a.py: its tape alone is encoded; core and prefilter change, kinds cuts off.
+    std::fs::write(dir.join("a.py"), "renamed = 1\n").unwrap();
+    let (warm, parses) = push_directory(&store, &dir);
+    let work = warm.push.work;
+    assert_eq!((warm.push.rebound, warm.created), (2, 0), "a.py's path and the root tree");
+    assert_eq!((work.waves, work.rerun, work.changed), (3, 4, 3));
+    assert_eq!((parses.parsed, parses.decoded), (1, 0));
+    assert_eq!(store.binding(&kinds_name(WS, "a.py")).unwrap(), kinds);
+    assert_eq!(rows(&store, "SELECT count(*) FROM prefilter_sets"), 4, "the new tape's rows beside the old");
+
+    // An unchanged snapshot rebinds nothing.
+    let (same, parses) = push_directory(&store, &dir);
+    assert_eq!((same.push.rebound, same.push.work.rerun, parses.parsed), (0, 0, 0));
+
+    // A copy of b.py at a new path shares its stored tape: decoded, not encoded.
+    std::fs::write(dir.join("d.py"), "def f():\n    return 2\n").unwrap();
+    let (copy, parses) = push_directory(&store, &dir);
+    assert_eq!((copy.created, parses.parsed, parses.decoded), (4, 0, 1));
+    assert_eq!(store.binding(&tape_name(WS, "d.py")).unwrap(), store.binding(&tape_name(WS, "pkg/b.py")).unwrap());
+
+    // Removing c.py unbinds its families down to the histogram.
+    std::fs::remove_file(dir.join("c.py")).unwrap();
+    let (removed, parses) = push_directory(&store, &dir);
+    assert_eq!((removed.push.work.rerun, removed.push.work.changed, parses.parsed), (4, 4, 0));
+    for name in [tape_name(WS, "c.py"), core_name(WS, "c.py"), prefilter_name(WS, "c.py"), kinds_name(WS, "c.py")] {
+        assert_eq!(store.binding(&name).unwrap(), Some(ABSENT), "{name}");
+    }
+}
+
+/// A clean checkout's snapshot is its `HEAD` tree, and pushing either binds the same names.
+#[test]
+fn a_clean_checkouts_snapshot_is_its_head_tree() {
+    let dir = temp("git");
+    std::fs::create_dir_all(dir.join("pkg")).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    std::fs::write(dir.join("pkg/b.py"), "def f():\n    return 2\n").unwrap();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=rerail", "-c", "user.email=rerail@example.invalid", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&status.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["add", "a.py", "pkg/b.py"]);
+    git(&["commit", "-q", "-m", "fixture"]);
+    let store = ContentStore::open(&temp("git-store").with_extension("sqlite")).unwrap();
+    let head = git_root(&store, &dir).unwrap();
+    assert_eq!(directory_root(&store, &dir).unwrap(), head);
+    let mut families = Families::default();
+    let ingested = families.push(&store, WS, head, 8, |_| Ok(Vec::new())).unwrap();
+    assert_eq!((ingested.created, families.parses.parsed), (8, 2));
 }

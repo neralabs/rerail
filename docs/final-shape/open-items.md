@@ -7,7 +7,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | Id | Found | Item | Status |
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated |
-| O2 | Phase 1 | Nothing calls the push path yet | open |
+| O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | open |
 | O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
@@ -122,6 +122,13 @@ steps no worse than P on the same captures") therefore cannot run yet: P's captu
 store, which the lab no longer reads. Closure adds: publication in the push path when a tape is
 stored, then a corpus run with `RERAIL_SQL_PROFILE_DIR` to capture batches, and the lab and
 `candidate_replay` over them against P's numbers.
+
+S3 update (2026-10-30): the ingest side is wired. `Families::push` observes a root (a directory
+snapshot or a Git `HEAD`, `facts::observe::roots`), encodes and stores each new or changed tape
+once, builds core facts from it, and publishes its prefilter rows, each a derivation that cuts off
+on its digest. Named `git add` works in tests, so a committed repository is tested. What remains:
+a production caller (W's workspace scan, or the slice's entry points, S6), and the corpus capture
+for the anchor lab.
 
 ## O3. Synchronous interning
 

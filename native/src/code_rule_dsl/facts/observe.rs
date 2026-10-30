@@ -87,5 +87,7 @@ pub(crate) fn recover(
     Ok(Some(work))
 }
 
+pub(crate) mod roots;
+
 #[cfg(test)]
 mod tests;

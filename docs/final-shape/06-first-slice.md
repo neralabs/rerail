@@ -196,16 +196,45 @@ interpreter.
   - A label-domain program starts at every node, because its label is not known when the
     command buffer is encoded. Its first `SUPERTYPE` drops the others.
 
-### S3. Ingest through the push path (closes O2's ingest side)
+### S3. Ingest through the push path (closes O2's ingest side) — done (2026-10-30)
 
-- The `recompute` callback of `facts::observe::push_root`, for blob names of Python files, does four things:
-  1. reads the source (CAS);
-  2. encodes the tape (v8, `tape_objects`);
-  3. builds core facts (`facts::core`);
-  4. publishes prefilter rows (`prefilter::publish`).
-- Each output is a derivation with its `output_hash`, so an unchanged tape cuts off.
-- Observers: a directory snapshot builds a tree (W `git_workspace` already writes `git_trees`); a Git root comes from `HEAD`.
-- Check: Phase 1's frontier test, extended. One blob edit re-encodes exactly one tape, and its unchanged kinds cut off.
+- `facts::families::Families::push(graph, scope, root, max_waves, others)` is the push: it
+  observes the root (`observe_root`), propagates every rebound name, then creates the families of
+  each new path, 256 paths at a time, wave by wave. Cold and warm are the same call: cold, every
+  path is new. `others` re-runs the waves' derivations of other producers (the families' readers).
+- Four derivations per file with a tape dialect, each with its `output_hash`:
+  1. `#tape:` reads `#path:`. It reads the source (CAS, by the blob's Git id), encodes the tape
+     (v8) and stores it in `tape_objects`. Its digest is the tape's canonical hash. Content
+     already stored (another path, another scope) is decoded, not encoded again.
+  2. `#core:` reads `#tape:` and builds core facts from that tape (`core::from_tape`); it no
+     longer parses.
+  3. `#prefilter:` reads `#tape:` and publishes the tape's rows (`prefilter::image`, 64 tapes per
+     transaction). Its digest is the tape's and the rows' image version.
+  4. `#kinds:` reads `#core:`, as before.
+- A tape is kept in memory from the tape wave until its two readers take it, and facts until
+  kinds takes them. A reader that finds neither decodes the stored tape, so a wave never encodes
+  twice. A chunk's tapes are resident, not a scope's.
+- Observers (`facts::observe::roots`):
+  - `directory_root` hashes a directory into Git trees (SHA-1, Git's order and encoding), stores
+    them and the sources of files with a language, each under its blob id.
+  - `git_root` stores the `HEAD` tree from W's `git_workspace::discover`, and the committed
+    sources from the repository's objects.
+  - A clean checkout's snapshot equals its `HEAD` tree.
+- Derived documents (embedded languages) are not stored by `#tape:`; Python has none.
+- Check (`facts::families` tests, 4 tests, 0.1 s):
+  - `a_directory_edit_reencodes_one_tape_and_its_unchanged_kinds_cut_off`: 3 Python files and one
+    other.
+    - Cold: 12 derivations created, 3 encodes, 3 prefilter sets.
+    - A rename in one file: 1 encode, 0 decodes, 3 waves, 4 re-runs (that file's tape, core,
+      prefilter and kinds), 3 changed. Its kinds digest is unchanged, so it cuts off.
+    - An unchanged snapshot rebinds nothing. A copy at a new path decodes the shared tape (0
+      encodes). A removed file unbinds its four names.
+  - `a_clean_checkouts_snapshot_is_its_head_tree`: a committed repository (named `git add`)
+    gives the same root by either observer, and its push encodes each file once.
+  - Phase 2's tests now include the tape wave: a rename is 3 waves, 4 re-runs and 3 changes; the
+    later reader runs on a kind change.
+- Left for later: nothing outside tests calls `push` yet. W's workspace scan keeps its own path
+  until the entry points (S6). Worktree edits reach the slice through a directory snapshot.
 
 ### S4. The wave: prefilter → `demand(batch)` → match facts
 

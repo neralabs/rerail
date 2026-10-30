@@ -71,7 +71,6 @@ impl ContentStore {
         source_id_by_hash(&connection, hash)
     }
 
-    #[cfg(test)]
     pub fn tape_by_source(
         &self,
         source_id: SourceId,

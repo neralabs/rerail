@@ -19,6 +19,7 @@ mod index;
 mod ingest;
 mod memory;
 mod persisted;
+pub(in crate::code_rule_dsl) use persisted::grammar_version;
 mod results;
 mod storage;
 

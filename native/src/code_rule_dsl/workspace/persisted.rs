@@ -514,7 +514,7 @@ fn engine_build_id() -> &'static str {
 const GRAMMAR_BUILD_ID: &str = env!("RERAIL_GRAMMAR_BUILD_ID");
 
 /// The stored tapes' grammar version column: the grammar build identity as a positive integer.
-pub(super) fn grammar_version() -> i64 {
+pub(in crate::code_rule_dsl) fn grammar_version() -> i64 {
     i64::from_str_radix(&GRAMMAR_BUILD_ID[..15], 16).expect("grammar build identity is hex")
 }
 
