@@ -1,0 +1,113 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-file-extension-in-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Spell out the file extension in relative and absolute import specifiers, such as ./util.js; Node.js ES modules add none, so ./util fails to load.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "inside": {
+                  "field": "source",
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "number"
+                  },
+                  {
+                    "kind": "true"
+                  },
+                  {
+                    "kind": "false"
+                  },
+                  {
+                    "kind": "null"
+                  },
+                  {
+                    "kind": "regex"
+                  }
+                ],
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "field": "arguments",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "import"
+                    }
+                  }
+                }
+              }
+            ],
+            "importTarget": {
+              "via": "import",
+              "builtin": false,
+              "moduleType": [
+                "relative",
+                "absolute"
+              ],
+              "extensionSpelled": false
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/file-extension-in-import",
+        "message": "Spell out the file extension of the file this specifier resolves to.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/file-extension-in-import"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
