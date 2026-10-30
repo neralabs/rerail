@@ -4,8 +4,9 @@
 //! clause's label passes over the chunk's tapes together (`LoweredWave`), and registers the
 //! clauses' root programs from those candidates as the chunk's `demand(batch)` (the CPU JIT, over
 //! the chunk's files in one execution; it tests each label as one bit of the batch, `PackedBatch::derived`). The step
-//! reads the batch's terminal matches into `match(clause, d, node)`; the planner emits it from
-//! `SOURCE`, one rule over two batch inputs (O14, `logic::plan::emit_batch`). The loop records the relation as one
+//! reads the batch's terminal matches into `match(clause, d, node)`, and each matched node's bytes
+//! into `span(d, node, start, end)` for the findings layer (`findings`, S5); the planner emits them
+//! from `SOURCE`, over two batch inputs (O14, `logic::plan::emit_batch`). The loop records the relation as one
 //! fact family per clause (`partitions`) and `statistics` writes their row estimates to
 //! `fact_stats`, where the demand relations read them.
 
@@ -31,16 +32,18 @@ pub(in crate::code_rule_dsl) const PROGRAM: &str = "matches";
 const RELATION: &str = "match";
 /// The demand relation the step reads, whose row estimate `statistics` writes.
 const TERMINAL: &str = "rerail_terminal_match";
-/// The wave's program: a batch's terminal matches by document. `terminal` is the chunk's
-/// `rerail_terminal_match` (file, clause, node); `document` is `temp.wave_document` (the batch's
-/// file index, the document's key).
+/// The wave's program: a batch's terminal matches by document, and the matched nodes' bytes.
+/// `terminal` is the chunk's `rerail_terminal_match` (file, clause, node, start byte, end byte);
+/// `document` is `temp.wave_document` (the batch's file index, the document's key).
 const SOURCE: &str = "
-.decl terminal(f: int, c: int, n: int)
+.decl terminal(f: int, c: int, n: int, s: int, e: int)
 .decl document(f: int, d: int)
 .input terminal, document
 .decl match(c: int, d: int, n: int)
-.output match
-match($c, $d, $n) :- terminal($f, $c, $n), document($f, $d).
+.decl span(d: int, n: int, s: int, e: int)
+.output match, span
+match($c, $d, $n) :- terminal($f, $c, $n, _, _), document($f, $d).
+span($d, $n, $s, $e) :- terminal($f, _, $n, $s, $e), document($f, $d).
 ";
 
 /// One lowered clause of the wave: its name (`policy/clause`), the prefilter's plan for its roots
@@ -98,7 +101,10 @@ impl Wave {
         let batch = HashMap::from([
             (
                 "terminal".to_owned(),
-                (format!("(SELECT file_index AS c0, producer_id AS c1, node AS c2 FROM {TERMINAL} WHERE batch = :batch)"), self.names.len() as f64),
+                (
+                    format!("(SELECT file_index AS c0, producer_id AS c1, node AS c2, start_byte AS c3, end_byte AS c4 FROM {TERMINAL} WHERE batch = :batch)"),
+                    self.names.len() as f64,
+                ),
             ),
             ("document".to_owned(), ("(SELECT position AS c0, d AS c1 FROM temp.wave_document)".to_owned(), 100.0)),
         ]);

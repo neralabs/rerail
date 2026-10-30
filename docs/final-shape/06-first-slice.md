@@ -331,6 +331,22 @@ interpreter.
 - `findings::contract::Findings::publish` writes the set as a family, so an unchanged finding set cuts off.
 - Check: the finding keys equal W's `violations` for the same files and clauses, as sets.
 
+**Done (2026-10-30, decision 0013):**
+- **The rule.** `waves::findings` is the pack's `violation` rule in RDL. The planner emits it, and
+  it runs once after the wave (`schedule::layer`) over `match`, the wave's new
+  `span(d, n, s, e)`, and facts of the clauses and documents:
+  - the shape and the `applies` gate (W's `grammar_matcher`, scope and syntax gate);
+  - lines;
+  - the `noqa`, `nosec` and `rerail-ignore` comments, read off the tape.
+- **One statement.** `finding(rule, code, d, line)` is one statement over non-recursive strata
+  for the anchor and suppression.
+- **Families.** Each code rule's findings are a family, so a second run over the same matches
+  changes none. `Findings::publish` writes each (rule, document).
+- **The gate** (`the_findings_are_ws_violations`, W evaluated one file at a time):
+  - 8 fixtures: 28 keys equal to W's, all 488 (rule, file)s Complete;
+  - 48 fixtures: 121 keys equal to W's, 2867 Complete and 61 Unknown (syntax errors, O27);
+  - the layer's SQL takes 41 ms.
+
 ### S6. Entry points and the warm path
 
 `slice::audit(store, scope, root, rules)` and `slice::apply(store, scope, edits)`:

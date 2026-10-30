@@ -9,6 +9,9 @@ pub(in crate::code_rule_dsl) mod relational;
 /// The first slice's wave over lowered matchers (06 S4).
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod matches;
+/// The first slice's findings layer over the wave's matches (06 S5).
+#[allow(dead_code)]
+pub(in crate::code_rule_dsl) mod findings;
 /// The frontier loop; `logic::plan::emit` gives it the planner's programs (O14).
 pub(in crate::code_rule_dsl) mod schedule;
 mod storage;

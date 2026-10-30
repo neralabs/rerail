@@ -388,6 +388,36 @@ pub(in crate::code_rule_dsl) fn run(
         }
         Ok(())
     })?;
+    record(lease, graph, program, scope, inputs, outcome)
+}
+
+/// Runs `program`, whose steps read only tables already on `lease` (no documents' sources, no
+/// batch), once to its fixpoint, then records each derived relation as a family read from
+/// `inputs`: a layer over another program's relations (06 S5's findings, architecture §8).
+pub(in crate::code_rule_dsl) fn layer(
+    lease: &Lease<'_>,
+    graph: &(impl Graph + ?Sized),
+    program: &Program,
+    scope: &str,
+    mut inputs: Vec<DerivationInput>,
+    limits: &Limits,
+) -> StoreResult<Outcome> {
+    declare(lease, program)?;
+    inputs.sort_by(|a, b| a.name.cmp(&b.name));
+    let waves = waves(lease, program, None, limits.max_waves)?;
+    record(lease, graph, program, scope, inputs, Outcome { waves, chunks: 1, ..Outcome::default() })
+}
+
+/// Records each derived relation of `program` (and each part of a partitioned one) as a family
+/// read from `inputs`; `outcome.changed` names those whose digest changed.
+fn record(
+    lease: &Lease<'_>,
+    graph: &(impl Graph + ?Sized),
+    program: &Program,
+    scope: &str,
+    inputs: Vec<DerivationInput>,
+    mut outcome: Outcome,
+) -> StoreResult<Outcome> {
     outcome.rows = lease.storage.borrow_mut().statistics_boundary(lease)?;
     let producer = program.digest();
     let record = |output: String, (digest, rows): ([u8; 32], i64)| DerivationRecord {

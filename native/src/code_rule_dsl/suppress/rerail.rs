@@ -94,6 +94,11 @@ impl RerailIgnores {
         Self { covers }
     }
 
+    /// Each directive's covered range and the code rules it names.
+    pub(crate) fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
+        self.covers.iter().map(|cover| (&cover.range, cover.rules.as_slice()))
+    }
+
     /// Whether any directive of the file names `rule`.
     pub(crate) fn names(&self, rule: &str) -> bool {
         self.covers

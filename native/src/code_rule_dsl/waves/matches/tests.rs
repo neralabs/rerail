@@ -5,7 +5,9 @@
 //! in S1 (default: the first 8 of every eighth), `RERAIL_S1_CLAUSE` the clauses.
 
 use super::super::owner::Backing;
+use super::super::findings::{Layer, PROGRAM as FINDINGS, Shape};
 use super::super::schedule::{Limits, family_name, run};
+use crate::code_rule_dsl::findings::contract::Coverage;
 use super::*;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::facts::observe::roots::directory_root;
@@ -64,19 +66,19 @@ fn fixtures(dir: &Path, default: usize) -> Vec<String> {
 
 /// The Python pack's lowered AST clauses, with W's matcher for each.
 fn clauses() -> (Vec<Clause>, Vec<GrammarMatcher>) {
-    let mut documents = Vec::new();
-    files(&pack().join("rules"), "json", &mut documents);
-    files(&pack().join("candidates/rules"), "json", &mut documents);
-    documents.sort();
+    let (clauses, grammars, _) = shaped();
+    (clauses, grammars)
+}
+
+/// The Python pack's lowered AST clauses, with W's matcher and the findings layer's shape for each.
+fn shaped() -> (Vec<Clause>, Vec<GrammarMatcher>, Vec<Shape>) {
     let mut clauses = Vec::new();
     let mut grammars = Vec::new();
-    for path in documents {
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(compiled) = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) else { continue };
-        let policy = path.file_stem().unwrap().to_string_lossy().into_owned();
-        for clause in &compiled.inner.clauses {
+    let mut shapes = Vec::new();
+    for (policy, compiled) in policies() {
+        for (at, clause) in compiled.inner.clauses.iter().enumerate() {
             let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-            for grammar in matchers.iter().filter(|matcher| matcher.language == GrammarDialect::Python) {
+            for (index, grammar) in matchers.iter().enumerate().filter(|(_, matcher)| matcher.language == GrammarDialect::Python) {
                 let name = format!("{policy}/{}", clause.id);
                 if std::env::var("RERAIL_S1_CLAUSE").is_ok_and(|part| !name.contains(&part)) {
                     continue;
@@ -85,10 +87,11 @@ fn clauses() -> (Vec<Clause>, Vec<GrammarMatcher>) {
                 let Ok(matcher) = LoweredMatcher::lower(&tree) else { continue };
                 clauses.push(Clause { name, plan: Arc::clone(&grammar.anchors), matcher });
                 grammars.push(grammar.clone());
+                shapes.push(Shape { rule: Arc::clone(&compiled.inner), clause: at, grammar: index });
             }
         }
     }
-    (clauses, grammars)
+    (clauses, grammars, shapes)
 }
 
 /// The nodes W's matcher matches at in `tape`.
@@ -143,7 +146,9 @@ fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
     assert_eq!(documents.len(), paths.len(), "every fixture has core facts");
     let mut wave = Wave::new(&clauses, backend).unwrap();
     let program = wave.program(&store).unwrap();
-    assert_eq!(program.steps.len(), 1, "{:?}", program.steps.iter().map(|s| &s.sql).collect::<Vec<_>>());
+    // One step per output (`match`, `span`), neither reading the other: they share the wave.
+    assert_eq!(program.steps.len(), 2, "{:?}", program.steps.iter().map(|s| &s.sql).collect::<Vec<_>>());
+    assert!(program.steps.iter().all(|s| s.reads.iter().all(|r| !program.relations.iter().any(|(rel, _)| r.ends_with(rel.as_str())))));
     let backing = Backing::default();
     let scope = backing.enter(&store);
     let lease = scope.pool().take().unwrap();
@@ -263,4 +268,114 @@ fn the_wave_is_one_evaluation_on_metal() {
     assert!(differ.is_empty());
     assert_eq!(outcome.command_buffers, 1, "one evaluation");
     assert!(outcome.dispatches < 100, "the launch budget's target");
+}
+
+/// The Python pack's compiled policies, by file stem (the clauses' `policy` prefix).
+fn policies() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
+    let mut documents = Vec::new();
+    files(&pack().join("rules"), "json", &mut documents);
+    files(&pack().join("candidates/rules"), "json", &mut documents);
+    documents.sort();
+    documents
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
+        })
+        .collect()
+}
+
+/// 06 S5's gate: the findings layer over the wave's matches gives, for every (rule, file) it
+/// decides, the keys of W's violations of the same clauses on the same files, as sets.
+#[test]
+fn the_findings_are_ws_violations() {
+    use serde_json::json;
+    let (store, paths) = ingested(8);
+    let (clauses, _, shapes) = shaped();
+    let documents = documents(&store, WS, &paths).unwrap();
+    let mut wave = Wave::new(&clauses, ExecutionBackend::CpuJit).unwrap();
+    let program = wave.program(&store).unwrap();
+    let backing = Backing::default();
+    let scope = backing.enter(&store);
+    let lease = scope.pool().take().unwrap();
+    let limits = Limits { max_waves: 1, ..Limits::default() };
+    run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&store, WS, chunk)).unwrap();
+    let layer = Layer::new(shapes);
+    let findings_program = layer.program(&store).unwrap();
+    let started = std::time::Instant::now();
+    let (findings, outcome) = layer.findings(&lease, &store, WS, &documents, &findings_program).unwrap();
+    let elapsed = started.elapsed();
+    let path = documents.iter().map(|d| (d.key, d.path.clone())).collect::<BTreeMap<_, _>>();
+    let ours = findings.keys.iter().map(|k| (k.rule.clone(), k.code.clone(), path[&k.doc].clone(), k.line)).collect::<BTreeSet<_>>();
+
+    // W's violations of the wave's clauses, keyed alike, on the (rule, file)s the layer decided.
+    let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
+    let tapes = paths.iter().map(|path| Families::stored(&store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
+    // One snapshot per file: a file W cannot read fails its evaluation, which reports no other
+    // file's violations; the layer decides each (rule, file) apart.
+    let snapshots = paths
+        .iter()
+        .zip(&tapes)
+        .map(|(path, tape)| {
+            json!({
+                "facts": [],
+                "files": [{ "language": "python", "path": path, "source": ast_grep_core::Doc::get_source(&tape.doc) }],
+                "format": "rerail.repository-snapshot/v1",
+                "revision": 0,
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>();
+    let complete = findings
+        .coverage
+        .iter()
+        .filter(|(_, coverage)| **coverage == Coverage::Complete)
+        .map(|((rule, doc), _)| (rule.clone(), path[doc].clone()))
+        .collect::<BTreeSet<_>>();
+    let mut ws = BTreeSet::new();
+    for (policy, compiled) in policies() {
+        for snapshot in &snapshots {
+            let result: serde_json::Value = serde_json::from_str(&compiled.evaluate(snapshot.clone(), "report".to_owned()).unwrap()).unwrap();
+            for v in result["violations"].as_array().unwrap() {
+                let (rule, file) = (v["ruleId"].as_str().unwrap().to_owned(), v["path"].as_str().unwrap().to_owned());
+                if names.contains(&format!("{policy}/{}", v["clauseId"].as_str().unwrap())) && complete.contains(&(rule.clone(), file.clone())) {
+                    ws.insert((rule, v["code"].as_str().unwrap().to_owned(), file, v["span"]["startLine"].as_u64().unwrap() as usize));
+                }
+            }
+        }
+    }
+    let mut unknown = BTreeMap::new();
+    for coverage in findings.coverage.values() {
+        if let Coverage::Unknown(reason) = coverage {
+            *unknown.entry(reason.clone()).or_insert(0) += 1;
+        }
+    }
+    eprintln!(
+        "S5 findings: {} clauses on {} fixtures in {elapsed:?} ({} waves): {} keys, W {}; {} only ours, {} only W; \
+         {} (rule, file)s complete, unknown {unknown:?}; {} families changed",
+        clauses.len(),
+        documents.len(),
+        outcome.waves,
+        ours.len(),
+        ws.len(),
+        ours.difference(&ws).count(),
+        ws.difference(&ours).count(),
+        complete.len(),
+        outcome.changed.len(),
+    );
+    let text = paths.iter().zip(&tapes).map(|(path, tape)| (path.clone(), ast_grep_core::Doc::get_source(&tape.doc).clone())).collect::<BTreeMap<_, _>>();
+    for key in ours.symmetric_difference(&ws).take(20) {
+        let line = text[&key.2].lines().nth(key.3).unwrap_or_default();
+        eprintln!("  {} {key:?}: {}", if ours.contains(key) { "only ours" } else { "only W" }, line.trim());
+    }
+    assert_eq!(ours, ws);
+    for rule in findings.coverage.keys().map(|(rule, _)| rule).collect::<BTreeSet<_>>() {
+        let family = family_name(WS, FINDINGS, &format!("finding:{rule}"));
+        assert!(store.derivation_valid(&family).unwrap(), "{family}");
+    }
+    // The same matches again: no finding family changes, so nothing downstream reruns.
+    let (again, outcome) = layer.findings(&lease, &store, WS, &documents, &findings_program).unwrap();
+    assert_eq!(again.keys, findings.keys);
+    assert!(outcome.changed.is_empty(), "{:?}", outcome.changed);
 }

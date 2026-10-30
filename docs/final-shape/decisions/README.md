@@ -11,3 +11,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0010 | Waves run on one owner connection; SQL selects each wave's frontier; derived relations are fact families | accepted |
 | 0011 | Composite matchers lower to node-label passes plus positive walking programs | accepted |
 | 0012 | Compilation runs in the background, on demand; the interpreter runs until it is ready | accepted |
+| 0013 | Findings are one stratified SQL layer over the match facts, from facts of the tape | accepted |
