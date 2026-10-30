@@ -505,19 +505,19 @@ function reposWithText(samples: readonly Sample[], texts: (repo: string, commit:
 }
 
 /**
- * What the archive's LICENSES.md holds, for SAMPLES.md: licence texts for every repository, for none (ESLint test-set
- * sets: the licence ids the test set recorded, which publishedSamples holds to RECORDED_LICENCES), or for some.
+ * What the archive's LICENSES.md holds, for SAMPLES.md: licence texts for every repository, for none (a set converted
+ * from a test set with only the licence id the test set recorded per file, as the ESLint test set was), or for some.
  */
 export function licensesClaim(repos: number, withText: readonly string[]): string {
   if (withText.length === repos) return "The archive's `LICENSES.md` lists every file with its repository's licence text.";
-  const ids = "the licence id the ESLint test set recorded, which is the one `scripts/samples/licences.ts` records for the repository";
+  const ids = "the licence id its test set recorded, which publish holds to the one `scripts/samples/licences.ts` records for the repository at the file's commit";
   if (withText.length === 0) return `The archive's \`LICENSES.md\` lists every file with its repository's licence: ${ids}. It holds no licence texts.`;
   return `The archive's \`LICENSES.md\` lists every file with its repository's licence. It holds the licence text of ${withText.join(", ")} only; for every other repository it holds ${ids}, and no licence text.`;
 }
 
 /**
  * The archive's LICENSES.md: per source repository its licence, the files taken from it (as the archive holds them),
- * and the licence texts read at their commits. ESLint test-set sources carry the licence the test set recorded.
+ * and the licence texts read at their commits; a repository with none carries the licence its test set recorded.
  */
 export function licensesMarkdown(samples: readonly Sample[], texts: (repo: string, commit: string) => LicenceText[] | undefined): string {
   const byRepo = new Map<string, Sample[]>();
@@ -526,7 +526,7 @@ export function licensesMarkdown(samples: readonly Sample[], texts: (repo: strin
   const lines = [
     "# Sources",
     "",
-    `Every sample in this archive is a copy of one file of an open-source repository, at the commit its \`.expected.json\` names (\`source.commit\`; for a SWE task's file, that commit with the task's reference solution applied). Each repository below is listed with its licence, the files taken from it, and ${allText ? "its licence text as read at those commits" : "its licence text as read at those commits where one was read (otherwise the licence the ESLint test set recorded)"}. The files remain under their repositories' licences.`,
+    `Every sample in this archive is a copy of one file of an open-source repository, at the commit its \`.expected.json\` names (\`source.commit\`; for a SWE task's file, that commit with the task's reference solution applied). Each repository below is listed with its licence, the files taken from it, and ${allText ? "its licence text as read at those commits" : "its licence text as read at those commits where one was read (otherwise the licence its test set recorded)"}. The files remain under their repositories' licences.`,
     "",
   ];
   for (const repo of [...byRepo.keys()].sort(byText)) {
@@ -549,7 +549,7 @@ export function licensesMarkdown(samples: readonly Sample[], texts: (repo: strin
         lines.push(`### ${file} (at ${commitsWithText.map((other) => other.slice(0, 12)).join(", ")})`, "", fence(text), text.trimEnd(), fence(text), "");
       }
     }
-    if (!anyText) lines.push("The licence is the one the ESLint test set recorded for each file (`source.license`).", "");
+    if (!anyText) lines.push("The licence is the one its test set recorded for each file (`source.license`).", "");
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }

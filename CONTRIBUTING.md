@@ -610,7 +610,8 @@ Real-code samples are whole files of other repositories. Each sample's labels de
 publish takes it only when `scripts/samples/licences.ts` records that licence for the repository: a repository with
 no entry, a declared licence that is not its entry, and a copyleft repository are refused. A samples archive's
 `LICENSES.md` lists every file with its repository's licence, and holds a licence text only where one was read at the
-samples' commits (samples from the ESLint test set carry the licence it recorded, and no text); `SAMPLES.md` says which
+samples' commits (a set converted from a test set with only the licence it recorded, as the ESLint test set's were,
+carries that licence and no text); `SAMPLES.md` says which
 ([docs/upstream.md, "Sample licences"](docs/upstream.md#sample-licences)).
 
 The checks confirm that licences are declared, permitted and cover every file; they cannot confirm that an

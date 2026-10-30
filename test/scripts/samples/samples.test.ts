@@ -194,10 +194,10 @@ describe("licences", () => {
     const none = claims(() => undefined);
     expect(none.samplesMd).toContain("It holds no licence texts.");
     expect(none.samplesMd).not.toContain("with its repository's licence text");
-    expect(none.intro).toContain("where one was read (otherwise the licence the ESLint test set recorded)");
+    expect(none.intro).toContain("where one was read (otherwise the licence its test set recorded)");
 
     const some = claims((repo) => (repo === "a/x" ? text : []));
-    expect(some.samplesMd).toContain("It holds the licence text of a/x only; for every other repository it holds the licence id the ESLint test set recorded");
+    expect(some.samplesMd).toContain("It holds the licence text of a/x only; for every other repository it holds the licence id its test set recorded");
     expect(some.samplesMd).not.toContain("with its repository's licence text");
   });
 });
