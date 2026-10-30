@@ -100,6 +100,22 @@ pub(super) fn plan_shared(
         return Err(Error::InvalidAnchor);
     }
     let mut plan = SharedWorkspacePlan::default();
+    // The kinds an evaluation sizes by its widest task; the others sum its tasks'.
+    let mut widest = [false; ARENA_KIND_COUNT];
+    for kind in [
+        ArenaKind::Pending,
+        ArenaKind::Capture,
+        ArenaKind::Cursor,
+        ArenaKind::Repeat,
+        ArenaKind::ValueState,
+        ArenaKind::Candidate,
+        ArenaKind::QueryBucket,
+        ArenaKind::QueryMember,
+        ArenaKind::QueuedState,
+        ArenaKind::GreedyEntry,
+    ] {
+        widest[kind as usize] = true;
+    }
     let mut task_index = 0;
     while task_index < tasks.len() {
         let first = tasks[task_index];
@@ -115,19 +131,7 @@ pub(super) fn plan_shared(
             for (kind, (total, value)) in
                 limits.iter_mut().zip(capacities[end].values()).enumerate()
             {
-                *total = if [
-                    ArenaKind::Pending as usize,
-                    ArenaKind::Capture as usize,
-                    ArenaKind::Cursor as usize,
-                    ArenaKind::Repeat as usize,
-                    ArenaKind::ValueState as usize,
-                    ArenaKind::Candidate as usize,
-                    ArenaKind::QueryBucket as usize,
-                    ArenaKind::QueryMember as usize,
-                    ArenaKind::QueuedState as usize,
-                    ArenaKind::GreedyEntry as usize,
-                ]
-                .contains(&kind)
+                *total = if widest[kind]
                 {
                     (*total).max(value)
                 } else if let Some(caps) = shared_caps {

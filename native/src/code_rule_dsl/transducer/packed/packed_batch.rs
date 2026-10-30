@@ -769,13 +769,54 @@ impl PackedBatch {
             .iter()
             .map(ProgramCapacityFacts::new)
             .collect::<Result<Vec<_>, _>>()?;
+        // What a task's capacities take from its program alone, once per program.
+        let per_program = programs
+            .iter()
+            .zip(&self.programs)
+            .map(|(program, packed_program)| {
+                let value_end = packed_program
+                    .value_start
+                    .checked_add(packed_program.value_count)
+                    .ok_or(Error::BackendCapacity)? as usize;
+                let program_values = self
+                    .values
+                    .get(packed_program.value_start as usize..value_end)
+                    .ok_or(Error::BackendFailure)?;
+                let strip_states = program.output_program.instructions.iter().try_fold(
+                    0u32,
+                    |maximum, instruction| {
+                        let needed =
+                            if let output::OutputInstruction::Strip { regex, .. } = instruction {
+                                checked_u32(regex.states.len())?
+                                    .checked_mul(7)
+                                    .and_then(|n| n.checked_add(1))
+                                    .ok_or(Error::BackendCapacity)?
+                            } else {
+                                0
+                            };
+                        Ok::<_, Error>(maximum.max(needed))
+                    },
+                )?;
+                let source_transform = program.output_program.instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction,
+                        output::OutputInstruction::Strip { .. } | output::OutputInstruction::Downcase { .. }
+                    )
+                });
+                let mime_transform = program
+                    .output_program
+                    .instructions
+                    .iter()
+                    .any(|instruction| matches!(instruction, output::OutputInstruction::LanguageFromMime { .. }));
+                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let capacities = self
             .tasks
             .iter()
             .map(|task| {
-                let program = &programs[task.program as usize];
                 let facts = facts[task.program as usize];
-                let packed_program = &self.programs[task.program as usize];
+                let (program_values, strip_states, source_transform, mime_transform) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
                 let root = self.nodes[task.root as usize];
                 let work_capacity = |operations: u32| {
@@ -793,14 +834,6 @@ impl PackedBatch {
                 let greedy_states = work_capacity(facts.greedy_operations);
                 let result_states = work_capacity(facts.emit_operations);
                 let node_source_length = root.source_end.saturating_sub(root.source_start);
-                let value_end = packed_program
-                    .value_start
-                    .checked_add(packed_program.value_count)
-                    .ok_or(Error::BackendCapacity)? as usize;
-                let program_values = self
-                    .values
-                    .get(packed_program.value_start as usize..value_end)
-                    .ok_or(Error::BackendFailure)?;
                 let value_states = program_values.iter().try_fold(0_u32, |maximum, value| {
                     let needed = if value.kind == 2 {
                         value
@@ -824,45 +857,7 @@ impl PackedBatch {
                     };
                     Ok::<u32, Error>(maximum.max(needed))
                 })?;
-                let strip_states = program.output_program.instructions.iter().try_fold(
-                    0u32,
-                    |maximum, instruction| {
-                        let needed =
-                            if let output::OutputInstruction::Strip { regex, .. } = instruction {
-                                checked_u32(regex.states.len())?
-                                    .checked_mul(7)
-                                    .and_then(|n| n.checked_add(1))
-                                    .ok_or(Error::BackendCapacity)?
-                            } else {
-                                0
-                            };
-                        Ok::<_, Error>(maximum.max(needed))
-                    },
-                )?;
                 let value_states = value_states.max(strip_states);
-                let source_transform =
-                    program
-                        .output_program
-                        .instructions
-                        .iter()
-                        .any(|instruction| {
-                            matches!(
-                                instruction,
-                                output::OutputInstruction::Strip { .. }
-                                    | output::OutputInstruction::Downcase { .. }
-                            )
-                        });
-                let mime_transform =
-                    program
-                        .output_program
-                        .instructions
-                        .iter()
-                        .any(|instruction| {
-                            matches!(
-                                instruction,
-                                output::OutputInstruction::LanguageFromMime { .. }
-                            )
-                        });
                 let output_bytes_per_result = if source_transform {
                     file.source_length
                 } else if mime_transform {

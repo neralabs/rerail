@@ -69,6 +69,9 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// any), and whether its programs step to siblings (`NEXT`, `FOLLOWING`). Its rounds follow
     /// chains of such nodes, nested or (stepping to siblings) side by side.
     pub(in crate::code_rule_dsl) chains: Vec<(Option<Vec<u16>>, bool)>,
+    /// The labels' words before the passes (as `Outcome::labels`), where steps before them ran
+    /// elsewhere; empty otherwise.
+    pub(in crate::code_rule_dsl) initial: Option<Vec<u32>>,
 }
 
 /// Whether a recursive group runs as sweeps: its passes are programs (or empty), whose results only
@@ -483,6 +486,15 @@ fn tapes(device: &Device, files: &[TapeDoc], plan: &Plan<'_>, words: usize) -> R
         kind: words as u32,
     });
     supertypes.resize(prefix, MetalSupertype { node: 0, kind: 0 });
+    // The prefix's words after its head: the labels.
+    for (at, &word) in plan.initial.iter().flatten().enumerate().take(plan.labels * words) {
+        let slot = &mut supertypes[1 + at / 2];
+        if at % 2 == 0 {
+            slot.node = word;
+        } else {
+            slot.kind = word;
+        }
+    }
     supertypes.extend(batch.supertypes.iter().map(|pair| MetalSupertype { node: pair.node, kind: pair.kind }));
     let mut batch_files = batch.files.clone();
     for file in &mut batch_files {

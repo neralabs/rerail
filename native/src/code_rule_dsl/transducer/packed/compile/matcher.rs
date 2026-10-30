@@ -116,6 +116,28 @@ impl Labels {
         &self.defs[usize::from(id - LABEL_BASE - self.offset)]
     }
 
+    /// The kinds a domain's nodes can have, known before any label is (`None`: any kind). A
+    /// label of roots, pattern matches or counts by root lies within its own domain; targets,
+    /// counts by capture and complements can be any node. A label met again (recursion) is any.
+    fn bound(&self, domain: &Domain, seen: &mut Vec<u16>) -> Option<BTreeSet<u16>> {
+        match domain {
+            Domain::All => None,
+            Domain::Kinds(kinds) => Some(kinds.iter().copied().collect()),
+            Domain::Label(id) if seen.contains(id) => None,
+            Domain::Label(id) => {
+                seen.push(*id);
+                let bound = match self.def(*id) {
+                    Label::Pattern(_, starts) | Label::Constrained(_, starts, _) | Label::Roots(_, starts) => self.bound(starts, seen),
+                    Label::Count { domain, by: Tally::Start, .. } => self.bound(domain, seen),
+                    Label::Empty => Some(BTreeSet::new()),
+                    Label::Targets(..) | Label::Count { .. } | Label::Complement(_) => None,
+                };
+                seen.pop();
+                bound
+            }
+        }
+    }
+
     /// The labels' ids, past the last label of the wave's clauses before this one.
     fn ids(&self) -> std::ops::Range<u16> {
         LABEL_BASE + self.offset..LABEL_BASE + self.offset + self.defs.len() as u16
@@ -468,21 +490,36 @@ impl LoweredWave {
     /// label pass starts at most of a tape's nodes, where a packed batch's cost per task is the
     /// interpreter's per start. A recursive step sweeps each tape in node order where its passes
     /// allow (`sweep`), else repeats its levels until a round changes nothing.
-    pub(in crate::code_rule_dsl) fn labelled(&self, tapes: &[TapeDoc]) -> Result<Vec<TapeDoc>, Error> {
+    ///
+    /// `active` (per clause, per tape) is where a clause's root program will start: a clause's
+    /// labels are its own and read only by its walks, so they are computed only on those tapes
+    /// (empty elsewhere).
+    pub(in crate::code_rule_dsl) fn labelled(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<Vec<TapeDoc>, Error> {
         let clauses = self.clauses.iter().collect::<Vec<_>>();
         let (steps, _) = levels(&clauses, |clause, id| Ok((clause, id)))?;
+        let active = |clause: &LoweredMatcher, tape: usize| {
+            let at = self.clauses.iter().position(|c| std::ptr::eq(c, clause)).expect("a clause of the wave");
+            active[at][tape]
+        };
+        let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
         let mut sets = empty_sets(tapes, self.labels);
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
         for (recursive, levels) in &steps {
             if !recursive {
                 for level in levels {
-                    label_level(level, tapes, &mut sets)?;
+                    label_level(level, tapes, &mut sets, active)?;
                 }
                 continue;
             }
             if sweeps(levels) {
-                for (tape, sets) in tapes.iter().zip(sets.iter_mut()) {
-                    sweep(levels, tape, sets)?;
+                for (at, (tape, sets)) in tapes.iter().zip(sets.iter_mut()).enumerate() {
+                    let levels = levels
+                        .iter()
+                        .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
+                        .collect::<Vec<_>>();
+                    if levels.iter().any(|level| !level.is_empty()) {
+                        sweep(&levels, tape, sets)?;
+                    }
                 }
                 continue;
             }
@@ -490,7 +527,7 @@ impl LoweredWave {
             for _round in 0..=most + 1 {
                 let mut changed = false;
                 for level in levels {
-                    changed |= label_level(level, tapes, &mut sets)?;
+                    changed |= label_level(level, tapes, &mut sets, active)?;
                 }
                 if !changed {
                     settled = true;
@@ -566,6 +603,33 @@ fn has(sets: &[Vec<u64>], label: u16, node: u32) -> bool {
     sets[usize::from(label - LABEL_BASE)][node as usize / 64] >> (node % 64) & 1 != 0
 }
 
+/// The tests a program makes of its start before it moves, forks or captures: a kind, or a
+/// grammar supertype (labels are not known on the host before Metal runs). A start that fails one
+/// has no outputs, so it is not started.
+struct Entry(Vec<(u8, u16)>);
+
+impl Entry {
+    fn of(program: &Program) -> Self {
+        let mut tests = Vec::new();
+        for &word in &program.words {
+            match split(word) {
+                (KIND, 0, kind) => tests.push((KIND, kind)),
+                (SUPERTYPE, 0, class) if class < LABEL_BASE => tests.push((SUPERTYPE, class)),
+                (SUPERTYPE, 0, _) => {}
+                _ => break,
+            }
+        }
+        Self(tests)
+    }
+
+    fn admits(&self, tape: &TapeDoc, node: u32) -> bool {
+        self.0.iter().all(|&(op, arg)| match op {
+            KIND => tape.transducer_kind(node) == arg,
+            _ => tape.transducer_has_supertype(node, arg),
+        })
+    }
+}
+
 /// `program`'s outputs from each tape's `starts`.
 fn run(
     program: &Program,
@@ -573,10 +637,11 @@ fn run(
     starts: &Domain,
     sets: &[Arc<Vec<Vec<u64>>>],
 ) -> Result<Vec<Vec<Output>>, Error> {
+    let entry = Entry::of(program);
     views
         .iter()
         .zip(sets)
-        .map(|(view, sets)| program.execute_roots(view, domain(starts, view, sets)))
+        .map(|(view, sets)| program.execute_roots(view, domain(starts, view, sets).filter(|&node| entry.admits(view, node))))
         .collect()
 }
 
@@ -590,7 +655,7 @@ impl LoweredMatcher {
     ) -> Result<(Vec<BTreeSet<u32>>, metal_program_backend::label_passes::Outcome), Error> {
         let no_labels = empty_sets(tapes, self.labels.defs.len());
         let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&self.domain, tape, sets).collect()).collect();
-        let (mut found, outcome) = metal(&[self], self.labels.defs.len(), tapes, &[roots])?;
+        let (mut found, outcome) = metal(&[self], self.labels.defs.len(), tapes, &[roots], None)?;
         Ok((found.pop().expect("one clause"), outcome))
     }
 }
@@ -600,11 +665,13 @@ impl LoweredWave {
     /// Every clause's labels over the batch on Metal, in one command buffer (as `roots_metal`'s,
     /// without the roots), as views of its tapes the root programs read: `demand(batch)` then runs
     /// the roots with their results (captures, spans), which a label keeps only as bits.
+    /// `active` as `labelled`'s.
     pub(in crate::code_rule_dsl) fn labelled_metal(
         &self,
         tapes: &[TapeDoc],
+        active: &[Vec<bool>],
     ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
-        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[])?;
+        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[], Some(active))?;
         let mut base = 0_usize;
         let views = tapes
             .iter()
@@ -636,7 +703,7 @@ impl LoweredWave {
         tapes: &[TapeDoc],
         roots: &[Vec<Vec<u32>>],
     ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-        metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, roots)
+        metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, roots, None)
     }
 }
 
@@ -646,13 +713,15 @@ impl LoweredWave {
 /// phases and its recursive groups odd ones, each past the clause's segment before it, and a
 /// phase's segments of every clause are one segment. So non-recursive passes never re-run per
 /// round, recursive groups of different clauses share their rounds, and the wave's levels are the
-/// deepest clause's per phase, not their sum.
+/// deepest clause's per phase, not their sum. `active` (per clause, per tape): where a clause's
+/// passes start, none elsewhere (`LoweredWave::labelled`).
 #[cfg(target_os = "macos")]
 fn metal<'a>(
     clauses: &[&'a LoweredMatcher],
     labels: usize,
     tapes: &[TapeDoc],
     clause_roots: &[Vec<Vec<u32>>],
+    active: Option<&[Vec<bool>]>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
     use metal_program_backend::label_passes::{Pass, Plan, run};
     let bases = tapes
@@ -667,14 +736,28 @@ fn metal<'a>(
     let words = nodes.div_ceil(32).max(1);
     let no_labels = empty_sets(tapes, labels);
     // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
-    // Metal, where the label is not known before the command buffer runs, it starts everywhere.
-    let roots = |starts: &Domain| {
+    // Metal, where the label is not known before the command buffer runs, it starts at the nodes
+    // of the kinds the label can have (`Labels::bound`).
+    let roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&Program>| {
+        let entry = program.map(Entry::of);
+        let bound = match starts {
+            Domain::Label(_) => {
+                Some(clause.labels.bound(starts, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())))
+            }
+            _ => None,
+        };
+        let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
         tapes
             .iter()
             .zip(&no_labels)
-            .map(|(tape, sets)| match starts {
-                Domain::Label(_) => (0..tape.transducer_len() as u32).collect(),
-                _ => domain(starts, tape, sets).collect(),
+            .enumerate()
+            .map(|(tape_at, (tape, sets))| {
+                if active.is_some_and(|active| !active[at][tape_at]) {
+                    return Vec::new();
+                }
+                domain(bound.as_ref().unwrap_or(starts), tape, sets)
+                    .filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node)))
+                    .collect()
             })
             .collect::<Vec<Vec<u32>>>()
     };
@@ -696,7 +779,7 @@ fn metal<'a>(
                 Pass::Pattern {
                     target,
                     pattern: patterns.len() - 1,
-                    roots: roots(starts)
+                    roots: roots(clause, starts, None)
                         .into_iter()
                         .zip(&bases)
                         .flat_map(|(roots, base)| roots.into_iter().map(move |node| base + node))
@@ -707,7 +790,7 @@ fn metal<'a>(
             Label::Roots(program, starts) | Label::Targets(program, starts) => Pass::Program {
                 target,
                 program,
-                roots: roots(starts),
+                roots: roots(clause, starts, Some(program)),
                 captured: matches!(clause.labels.def(id), Label::Targets(..)),
             },
             Label::Count {
@@ -722,7 +805,7 @@ fn metal<'a>(
                     target,
                     slot: slots - 1,
                     program,
-                    roots: roots(starts),
+                    roots: roots(clause, starts, Some(program)),
                     captured: matches!(by, Tally::Capture),
                     min: u32::try_from(*min).unwrap_or(u32::MAX),
                     max: max.map_or(u32::MAX, |max| u32::try_from(max).unwrap_or(u32::MAX)),
@@ -733,6 +816,7 @@ fn metal<'a>(
         })
     };
     let (mut steps, mut chains) = levels(clauses, &mut pass)?;
+    let all = clauses;
     // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`).
     let roots = !clause_roots.is_empty();
     let clauses = if roots { clauses } else { &[] };
@@ -755,16 +839,12 @@ fn metal<'a>(
     ));
     chains.push((None, false));
     }
-    let outcome = run(
-        &Plan {
-            labels: labels + clauses.len(),
-            counts: slots as usize,
-            patterns,
-            steps,
-            chains,
-        },
-        tapes,
-    )?;
+    let outcome = match active {
+        // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
+        // walk in node order, between the GPU's wide levels (O26).
+        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active)?,
+        None => run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: None }, tapes)?,
+    };
     let found = (0..clauses.len())
         .map(|at| {
             tapes
@@ -782,6 +862,134 @@ fn metal<'a>(
         })
         .collect();
     Ok((found, outcome))
+}
+
+/// The wave's label plan with its sweeping groups apart: the steps between them as Metal runs
+/// (each from the labels so far), each sweeping group as the CPU sweeps it (`sweep`, on the tapes
+/// where its clauses are active). A sweep follows a file's nodes in order, one thread a file on
+/// the GPU, where the interpreter's thread is far slower than a CPU core; the levels between are
+/// a task per node and program, as wide as the GPU.
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
+fn apart<'a>(
+    clauses: &[&'a LoweredMatcher],
+    labels: usize,
+    counts: usize,
+    patterns: Vec<&'a PackedPattern>,
+    steps: Vec<(bool, Vec<Vec<metal_program_backend::label_passes::Pass<'a>>>)>,
+    chains: Vec<(Option<Vec<u16>>, bool)>,
+    tapes: &[TapeDoc],
+    active: &[Vec<bool>],
+) -> Result<metal_program_backend::label_passes::Outcome, Error> {
+    use metal_program_backend::label_passes::{Outcome, Plan, run};
+    let (host, _) = levels(clauses, |clause, id| Ok((clause, id)))?;
+    if host.len() != steps.len() {
+        return Err(Error::BackendFailure);
+    }
+    let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
+    let words = nodes.div_ceil(32).max(1);
+    let mut outcome = Outcome { labels: vec![0; labels * words], words, ..Outcome::default() };
+    let mut segment = (Vec::new(), Vec::new());
+    let flush = |segment: &mut (Vec<_>, Vec<_>), outcome: &mut Outcome| -> Result<(), Error> {
+        if segment.0.is_empty() {
+            return Ok(());
+        }
+        let plan = Plan {
+            labels,
+            counts,
+            patterns: patterns.clone(),
+            steps: std::mem::take(&mut segment.0),
+            chains: std::mem::take(&mut segment.1),
+            initial: Some(std::mem::take(&mut outcome.labels)),
+        };
+        let ran = run(&plan, tapes)?;
+        outcome.labels = ran.labels;
+        outcome.command_buffers += ran.command_buffers;
+        outcome.dispatches += ran.dispatches;
+        outcome.rounds = outcome.rounds.max(ran.rounds);
+        (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
+        Ok(())
+    };
+    for ((step, chain), (recursive, levels)) in steps.into_iter().zip(chains).zip(&host) {
+        if !(*recursive && sweeps(levels)) {
+            segment.0.push(step);
+            segment.1.push(chain);
+            continue;
+        }
+        flush(&mut segment, &mut outcome)?;
+        let mut sets = to_sets(&outcome.labels, labels, words, tapes);
+        for (at, (tape, sets)) in tapes.iter().zip(sets.iter_mut()).enumerate() {
+            let levels = levels
+                .iter()
+                .map(|level| {
+                    level
+                        .iter()
+                        .copied()
+                        .filter(|&(clause, _)| {
+                            clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            if levels.iter().any(|level| !level.is_empty()) {
+                sweep(&levels, tape, sets)?;
+            }
+        }
+        outcome.labels = to_words(&sets, labels, words, tapes);
+    }
+    flush(&mut segment, &mut outcome)?;
+    Ok(outcome)
+}
+
+/// Label words over the batch's nodes (label-major, `words` a label) as each tape's label sets.
+fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> Vec<Arc<Vec<Vec<u64>>>> {
+    let at = |label: usize, bit: usize| -> u64 {
+        let word = |i: usize| u128::from(bits.get(label * words + i).copied().unwrap_or(0));
+        let i = bit / 32;
+        let wide = word(i) | word(i + 1) << 32 | word(i + 2) << 64;
+        (wide >> (bit % 32)) as u64
+    };
+    let mut base = 0;
+    tapes
+        .iter()
+        .map(|tape| {
+            let len = tape.transducer_len();
+            let sets = (0..labels)
+                .map(|label| {
+                    (0..len.div_ceil(64))
+                        .map(|k| {
+                            let value = at(label, base + 64 * k);
+                            let left = len - 64 * k;
+                            if left < 64 { value & ((1 << left) - 1) } else { value }
+                        })
+                        .collect()
+                })
+                .collect();
+            base += len;
+            Arc::new(sets)
+        })
+        .collect()
+}
+
+/// `to_sets` the other way.
+fn to_words(sets: &[Arc<Vec<Vec<u64>>>], labels: usize, words: usize, tapes: &[TapeDoc]) -> Vec<u32> {
+    let mut bits = vec![0_u32; labels * words];
+    let mut base = 0;
+    for (tape, sets) in tapes.iter().zip(sets) {
+        for (label, set) in sets.iter().enumerate().take(labels) {
+            for (k, &value) in set.iter().enumerate() {
+                let bit = base + 64 * k;
+                let wide = u128::from(value) << (bit % 32);
+                for part in 0..3 {
+                    if let Some(word) = bits.get_mut(label * words + bit / 32 + part) {
+                        *word |= (wide >> (32 * part)) as u32;
+                    }
+                }
+            }
+        }
+        base += tape.transducer_len();
+    }
+    bits
 }
 
 /// A wave's label passes as its plan runs them, on either backend: by wave level, its
@@ -880,18 +1088,27 @@ fn levels<'a, T>(
 }
 
 /// One level of a wave's label passes over the batch, each as `evaluate` has it (they read only
-/// levels before). Whether a set changed.
-fn label_level(level: &[(&LoweredMatcher, u16)], tapes: &[TapeDoc], sets: &mut [Arc<Vec<Vec<u64>>>]) -> Result<bool, Error> {
+/// levels before), each on the tapes where its clause is `active`. Whether a set changed.
+fn label_level(
+    level: &[(&LoweredMatcher, u16)],
+    tapes: &[TapeDoc],
+    sets: &mut [Arc<Vec<Vec<u64>>>],
+    active: &dyn Fn(&LoweredMatcher, usize) -> bool,
+) -> Result<bool, Error> {
     let views = tapes.iter().zip(sets.iter()).map(|(tape, sets)| tape.with_labels(Arc::clone(sets))).collect::<Vec<_>>();
     let found = level
         .iter()
-        .map(|&(clause, id)| clause.evaluate(clause.labels.def(id), &views, sets))
+        .map(|&(clause, id)| {
+            let on = (0..tapes.len()).filter(|&at| active(clause, at)).collect::<Vec<_>>();
+            let (views, read) = (on.iter().map(|&at| views[at].clone()).collect::<Vec<_>>(), on.iter().map(|&at| Arc::clone(&sets[at])).collect::<Vec<_>>());
+            Ok::<_, Error>(on.into_iter().zip(clause.evaluate(clause.labels.def(id), &views, &read)?).collect::<Vec<_>>())
+        })
         .collect::<Result<Vec<_>, _>>()?;
     drop(views);
     let mut changed = false;
     for (&(_, id), found) in level.iter().zip(found) {
-        for (sets, set) in sets.iter_mut().zip(found) {
-            let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
+        for (at, set) in found {
+            let slot = &mut Arc::make_mut(&mut sets[at])[usize::from(id - LABEL_BASE)];
             if *slot != set {
                 *slot = set;
                 changed = true;
@@ -934,7 +1151,11 @@ fn sweep(levels: &[Vec<(&LoweredMatcher, u16)>], tape: &TapeDoc, sets: &mut Arc<
                 Label::Empty => Box::new(std::iter::empty()),
                 _ => Box::new(0..len),
             };
-            entries.extend(starts.map(|node| (node, at, clause, id)));
+            let entry = match clause.labels.def(id) {
+                Label::Roots(program, _) | Label::Targets(program, _) => Some(Entry::of(program)),
+                _ => None,
+            };
+            entries.extend(starts.filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node))).map(|node| (node, at, clause, id)));
         }
     }
     entries.sort_by_key(|&(node, at, ..)| (node, at));

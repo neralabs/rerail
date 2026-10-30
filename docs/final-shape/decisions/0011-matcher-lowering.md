@@ -119,3 +119,7 @@ A clause becomes a sequence of **node-label passes**, then one root program
     - History index L626 (a recursive worktable estimated at 10 iterations ran 54–77): iteration
       counts are measured here, not assumed. A group still changing in its last encoded sweep
       reruns the clause with more sweeps.
+- **2026-10-30 (O26).** On Metal, a wave's sweeping groups run on the CPU between the GPU's levels:
+  a sweep is serial per file, and the GPU's interpreter thread is far slower than a CPU core. A
+  clause's labels are computed only on the files where it has candidates. Groups with complements
+  were measured to need three sweeps, not one, on both backends.

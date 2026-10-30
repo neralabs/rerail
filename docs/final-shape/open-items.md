@@ -26,7 +26,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O23 | Phase 4 / 9 | Lowered matchers' node labels on Metal (06 S1, decision 0011) | open |
 | O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
-| O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | open |
+| O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | closed (2026-10-30): labels only where a clause has candidates; sweeps on the CPU between GPU levels; 18.8 → 6.4 s on 8 fixtures |
 
 ## O1. Stale-fact detection after a crash
 
@@ -654,6 +654,29 @@ The CPU wave is unaffected: its labels settle per group by fixpoint, and the roo
 one `demand(batch)` per chunk.
 
 ## O26. The wave's label passes on Metal
+
+**Closed (2026-10-30).** Measured on the gate (8 fixtures, load about 15) before the change: the
+label passes took 17.6 s, of which the host's `size()` was 6.7 s (workspace assignment 5.2 s for
+1.35 M tasks) and the GPU 10.9 s. Every dispatch had 64 lanes, and the sweeps (8.8 s) ran one
+thread per file, the largest file setting the time. The fixes:
+- **Labels only where they are read.** A clause's labels are its own and read only by its root
+  program, at its candidates. `LoweredWave::labelled` and `labelled_metal` take `active` (per
+  clause, per tape: whether it has candidates) and compute a clause's labels only there, on both
+  backends: 1.35 M tasks become 686 K, and the CPU wave on 8 fixtures goes from 12.1 s to 7.0 s.
+- **Starts that cannot match are not started.** A label domain on Metal starts at the kinds its
+  label can have (`Labels::bound`), and a program whose first tests are a kind or a grammar
+  supertype starts only where they hold (`Entry`).
+- **Workspace assignment** computes a program's part of a task's capacities once per program, and
+  `plan_shared` tests its kinds by a precomputed mask: `size()` 6.7 s → 1.4 s.
+- **Sweeps where they are fast.** A sweeping group follows each file's nodes in order: on the GPU
+  one interpreter thread a file, which is far slower than a CPU core (group 9: 4.2 s on the GPU,
+  1.6 s on the CPU). The wave's Metal labels now run the wide levels on the GPU and each sweeping
+  group with the CPU's `sweep`, the labels passed between them as words (`Plan::initial`).
+
+Result: the Metal wave on 8 fixtures 18.8 s → 6.4 s (CPU 6.6 s); on 48 fixtures 8.8 s (CPU
+9.8 s); 0 differ on both. Measured on the way: groups with complements take three sweeps on the
+CPU as on the GPU, so the claim that one reverse sweep settles them (decision 0011) does not hold
+for these clauses; both iterate until a sweep changes nothing.
 
 06 S4: on Metal, `the_wave_finds_ws_matches_on_metal` (8 fixtures) takes 17.6 s, of which the roots
 are 178 ms. Measured on 4 fixtures: the host's buffer sizing (`size()`) takes 3.5 s and the GPU's
