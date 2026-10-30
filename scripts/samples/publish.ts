@@ -29,7 +29,7 @@ interface Entry {
  * it): every file but `REUSE.toml`, once each is checked. A path is `LICENSES.md` or `<sample-id>/<path>` with a
  * SAMPLE_ID; each staged sample is staged whole, its labels (`<source.path>.expected.json`, sampleLabelsSchema) beside
  * its file, whose sha256 is the labels' `source.sha256`; and no sample is taken from a copyleft source
- * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (RECORDED_LICENCES) and its declared
+ * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (SOURCE_LICENCES) and its declared
  * `source.license` must equal the one recorded at its `source.commit` (recordedLicence), so packFrom's allowlist check
  * on `source.license` judges the recorded value, never a label's own claim. Throws one error naming every problem.
  */

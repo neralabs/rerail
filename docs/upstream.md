@@ -50,10 +50,9 @@ policy for trimming a set: a `SAMPLES.md` says how its set was trimmed, where it
 ### Sample licences
 
 A sample is a whole file of another repository, so its licence comes from a recorded table, not from the sample's own
-labels. `RECORDED_LICENCES` in `scripts/samples/licences.ts` names every repository samples may be taken from
-(`owner/name`) with its SPDX licence: the repositories whose licence files are read at the samples' commits
-(`SOURCE_LICENCES`), and the sources of test sets converted with only the licence id the test set recorded
-(`TEST_SET_LICENCES`). `COPYLEFT_SOURCES` lists the repositories found copyleft, with the evidence.
+labels. `SOURCE_LICENCES` in `scripts/samples/licences.ts` names every repository samples may be taken from
+(`owner/name`) with its SPDX licence and the licence files that state it, which the publish reads at the samples'
+commits. `COPYLEFT_SOURCES` lists the repositories found copyleft, with the evidence.
 
 A licence is the one in force at the sample's commit, for the sample's file: the licence files of the nearest
 directory above the file that has any (a monorepo package's own, else the root's), or, at a commit with none, the
@@ -74,9 +73,8 @@ When samples are published, `publishedSamples` (`scripts/samples/publish.ts`) re
 Then `checkLicenceTexts` reads, for each repository and commit the staged samples name, the licence files
 `SOURCE_LICENCES` records for that commit, from GitHub (`gh api`, cached in `.rerail/pack-data/licences/`), and refuses
 the commit when a file is not there, the files do not read as the recorded licence, they name a copyleft licence, or
-the commit has no licence (`NONE`). A repository with no `SOURCE_LICENCES` entry is refused too: its licence files
-must be recorded before samples of it are published. Both checks run when `writeSampleSet` stages a set and again in
-the publish workflow's prep, which is the only way a sample reaches S3.
+the commit has no licence (`NONE`). Both checks run when `writeSampleSet` stages a set and again in the publish
+workflow's prep, which is the only way a sample reaches S3.
 
 The publish's licence check then judges each sample's licence, which is now the recorded one, against the allowlist
 (`scripts/check/licence-allowlist.json`), and the approver's summary lists every repository the archive takes files
