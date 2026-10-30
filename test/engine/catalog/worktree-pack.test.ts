@@ -9,7 +9,7 @@ import { recordCheckout } from "../../../src/engine/catalog/repository-registry.
 import { loadCheckoutRuleSet, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { WORKTREE_PACK_ID, worktreeRuleCatalog } from "../../../src/engine/catalog/worktree-pack.js";
 import { approve, currentSubject } from "../../../src/engine/catalog/rule-approval.js";
-import { runRuleApproveCommand } from "../../../src/cli/rule-approval-cli.js";
+import { runRuleApproveCommand } from "../../../src/cli/index.js";
 import type { AuditInput, AuditRecorder, AuditResult } from "../../../src/engine/audit/audit.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";

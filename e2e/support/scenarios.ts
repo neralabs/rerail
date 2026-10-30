@@ -6,7 +6,7 @@
  * receipts) are given the seed clock there.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,8 @@ import {
   setUpRepository,
   SqliteAuditStore,
   upsertLibraryRule,
+  approve,
+  ruleSubject,
 } from "../../src/engine/index.js";
 import { setRepositoryStarted, SqliteSessionStore } from "../../src/runtime/index.js";
 import { DAY, HOUR, MINUTE, SEED_NOW, type ScenarioManifest, type ScenarioName, type ScenarioRepository } from "./scenario-manifest.js";
@@ -110,8 +112,9 @@ function createCheckout(reposRoot: string, spec: CheckoutSpec, gitEnvironment: N
 }
 
 /**
- * Installs this repository's `packs/<id>` into the scenario home the way `rerail packs add <folder>` does: npm links the
- * folder into the prefix's `node_modules` and records it as `file:<folder>` in the prefix's `package.json`.
+ * Installs this repository's `packs/<id>` into the scenario home as `rerail packs add <id>` does from the registry: the
+ * package in the prefix's `node_modules` (here a link to the folder) and its version in the prefix's `package.json`, so
+ * each loads as Rerail's own pack rather than one installed from a folder, which would wait for approval.
  */
 function installPacks(home: string, packIds: readonly string[]): void {
   const prefix = installedPacksPrefix(home);
@@ -121,7 +124,7 @@ function installPacks(home: string, packIds: readonly string[]): void {
   for (const id of packIds) {
     const folder = join(REPOSITORY_ROOT, "packs", id);
     symlinkSync(folder, join(scope, `rerail-pack-${id}`), process.platform === "win32" ? "junction" : "dir");
-    dependencies[rulePackPackageName(id)] = `file:${folder}`;
+    dependencies[rulePackPackageName(id)] = (JSON.parse(readFileSync(join(folder, "package.json"), "utf8")) as { version: string }).version;
   }
   writeFileSync(join(prefix, "package.json"), `${JSON.stringify({ dependencies }, null, 2)}\n`);
 }
@@ -373,10 +376,11 @@ function setUpAndStart(packIds: readonly string[], settings: readonly [string, b
   };
 }
 
-/** A rule created by you, stored in the library and added to the whole repository. */
+/** A rule created by you, stored in the library, approved as its author would, and added to the whole repository. */
 function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog): Change["apply"] {
   return (db, repositoryKey, at) => {
-    upsertLibraryRule(db, catalog(), rule, "code", { now: at, createdAt: at });
+    const stored = upsertLibraryRule(db, catalog(), rule, "code", { now: at, createdAt: at });
+    approve(db, ruleSubject(stored.document.rule.id, stored.payloadHash), at);
     addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: rule.id }, at);
   };
 }
