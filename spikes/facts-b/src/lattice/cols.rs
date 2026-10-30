@@ -76,6 +76,103 @@ pub fn write<T: Elem>(path: &Path, v: &[T]) {
     std::fs::write(path, b).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 }
 
+/// A column a worktree writes without copying it (L6, L10): the base's file mapped privately, so
+/// every worktree reads the base's pages in place and the kernel copies a page (16 KB here) only
+/// when this worktree first writes it. The mapping reserves `cap` elements; elements past the
+/// file (ids local to the worktree) are anonymous pages, untouched until written. What the
+/// worktree owns is measured from the kernel (`private_bytes`), not estimated.
+pub struct CowCol<T: Elem> {
+    ptr: *mut T,
+    len: usize,
+    cap: usize,
+    reserved: usize,
+}
+
+// SAFETY: one owner writes it (a worktree's state); no other thread holds a reference.
+unsafe impl<T: Elem> Send for CowCol<T> {}
+
+pub fn page_size() -> usize {
+    // SAFETY: plain query.
+    (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }) as usize
+}
+
+impl<T: Elem> CowCol<T> {
+    /// The file at `path` (its first `len` elements are the column) mapped privately, with room
+    /// for `cap` elements. The file is a whole number of pages (`write_padded`).
+    pub fn map(path: &Path, len: usize, cap: usize) -> CowCol<T> {
+        let f = std::fs::File::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let bytes = f.metadata().unwrap().len() as usize;
+        let sz = std::mem::size_of::<T>();
+        let ps = page_size();
+        assert!(bytes % ps == 0 && len * sz <= bytes, "{}: not a padded column", path.display());
+        let reserved = (cap * sz).max(bytes).div_ceil(ps) * ps;
+        use std::os::fd::AsRawFd;
+        // SAFETY: a fresh anonymous reservation, then the file mapped privately over its start.
+        unsafe {
+            let r = libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0);
+            assert!(r != libc::MAP_FAILED, "reserve");
+            if bytes > 0 {
+                let p = libc::mmap(r, bytes, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_FIXED, f.as_raw_fd(), 0);
+                assert!(p == r, "{}: private mapping", path.display());
+            }
+            CowCol { ptr: r as *mut T, len, cap: reserved / sz, reserved }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Extend to `len` elements, the new ones set to `fill`.
+    pub fn grow(&mut self, len: usize, fill: T) {
+        assert!(len <= self.cap, "CowCol: past its reservation ({len} > {})", self.cap);
+        for i in self.len..len {
+            // SAFETY: within the reservation.
+            unsafe { *self.ptr.add(i) = fill };
+        }
+        self.len = len.max(self.len);
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        // SAFETY: `len` ≤ the reservation, mapped readable.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        // SAFETY: as above; the mapping is private and writable.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+
+    /// Bytes this mapping owns: pages resident and anonymous (copied from the file on a write,
+    /// or written past it), from `mincore` (Darwin: `MINCORE_INCORE` 0x1, `MINCORE_ANONYMOUS`
+    /// 0x80).
+    pub fn private_bytes(&self) -> usize {
+        let ps = page_size();
+        let pages = self.reserved / ps;
+        let mut v = vec![0 as libc::c_char; pages];
+        // SAFETY: the whole reservation, one byte per page.
+        let r = unsafe { libc::mincore(self.ptr as *const libc::c_void, self.reserved, v.as_mut_ptr()) };
+        assert_eq!(r, 0, "mincore");
+        v.iter().filter(|&&b| (b as u8) & 0x81 == 0x81).count() * ps
+    }
+}
+
+impl<T: Elem> Drop for CowCol<T> {
+    fn drop(&mut self) {
+        // SAFETY: the reservation this value mapped.
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.reserved) };
+    }
+}
+
+/// `write`, padded with `pad` to a whole number of pages (what `CowCol::map` maps).
+pub fn write_padded<T: Elem>(path: &Path, v: &[T], pad: T) {
+    let sz = std::mem::size_of::<T>();
+    let n = (v.len() * sz).div_ceil(page_size()) * page_size() / sz;
+    let mut w = v.to_vec();
+    w.resize(n.max(page_size() / sz), pad);
+    write(path, &w);
+}
+
 /// The process's memory: (peak resident bytes, resident now, private footprint now, peak private
 /// footprint). Resident counts mapped column pages once; the private footprint does not count
 /// clean file-backed pages, so it is the memory the process owns.

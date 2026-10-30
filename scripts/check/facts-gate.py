@@ -167,6 +167,12 @@ MUTANTS = [
      ["facts-b-unit"]),
     (56, "interner-sweep-arrangements", "facts-b", "gen: the interner's epoch sweep (lower.rs walk_rows)", "the sweep does not mark the arrangements' rows, so a symbol only an arrangement holds is reclaimed and its id reused",
      ["facts-b-unit"]),
+    (75, "lattice-level-witness-invalid", "facts-b", "lattice: min_level maintenance (lattice/maint.rs level_update)", "an invalidated predecessor still counts as a level − 1 witness (a cycle or a chain supports itself)",
+     ["facts-b-unit"]),
+    (77, "lattice-set-no-overdelete", "facts-b", "lattice: set maintenance (lattice/maint.rs set_update)", "DRed's over-delete stops at the deleted edges' targets (no forward rounds)",
+     ["facts-b-unit"]),
+    (79, "lattice-set-bf-stale-support", "facts-b", "lattice: set maintenance by B/F (lattice/maint.rs set_update_bf)", "the backward search accepts any id reached before the edit as support (a cycle supports itself)",
+     ["facts-b-unit"]),
 ]
 REWRITES = ROOT / "docs/facts/REWRITES.md"
 # The checks each registry table's mutants run: rerail-facts rewrites (logical) have their unit

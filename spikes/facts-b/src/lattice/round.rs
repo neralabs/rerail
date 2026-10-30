@@ -57,6 +57,13 @@ impl<'a> Csr<'a> {
         Csr { off, tgt }
     }
 
+    /// The same columns `new` already checked (a maintained base, read again per edit): no
+    /// second pass over the layout.
+    pub fn trusted(off: &'a [u32], tgt: &'a [u32]) -> Csr<'a> {
+        debug_assert!(!off.is_empty() && *off.last().unwrap() as usize == tgt.len());
+        Csr { off, tgt }
+    }
+
     pub fn rows(&self) -> usize {
         self.off.len() - 1
     }

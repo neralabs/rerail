@@ -29,14 +29,14 @@ use std::time::Instant;
 
 /// One worktree's product graph: states in discovery order, their `succ` rows (as `St`, with
 /// repeats), and the roots.
-struct Enumerated {
-    states: Vec<St>,
-    off: Vec<usize>,
-    tgt: Vec<St>,
-    seeds: Vec<St>,
+pub(super) struct Enumerated {
+    pub states: Vec<St>,
+    pub off: Vec<usize>,
+    pub tgt: Vec<St>,
+    pub seeds: Vec<St>,
 }
 
-fn enumerate(f: &Facts) -> Enumerated {
+pub(super) fn enumerate(f: &Facts) -> Enumerated {
     let mut seeds = Dc::root_states(f);
     seeds.sort_unstable();
     seeds.dedup();

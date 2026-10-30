@@ -31,6 +31,7 @@ Numbers:
 - 28–40 (even): R20–R32, the delta generator's decorrelation rewrites (facts-b table); 44: R34 (same table); 48: R36 (same table, S3-6);
 - 42: the generator's ordered aggregates (`group_concat`/`json_group_array` folded in the order of the Sort below; not a rewrite: the gate's `MUTANTS`, family `facts-b-unit`); 46: the generator's LEFT JOIN on equalities (unmatched rows by an antijoin on the join's keys, stratified inside a recursion; `MUTANTS`, `facts-b-unit`).
 - 50, 52, 54: R37 (facts-b table, P3a M1: cross-plan stage sharing; P3a takes even numbers from 50, P3b odd from 51, P3c from 100); 56: the interner's epoch sweep marks the arrangements' rows (P3a M1; not a rewrite: the gate's `MUTANTS`, family `facts-b-unit`).
+- 75, 77, 79: the lattice facts' maintenance (LATTICE.md L9, E3: `spikes/facts-b/src/lattice/maint.rs`): 75 `min_level`'s levelled re-check counts an invalidated predecessor as a witness, 77 `set`'s DRed over-delete stops after one step, 79 `set`'s backward/forward check accepts an id reached before the edit as support; not rewrites: the gate's `MUTANTS`, family `facts-b-unit` (E3 takes odd numbers from 75; E4 holds 71, 73).
 
 ## Implemented
 
