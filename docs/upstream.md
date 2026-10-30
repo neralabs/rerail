@@ -258,13 +258,14 @@ Two workflows carry a request. Neither runs any code of the pull request.
 5. **finish** runs only once every object is confirmed. It builds one commit on the pull request's head with git
    plumbing alone (no checkout, no hooks): the new `test-data.lock` and `samples.lock` files written, and every
    `publish/` of the published tool-packs deleted. It pushes it as the `neralabs-ci` app, with the app's token so CI
-   runs again, as a plain push that GitHub accepts only as a fast-forward of the head prep packed; it never forces. The
+   runs again, as a plain push that GitHub accepts only as a fast-forward of the head prep packed; it never forces. A
+   rejected push is tried once more after a pause, since GitHub answers a transient error with a rejection too. The
    comment then reads "published".
 
 When finish cannot push, the run is red and the comment reads "action needed", with each lock's text and the reason:
-someone pushed to the branch since prep, or the branch is on a fork, which the project never publishes from
-([Forks](#forks)). Commit the locks, delete `publish/` and
-push, or pull and dispatch again. When an object was not put and confirmed (a failed put or confirm, a rejected
+the branch moved since prep (its head is no longer the one prep packed), GitHub rejected the push twice for another
+reason, which the comment quotes, or the branch is on a fork, which the project never publishes from
+([Forks](#forks)). Commit the locks, delete `publish/` and push, or pull and dispatch again. When an object was not put and confirmed (a failed put or confirm, a rejected
 approval, a cancelled job), the **failed** job names each object's failure in the comment; nothing is committed and
 no lock changes. Re-running is safe: puts are create-only and content-addressed, and confirm accepts an object S3
 already holds once it verifies.

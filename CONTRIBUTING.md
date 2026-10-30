@@ -544,8 +544,9 @@ first: its pack data is reviewed like its code ([REVIEW.md](REVIEW.md#what-block
 4. The comment says how the run ended:
    - **Pack data published**: the branch has the new locks and no `publish/`, and CI runs again on it;
    - **Pack data published: action needed**: S3 holds the data, but the locks were not committed, and the comment says
-     why (the branch moved since prep). Commit the locks the comment gives, delete `publish/` and push, or pull the
-     branch and dispatch again;
+     why: the branch moved since prep, or GitHub rejected the push twice and the comment quotes its answer (a rejected
+     push is tried once more after a pause). Commit the locks the comment gives, delete `publish/` and push, or pull
+     the branch and dispatch again;
    - **Pack data publish failed**: not every object was put and confirmed, or the approval was rejected. Nothing was
      committed. Re-running is safe: puts are create-only, and an object S3 already holds is accepted once it
      verifies.
