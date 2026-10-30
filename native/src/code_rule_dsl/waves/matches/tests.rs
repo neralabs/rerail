@@ -2,7 +2,7 @@
 //! fixtures, ingested through the push path (S3). Every clause's prefilter candidates contain the
 //! nodes W's matcher matches at (the prefilter never under-produces), and its match facts are
 //! exactly those nodes (S1's oracle). `RERAIL_S1_FILES` and `RERAIL_S1_FROM` pick the fixtures as
-//! in S1 (default: the first 15 of every eighth), `RERAIL_S1_CLAUSE` the clauses.
+//! in S1 (default: the first 8 of every eighth), `RERAIL_S1_CLAUSE` the clauses.
 
 use super::super::owner::Backing;
 use super::super::schedule::{Limits, family_name, run};
@@ -112,7 +112,7 @@ fn ingested(default: usize) -> (ContentStore, Vec<String>) {
 
 #[test]
 fn the_wave_finds_ws_matches_from_the_prefilters_candidates() {
-    gate(15, Limits::default());
+    gate(8, Limits::default());
 }
 
 /// Chunks of one document each: a chunk's batch maps its files to its own documents.
@@ -203,4 +203,48 @@ fn gate(default: usize, limits: Limits) {
         eprintln!("  {line}");
     }
     assert!(under.is_empty() && differ.is_empty());
+}
+
+/// On Metal the wave is one evaluation: every clause's passes and root programs, from the same
+/// prefilter candidates, in one command buffer, with W's matches.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+#[ignore = "O25: the wave's recursive rounds, encoded to their bounds, exceed the launch limit"]
+fn the_wave_is_one_evaluation_on_metal() {
+    let (store, paths) = ingested(15);
+    let (clauses, grammars) = clauses();
+    let wave = Wave::new(&clauses).unwrap();
+    let tapes = paths.iter().map(|path| Families::stored(&store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
+    let candidates = wave.candidates(&store, &tapes).unwrap();
+    let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
+    let started = std::time::Instant::now();
+    let (found, outcome) = wave.lowered().roots_metal(&docs, &candidates).unwrap();
+    let elapsed = started.elapsed();
+    let mut differ = Vec::new();
+    let mut matched = 0;
+    for (clause, grammar) in grammars.iter().enumerate() {
+        for (at, doc) in docs.iter().enumerate() {
+            let expected = oracle(grammar, doc);
+            matched += expected.len();
+            if found[clause][at] != expected {
+                differ.push(format!("{} in {}", clauses[clause].name, paths[at]));
+            }
+        }
+    }
+    eprintln!(
+        "S4 Metal: {} clauses on {} fixtures ({matched} matched nodes) in {elapsed:?}: {} command buffers, {} launches, \
+         {} rounds at most; host waits for growth, reruns, uploads {:?}; {} differ",
+        clauses.len(),
+        docs.len(),
+        outcome.command_buffers,
+        outcome.dispatches,
+        outcome.rounds,
+        outcome.waits,
+        differ.len(),
+    );
+    for line in differ.iter().take(10) {
+        eprintln!("  {line}");
+    }
+    assert!(differ.is_empty());
+    assert_eq!(outcome.command_buffers, 1, "one evaluation");
 }

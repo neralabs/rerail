@@ -239,7 +239,8 @@ impl PackedBatch {
             batch
                 .supertypes
                 .extend(
-                    tape.transducer_supertypes()
+                    tape.transducer_classes()
+                        .into_iter()
                         .map(|(node, kind)| BatchSupertype {
                             node: node_start + node,
                             kind: u32::from(kind),
@@ -1311,10 +1312,9 @@ impl PackedExecution {
         }
     }
 
-    // The reference interpreter's values through the production publication adapter, without
-    // planning a JIT execution workspace: the tests' oracle, and the CPU interpreter backend
-    // (one file per execution), which reads a tape's derived classes (a lowered matcher's labels,
-    // `TapeDoc::with_labels`) as the packed image does not.
+    // Test oracle only: preserve all interpreter values through the production
+    // publication adapter without planning a JIT execution workspace.
+    #[cfg(test)]
     pub(super) fn interpret_reference(
         programs: &[Program],
         file: &TapeDoc,

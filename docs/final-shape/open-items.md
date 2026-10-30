@@ -25,6 +25,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | closed (2026-10-29): option (a), user decision |
 | O23 | Phase 4 / 9 | Lowered matchers' node labels on Metal (06 S1, decision 0011) | open |
 | O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
+| O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -589,3 +590,42 @@ The rest are refused for `count` (25; since S2, 10 lower and 15 are refused for 
 (`transducer::semantic_facts`, rows before SQL composition), not an operation inside the program.
 Its sub-rules are lowered as labels of their own. Shared bindings are joins on capture columns
 between labels, in the wave's SQL.
+
+## O25. A wave's recursive label rounds on Metal
+
+06 S4's Metal check: the wave (87 lowered clauses over a chunk) as one evaluation under 100
+launches (`metal_launch_budget.rs`). Not met; `the_wave_is_one_evaluation_on_metal` is ignored with
+this item as its reason.
+
+What the wave needs, measured on 15 fixtures:
+
+- **Rule depth.** The clauses' labels are scheduled by global dependency level, merged across
+  clauses (`compile_matcher::metal`). The non-recursive passes take 45 launches: about 15 levels at
+  3 kernels each (interpreter, sink, settle).
+- **Recursion.** 8 merged recursive groups cost 72 launches per round, because a round re-runs
+  every level of its group. One group has 10 levels.
+- **Rounds.** Measured on the CPU, 63 recursive groups settle in 2–3 rounds, counting the round
+  that confirms nothing changed. The worst take 5–8, and `ruff-f704` takes 18 (`inside` …
+  `matches: yield-ok`, the nesting depth).
+- **Bounds.** Rounds are encoded up front, to a bound the host computes: 25 (the tree's depth) or 154
+  (the longest sibling run, where a group recurses along siblings). A skipped round still counts as
+  a launch, so the wave exceeds the 600 limit.
+
+Why this is not a tuning problem: a recursive label is evaluated as a Jacobi iteration. Every node
+is recomputed in parallel each round, and the recursion moves one tree edge per round. Launches are
+then rounds × group levels × 3, while the data dependency is rule depth plus recursion depth.
+
+Candidates, in rough order of reach:
+
+1. **Rounds the GPU decides.** Encode a group's rounds once, for example as a Metal indirect command
+   buffer whose executed range the settle kernel writes, so the cost is the real depth, not the
+   bound.
+2. **Recursion in node order.** For a group that recurses only toward smaller preorders (ancestors,
+   preceding siblings) or only toward larger ones (descendants, following siblings), one pass in
+   that order settles it. On the CPU that is one pass. On the GPU it needs the interpreter to
+   evaluate in that order.
+3. **Fewer kernels per level.** Fuse the sink into the settle where a label starts empty and only
+   grows: 2 launches per level instead of 3.
+
+The CPU wave is unaffected: its labels settle per group by fixpoint, and the root programs run as
+one `demand(batch)` per chunk.

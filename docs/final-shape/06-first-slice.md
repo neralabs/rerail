@@ -236,15 +236,61 @@ interpreter.
 - Left for later: nothing outside tests calls `push` yet. W's workspace scan keeps its own path
   until the entry points (S6). Worktree edits reach the slice through a directory snapshot.
 
-### S4. The wave: prefilter → `demand(batch)` → match facts
+### S4. The wave: prefilter → `demand(batch)` → match facts — CPU done (2026-10-30); Metal check open (O25)
 
-- One `waves::schedule::Program`, `file_local = true`, with one step.
-- **Step:** SQL reads the candidate sets from `prefilter::select` for every lowered clause's `AnchorPlan`, and calls `demand(batch)` over the packed programs (CPU interpreter).
-- **Output:** match rows are written as a match-fact family per (rule, clause) in the overlay (`demand::driver`), with row estimates in `fact_stats`.
-- **Chunks:** 125 MB chunks, prepared ahead (decision 0010).
-- This exercises the scheduler and the vtab on real fact families. That is part of O14, with a hand-written step rather than one emitted by the planner.
-- Check: the batch's candidates must be a superset of S1's oracle roots (the prefilter never under-produces, §16.3), and the match facts must equal S1's matches.
-- Check: on Metal, the wave is one evaluation within the launch budget's target of under 100 launches (`metal_launch_budget.rs`). Its clauses share levels and recursive rounds; S2 meets the target on average per clause (36–69) but not for every clause (up to 559).
+- **Program** (`waves::matches`): one `waves::schedule::Program`, `file_local = true`, with one
+  step:
+
+  ```sql
+  INSERT OR IGNORE INTO new_match SELECT t.producer_id, w.d, t.node FROM rerail_terminal_match t
+  JOIN temp.wave_document w ON w.position = t.file_index WHERE t.batch = :batch
+  ```
+
+  `max_waves` = 1 per chunk is asserted.
+- **Per chunk, `Wave::demand`:**
+  1. Reads the documents' stored tapes (S3's `#tape:`).
+  2. Selects every clause's candidates in one `prefilter::select` statement over the tapes' rows,
+     and keeps those of the root's kinds.
+  3. Evaluates every clause's labels over the chunk together (`LoweredWave`). Each clause's labels
+     are shifted past the clauses before it, so one label set per tape holds them all.
+  4. Registers the 87 root programs, anchored at those candidates, as one `PackedDemand` on the
+     CPU JIT, over the chunk's files in one execution. The packed image now lists a tape's labels
+     as classes (`TapeDoc::transducer_classes`).
+- **Scheduler changes:**
+  - `temp.wave_document(position, d)` maps a batch's `file_index` to the chunk's document keys.
+  - A batch that does not complete fails its chunk, instead of leaving its relations silently
+    short.
+  - `partitions` records `match` as one family per clause, `{scope}#wave:matches:match:{clause}`,
+    beside the relation's own. The cost of each family is its row count.
+- **Row estimates:** `Wave::statistics` writes each clause family's rows and documents to
+  `fact_stats`. It also writes the most for `rerail_terminal_match`, which the demand relation's
+  estimate reads.
+- **Chunks:** the scheduler's 125 MB chunks, with the next chunk prepared while one runs (decision
+  0010).
+- **Checks** (`waves::matches` tests). The fixtures are ingested through the push path (S3).
+  - `the_wave_finds_ws_matches_from_the_prefilters_candidates`:
+    - For every clause and fixture, the candidates contain W's roots, and the match facts equal
+      them.
+    - On 15 fixtures: 87 clauses, 833 passes, 324 matched nodes, the same as S1 on those
+      fixtures.
+    - The candidates are 40,343 of 1,527,981 clause-nodes (2.6%). None under-produce and none
+      differ.
+    - It took 100 s on the CPU JIT, 30 s on the reference interpreter (debug build, load about 17).
+      The gate's default is 8 fixtures; `RERAIL_S1_FILES` widens it.
+  - `the_wave_runs_chunk_by_chunk`: the same check in chunks of one document each.
+- **Metal check, open (O25).** On Metal the wave is planned as one evaluation (`LoweredWave::roots_metal`).
+  - Labels are scheduled by global dependency level across clauses. The non-recursive passes take
+    45 launches.
+  - Recursive groups at the same level share their rounds, and cost 72 launches per round.
+  - Their rounds are encoded to bounds of 25–154, against the 2–18 they actually take. So the wave
+    exceeds the 600-launch limit, and the target of under 100 is not met.
+  - `the_wave_is_one_evaluation_on_metal` is ignored with O25 as the reason. O25 has the
+    measurements and the candidate fixes.
+- **Left for later:**
+  - **CPU cost.** The CPU JIT compiles the wave's programs on every chunk, which is slower than the
+    interpreter. The JIT binding (Phase 4d) caches them.
+  - **Root programs on Metal.** The demand step does not use the label passes on Metal yet.
+  - **Planner.** The step is still hand-written; O14 has the planner-emitted version.
 
 ### S5. Findings layer (first version of §8)
 

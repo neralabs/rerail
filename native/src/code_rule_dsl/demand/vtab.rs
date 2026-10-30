@@ -288,10 +288,6 @@ impl PackedDemand {
     }
 
     fn execution_partitions(&self) -> (Vec<Range<usize>>, Vec<HardPartition>) {
-        // The CPU interpreter executes one file at a time: not a capacity partition.
-        if self.backend == ExecutionBackend::CpuInterpreter {
-            return ((0..self.files.len()).map(|file| file..file + 1).collect(), Vec::new());
-        }
         let ranges = stable_partition_ranges(self.files.len(), |range| {
             let fit = packed_workspace_fits(
                 &self.programs,

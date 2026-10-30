@@ -518,13 +518,14 @@ impl LoweredWave {
 
 /// `clauses`' matches of the batch on Metal, in one command buffer: their labels (disjoint, `labels`
 /// in all) as passes, then each clause's root program from its `roots` (per tape) as one pass more.
-/// The clauses' segments are merged by position: the i-th run of single-label steps of every
-/// clause, or its i-th recursive group, are one segment, recursive if any is, so the wave's levels
-/// and rounds are the deepest clause's, not their sum. A pass of a merged recursive segment that is
-/// not itself recursive re-runs each round on settled inputs, and gives the same label.
+/// The clauses' segments are merged by phase: a clause's runs of single-label steps take even
+/// phases and its recursive groups odd ones, each past the clause's segment before it, and a
+/// phase's segments of every clause are one segment. So non-recursive passes never re-run per
+/// round, recursive groups of different clauses share their rounds, and the wave's levels are the
+/// deepest clause's per phase, not their sum.
 #[cfg(target_os = "macos")]
-fn metal(
-    clauses: &[&LoweredMatcher],
+fn metal<'a>(
+    clauses: &[&'a LoweredMatcher],
     labels: usize,
     tapes: &[TapeDoc],
     clause_roots: &[Vec<Vec<u32>>],
@@ -556,114 +557,136 @@ fn metal(
     let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut slots = 0_u32;
     let mut patterns = Vec::new();
-    // Per merged segment: whether it is recursive, its levels, its recursive labels' kinds (None:
-    // any) and whether it steps to siblings.
-    let mut steps: Vec<(bool, Vec<Vec<Pass<'_>>>)> = Vec::new();
-    let mut chains: Vec<(Option<BTreeSet<u16>>, bool)> = Vec::new();
-    for clause in clauses {
-        // Segments: each run of single-label steps, and each recursive group, as its levels. A
-        // label's level is one past the deepest label of its segment it reads that is computed
-        // before it; in a recursive group, a read of a later member is the last round's.
-        let mut segments: Vec<(bool, Vec<u16>)> = Vec::new();
+    let mut pass = |clause: &'a LoweredMatcher, id: u16| -> Result<Pass<'a>, Error> {
+        let target = index(id);
+        Ok(match clause.labels.def(id) {
+            Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
+                let constraints = match clause.labels.def(id) {
+                    Label::Constrained(_, _, constraints) => {
+                        constraints.iter().map(|(name, label)| (name.clone(), index(*label))).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let packed = pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?;
+                patterns.push(packed);
+                Pass::Pattern {
+                    target,
+                    pattern: patterns.len() - 1,
+                    roots: roots(starts)
+                        .into_iter()
+                        .zip(&bases)
+                        .flat_map(|(roots, base)| roots.into_iter().map(move |node| base + node))
+                        .collect(),
+                    constraints,
+                }
+            }
+            Label::Roots(program, starts) | Label::Targets(program, starts) => Pass::Program {
+                target,
+                program,
+                roots: roots(starts),
+                captured: matches!(clause.labels.def(id), Label::Targets(..)),
+            },
+            Label::Count {
+                program,
+                domain: starts,
+                by,
+                min,
+                max,
+            } => {
+                slots += 1;
+                Pass::Count {
+                    target,
+                    slot: slots - 1,
+                    program,
+                    roots: roots(starts),
+                    captured: matches!(by, Tally::Capture),
+                    min: u32::try_from(*min).unwrap_or(u32::MAX),
+                    max: max.map_or(u32::MAX, |max| u32::try_from(max).unwrap_or(u32::MAX)),
+                }
+            }
+            Label::Complement(of) => Pass::Complement { target, of: index(*of) },
+            Label::Empty => Pass::Empty { target },
+        })
+    };
+    // By wave level: its non-recursive passes, and its recursive groups merged (their levels by
+    // position, their rounds shared, their recursive labels' kinds and whether any steps to
+    // siblings).
+    let mut single: Vec<Vec<Pass<'a>>> = Vec::new();
+    let mut groups: Vec<(Vec<Vec<Pass<'a>>>, Option<BTreeSet<u16>>, bool)> = Vec::new();
+    for &clause in clauses {
+        // When each label is final: (wave level, whether in the level's recursive part).
+        let mut done = BTreeMap::<u16, (usize, bool)>::new();
         for step in &clause.labels.steps {
             let recursive = clause.labels.recursive.values().any(|id| step.contains(id));
-            match segments.last_mut() {
-                Some((false, members)) if !recursive => members.extend(step),
-                _ => segments.push((recursive, step.clone())),
-            }
-        }
-        for (position, (recursive, members)) in segments.iter().enumerate() {
-            let mut level = BTreeMap::<u16, usize>::new();
-            if steps.len() <= position {
-                steps.push((false, Vec::new()));
-                chains.push((Some(BTreeSet::new()), false));
-            }
-            let levels = &mut steps[position].1;
-            for &id in members {
-                let at = clause
-                    .labels
-                    .reads(id)
-                    .iter()
-                    .filter_map(|read| level.get(read))
-                    .map(|deepest| deepest + 1)
-                    .max()
-                    .unwrap_or(0);
-                let target = index(id);
-                let pass = match clause.labels.def(id) {
-                    Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
-                        let constraints = match clause.labels.def(id) {
-                            Label::Constrained(_, _, constraints) => {
-                                constraints.iter().map(|(name, label)| (name.clone(), index(*label))).collect()
-                            }
-                            _ => Vec::new(),
-                        };
-                        let packed = pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?;
-                        patterns.push(packed);
-                        Pass::Pattern {
-                            target,
-                            pattern: patterns.len() - 1,
-                            roots: roots(starts)
-                                .into_iter()
-                                .zip(&bases)
-                                .flat_map(|(roots, base)| roots.into_iter().map(move |node| base + node))
-                                .collect(),
-                            constraints,
-                        }
-                    }
-                    Label::Roots(program, starts) | Label::Targets(program, starts) => Pass::Program {
-                        target,
-                        program,
-                        roots: roots(starts),
-                        captured: matches!(clause.labels.def(id), Label::Targets(..)),
-                    },
-                    Label::Count {
-                        program,
-                        domain: starts,
-                        by,
-                        min,
-                        max,
-                    } => {
-                        slots += 1;
-                        Pass::Count {
-                            target,
-                            slot: slots - 1,
-                            program,
-                            roots: roots(starts),
-                            captured: matches!(by, Tally::Capture),
-                            min: u32::try_from(*min).unwrap_or(u32::MAX),
-                            max: max.map_or(u32::MAX, |max| u32::try_from(max).unwrap_or(u32::MAX)),
-                        }
-                    }
-                    Label::Complement(of) => Pass::Complement { target, of: index(*of) },
-                    Label::Empty => Pass::Empty { target },
-                };
-                level.insert(id, at);
-                if levels.len() <= at {
-                    levels.resize_with(at + 1, Vec::new);
-                }
-                levels[at].push(pass);
-            }
+            let outside = |id: u16| clause.labels.reads(id).into_iter().filter(|read| !step.contains(read)).collect::<Vec<_>>();
             if !recursive {
+                for &id in step {
+                    let at = outside(id).iter().filter_map(|read| done.get(read)).map(|(level, _)| level + 1).max().unwrap_or(0);
+                    if single.len() <= at {
+                        single.resize_with(at + 1, Vec::new);
+                    }
+                    single[at].push(pass(clause, id)?);
+                    done.insert(id, (at, false));
+                }
                 continue;
             }
-            steps[position].0 = true;
-            let (kinds, siblings) = &mut chains[position];
-            for id in members.iter().filter(|id| clause.labels.recursive.values().any(|label| label == *id)) {
+            // A group runs after the single passes of its level and the groups of the level before.
+            let at = step
+                .iter()
+                .flat_map(|&id| outside(id))
+                .filter_map(|read| done.get(&read))
+                .map(|(level, group)| level + usize::from(*group))
+                .max()
+                .unwrap_or(0);
+            if groups.len() <= at {
+                groups.resize_with(at + 1, || (Vec::new(), Some(BTreeSet::new()), false));
+            }
+            // Inside the group a label's level is one past the deepest member it reads that is
+            // computed before it; a read of a later member is the last round's.
+            let mut level = BTreeMap::<u16, usize>::new();
+            for &id in step {
+                let inner = clause.labels.reads(id).iter().filter_map(|read| level.get(read)).map(|deepest| deepest + 1).max().unwrap_or(0);
+                let levels = &mut groups[at].0;
+                if levels.len() <= inner {
+                    levels.resize_with(inner + 1, Vec::new);
+                }
+                levels[inner].push(pass(clause, id)?);
+                level.insert(id, inner);
+            }
+            let (_, kinds, siblings) = &mut groups[at];
+            for id in step.iter().filter(|id| clause.labels.recursive.values().any(|label| label == *id)) {
                 match (clause.labels.def(*id), kinds.as_mut()) {
                     (Label::Roots(_, Domain::Kinds(own)), Some(kinds)) => kinds.extend(own.iter().copied()),
                     _ => *kinds = None,
                 }
             }
-            *siblings |= members.iter().any(|id| match clause.labels.def(*id) {
+            // The recursion runs along siblings only where a program that steps to siblings tests a
+            // label of the group itself; a sibling walk to a label settled before the group does not
+            // lengthen its chains.
+            *siblings |= step.iter().any(|id| match clause.labels.def(*id) {
                 Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. } => {
                     program.words.iter().any(|&word| matches!(split(word).0, NEXT | FOLLOWING))
+                        && program.words.iter().any(|&word| matches!(split(word), (SUPERTYPE, _, class) if step.contains(&class)))
                 }
                 _ => false,
             });
+            for &id in step {
+                done.insert(id, (at, true));
+            }
         }
     }
-    for (_, levels) in &mut steps {
-        levels.retain(|level| !level.is_empty());
+    let mut steps: Vec<(bool, Vec<Vec<Pass<'a>>>)> = Vec::new();
+    let mut chains: Vec<(Option<Vec<u16>>, bool)> = Vec::new();
+    let mut groups = groups.into_iter();
+    for at in 0..single.len().max(groups.len()) {
+        if let Some(passes) = single.get_mut(at).filter(|passes| !passes.is_empty()) {
+            steps.push((false, vec![std::mem::take(passes)]));
+            chains.push((None, false));
+        }
+        if let Some((levels, kinds, siblings)) = groups.next().filter(|(levels, ..)| !levels.is_empty()) {
+            steps.push((true, levels));
+            chains.push((kinds.map(|kinds| kinds.into_iter().collect()), siblings));
+        }
     }
     // A clause's roots: one label past every pass's.
     steps.push((
@@ -682,14 +705,7 @@ fn metal(
                 .collect(),
         ],
     ));
-    let chains = chains
-        .into_iter()
-        .zip(&steps)
-        .map(|((kinds, siblings), (recursive, _))| {
-            if *recursive { (kinds.map(|kinds| kinds.into_iter().collect()), siblings) } else { (None, false) }
-        })
-        .chain([(None, false)])
-        .collect();
+    chains.push((None, false));
     let outcome = run(
         &Plan {
             labels: labels + clauses.len(),

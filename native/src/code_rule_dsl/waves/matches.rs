@@ -2,7 +2,8 @@
 //! wave program with one step. Per chunk of documents, `demand` selects each clause's candidates
 //! with the prefilter (`prefilter::select`, SQL over the tapes' published rows), evaluates every
 //! clause's label passes over the chunk's tapes together (`LoweredWave`), and registers the
-//! clauses' root programs from those candidates as the chunk's `demand(batch)`. The step's SQL reads
+//! clauses' root programs from those candidates as the chunk's `demand(batch)` (the CPU JIT, over
+//! the chunk's files in one execution; it reads the labels as classes, `transducer_classes`). The step's SQL reads
 //! the batch's terminal matches into `match(clause, d, node)`; the loop records the relation as one
 //! fact family per clause (`partitions`) and `statistics` writes their row estimates to
 //! `fact_stats`, where the demand relations read them.
@@ -117,7 +118,7 @@ impl Wave {
         let grid = vec![vec![true; programs.len()]; views.len()];
         let limits = vec![u32::MAX; programs.len()];
         let demand =
-            PackedDemand::new(ExecutionBackend::CpuInterpreter, programs, views, anchors, grid, limits).map_err(invalid)?;
+            PackedDemand::new(ExecutionBackend::CpuJit, programs, views, anchors, grid, limits).map_err(invalid)?;
         self.chunks.push(Chunk { candidates });
         Ok(Some(demand))
     }
