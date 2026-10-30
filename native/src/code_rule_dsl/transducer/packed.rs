@@ -85,7 +85,7 @@ mod backend_parity_tests;
 #[path = "packed/compile/scm.rs"]
 mod scm;
 mod metal_bulk_closure;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_bulk_closure_tests;
 #[cfg(target_os = "macos")]
 mod metal_candidate_batch;
@@ -102,11 +102,11 @@ mod metal_child_index;
 mod metal_closure_continuation;
 #[cfg(target_os = "macos")]
 mod metal_closure_prepare;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_closure_prepare_tests;
 #[cfg(target_os = "macos")]
 mod metal_constant_output;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 #[path = "packed/metal_cutover_architecture.rs"]
 mod metal_cutover_architecture;
 #[cfg(target_os = "macos")]
@@ -115,15 +115,15 @@ mod metal_dynamic_execution;
 mod metal_failure_records;
 #[cfg(target_os = "macos")]
 mod metal_frame_identity;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_frame_identity_tests;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_frontier_conformance;
 #[cfg(target_os = "macos")]
 mod metal_frontier_reduce;
 #[cfg(target_os = "macos")]
 mod metal_frontier_seed;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_frontier_seed_tests;
 #[cfg(target_os = "macos")]
 mod metal_frontier_validation;
@@ -160,7 +160,7 @@ mod metal_position_order;
 mod metal_grid_backend;
 #[cfg(target_os = "macos")]
 mod metal_ready_batch;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_ready_batch_tests;
 #[cfg(target_os = "macos")]
 mod metal_ready_proof;
@@ -170,17 +170,17 @@ mod metal_regex_code;
 mod metal_regex_frontier;
 #[cfg(target_os = "macos")]
 mod metal_register_codegen;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_register_conformance;
 #[cfg(target_os = "macos")]
 mod metal_register_execution;
 #[cfg(target_os = "macos")]
 mod metal_semantic_columns;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_semantic_conformance;
 #[cfg(target_os = "macos")]
 mod metal_state_values;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_state_values_tests;
 #[cfg(target_os = "macos")]
 mod metal_successor;
@@ -192,7 +192,7 @@ mod metal_successor_codegen;
 mod metal_successor_prepare;
 #[cfg(target_os = "macos")]
 mod metal_successor_repeat_codegen;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_successor_tests;
 #[cfg(target_os = "macos")]
 mod metal_terminal;
@@ -202,7 +202,7 @@ mod metal_terminal_capture_order;
 mod metal_terminal_repeat;
 #[cfg(target_os = "macos")]
 mod metal_typed_output;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_unique_child_tests;
 mod native_cpu;
 mod native_cpu_capture;
@@ -221,7 +221,7 @@ mod output;
 mod packed_arena;
 mod packed_batch;
 pub(super) use packed_batch::PackedExecution;
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_value_prefix_tests;
 mod packed_workspace;
 mod scheduler;

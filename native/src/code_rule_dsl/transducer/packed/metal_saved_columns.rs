@@ -9,7 +9,7 @@ use metal::{CommandQueueRef, Device};
 const SOURCE: &str = include_str!("metal_saved_columns.metal");
 const MINIMUM_RAW_BYTES: usize = 32 * 1024 * 1024;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_saved_columns_tests.rs"]
 mod tests;
 

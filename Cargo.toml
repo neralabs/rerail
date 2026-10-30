@@ -5,6 +5,11 @@ resolver = "2"
 [patch.crates-io]
 block = { path = "native/vendor/block-0.1.6" }
 
+# Dependencies (SQLite's C, tree-sitter, regex, cranelift, ast-grep) are optimized in dev and test
+# builds: they compile once and stay cached, while this crate keeps its fast unoptimized rebuilds.
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -12,7 +12,7 @@ use metal::{CommandQueueRef, Device};
 use std::collections::BTreeSet;
 
 const COMPACT_THRESHOLD: usize = 256 * 1024 * 1024;
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_finite_literal_class_tests.rs"]
 mod finite_literal_tests;
 pub(super) const MAX_CONSTANT_DIRECTIVES: u32 = 256;

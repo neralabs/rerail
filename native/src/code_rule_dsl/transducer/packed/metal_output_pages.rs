@@ -16,7 +16,7 @@ const SOURCE: &str = concat!(
     include_str!("metal_parallel.metal"),
     include_str!("metal_output_pages.metal"),
 );
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_typed_checkpoint_tests.rs"]
 mod checkpoint_tests;
 #[path = "metal_saved_columns.rs"]
@@ -558,6 +558,6 @@ impl SavedOutput {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_saved_output_contract_tests.rs"]
 mod tests;

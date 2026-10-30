@@ -13,6 +13,10 @@ code-rule-profile = []
 # rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
 # the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
 p-anchor-corpus = []
+# The Metal transducer suites (485 tests). Every GPU dispatch takes the process-wide
+# `METAL_EXECUTION_LOCK`, so these run one at a time and were 82% of the default suite's test
+# time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
+metal-tests = []
 [dependencies]
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched

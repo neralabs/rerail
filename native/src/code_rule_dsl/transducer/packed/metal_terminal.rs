@@ -904,6 +904,6 @@ fn validate_publication(output: &TerminalOutput) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_terminal_anchor_tests.rs"]
 mod anchor_tests;

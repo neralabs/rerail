@@ -10,7 +10,7 @@ use super::metal_parallel::Scan;
 use super::metal_register_execution::read;
 use metal::{CommandQueueRef, Device};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_typed_batch_tests.rs"]
 mod batch_tests;
 

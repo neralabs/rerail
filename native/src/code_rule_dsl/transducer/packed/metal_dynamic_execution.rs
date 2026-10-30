@@ -77,7 +77,7 @@ fn use_successor_views(device: &Device, bound: &Capacity) -> Result<bool, Error>
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_dynamic_execution_tests.rs"]
 mod tests;
 
@@ -438,7 +438,7 @@ fn advance<const FIELDS: usize>(
     preparation: PreparedSuccessors<FIELDS>,
     bound: &Capacity,
 ) -> Result<DynamicFrontier, Error> {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "metal-tests"))]
     if std::env::var_os("TEMPO_METAL_PROFILE_EXPANSION").is_some() {
         tests::profile_expansion(device, queue, &input, &preparation)?;
     }

@@ -91,13 +91,27 @@ fn t_programs_run_natively_like_t() {
     let mut failures = Vec::new();
     let mut ran = BTreeSet::new();
     let exe = std::env::current_exe().unwrap();
-    for modes in ["nearest", "fixpoint", "fixpoint,kseed", "fixpoint,vtab", "fixpoint,direct", "upsert", "setfix", "setfix,join,nearest", "all", "program"] {
-        for name in ["workload", "workload_demand", "calls"] {
-            let out = std::process::Command::new(&exe)
-                .args(["--exact", "code_rule_dsl::logic::plan::tests::t_programs_run_natively_like_t", "--nocapture", "--test-threads=1"])
-                .env(CASE, format!("{modes} {name}"))
-                .output()
-                .unwrap();
+    let cases = ["nearest", "fixpoint", "fixpoint,kseed", "fixpoint,vtab", "fixpoint,direct", "upsert", "setfix", "setfix,join,nearest", "all", "program"]
+        .into_iter()
+        .flat_map(|modes| ["workload", "workload_demand", "calls"].map(move |name| (modes, name)))
+        .collect::<Vec<_>>();
+    // Six children at a time: the cases are independent, and six fit the memory budget.
+    for chunk in cases.chunks(6) {
+        let children = chunk
+            .iter()
+            .map(|&(modes, name)| {
+                let child = std::process::Command::new(&exe)
+                    .args(["--exact", "code_rule_dsl::logic::plan::tests::t_programs_run_natively_like_t", "--nocapture", "--test-threads=1"])
+                    .env(CASE, format!("{modes} {name}"))
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                (modes, name, child)
+            })
+            .collect::<Vec<_>>();
+        for (modes, name, child) in children {
+            let out = child.wait_with_output().unwrap();
             let stdout = String::from_utf8_lossy(&out.stdout);
             if !out.status.success() {
                 failures.push(format!("{modes} {name}: {}", String::from_utf8_lossy(&out.stderr).lines().filter(|l| l.contains("panicked") || l.contains(name)).collect::<Vec<_>>().join(" | ")));

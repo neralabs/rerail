@@ -360,6 +360,6 @@ impl Scan {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_parallel_scan_tests.rs"]
 mod tests;

@@ -836,6 +836,7 @@ fn assemble_evaluation_streams(
     Ok((results, captures))
 }
 
+#[cfg(feature = "metal-tests")]
 #[test]
 fn output_assembly_rejects_orphaned_overlapping_and_missing_capture_values() {
     let (program, file, _) = super::metal_frontier_conformance::convergence_case(2);
