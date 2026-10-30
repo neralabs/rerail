@@ -1,0 +1,70 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "da04267ffc7b0903ca91f2fccb80e56246d13328",
+    "path": "packages/socket.io/lib/broadcast-operator.ts",
+    "license": "MIT",
+    "sha256": "206ea10e7c58c3a7696383a4a20dc6c3ca4a268d907000887bf108452a42b3e0"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-es-syntax": [
+      {
+        "line": 1,
+        "column": 1
+      },
+      {
+        "line": 2,
+        "column": 1
+      },
+      {
+        "line": 3,
+        "column": 1
+      },
+      {
+        "line": 4,
+        "column": 1
+      },
+      {
+        "line": 5,
+        "column": 1
+      },
+      {
+        "line": 17,
+        "column": 1
+      },
+      {
+        "line": 239,
+        "column": 25
+      },
+      {
+        "line": 476,
+        "column": 1
+      },
+      {
+        "line": 479,
+        "column": 19
+      },
+      {
+        "line": 480,
+        "column": 19
+      },
+      {
+        "line": 481,
+        "column": 19
+      },
+      {
+        "line": 482,
+        "column": 19
+      },
+      {
+        "line": 484,
+        "column": 20
+      }
+    ]
+  }
+}

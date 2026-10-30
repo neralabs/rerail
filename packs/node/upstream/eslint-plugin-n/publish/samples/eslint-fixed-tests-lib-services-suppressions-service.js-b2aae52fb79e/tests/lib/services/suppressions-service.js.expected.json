@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "7246f923332522d8b3d46b6ee646fce88535f3fb",
+    "path": "tests/lib/services/suppressions-service.js",
+    "license": "MIT",
+    "sha256": "b2aae52fb79ed7c922ff5c505b563094660782ea09a8b1319610509de78a6891"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-import-assert-strict": []
+  }
+}

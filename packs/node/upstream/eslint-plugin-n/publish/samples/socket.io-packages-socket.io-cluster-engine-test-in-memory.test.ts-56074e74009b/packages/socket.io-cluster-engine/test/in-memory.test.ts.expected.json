@@ -1,0 +1,54 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "8f4b825a763973bf4183b21955beb3b9f995fc33",
+    "path": "packages/socket.io-cluster-engine/test/in-memory.test.ts",
+    "license": "MIT",
+    "sha256": "56074e74009bc4ed99e11b3f0e652e1aba5324a3ee6cc8655e7847c95a86107a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-es-syntax": [
+      {
+        "line": 1,
+        "column": 1
+      },
+      {
+        "line": 2,
+        "column": 1
+      },
+      {
+        "line": 3,
+        "column": 1
+      },
+      {
+        "line": 4,
+        "column": 1
+      },
+      {
+        "line": 5,
+        "column": 1
+      },
+      {
+        "line": 6,
+        "column": 1
+      },
+      {
+        "line": 11,
+        "column": 1
+      },
+      {
+        "line": 12,
+        "column": 1
+      },
+      {
+        "line": 13,
+        "column": 1
+      }
+    ]
+  }
+}

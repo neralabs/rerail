@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "node-red/node-red",
+    "commit": "30956b54413d58caed98d6fc47e159a80b4215e2",
+    "path": "test/nodes/core/network/21-httprequest_spec.js",
+    "license": "Apache-2.0",
+    "sha256": "182786789dca9c95b96c50c9a67aba91c5ca93e99f1b88be0943dd25bc329b37"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": [
+      {
+        "line": 2291,
+        "column": 49
+      }
+    ]
+  }
+}

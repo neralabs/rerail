@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "nuxt/nuxt",
+    "commit": "201236195d3c5c0108c764bc56734d418a687e76",
+    "path": "test/presets/cloudflare.test.mjs",
+    "license": "MIT",
+    "sha256": "5fc8d97388047a9fa2ec1b896298d6f49210a3c12f3c880dd44fb620cd35d50e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-decoder": []
+  }
+}

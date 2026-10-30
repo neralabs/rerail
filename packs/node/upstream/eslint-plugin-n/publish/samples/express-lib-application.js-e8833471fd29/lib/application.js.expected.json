@@ -1,0 +1,76 @@
+{
+  "source": {
+    "repo": "expressjs/express",
+    "commit": "f41d09a3cf0592b65a1359495b65d3d7cf949c50",
+    "path": "lib/application.js",
+    "license": "MIT",
+    "sha256": "e8833471fd299fb4ba0302416ff451908a17c482847fde3778a6984d7b00c6ba"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-es-builtins": [
+      {
+        "line": 63,
+        "column": 17
+      },
+      {
+        "line": 80,
+        "column": 3
+      },
+      {
+        "line": 82,
+        "column": 17
+      },
+      {
+        "line": 254,
+        "column": 42
+      },
+      {
+        "line": 276,
+        "column": 7
+      },
+      {
+        "line": 276,
+        "column": 7
+      },
+      {
+        "line": 404,
+        "column": 9
+      },
+      {
+        "line": 404,
+        "column": 9
+      },
+      {
+        "line": 498,
+        "column": 21
+      }
+    ],
+    "n-no-unsupported-features-es-syntax": [
+      {
+        "line": 63,
+        "column": 17
+      },
+      {
+        "line": 80,
+        "column": 3
+      },
+      {
+        "line": 276,
+        "column": 7
+      },
+      {
+        "line": 404,
+        "column": 9
+      },
+      {
+        "line": 442,
+        "column": 11
+      }
+    ]
+  }
+}

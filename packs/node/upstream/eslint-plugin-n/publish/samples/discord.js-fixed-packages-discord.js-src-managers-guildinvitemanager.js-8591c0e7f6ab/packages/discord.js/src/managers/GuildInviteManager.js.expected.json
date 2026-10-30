@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "281f8203d6ad90fa8daee9faaa04fb8dfb8fbeb4",
+    "path": "packages/discord.js/src/managers/GuildInviteManager.js",
+    "license": "Apache-2.0",
+    "sha256": "8591c0e7f6ab73c750822f7b9d47f0dc4c3f7958653bad7a419145fad332fc93"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-buffer": []
+  }
+}

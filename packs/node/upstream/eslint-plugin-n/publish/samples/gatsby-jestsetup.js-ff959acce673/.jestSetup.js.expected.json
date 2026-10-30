@@ -1,0 +1,28 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "315edc64c9aa87b7f5bf43c7698e47187aeb6450",
+    "path": ".jestSetup.js",
+    "license": "MIT",
+    "sha256": "ff959acce673ce70943b5904ef72004c8cc3439edcd249dbcd590d06be01ab01"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-decoder": [
+      {
+        "line": 10,
+        "column": 28
+      }
+    ],
+    "n-prefer-global-text-encoder": [
+      {
+        "line": 9,
+        "column": 28
+      }
+    ]
+  }
+}

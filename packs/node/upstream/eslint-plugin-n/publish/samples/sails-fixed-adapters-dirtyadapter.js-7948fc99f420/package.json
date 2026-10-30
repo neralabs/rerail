@@ -1,0 +1,42 @@
+{
+  "name": "waterline",
+  "version": "0.0.51",
+  "description": "Adaptable data access layer for Node.js",
+  "main": "waterline.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/mikermcneil/waterline.git"
+  },
+  "keywords": [
+    "orm",
+    "mysql",
+    "mongo",
+    "mongodb",
+    "neo4j",
+    "postgres",
+    "sqlite",
+    "adapter",
+    "waterline",
+    "sails"
+  ],
+  "author": "Mike McNeil",
+  "license": "MIT",
+  "dependencies": {
+    "dirty": "~0.9.6",
+    "underscore": "=1.4.3",
+    "mysql": "~2.0.0-alpha4",
+    "node-uuid": "~1.4.0",
+    "require-all": "0.0.5",
+    "fs-extra": "~0.3.2",
+    "sails-util": "0.0.0",
+    "parley": "0.0.2",
+    "microtime": "~0.3.3",
+    "waterline-dirty": "0.0.01"
+  }
+}

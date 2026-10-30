@@ -1,6 +1,6 @@
 # Real-code samples: node/eslint-plugin-n
 
-The sample set `samples.lock` pins (archive `rerail/archives/samples/node/eslint-plugin-n/bbcfc94ffda7e072b9dc83d59a231c9c18cd530e59b966e45667cfa83472baaa.tar.zst`, 2021 files, 10386600 bytes) holds 658 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
+The sample set `samples.lock` pins (archive `rerail/archives/samples/node/eslint-plugin-n/7d3c311a8a16dcd94992551225510572b42a818c7f6d1970d13b4e894aa97e29.tar.zst`, 1973 files, 10697732 bytes) holds 641 sample(s): files copied from the repositories below, each under its repository's licence. The archive's `LICENSES.md` lists every file with its repository's licence text. None of it is published with the pack.
 
 | Repository | Licence | Commits | Files |
 |---|---|---|---:|
@@ -15,7 +15,7 @@ The sample set `samples.lock` pins (archive `rerail/archives/samples/node/eslint
 | brianc/node-postgres | MIT | 3644730d2b06, 3aba3794cf7d, 4b88c82b1687 and 5 more | 15 |
 | cypress-io/cypress | MIT | 0de9f6ea6c8f, 778435c93a37, b0f01d58f970 and 2 more | 10 |
 | dherault/serverless-offline | MIT | 113ececc49c9, 148167c11a81 | 4 |
-| discordjs/discord.js | Apache-2.0 | 052ed7fbe7dc, 065908956bae, 096177189f5d and 11 more | 28 |
+| discordjs/discord.js | Apache-2.0, MIT | 052ed7fbe7dc, 065908956bae, 096177189f5d and 11 more | 28 |
 | electron/electron | MIT | 0ef9950c1c65, 33cce89c88b2 | 3 |
 | eslint/eslint | MIT | 169668279166, 217b2a91f461, 2b252be80f36 and 7 more | 21 |
 | ether/etherpad | Apache-2.0 | 993d50194372 | 2 |
@@ -26,15 +26,14 @@ The sample set `samples.lock` pins (archive `rerail/archives/samples/node/eslint
 | getsentry/sentry-javascript | MIT | 0046d1703f45 | 3 |
 | hexojs/hexo | MIT | 04bc704d9479, 059cb17494d0, 4c4bd2202f11 and 8 more | 22 |
 | ioBroker/ioBroker.js-controller | MIT | 1e7b7b9eeaf5 | 2 |
-| jestjs/jest | MIT | 12c13459b35c, 242fb35459b3, 4f2ce5f3be0a and 9 more | 23 |
+| jestjs/jest | BSD-3-Clause, MIT | 12c13459b35c, 242fb35459b3, 4f2ce5f3be0a and 9 more | 23 |
 | karma-runner/karma | MIT | 255bf6744c2c, bfa774195849, e17698f950af and 1 more | 8 |
 | knex/knex | MIT | 1baeefedf1de, 96985f755c39, cfce68577502 and 2 more | 10 |
 | lerna/lerna | MIT | 96095e21595c | 2 |
 | less/less.js | Apache-2.0 | 0925cf195704, 3f6abd18fe8f, 6238bbcd3b7c and 6 more | 19 |
 | louislam/uptime-kuma | MIT | 73f199f4bd25, 86dcc9bc8fc3, c79be19ec348 | 6 |
-| mde/ejs | Apache-2.0 | 2f5b75fdfae6 | 2 |
-| meteor/meteor | MIT | 2881a5e68b6b, 4874002f2e12, 58e608247bb3 and 1 more | 7 |
-| mochajs/mocha | MIT | 0ed524af347b, 123b2d5c9da2, 163289d0b29a and 23 more | 60 |
+| meteor/meteor | MIT | 2881a5e68b6b, 4874002f2e12, 58e608247bb3 | 6 |
+| mochajs/mocha | MIT | 0ed524af347b, 123b2d5c9da2, 163289d0b29a and 22 more | 58 |
 | mongodb/node-mongodb-native | Apache-2.0 | 399045a6a89c | 2 |
 | nestjs/nest | MIT | 0fb57c8b07d5, 135f999b6dd8, 1435ed22f4ce and 12 more | 32 |
 | node-fetch/node-fetch | MIT | 96431ed4a10b | 2 |
@@ -43,10 +42,10 @@ The sample set `samples.lock` pins (archive `rerail/archives/samples/node/eslint
 | nuxt/nuxt | MIT | 201236195d3c, b49c62b33538 | 4 |
 | parse-community/parse-server | Apache-2.0 | 6145e7f71882 | 2 |
 | pinojs/pino | MIT | 9826cfbfb608 | 1 |
-| pnpm/pnpm | MIT | 85cd31b9e5dc, 8aec5067cc25, e02e667d9124 | 6 |
+| pnpm/pnpm | MIT | 8aec5067cc25, e02e667d9124 | 4 |
 | prettier/prettier | MIT | 592721622741 | 46 |
 | rollup/rollup | MIT | 97611099c648, e2552c9e955e | 4 |
-| sequelize/sequelize | MIT | 155381bd5ddf, 1ecdaf98308a, 2a78517d8092 and 11 more | 28 |
+| sequelize/sequelize | MIT | 1ecdaf98308a, 2a78517d8092, 410bb59eb777 and 6 more | 18 |
 | sidorares/node-mysql2 | MIT | 2f1014c1cc78, 5fa053ade98d, 75e709134613 and 2 more | 10 |
 | socketio/socket.io | MIT | 000cba31e716, 0b5e98591e7b, 0c431243e289 and 27 more | 59 |
 | storybookjs/storybook | MIT | 0d2994735848, 2c509cb2f743, 447caec091b0 | 3 |

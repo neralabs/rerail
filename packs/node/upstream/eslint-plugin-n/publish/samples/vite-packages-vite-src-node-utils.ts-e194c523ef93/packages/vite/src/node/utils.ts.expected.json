@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "vitejs/vite",
+    "commit": "df869909ae1bb5d7cd0fdd7b705737e9b19e41d4",
+    "path": "packages/vite/src/node/utils.ts",
+    "license": "MIT",
+    "sha256": "e194c523ef9379428e9d64adef6e39165327a010d4317c82bea3bd31f89fa2d1"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url-search-params": [
+      {
+        "line": 6,
+        "column": 15
+      }
+    ]
+  }
+}

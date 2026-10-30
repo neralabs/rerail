@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-js/utilities/is-prettier-ignore-comment.js",
+    "license": "MIT",
+    "sha256": "48cb09f5223b8f1c152be77593ebf8ce697810e1d61c108bed39b9382d86bb4a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-path-concat": []
+  }
+}

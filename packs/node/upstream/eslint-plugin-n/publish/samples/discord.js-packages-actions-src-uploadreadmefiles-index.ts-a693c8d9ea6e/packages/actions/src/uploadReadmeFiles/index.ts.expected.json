@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "2c3bf5c8174e90a3b96982e5017a23c9223ddbea",
+    "path": "packages/actions/src/uploadReadmeFiles/index.ts",
+    "license": "Apache-2.0",
+    "sha256": "a693c8d9ea6e46a1c1814256441fc51095c7703a9c7d229d9d675d27891a46e8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": [
+      {
+        "line": 2,
+        "column": 1
+      }
+    ]
+  }
+}

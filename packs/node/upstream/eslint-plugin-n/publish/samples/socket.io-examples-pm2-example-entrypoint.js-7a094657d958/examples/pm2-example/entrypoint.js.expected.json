@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "3ad4e1f2dcf0e8b7d1bb05892be5ede2ab100abf",
+    "path": "examples/pm2-example/entrypoint.js",
+    "license": "MIT",
+    "sha256": "7a094657d9586ec5cb54bcc588987e01097c3506185f1c9b3a762f70f57316af"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-process-exit": [
+      {
+        "line": 43,
+        "column": 5
+      }
+    ]
+  }
+}

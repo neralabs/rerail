@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "sequelize/sequelize",
+    "commit": "ad68a5e5f07d7800ece68290de4d15e33ac7579a",
+    "path": "test/unit/dialects/snowflake/query-generator.test.js",
+    "license": "MIT",
+    "sha256": "c7ce29080f0c0f51ff6676b0f3e10eaf43e92e74db828ea0272a2a8da52b703b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-mixed-requires": [
+      {
+        "line": 3,
+        "column": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "appium/appium",
+    "commit": "453a9e9e01c4df3dc8500bfaf95770aa4a30e8e6",
+    "path": "packages/support/lib/console.ts",
+    "license": "Apache-2.0",
+    "sha256": "34b21197cad809818db6177188e2c09cba2c961fbfda953fe70ed0a27878b025"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": []
+  }
+}

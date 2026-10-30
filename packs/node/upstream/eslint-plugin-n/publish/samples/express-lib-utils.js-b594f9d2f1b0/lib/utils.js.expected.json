@@ -1,0 +1,66 @@
+{
+  "source": {
+    "repo": "expressjs/express",
+    "commit": "511d9dfca8f2329534ee9c75990163766b82c407",
+    "path": "lib/utils.js",
+    "license": "MIT",
+    "sha256": "b594f9d2f1b0b29ee6dcb1e5a166287a4ef41c179909fce356f57ba3acecbadf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-exports-style": [
+      {
+        "line": 27,
+        "column": 1
+      },
+      {
+        "line": 38,
+        "column": 1
+      },
+      {
+        "line": 49,
+        "column": 1
+      },
+      {
+        "line": 59,
+        "column": 1
+      },
+      {
+        "line": 73,
+        "column": 1
+      },
+      {
+        "line": 74,
+        "column": 20
+      },
+      {
+        "line": 128,
+        "column": 1
+      },
+      {
+        "line": 138,
+        "column": 12
+      },
+      {
+        "line": 143,
+        "column": 12
+      },
+      {
+        "line": 160,
+        "column": 1
+      },
+      {
+        "line": 192,
+        "column": 1
+      },
+      {
+        "line": 223,
+        "column": 1
+      }
+    ]
+  }
+}

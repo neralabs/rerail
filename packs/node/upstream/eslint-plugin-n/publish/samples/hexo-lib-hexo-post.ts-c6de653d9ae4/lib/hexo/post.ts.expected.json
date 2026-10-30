@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "hexojs/hexo",
+    "commit": "5977d015eaecf5c60510f6e0b316dcf3bc8e8d23",
+    "path": "lib/hexo/post.ts",
+    "license": "MIT",
+    "sha256": "c6de653d9ae44a3cb28e5253fcf85ea0989549da495e795a5934d633b0f7bd70"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-node-protocol": [
+      {
+        "line": 1,
+        "column": 20
+      },
+      {
+        "line": 4,
+        "column": 48
+      }
+    ]
+  }
+}

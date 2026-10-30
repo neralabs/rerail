@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "c9855614c481d6fd4409644b7baee138f0b484e2",
+    "path": "packages/rpc/src/ipc.ts",
+    "license": "MIT",
+    "sha256": "6fc6d068dc24a9b389fecd75f3a4e9d01222e6af92b2188ff43eb608b2d5dc26"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-process": []
+  }
+}

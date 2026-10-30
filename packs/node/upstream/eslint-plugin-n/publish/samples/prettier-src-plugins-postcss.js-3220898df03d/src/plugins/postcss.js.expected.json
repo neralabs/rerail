@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/plugins/postcss.js",
+    "license": "MIT",
+    "sha256": "3220898df03d8b51eadfb9d60996d2eb725830cbd8979101f5d322803c62f10b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-prefer-global-buffer": [],
+    "n-prefer-global-console": [],
+    "n-prefer-global-process": [],
+    "n-prefer-global-text-decoder": [],
+    "n-prefer-global-text-encoder": [],
+    "n-prefer-global-url": [],
+    "n-prefer-global-url-search-params": [],
+    "n-prefer-node-protocol": []
+  }
+}

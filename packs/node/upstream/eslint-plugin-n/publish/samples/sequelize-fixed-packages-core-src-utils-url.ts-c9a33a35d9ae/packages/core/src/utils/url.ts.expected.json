@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "sequelize/sequelize",
+    "commit": "9cc6ca90199d1e9c30737b46c3d25e55a85b6a38",
+    "path": "packages/core/src/utils/url.ts",
+    "license": "MIT",
+    "sha256": "c9a33a35d9aec6fca55c2b1c71cb8fc88aaacad2e2ce19e5ccd541f83050fd24"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": []
+  }
+}

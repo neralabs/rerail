@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ioBroker/ioBroker.js-controller",
+    "commit": "1e7b7b9eeaf58a3d327637e8bb924f9611c1b269",
+    "path": "packages/common/src/lib/common/tools.ts",
+    "license": "MIT",
+    "sha256": "ef573ecfd56d6328bfb264e626757302fc301bb68d5c06588b1b5948f31b0d1f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url-search-params": []
+  }
+}

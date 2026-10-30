@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "node-red/node-red",
+    "commit": "1e85f1efbc8875ad960400905038154a4e4dd76e",
+    "path": "test/nodes/core/parsers/70-CSV-leading-empty_spec.js",
+    "license": "Apache-2.0",
+    "sha256": "50892cd9d824a2f025b86f3be90d8684724f5700b6a1054c76bc82496e75a63d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": []
+  }
+}

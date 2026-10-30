@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "verdaccio/verdaccio",
+    "commit": "63bfb5dac7d4c0f316c2bdb777dee6066b38501e",
+    "path": "scripts/check-uncovered-latest.mjs",
+    "license": "MIT",
+    "sha256": "3166ef289f4a8e09fbeaf152b0b692cf9c68bff11ddf817fba53e194fe43ff03"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-hashbang": []
+  }
+}

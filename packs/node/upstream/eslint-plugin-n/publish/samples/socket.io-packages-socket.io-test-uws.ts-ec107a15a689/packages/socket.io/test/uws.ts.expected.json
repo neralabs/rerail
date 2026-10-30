@@ -1,0 +1,62 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "dfb5ab3b6a2f00d1ecb226939022ea56e5701124",
+    "path": "packages/socket.io/test/uws.ts",
+    "license": "MIT",
+    "sha256": "ec107a15a6890be3e001f0523813e38e91c2cb0579787f4b8b9ea9ea871e1473"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 234,
+        "column": 25
+      },
+      {
+        "line": 246,
+        "column": 25
+      },
+      {
+        "line": 258,
+        "column": 25
+      },
+      {
+        "line": 270,
+        "column": 25
+      },
+      {
+        "line": 282,
+        "column": 25
+      },
+      {
+        "line": 294,
+        "column": 25
+      },
+      {
+        "line": 306,
+        "column": 25
+      },
+      {
+        "line": 318,
+        "column": 25
+      },
+      {
+        "line": 326,
+        "column": 25
+      },
+      {
+        "line": 334,
+        "column": 25
+      },
+      {
+        "line": 347,
+        "column": 25
+      }
+    ]
+  }
+}

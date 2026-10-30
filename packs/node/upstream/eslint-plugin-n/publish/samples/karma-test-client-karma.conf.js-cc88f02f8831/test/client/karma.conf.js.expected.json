@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "karma-runner/karma",
+    "commit": "bfa7741958498d553a3ffa160436e08683d54773",
+    "path": "test/client/karma.conf.js",
+    "license": "MIT",
+    "sha256": "cc88f02f8831ea83dbc5bb06018a6dfea39e9c20b65f7a72758c228928f3f64c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-promises-fs": [
+      {
+        "line": 49,
+        "column": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "TryGhost/Ghost",
+    "commit": "2aa97a636d1c4739b18315d0d5f0d4f3da9df681",
+    "path": "scripts/test/assert-boot-skips-modules.test.js",
+    "license": "MIT",
+    "sha256": "d55309882e7a000336442985bc8f07d287471bb413eca0c46bd777a17afc51bf"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-import-assert-strict": []
+  }
+}

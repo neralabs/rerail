@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "meteor/meteor",
+    "commit": "4874002f2e129bcdaecc9c83cbf49b51d43f8f99",
+    "path": ".github/skills/sync-modern-tool-versions/scripts/audit-rspack-versions.mjs",
+    "license": "MIT",
+    "sha256": "4e91f68bf96ab3eafeb173523bdcf8a135baac72b4d068352eb3c5875e554bd2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-hashbang": []
+  }
+}

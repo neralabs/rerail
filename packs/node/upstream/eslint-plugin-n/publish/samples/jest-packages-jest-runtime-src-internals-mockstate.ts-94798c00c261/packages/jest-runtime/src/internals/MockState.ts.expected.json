@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jestjs/jest",
+    "commit": "b43f4fe33c58ac8c9cbeb28c2fcc2c826a599faa",
+    "path": "packages/jest-runtime/src/internals/MockState.ts",
+    "license": "MIT",
+    "sha256": "94798c00c261e68507379b013daef2ddaed67a1d251579dd8d56fb2268ec1371"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-callback-return": [
+      {
+        "line": 368,
+        "column": 16
+      }
+    ]
+  }
+}

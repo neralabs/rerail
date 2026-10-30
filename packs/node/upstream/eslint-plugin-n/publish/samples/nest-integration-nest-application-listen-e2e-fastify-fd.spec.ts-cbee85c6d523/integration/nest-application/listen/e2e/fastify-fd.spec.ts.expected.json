@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "fe2faa0ab8720d891913da9739bca7184640f03b",
+    "path": "integration/nest-application/listen/e2e/fastify-fd.spec.ts",
+    "license": "MIT",
+    "sha256": "cbee85c6d52371c3f4b98295284357e8280c67aeeb836a385a386cce259d3de2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 41,
+        "column": 15
+      },
+      {
+        "line": 47,
+        "column": 30
+      }
+    ]
+  }
+}

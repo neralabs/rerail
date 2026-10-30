@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "hexojs/hexo",
+    "commit": "9383a3ed569b01f7570533e5e333a3b54b5fda8e",
+    "path": "test/scripts/models/cache.ts",
+    "license": "MIT",
+    "sha256": "4c263cc6bf8f96254322700477795d16f86ea5bbdef9869ccd04224380ccb836"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-node-protocol": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "jestjs/jest",
+    "commit": "f57e2887357d7f19f398cac8fb25f1b0835467e7",
+    "path": "packages/jest-util/src/BufferedConsole.ts",
+    "license": "MIT",
+    "sha256": "2d3392d0dc97af002c5174c31abe714326afb3f22738a642d3beaa72b5d491e2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 9,
+        "column": 1
+      }
+    ]
+  }
+}

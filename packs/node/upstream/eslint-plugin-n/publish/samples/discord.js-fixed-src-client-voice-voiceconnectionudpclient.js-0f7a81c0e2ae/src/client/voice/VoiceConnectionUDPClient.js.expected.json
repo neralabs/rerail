@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "e370ccf80676e42078e0d0eb75715b66c6981897",
+    "path": "src/client/voice/VoiceConnectionUDPClient.js",
+    "license": "Apache-2.0",
+    "sha256": "0f7a81c0e2ae4ced1f96ddd19cb1de2846e822942fd61ec3b2825155f78b30ae"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-promises-dns": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "brianc/node-postgres",
+    "commit": "4b88c82b1687fb758f65a2c1e7c5213fe3519272",
+    "path": "lib/utils.js",
+    "license": "MIT",
+    "sha256": "987fcf9f2b4217344ad42f84ae21adf60bdecc77c9ebb1b8bae890c0e677dd67"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-promises-dns": []
+  }
+}

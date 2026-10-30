@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/universal/yuku-parser.js",
+    "license": "MIT",
+    "sha256": "1bd8ac21784451cdf13a55bd7d0214ecea8d4c8a78359b961cefaef8e13172a4"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-exports-style": [],
+    "n-no-sync": [],
+    "n-prefer-global-buffer": [],
+    "n-prefer-global-console": [],
+    "n-prefer-global-process": [],
+    "n-prefer-global-text-decoder": [],
+    "n-prefer-global-text-encoder": [],
+    "n-prefer-global-url": [],
+    "n-prefer-global-url-search-params": [],
+    "n-prefer-node-protocol": []
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "verdaccio/verdaccio",
+    "commit": "1905990ceaafb6f08a5e9e649391a52b26737f5a",
+    "path": "packages/middleware/src/middlewares/web/utils/ui-options.ts",
+    "license": "MIT",
+    "sha256": "46dd06707965991c283b7e76d78c5a66f0818d752aeea90e27510954ca91183b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": [
+      {
+        "line": 3,
+        "column": 10
+      }
+    ]
+  }
+}

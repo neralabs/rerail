@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "knex/knex",
+    "commit": "cfce685775028d420525e82412e3207f17c0f2bd",
+    "path": "test/cli/seed.spec.js",
+    "license": "MIT",
+    "sha256": "60c0ddb61dba4f70d6a3d3e169eb4f2c51e0198f8957ed695c762c499fd4ab83"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-new-require": []
+  }
+}

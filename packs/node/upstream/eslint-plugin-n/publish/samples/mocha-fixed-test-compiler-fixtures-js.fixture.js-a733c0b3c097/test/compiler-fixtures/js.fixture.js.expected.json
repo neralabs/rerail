@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "41e24a242944da0cfc9d4d6989dede85f648cb40",
+    "path": "test/compiler-fixtures/js.fixture.js",
+    "license": "MIT",
+    "sha256": "a733c0b3c097419c4445286b65edc41b1b6db07e706e88ad66992613bc6d2d90"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-node-protocol": []
+  }
+}

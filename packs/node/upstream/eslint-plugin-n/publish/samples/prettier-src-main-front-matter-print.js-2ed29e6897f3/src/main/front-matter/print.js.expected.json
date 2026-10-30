@@ -1,0 +1,18 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/main/front-matter/print.js",
+    "license": "MIT",
+    "sha256": "2ed29e6897f33e8ba57484bba3ac400ef3198e7a0b44a83c43de4f04a2af0126"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-handle-callback-err": [],
+    "n-no-process-env": []
+  }
+}

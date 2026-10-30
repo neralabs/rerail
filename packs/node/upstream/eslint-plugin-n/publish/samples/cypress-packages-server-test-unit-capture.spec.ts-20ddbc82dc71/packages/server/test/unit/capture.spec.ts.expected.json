@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "cypress-io/cypress",
+    "commit": "778435c93a37a4cd565a64ae72dcc737496218fc",
+    "path": "packages/server/test/unit/capture.spec.ts",
+    "license": "MIT",
+    "sha256": "20ddbc82dc71f64adc6844996675a719ef6f47f55258ceea1ebb705c7d450a64"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 2,
+        "column": 1
+      }
+    ]
+  }
+}

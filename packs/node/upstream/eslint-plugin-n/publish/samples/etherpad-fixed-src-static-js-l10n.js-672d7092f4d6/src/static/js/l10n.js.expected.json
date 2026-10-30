@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "ether/etherpad",
+    "commit": "993d50194372bea8bd2db18a0f93cc67440a2906",
+    "path": "src/static/js/l10n.js",
+    "license": "Apache-2.0",
+    "sha256": "672d7092f4d65aa47497166b78305086da3a9fa26f5a81bd39149a8574de2dca"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}

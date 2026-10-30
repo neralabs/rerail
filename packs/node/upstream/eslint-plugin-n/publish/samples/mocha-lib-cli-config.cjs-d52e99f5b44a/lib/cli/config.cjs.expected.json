@@ -1,0 +1,52 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "a652ff5c1b14e2476a0e81ddabf5992fb7de5c12",
+    "path": "lib/cli/config.cjs",
+    "license": "MIT",
+    "sha256": "d52e99f5b44ab3308a2b9d3a356b7a22634b82f04d3e1954f918206643bc6bcb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-exports-style": [
+      {
+        "line": 36,
+        "column": 1
+      },
+      {
+        "line": 50,
+        "column": 18
+      },
+      {
+        "line": 80,
+        "column": 1
+      },
+      {
+        "line": 109,
+        "column": 1
+      },
+      {
+        "line": 110,
+        "column": 34
+      }
+    ],
+    "n-no-sync": [
+      {
+        "line": 19,
+        "column": 22
+      },
+      {
+        "line": 52,
+        "column": 29
+      },
+      {
+        "line": 68,
+        "column": 46
+      }
+    ]
+  }
+}

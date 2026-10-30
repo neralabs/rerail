@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-css/utilities/is-module-rule-name.js",
+    "license": "MIT",
+    "sha256": "beed6c6f2d5ec5950da7f3446669754f723892625ac38eaf08ffe7e124244e9d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-new-require": []
+  }
+}

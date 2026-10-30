@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "knex/knex",
+    "commit": "1baeefedf1debbba9537fccabbcf3b822de7e5b0",
+    "path": "scripts/clean.js",
+    "license": "MIT",
+    "sha256": "dbd6a9b3aa88511d915a3abe0147a5b8fbd344abff7eecc8832b08c146b82e51"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-hashbang": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

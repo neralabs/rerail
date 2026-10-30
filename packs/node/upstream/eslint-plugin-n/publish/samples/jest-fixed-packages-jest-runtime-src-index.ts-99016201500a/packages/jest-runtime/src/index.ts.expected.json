@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "jestjs/jest",
+    "commit": "f23e8f6ff463a00130d7b39865ddf016b9cae4a4",
+    "path": "packages/jest-runtime/src/index.ts",
+    "license": "MIT",
+    "sha256": "99016201500ae927112198615de677767fd18c3769be0e3b3874bd3dbc931e1f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": []
+  }
+}

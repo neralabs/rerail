@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "300b95c3d6035b3ec054255b8426e7ad4b3253cd",
+    "path": "packages/platform-ws/test/ws-adapter.spec.ts",
+    "license": "MIT",
+    "sha256": "a4070c25ba9300bd1f4ae9a8cb6ec15c8c07e371bef5260d3cb81c0a72111dad"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 386,
+        "column": 30
+      },
+      {
+        "line": 387,
+        "column": 17
+      }
+    ]
+  }
+}

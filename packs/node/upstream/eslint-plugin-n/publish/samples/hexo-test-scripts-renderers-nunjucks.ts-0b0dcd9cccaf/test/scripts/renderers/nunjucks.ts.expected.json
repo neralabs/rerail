@@ -1,0 +1,48 @@
+{
+  "source": {
+    "repo": "hexojs/hexo",
+    "commit": "059cb17494d0632a053c24077f5bcb6ae92acc51",
+    "path": "test/scripts/renderers/nunjucks.ts",
+    "license": "MIT",
+    "sha256": "0b0dcd9cccaf4a37123ce79032868c426061bddca97d1a53a9ef2f32b6880f03"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-sync": [
+      {
+        "line": 99,
+        "column": 26
+      },
+      {
+        "line": 104,
+        "column": 9
+      },
+      {
+        "line": 111,
+        "column": 9
+      },
+      {
+        "line": 114,
+        "column": 9
+      }
+    ],
+    "n-prefer-node-protocol": [
+      {
+        "line": 3,
+        "column": 31
+      },
+      {
+        "line": 4,
+        "column": 52
+      },
+      {
+        "line": 5,
+        "column": 24
+      }
+    ]
+  }
+}

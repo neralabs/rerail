@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "knex/knex",
+    "commit": "dab051b6da862c153b26df5b5e5f6c999a5994cf",
+    "path": "test/unit/dialects/better-sqlite3.js",
+    "license": "MIT",
+    "sha256": "ee598298b0bdc5bfe6de8d33564bd802ae406c68a8f72416df1eec2b25e9c48a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-path-concat": [
+      {
+        "line": 58,
+        "column": 21
+      },
+      {
+        "line": 74,
+        "column": 21
+      },
+      {
+        "line": 91,
+        "column": 21
+      }
+    ]
+  }
+}

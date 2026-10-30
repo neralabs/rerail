@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "065908956bae6c937de367cddf6ba3a5a092facb",
+    "path": "src/WebSocket.js",
+    "license": "Apache-2.0",
+    "sha256": "3a0a78f5bce2700983c5c1fba391143046f48feeb1407dbc45b9eaf777c66c47"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-text-decoder": [
+      {
+        "line": 15,
+        "column": 17
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "91dd763b42cc8439b3bae1bfda120c5f60aeea0a",
+    "path": "packages/engine.io/lib/transports/polling.ts",
+    "license": "MIT",
+    "sha256": "5ed17d87868af3afa4194c76efb17231a90580f63e5f722ecb072e81a7fce5ca"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-callback-return": []
+  }
+}

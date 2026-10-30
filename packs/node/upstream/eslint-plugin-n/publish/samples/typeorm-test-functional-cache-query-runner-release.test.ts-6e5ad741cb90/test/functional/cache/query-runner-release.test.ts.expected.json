@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "typeorm/typeorm",
+    "commit": "3883d764aa597985b0d93c9db0af502090fbdaea",
+    "path": "test/functional/cache/query-runner-release.test.ts",
+    "license": "MIT",
+    "sha256": "6e5ad741cb904b387364835c306f786d7a2303ea384a8283f631b51b0188bf1a"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-path-concat": [
+      {
+        "line": 19,
+        "column": 24
+      }
+    ]
+  }
+}

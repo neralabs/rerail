@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "ec3ef7b1bd2b871f20a2d2f4c158c868f46dd87c",
+    "path": "packages/create-discord-bot/template/TypeScript/src/util/loaders.ts",
+    "license": "Apache-2.0",
+    "sha256": "86845f8841c4a115e8d7e9c3eded31365d2ad52869162d9923569466d10771be"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": [
+      {
+        "line": 4,
+        "column": 25
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "bb47dc6da2399a8f76c0c0c3273e6bc314c480e5",
+    "path": "lib/cli-engine/lint-result-cache.js",
+    "license": "MIT",
+    "sha256": "91f1b160e43656b42c4b7c2dfb4a413e496cd6706f2caca7026d41a9e2c08c32"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": []
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "verdaccio/verdaccio",
+    "commit": "0fc30510992197f0f3c8d94e976cac85fcdea5d8",
+    "path": "packages/plugins/local-storage/tests/upload-failure.test.ts",
+    "license": "MIT",
+    "sha256": "87e89f06c00bfaa8085695b01de34eaa9c38dedf0241f31d5668e1fe4fd36d15"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-promises-fs": []
+  }
+}

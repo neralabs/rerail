@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "135f999b6dd89ab16e10f3a8b36012c15ffcf9a6",
+    "path": "integration/nest-application/get-url/e2e/utils.ts",
+    "license": "MIT",
+    "sha256": "64d028a3f31509c4114fee1334fc28dc2e066fdb9a26c60b3e4b01d68ccf222c"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 37,
+        "column": 20
+      }
+    ]
+  }
+}

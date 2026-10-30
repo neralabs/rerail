@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "gatsbyjs/gatsby",
+    "commit": "e85d62f1779e353eaac1753211629a26d123e26c",
+    "path": "e2e-tests/adapters/scripts/deploy-and-run/netlify.mjs",
+    "license": "MIT",
+    "sha256": "1e6eceedf066856ee5522014b3320b1bf015aeb5ec05633fa12b9638e3fa2e3e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 3,
+        "column": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "verdaccio/verdaccio",
+    "commit": "7590fb51ff6ee49616dbedbbf48c706f76487eef",
+    "path": "packages/store/src/storage.ts",
+    "license": "MIT",
+    "sha256": "22b996c819e572b289468f887838850691681dddd92fa08218f5ddf55c80c73f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-url": []
+  }
+}

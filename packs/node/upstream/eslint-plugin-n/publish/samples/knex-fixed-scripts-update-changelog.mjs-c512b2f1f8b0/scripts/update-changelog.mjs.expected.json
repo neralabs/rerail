@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "knex/knex",
+    "commit": "96985f755c39beb5864872328eecbd9264501488",
+    "path": "scripts/update-changelog.mjs",
+    "license": "MIT",
+    "sha256": "c512b2f1f8b03f61966aeb4a5ecf834432de69ee0682d7d3d3a1c7521b983ef2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-hashbang": []
+  }
+}

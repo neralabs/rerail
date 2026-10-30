@@ -1,0 +1,23 @@
+{
+  "source": {
+    "repo": "fastify/fastify",
+    "commit": "0d945819bebc08f4ca666d8283c03a26ed9706a0",
+    "path": "types/context.d.ts",
+    "license": "MIT",
+    "sha256": "285b28faf277ab4916080fa26d189874ffd25d79bec85f0fa6fc6154b09542ae"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-prefer-global-buffer": [],
+    "n-prefer-global-console": [],
+    "n-prefer-global-process": [],
+    "n-prefer-global-text-decoder": [],
+    "n-prefer-global-text-encoder": [],
+    "n-prefer-global-url": [],
+    "n-prefer-global-url-search-params": []
+  }
+}

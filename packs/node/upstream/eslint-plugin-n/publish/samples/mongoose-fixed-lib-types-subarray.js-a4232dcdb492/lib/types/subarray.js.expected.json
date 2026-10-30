@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "Automattic/mongoose",
+    "commit": "4edd44f6174f892a20ebb808b63b26c362a97763",
+    "path": "lib/types/subarray.js",
+    "license": "MIT",
+    "sha256": "a4232dcdb4926e8f3d4db6854722b72a5ff95f06dffaeb9c781b84de0d3bdeef"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-exports-assign": []
+  }
+}

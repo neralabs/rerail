@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "expressjs/express",
+    "commit": "0b746953c4bd8e377123527db11f9cd866e39f94",
+    "path": "test/res.location.js",
+    "license": "MIT",
+    "sha256": "6e4fb950f279fe9831f1195e78b4f9d3f826e7b1fbc28ed766dd8d024f1fdfc6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-deprecated-api": []
+  }
+}

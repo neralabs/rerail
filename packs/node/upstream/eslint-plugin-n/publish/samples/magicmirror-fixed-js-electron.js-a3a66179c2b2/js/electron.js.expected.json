@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "MagicMirrorOrg/MagicMirror",
+    "commit": "b9b7d2c95d723bd1b27889f44e15c6ea177f8b4d",
+    "path": "js/electron.js",
+    "license": "MIT",
+    "sha256": "a3a66179c2b2af1b57021166823d25cf9e7cf1eaa29e7d45607ff3e05328db50"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-callback-literal": []
+  }
+}

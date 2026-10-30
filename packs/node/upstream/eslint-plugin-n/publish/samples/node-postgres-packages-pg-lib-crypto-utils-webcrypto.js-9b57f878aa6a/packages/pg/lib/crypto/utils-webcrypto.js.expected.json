@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "brianc/node-postgres",
+    "commit": "3644730d2b06be57bcb8fb9007b5f4ca8b56da83",
+    "path": "packages/pg/lib/crypto/utils-webcrypto.js",
+    "license": "MIT",
+    "sha256": "9b57f878aa6ac3e1627ad4911eb610be33551d2f26be2975892260369ec894e8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-crypto": [
+      {
+        "line": 16,
+        "column": 19
+      }
+    ]
+  }
+}

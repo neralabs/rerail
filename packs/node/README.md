@@ -9,9 +9,11 @@ template with an invalid escape), against:
 
 - **the plugin's own findings on its rule tests** (`fixtures`);
 - **the tool-pack's real-code samples** (`samples.lock`, `SAMPLES.md`): files from fastify and prettier labelled with
-  the plugin's findings, and the Node test set: 323 real files from 49 MIT and Apache-2.0 repositories, each at the
-  commit that introduced a violation of one rule (about ten per rule), beside its nearest package.json, labelled with
-  the plugin's findings for that rule, and 279 copies with those findings fixed by hand, clean for it.
+  the plugin's findings, and the Node test set: 294 real files from 48 repositories, each at the commit that
+  introduced a violation of one rule (about ten per rule), beside its nearest package.json, labelled with the plugin's
+  findings for that rule, and 270 copies with those findings fixed by hand, clean for it. Each file is under the MIT,
+  Apache-2.0 or BSD-3-Clause licence its repository gave it at that commit, whose text the archive's `LICENSES.md`
+  holds.
 
 32 ports ship, 6 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
 `n-no-deprecated-api`, `n-no-exports-assign`, `n-no-process-exit`, `n-no-unsupported-features-es-builtins`,

@@ -1,0 +1,30 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "d2d753fed4435015c2d83fe62e676b44e07fa3f7",
+    "path": "packages/socket.io/test/server-attachment.ts",
+    "license": "MIT",
+    "sha256": "c44a130845b56cd37b9d4d525450388c59f6e25ad4008a31cf419d4abcda4ee2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-unsupported-features-node-builtins": [
+      {
+        "line": 207,
+        "column": 25
+      },
+      {
+        "line": 218,
+        "column": 25
+      },
+      {
+        "line": 226,
+        "column": 25
+      }
+    ]
+  }
+}

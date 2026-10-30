@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "nodejs/undici",
+    "commit": "5453139e5e41f2da368db740c95f8451cce8aee1",
+    "path": "lib/mock/snapshot-recorder.js",
+    "license": "MIT",
+    "sha256": "31309077414f4fe9c7e240b73dadad1d8c461cfe126d0c2e542bd92a0a61b0c6"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-timers": [
+      {
+        "line": 5,
+        "column": 9
+      },
+      {
+        "line": 5,
+        "column": 21
+      }
+    ]
+  }
+}

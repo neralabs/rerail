@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "dherault/serverless-offline",
+    "commit": "113ececc49c9004f67390c817fea54c50788720d",
+    "path": "src/events/http/lambda-events/__tests__/LambdaProxyIntegrationEventV2.test.js",
+    "license": "MIT",
+    "sha256": "7ac637379e1c29b5ff36a35decbbeef5e7d23b144251c035f3d1141626c30d95"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-buffer": []
+  }
+}

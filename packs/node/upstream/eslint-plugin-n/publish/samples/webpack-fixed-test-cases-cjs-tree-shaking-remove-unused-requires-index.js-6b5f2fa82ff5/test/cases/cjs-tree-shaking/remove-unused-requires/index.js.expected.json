@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "webpack/webpack",
+    "commit": "2fbbcf59e25554cf8e5629df237d41e9dcc9fc20",
+    "path": "test/cases/cjs-tree-shaking/remove-unused-requires/index.js",
+    "license": "MIT",
+    "sha256": "6b5f2fa82ff5659b30482e4081ada5ceb91de5463c3e9c17115617bb5acc4a77"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-new-require": []
+  }
+}

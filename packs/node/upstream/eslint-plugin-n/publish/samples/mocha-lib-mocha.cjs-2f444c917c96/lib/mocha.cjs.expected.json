@@ -1,0 +1,202 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "123b2d5c9da27c0df71a8b3a072c319dfdb9ef34",
+    "path": "lib/mocha.cjs",
+    "license": "MIT",
+    "sha256": "2f444c917c969321dc9f4d4d1112c0c3ae56f4e290b5b501bc4b8fa39a439b9f"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-exports-style": [
+      {
+        "line": 37,
+        "column": 1
+      },
+      {
+        "line": 85,
+        "column": 1
+      },
+      {
+        "line": 88,
+        "column": 1
+      },
+      {
+        "line": 93,
+        "column": 1
+      },
+      {
+        "line": 94,
+        "column": 1
+      },
+      {
+        "line": 95,
+        "column": 1
+      },
+      {
+        "line": 100,
+        "column": 1
+      },
+      {
+        "line": 101,
+        "column": 1
+      },
+      {
+        "line": 102,
+        "column": 1
+      },
+      {
+        "line": 103,
+        "column": 1
+      },
+      {
+        "line": 106,
+        "column": 1
+      },
+      {
+        "line": 112,
+        "column": 1
+      },
+      {
+        "line": 118,
+        "column": 1
+      },
+      {
+        "line": 121,
+        "column": 1
+      },
+      {
+        "line": 124,
+        "column": 1
+      },
+      {
+        "line": 127,
+        "column": 1
+      },
+      {
+        "line": 133,
+        "column": 1
+      },
+      {
+        "line": 139,
+        "column": 1
+      },
+      {
+        "line": 142,
+        "column": 1
+      },
+      {
+        "line": 145,
+        "column": 1
+      },
+      {
+        "line": 148,
+        "column": 1
+      },
+      {
+        "line": 148,
+        "column": 21
+      },
+      {
+        "line": 149,
+        "column": 1
+      },
+      {
+        "line": 149,
+        "column": 15
+      },
+      {
+        "line": 150,
+        "column": 1
+      },
+      {
+        "line": 150,
+        "column": 17
+      },
+      {
+        "line": 151,
+        "column": 1
+      },
+      {
+        "line": 151,
+        "column": 22
+      },
+      {
+        "line": 152,
+        "column": 1
+      },
+      {
+        "line": 152,
+        "column": 25
+      },
+      {
+        "line": 153,
+        "column": 1
+      },
+      {
+        "line": 153,
+        "column": 17
+      },
+      {
+        "line": 154,
+        "column": 1
+      },
+      {
+        "line": 154,
+        "column": 20
+      },
+      {
+        "line": 155,
+        "column": 1
+      },
+      {
+        "line": 155,
+        "column": 16
+      },
+      {
+        "line": 156,
+        "column": 1
+      },
+      {
+        "line": 172,
+        "column": 20
+      },
+      {
+        "line": 172,
+        "column": 42
+      },
+      {
+        "line": 229,
+        "column": 23
+      },
+      {
+        "line": 367,
+        "column": 21
+      },
+      {
+        "line": 1015,
+        "column": 5
+      },
+      {
+        "line": 1017,
+        "column": 3
+      },
+      {
+        "line": 1018,
+        "column": 3
+      },
+      {
+        "line": 1125,
+        "column": 27
+      },
+      {
+        "line": 1139,
+        "column": 7
+      }
+    ]
+  }
+}

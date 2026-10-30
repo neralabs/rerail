@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "louislam/uptime-kuma",
+    "commit": "73f199f4bd25baac094d6429931b29da7ff63eff",
+    "path": "server/monitor-types/ntp.js",
+    "license": "MIT",
+    "sha256": "6093079e8ac81f4bbdcd2553c62f2e630b1feb95635c8ff2e5429897be70c841"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-promises-dns": []
+  }
+}

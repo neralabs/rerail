@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "meteor/meteor",
+    "commit": "2881a5e68b6b1d80f6787cef5ef8114e5398f7d5",
+    "path": "tools/native-tests/scripts/run.js",
+    "license": "MIT",
+    "sha256": "c23e0ce6829352a875da65595651f263c734ed54b14eccdce8cb4f9bedc74532"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-hashbang": [
+      {
+        "line": 1,
+        "column": 1
+      }
+    ]
+  }
+}

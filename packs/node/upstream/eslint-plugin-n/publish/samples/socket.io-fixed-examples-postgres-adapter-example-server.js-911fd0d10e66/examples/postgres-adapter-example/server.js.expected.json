@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "6e9bff4fcf2a76ae71274af320f008aec1eadfce",
+    "path": "examples/postgres-adapter-example/server.js",
+    "license": "MIT",
+    "sha256": "911fd0d10e66500831b570d24649ac481001c0d038b8246e34c00a46eaaef131"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-top-level-await": []
+  }
+}

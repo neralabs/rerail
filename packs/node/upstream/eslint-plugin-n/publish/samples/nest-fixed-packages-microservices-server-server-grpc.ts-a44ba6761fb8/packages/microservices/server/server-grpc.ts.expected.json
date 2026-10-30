@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "nestjs/nest",
+    "commit": "7568c3c34df6dd6f1d18b11f2766161e242911bf",
+    "path": "packages/microservices/server/server-grpc.ts",
+    "license": "MIT",
+    "sha256": "a44ba6761fb8afe49d759cd0cab0a960fb6f348ef12a4fea0490a7be6badc96e"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-callback-return": []
+  }
+}

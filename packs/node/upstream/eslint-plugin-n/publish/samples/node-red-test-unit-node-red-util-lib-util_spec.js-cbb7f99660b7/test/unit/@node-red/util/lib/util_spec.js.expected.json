@@ -1,0 +1,58 @@
+{
+  "source": {
+    "repo": "node-red/node-red",
+    "commit": "a6cbceed28f680f702f8a2ba1d6d81a5f25a214e",
+    "path": "test/unit/@node-red/util/lib/util_spec.js",
+    "license": "Apache-2.0",
+    "sha256": "cbb7f99660b7dadeebdedf200b9514ceba4a4617d824040fe0a37a80e69afa83"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": [
+      {
+        "line": 445,
+        "column": 67
+      },
+      {
+        "line": 613,
+        "column": 70
+      },
+      {
+        "line": 624,
+        "column": 70
+      },
+      {
+        "line": 635,
+        "column": 70
+      },
+      {
+        "line": 646,
+        "column": 55
+      },
+      {
+        "line": 658,
+        "column": 55
+      },
+      {
+        "line": 669,
+        "column": 55
+      },
+      {
+        "line": 680,
+        "column": 55
+      },
+      {
+        "line": 691,
+        "column": 70
+      },
+      {
+        "line": 702,
+        "column": 70
+      }
+    ]
+  }
+}

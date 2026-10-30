@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "less/less.js",
+    "commit": "0925cf195704f32ddb9e071a58db320eb26fa1ee",
+    "path": "packages/less/test/less-test.js",
+    "license": "Apache-2.0",
+    "sha256": "0882e79164405f0541ce91aad5f1d9ec25c60ced66855e3059d81a4e800ba2cb"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": []
+  }
+}

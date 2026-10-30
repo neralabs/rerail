@@ -1,0 +1,32 @@
+{
+  "source": {
+    "repo": "mochajs/mocha",
+    "commit": "41e24a242944da0cfc9d4d6989dede85f648cb40",
+    "path": "test/compiler-fixtures/js.fixture.js",
+    "license": "MIT",
+    "sha256": "17a82ea816a0d1b9a9250e53329851c50183683f2c0d64dd2d1167855878e089"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-deprecated-api": [
+      {
+        "line": 5,
+        "column": 18
+      },
+      {
+        "line": 6,
+        "column": 1
+      }
+    ],
+    "n-prefer-node-protocol": [
+      {
+        "line": 3,
+        "column": 20
+      }
+    ]
+  }
+}

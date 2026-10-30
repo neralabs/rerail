@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "pnpm/pnpm",
+    "commit": "8aec5067cc25105d0b11a16d60cc0cdb67ce7309",
+    "path": ".github/scripts/run-ts-tests-chunk.mjs",
+    "license": "MIT",
+    "sha256": "65d87bb0e765680b264f6a06081706408a788dd0f328be5fb72300f3d5702139"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-console": [
+      {
+        "line": 3,
+        "column": 1
+      }
+    ]
+  }
+}

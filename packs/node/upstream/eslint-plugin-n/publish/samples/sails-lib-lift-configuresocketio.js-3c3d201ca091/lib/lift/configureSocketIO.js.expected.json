@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "balderdashy/sails",
+    "commit": "a412da3bdb7c73e772d9c8e4b791e60bd9ac077a",
+    "path": "lib/lift/configureSocketIO.js",
+    "license": "MIT",
+    "sha256": "3c3d201ca0911a85ac2524c90f3a667c6bee79b1a011fcceaba1e956a1b914c7"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-new-require": [
+      {
+        "line": 13,
+        "column": 25
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "repo": "sequelize/sequelize",
+    "commit": "2a78517d8092a0ab0ea4a6b84c00b4f15df3baa9",
+    "path": "lib/dialects/abstract/connection-manager.js",
+    "license": "MIT",
+    "sha256": "57fb1f33f52fe3a427d9c62b2a872bdb32823a89ea99e79de82cb39762bbe6e5"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-timers": [
+      {
+        "line": 271,
+        "column": 33
+      },
+      {
+        "line": 288,
+        "column": 13
+      }
+    ]
+  }
+}

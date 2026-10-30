@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-handlebars/loc.js",
+    "license": "MIT",
+    "sha256": "6a379237d582a2aa149fb8eeb5d8604241dc642e2cbe0e32b290793867f4323d"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-mixed-requires": []
+  }
+}

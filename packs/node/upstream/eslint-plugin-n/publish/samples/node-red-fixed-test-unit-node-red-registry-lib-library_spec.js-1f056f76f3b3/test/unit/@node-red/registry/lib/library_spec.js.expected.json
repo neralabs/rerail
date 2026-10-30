@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "node-red/node-red",
+    "commit": "7de0984d6d31f0b12a733c6da029ded96902808e",
+    "path": "test/unit/@node-red/registry/lib/library_spec.js",
+    "license": "Apache-2.0",
+    "sha256": "1f056f76f3b3a00232a3106c9317fa9e564d1901bf979433a67e342a612fa7b2"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-no-path-concat": []
+  }
+}

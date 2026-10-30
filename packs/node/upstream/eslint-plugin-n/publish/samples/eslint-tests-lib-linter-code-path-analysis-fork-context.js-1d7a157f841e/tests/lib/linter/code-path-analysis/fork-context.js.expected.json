@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "54080dad4f77bb39a1a843933d4ff3a2b7c175e2",
+    "path": "tests/lib/linter/code-path-analysis/fork-context.js",
+    "license": "MIT",
+    "sha256": "1d7a157f841ec35dc784fd899c6859372b61b71faaefc6e0ecf620f043f301be"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-import-assert-strict": [
+      {
+        "line": 8,
+        "column": 24
+      }
+    ]
+  }
+}

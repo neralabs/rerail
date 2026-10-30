@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "socketio/socket.io",
+    "commit": "6bb2e7f5fb7c548f0776328b4a19719723e27efd",
+    "path": "packages/socket.io/lib/contrib/base64id.ts",
+    "license": "MIT",
+    "sha256": "e4f9ffa0f44fa40d1a3c2515b946caa6c2232ba32dd02ca69771058311683ff8"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-handle-callback-err": [
+      {
+        "line": 56,
+        "column": 39
+      }
+    ]
+  }
+}

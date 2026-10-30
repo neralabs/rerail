@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "prettier/prettier",
+    "commit": "5927216227411bc2cdaf30d50559e0a475ab4832",
+    "path": "src/language-css/print/css-units.evaluate.js",
+    "license": "MIT",
+    "sha256": "8bd8a305c34d755ff0b9c2450a89dcdcc017a61fa7987d194068add07feac9dc"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "corpus recording"
+  },
+  "expected": {
+    "n-no-new-require": []
+  }
+}

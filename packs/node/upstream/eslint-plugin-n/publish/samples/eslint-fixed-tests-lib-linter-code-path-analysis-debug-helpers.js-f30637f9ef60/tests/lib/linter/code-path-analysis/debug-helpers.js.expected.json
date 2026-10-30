@@ -1,0 +1,17 @@
+{
+  "source": {
+    "repo": "eslint/eslint",
+    "commit": "544c0c3da589166ad8e5d634f35d3d06701c57be",
+    "path": "tests/lib/linter/code-path-analysis/debug-helpers.js",
+    "license": "MIT",
+    "sha256": "f30637f9ef60f5f898724a1fa95278e1366897184ad1ee8da15b51ccd0c4a49b"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-process-get-builtin-module": []
+  }
+}

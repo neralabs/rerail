@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo": "discordjs/discord.js",
+    "commit": "68bb8af58ad8720abb998dcaa297f89d3317ffa8",
+    "path": "packages/builders/__tests__/messages/fileBody.test.ts",
+    "license": "Apache-2.0",
+    "sha256": "1fd63cd1d150ef95b71e0420c8a0cfebeb7f7edfd23143a1a0719dd2e794fe15"
+  },
+  "labelledBy": {
+    "tool": "eslint-plugin-n",
+    "version": "18.4.1",
+    "how": "eslint test set"
+  },
+  "expected": {
+    "n-prefer-global-buffer": [
+      {
+        "line": 1,
+        "column": 10
+      }
+    ]
+  }
+}
