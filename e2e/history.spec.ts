@@ -44,7 +44,7 @@ test.describe("History by rule over a mature repository", () => {
     const { origin, manifest } = await rerail.scenario("mature");
     const api = new URL("/api/violations", origin);
     api.search = new URLSearchParams({ ruleId: "eslint-eqeqeq", since: "0", limit: "1", repository: manifest.primary.repositoryKey }).toString();
-    const { violations } = await (await page.request.get(api.href)).json() as { violations: { message: string }[] };
+    const { violations } = await (await rerail.get(api.href)).json() as { violations: { message: string }[] };
     await expect(content(page).locator(".hist .hkv .oc-blocked")).toBeVisible();
     await expect(content(page).locator(".hist .hkv .said2")).toHaveText(violations[0]!.message);
     await expect(violationRows(page).first().locator(".when")).toHaveText(/^\d{2}:\d{2}$/);
@@ -59,7 +59,7 @@ test.describe("History by rule over a mature repository", () => {
     const { origin, manifest } = await rerail.scenario("mature");
     const api = new URL("/api/violations", origin);
     api.search = new URLSearchParams({ ruleId: "eslint-no-console", since: "0", limit: "1", repository: manifest.primary.repositoryKey }).toString();
-    const { total } = await (await page.request.get(api.href)).json() as { total: number };
+    const { total } = await (await rerail.get(api.href)).json() as { total: number };
     expect(total).toBeGreaterThan(25);
 
     await page.goto(await rerail.dashboard("mature", { hash: "history?rule=eslint-no-console" }));

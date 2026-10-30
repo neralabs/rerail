@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, test } from "vitest";
 
 import { gatedToolPacks, readGatesManifest, type GatesManifest } from "../../../conformance/languages/manifest.js";
-import { readFrom, unwatchedTests } from "./support/watch-coverage.js";
+import { readFrom, readsUpstream, unwatchedTests } from "./support/watch-coverage.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
@@ -16,7 +16,9 @@ describe("each gated tool-pack's watch.tests covers every upstream file its gene
   for (const { pack, tool } of gatedToolPacks(ROOT)) {
     test(`${pack}/${tool}`, () => {
       const from = readFrom(ROOT, pack, tool);
-      assert.ok(from.length > 0, `packs/${pack}/upstream/${tool}/provenance.json records no upstream file`);
+      // A tool-pack whose test data is all Rerail's reads no upstream file (complexity/lizard scores Rerail's corpus).
+      if (!readsUpstream(ROOT, pack, tool)) assert.deepEqual(from, []);
+      else assert.ok(from.length > 0, `packs/${pack}/upstream/${tool}/provenance.json records no upstream file`);
       assert.deepEqual(unwatchedTests(ROOT, pack, tool, readGatesManifest(ROOT, pack, tool), from), []);
     });
   }

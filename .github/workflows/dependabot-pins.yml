@@ -1,7 +1,7 @@
 name: Dependabot pins
 
 # Dependabot bumps package.json and its lockfile alone. Some files pin a version in step with a dependency: the
-# standalone OMP host's version and release digests and the playground's SDK follow the OMP SDK, and the ast-grep
+# standalone OMP host's version and release digests follow the OMP SDK, and the ast-grep
 # differential test's reference follows the ast-grep CLI (scripts/deps/sync-pins.mjs). On a Dependabot pull request this
 # brings them along and pushes the result to its branch, so the pull request arrives complete; `npm run check` fails on
 # any pull request that leaves one behind.

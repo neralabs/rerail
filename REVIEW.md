@@ -28,16 +28,17 @@ The code owners are the required reviewers of the `test-data-upload` environment
 - **The run.** The summary's heading names the commit prep packed: it is the PR's head. It says `overlay` or `replace`; `replace` only when the PR stages each tool-pack's whole set (`fixtures:stage --all`), since it drops every file `publish/` lacks.
 - **The archives.** One row per archive (kind, tool-pack, sha256, files, bytes, licences, sources), for exactly the tool-packs the **Pack data waiting to publish** comment lists. A test data archive's licences are its repositories' `licenses/*/UPSTREAM.md` expressions and Apache-2.0 for Rerail's files; a samples archive's Sources column names every repository it takes files from, with its recorded licence, and each is one you expect.
 - **The changes.** Every path added, changed or dropped follows from the PR: added and changed paths from its `publish/` diff, dropped paths from the authored rows it removes (overlay) or the files its staged set lacks (replace). Each list shows at most 50 paths and a replace's dropped files appear nowhere else, so for a longer list pull the base and the head (`npm run fixtures:pull` on each) and compare. Data that no change in the PR explains is a reason to reject.
-- **The judgement.** The PR's CI judged the data as published (`publish/` laid over the locked archives): the conformance check passes, or its failures are explained. On a PR from a fork it did not run ([Known gaps](#known-gaps)).
+- **The judgement.** The PR's CI judged the data as published (`publish/` laid over the locked archives): the conformance check passes, or its failures are explained. A fork's change is published only from the PR that ports it, where CI runs.
 
 Reject the deployment when anything does not follow from the PR: the run then commits nothing and changes no lock, and the comment says the publish failed.
 
 ## Known gaps
 
-- `real-sessions` and `provider-smoke` (real agent sessions) don't run for PRs from forks or from Dependabot, so a host change from either has no real-session evidence in CI. Say so in the review; mark claims about host behaviour `needs-run`.
+- PRs from forks run no CI: maintainers don't approve fork runs, since CI is costly to run. Review a fork's PR as a proposal; what goes in is ported to a branch here, where CI runs ([CONTRIBUTING.md](CONTRIBUTING.md#proposing-a-change-from-your-fork)).
+- `real-sessions` and `provider-smoke` (real agent sessions) don't run for PRs from Dependabot, so a host change from it has no real-session evidence in CI. Say so in the review; mark claims about host behaviour `needs-run`.
 - The Rust job runs only when the paths filter in `.github/workflows/ci.yml` matches. A change that affects the engine through another path gets no Rust run.
 - Pack test data a PR does not track is not in the review checkout; once published, its diff is the `test-data.lock` change (the archive's sha256, file count and bytes). To see what a lock change does to the data, pull the base's and the head's archives (`npm run fixtures:pull` on each) and compare them. CI runs on the archives the PR's locks name, with any `publish/` laid over them; it never derives data again.
-- PRs from forks and from Dependabot get no OIDC token, so the jobs that read pack test data (`test-data`, `unit`, `rust`, `tools` with the conformance check, the **Conformance** comment and **Pack test data is in S3**) skip, and run when the change reaches `main`. Only structure metric #3 gates such a PR's pack data. Say so in the review, and mark claims about conformance and the data `needs-run` until a maintainer has run `npm run fixtures:pull`, `npm test` and `npm run test:conformance` on the head.
+- PRs from Dependabot get no OIDC token, so the jobs that read pack test data (`test-data`, `unit`, `rust`, `tools` with the conformance check, the **Conformance** comment and **Pack test data is in S3**) skip, and run when the change reaches `main`. Only structure metric #3 gates such a PR's pack data. Say so in the review, and mark claims about conformance and the data `needs-run` until a maintainer has run `npm run fixtures:pull`, `npm test` and `npm run test:conformance` on the head.
 - Git LFS files (`model/model.safetensors`, `native/src/code_rule_dsl/value/names/names.bin`) are pointer files in the review checkout; their diff is the pointer, not the content.
 
 ## High-risk areas
@@ -50,7 +51,7 @@ Reject the deployment when anything does not follow from the PR: the run then co
 
 ## Reviewer settings
 
-Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. A PR over the summary-only threshold (50,000 changed lines by default; set `largePrLines` here to change it) gets a summary-only review unless someone comments `@neralabs-ci review full`. Generated paths don't count toward that threshold; they are the files in `scripts/generate/README.md`, the packs' upstream test data (the fixtures, tests, expected findings and lock files under `packs/*/upstream/<tool>/`; not its `gates.yaml`, which declares the upstream pins and facts, nor the scripts and `UPSTREAM.md` beside them), and the regenerated grammar tables.
+Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. A PR over the summary-only threshold (50,000 changed lines by default; set `largePrLines` here to change it) gets a summary-only review unless someone comments `@neralabs-reviewer review full`. Generated paths don't count toward that threshold; they are the files in `scripts/generate/README.md`, the packs' upstream test data (the fixtures, tests, expected findings and lock files under `packs/*/upstream/<tool>/`; not its `gates.yaml`, which declares the upstream pins and facts, nor the scripts and `UPSTREAM.md` beside them), and the regenerated grammar tables.
 
 ```json reviewer
 {

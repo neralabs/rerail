@@ -145,19 +145,22 @@ export function closePanel() {
 /* ---------- navigation ---------- */
 
 /**
- * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now. The
- * view's `enter(route)` runs when it is entered, and again when the route carries a History rule or a session.
+ * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now; leaving
+ * the catalog forgets the packs it removed. The view's `enter(route)` runs when it is entered, and again when the
+ * route carries a History rule or chip, or a session.
  */
 export function go(route) {
   const moved = route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
   if (moved) {
     closePanel();
+    if (ui.view === "packs") ui.removedPacks.clear();
     ui.view = route.view;
     ui.pack = route.view === "pack" ? route.pack : null;
     ui.removeAsk = null;
     window.scrollTo(0, 0);
   }
-  if (moved || route.filterRule !== undefined || route.session !== undefined) hooks.enter(route);
+  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined;
+  if (moved || carries) hooks.enter(route);
   invalidate();
   if (moved) refreshNow();
 }
@@ -167,10 +170,10 @@ let pendingSession = null;
 /** A `#rule/<id>` link, checked once the first rules list is in. */
 let pendingRule = null;
 
-/** Mirror the page into the URL (`replaceState`): the view, its pack or rule, the open rule sheet and the selected session. */
+/** Mirror the page into the URL (`replaceState`): the view, its pack, rule or chip, the open rule sheet and the selected session. */
 export function syncUrl() {
   if (pendingSession !== null) return; // the deep link is still to be applied; a render must not overwrite it
-  const route = { view: ui.view, pack: ui.pack ?? undefined, filterRule: ui.actRule ?? undefined, rule: panelRuleId() ?? undefined };
+  const route = { view: ui.view, pack: ui.pack ?? undefined, filterRule: ui.actRule ?? undefined, outcome: ui.histOutcome, sessionFilter: ui.sessFilter, rule: panelRuleId() ?? undefined };
   const href = urlFor(location.href, route, ui.view === "sessions" ? ui.selectedSession : null);
   if (href !== location.href) history.replaceState(null, "", href);
 }
@@ -179,6 +182,7 @@ export function syncUrl() {
 function resetRepositoryView() {
   ui.welcomeDismissed = false;
   ui.actRule = null;
+  ui.histOutcome = "all";
   pendingRule = null;
   closePanel();
 }

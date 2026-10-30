@@ -1,0 +1,176 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "complexity-cyclomatic-blade",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep functions in Blade templates at cyclomatic complexity 6 or below, counting each if, elseif, loop, catch, switch, match, ternary and && or ||; branch-heavy functions are hard to follow and test.",
+  "scope": {
+    "include": [
+      "**/*.blade.php"
+    ],
+    "exclude": [
+      "**/vendor/**",
+      "**/node_modules/**",
+      "**/tests/**",
+      "**/Tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "complexity",
+      "define": {
+        "language": "blade",
+        "utils": {
+          "boundary": {
+            "any": [
+              {
+                "kind": "function_definition"
+              },
+              {
+                "kind": "method_declaration"
+              },
+              {
+                "kind": "anonymous_function"
+              }
+            ]
+          },
+          "decision": {
+            "any": [
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "else_if_clause"
+              },
+              {
+                "kind": "for_statement"
+              },
+              {
+                "kind": "foreach_statement"
+              },
+              {
+                "kind": "while_statement"
+              },
+              {
+                "kind": "do_statement"
+              },
+              {
+                "kind": "catch_clause"
+              },
+              {
+                "kind": "switch_statement",
+                "has": {
+                  "kind": "switch_block",
+                  "has": {
+                    "kind": "case_statement"
+                  }
+                }
+              },
+              {
+                "kind": "match_expression"
+              },
+              {
+                "kind": "conditional_expression",
+                "has": {
+                  "field": "body",
+                  "pattern": "$_"
+                }
+              },
+              {
+                "kind": "binary_expression",
+                "has": {
+                  "field": "operator",
+                  "regex": "^(?:&&|\\|\\||(?i:and|or))$"
+                }
+              }
+            ]
+          },
+          "too-complex": {
+            "matches": "boundary",
+            "count": {
+              "has": {
+                "matches": "decision",
+                "stopBy": {
+                  "matches": "boundary"
+                }
+              },
+              "min": 6,
+              "as": "CCN",
+              "offset": 1
+            }
+          },
+          "named": {
+            "any": [
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "assignment_expression",
+                  "stopBy": "neighbor",
+                  "has": {
+                    "field": "left",
+                    "pattern": "$NAME"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "too-complex",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "all": [
+              {
+                "matches": "too-complex"
+              },
+              {
+                "matches": "named"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CYCLOMATIC_COMPLEXITY",
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+      }
+    },
+    {
+      "id": "too-complex-anonymous",
+      "forbid": {
+        "ast": {
+          "language": "blade",
+          "embedded": "compiled-view",
+          "rule": {
+            "all": [
+              {
+                "matches": "too-complex"
+              },
+              {
+                "not": {
+                  "matches": "named"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CYCLOMATIC_COMPLEXITY",
+        "message": "This function has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+      }
+    }
+  ]
+}

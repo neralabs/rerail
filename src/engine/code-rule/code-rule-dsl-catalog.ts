@@ -27,11 +27,11 @@ import {
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../catalog/repository-identity.js";
-import { checkoutStatus, parentCheckouts, recordedCheckoutsVersion } from "../catalog/repository-registry.js";
+import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion } from "../catalog/repository-registry.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, repositories, ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
@@ -351,10 +351,7 @@ export class CheckoutCatalogs {
 
   /** Whether audits in `root` leave out files Git ignores: its repository's setting, on for a checkout not recorded. */
   followsGitignore(root: string): boolean {
-    const repositoryKey = this.#entry(root).checkout?.repositoryKey;
-    if (repositoryKey === undefined) return true;
-    return this.database.select({ followGitignore: repositories.followGitignore }).from(repositories)
-      .where(eq(repositories.repositoryKey, repositoryKey)).get()?.followGitignore ?? true;
+    return followsGitignore(this.database, this.#entry(root).checkout);
   }
 
   /** The checkout and its recorded parent checkouts, whose settings apply in it. */

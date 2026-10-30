@@ -5,13 +5,13 @@
  */
 
 .pwrap{display:flex;flex-direction:column;min-height:0;height:100%}
-.phead{padding:18px 20px 20px;background:var(--sheet-bg);flex:none}
+.phead{padding:18px 20px 20px;background:var(--card);flex:none}
 .phead .ptop{display:flex;align-items:flex-start;gap:10px}
 .phead .ptop > div{flex:1;min-width:0}
 .phead .ptop .picon{margin-top:2px}
 .phead .eyebrow{font-size:12px;letter-spacing:.02em;color:var(--muted-foreground);font-weight:600}
 /* The title clamps at two lines; the full title is its tooltip. Without an eyebrow it sits flush at the top. */
-.phead h2{margin:0;font-size:17px;line-height:1.3;font-weight:600;color:var(--header-primary);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.phead h2{margin:0;font-size:17px;line-height:1.3;font-weight:600;color:var(--header);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 .phead .eyebrow + h2{margin-top:4px}
 .phead .x{margin-left:auto;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted-foreground);flex:none}
 .phead .x:hover{background:var(--subtle)}
@@ -20,14 +20,15 @@
 .pact{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:12px;font-size:13px}
 .pact .grow{flex:1}
 .pact .muted{font-size:12.5px}
-.pask{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--box);padding:10px 12px}
+.pask{margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--panel-box);padding:10px 12px}
 .pask .lbl{font-size:12px;font-weight:600;color:var(--muted-foreground);margin:0 0 8px}
 .pask .why{margin:12px 0 0;font-size:13px;color:var(--muted-foreground);max-width:none}
 .pask textarea{display:block;width:100%;min-height:74px;resize:vertical;font-family:var(--font-mono);font-size:12.5px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-md);padding:8px 10px}
 .pask .foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;margin-top:10px;font-size:12px;color:var(--muted-foreground)}
 .pask .foot .btns{margin-left:auto;display:inline-flex;gap:8px}
-/* Edit with coding agent: opens at the top of the body, closes with its ✕ or the header button. */
-.pbody > .pask.sask{position:relative;margin:12px 0 16px;border:0;border-radius:var(--radius-xl);background:var(--subtle);padding:20px 18px}
+/* Edit with coding agent: opens under the sheet header, at the top of the body; closes with its ✕ or the header
+ * button. It and the inline Edit of What the agent sees are the sheet's expanded boxes: both on the inset fill. */
+.pbody > .pask.sask{position:relative;margin:12px 0 16px;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:20px 18px}
 .pask.sask > .x{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted-foreground)}
 .pask.sask > .x:hover{background:var(--muted)}
 .pask.sask .lbl{font-size:14px;color:var(--foreground);margin:0 0 12px;padding-right:32px}
@@ -36,7 +37,7 @@
 .pask.sask .chip[aria-pressed="true"]{background:transparent;border-color:var(--foreground);color:var(--foreground)}
 .pask.sask .cmd{align-items:flex-start;margin:0;background:var(--card)}
 .pask.sask .cmd textarea{flex:1;min-height:0;border:0;padding:3px 0;background:none;resize:none;field-sizing:content}
-.btn.open{background:var(--brand-subtle);color:var(--brand-foreground);border-color:var(--brand)}
+.btn.open{background:var(--brand-subtle);color:var(--brand-foreground);border-color:var(--brand-border)}
 .btn.open:hover{background:var(--brand-subtle)}
 .pbody{overflow:auto;padding:4px 20px 24px;flex:1;min-height:0}
 .pbody p{margin:0;max-width:52ch;font-size:14px;line-height:1.55;color:var(--foreground)}
@@ -46,20 +47,21 @@
 .pbody .psec .h3row h3{margin:0}
 .psec .h3row .btn{margin:-6px 0}
 .pbody .note2{margin-top:6px;font-size:13px}
-.sees-edit{margin-top:0}
-.enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--inset)}
+.pask.sees-edit{margin-top:0;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:16px 18px}
+.enf{margin:0 0 24px;padding:24px 18px;border-radius:var(--radius-xl);background:var(--sheet-inset)}
 .enf .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin-bottom:14px}
 .enf .modes{display:flex;width:max-content}
-.enf .modes button:disabled{cursor:default}
+.enf .modes button[aria-disabled="true"]{cursor:default}
 .enf .modes button[data-v="block"]{opacity:.55}
-.enf .modes button[aria-pressed="true"][data-v="log"] .ico{color:var(--logged)}
-.enf .modes button[aria-pressed="true"][data-v="steer"] .ico{color:var(--steered)}
+.enf .modes button[aria-pressed="true"][data-v="log"] .ico{color:var(--log-fg)}
+.enf .modes button[aria-pressed="true"][data-v="steer"] .ico{color:var(--steer-fg)}
 .pbody .enf > p{margin:14px 0 0;font-size:13px;line-height:1.5;color:var(--muted-foreground)}
 /* Three separate cards. */
 .pstats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:6px}
-.pstats div{padding:12px 14px;min-width:0;background:var(--inset);border-radius:var(--radius-xl)}
+.pstats div{padding:12px 14px;min-width:0;background:var(--sheet-inset);border-radius:var(--radius-xl)}
 .pstats b{display:block;font-size:18px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pstats span{display:block;font-size:12px;color:var(--muted-foreground);margin-top:2px}
+.pbody .pstats-none{margin:0 0 6px;font-size:13px;color:var(--muted-foreground)}
 .psec{margin-top:38px}
 .pbody .psec h3{margin:0 0 8px;font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground)}
 .desc{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;overflow:hidden}
@@ -81,10 +83,10 @@
 /* Delete: a footer pinned to the sheet's bottom while the content runs past it, resting at the end when it does not. */
 .pbody:has(> .pfoot:not([hidden])){display:flex;flex-direction:column;padding-bottom:0}
 .pbody:has(> .pfoot:not([hidden])) > *{flex:none}
-.pbody .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--sheet-bg)}
+.pbody .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--card)}
 .pbody > :has(+ .pfoot:not([hidden])){margin-bottom:32px}
 .pfoot .pask{margin-top:0}
-.pdelbox{border-color:var(--danger)}
+.pdelbox{border-color:var(--fail-border)}
 .pdelbox .lbl{font-size:13px;color:var(--foreground)}
 .pdelbox ul{margin:0 0 4px;padding-left:18px;font-size:13px;line-height:1.55;color:var(--foreground)}
 .btn.danger.quiet{background:transparent;color:var(--muted-foreground)}
@@ -93,7 +95,7 @@
 .pintro{margin:12px 0 0;font-size:13.5px;line-height:1.5}
 .pbody > .pintro:first-child{margin-top:20px}
 .pbody .pintro + .pintro{margin-top:12px}
-.cmd{display:flex;align-items:center;gap:10px;margin:10px 0 0;padding:8px 8px 8px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--box)}
+.cmd{display:flex;align-items:center;gap:10px;margin:10px 0 0;padding:8px 8px 8px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--panel-box)}
 .cmd code{flex:1;min-width:0;background:none;padding:0;font-size:13px;overflow-wrap:anywhere}
 .cmd + .pintro{margin-top:22px}
 .pgrp{border:1px solid var(--border);border-radius:var(--radius-lg);margin-top:12px;overflow:hidden}

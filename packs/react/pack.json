@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "18 eslint-plugin-react and eslint-plugin-react-hooks rules ported to Rerail, 14 of them on and 4 off until turned on, each scored against the plugin's own findings on its rule tests; 3 more ports are candidates until they pass the conformance check.",
+  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks.",
   "reason": "matches React",
   "match": {
     "any": [
@@ -29,112 +29,660 @@
       "document": "rules/react-button-has-type.json",
       "title": "eslint-plugin-react button-has-type: Disallow usage of `button` elements without an explicit `type` attribute",
       "group": "eslint-plugin-react",
-      "on": false
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Toolbar.jsx",
+          "text": "export function Toolbar({ onSave }) {\n  return <button onClick={onSave}>Save</button>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Toolbar.jsx",
+          "text": "export function Toolbar({ onSave }) {\n  return <button type=\"button\" onClick={onSave}>Save</button>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-error-boundaries",
+      "document": "rules/react-hooks-error-boundaries.json",
+      "title": "eslint-plugin-react-hooks error-boundaries: Validates usage of error boundaries instead of try/catch for errors in child components",
+      "group": "eslint-plugin-react-hooks",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Report.jsx",
+          "text": "import { Chart } from \"./Chart\";\n\nexport function Report({ data }) {\n  try {\n    return <Chart data={data} />;\n  } catch {\n    return <p>Failed</p>;\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Report.jsx",
+          "text": "import { Chart } from \"./Chart\";\n\nexport function Report({ data }) {\n  return <Chart data={data} />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-exhaustive-deps",
+      "document": "rules/react-hooks-exhaustive-deps.json",
+      "title": "eslint-plugin-react-hooks exhaustive-deps: Verifies the list of dependencies for Hooks like useEffect and similar",
+      "mode": "log",
+      "group": "eslint-plugin-react-hooks",
+      "examples": {
+        "caught": {
+          "path": "src/Title.jsx",
+          "text": "import { useEffect } from \"react\";\n\nexport function Title({ title }) {\n  useEffect(() => {\n    document.title = title;\n  }, []);\n  return <h1>{title}</h1>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Title.jsx",
+          "text": "import { useEffect } from \"react\";\n\nexport function Title({ title }) {\n  useEffect(() => {\n    document.title = title;\n  }, [title]);\n  return <h1>{title}</h1>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-globals",
+      "document": "rules/react-hooks-globals.json",
+      "title": "eslint-plugin-react-hooks globals: Validates against assignment/mutation of globals during render",
+      "group": "eslint-plugin-react-hooks",
+      "examples": {
+        "caught": {
+          "path": "src/Counter.jsx",
+          "text": "let renders = 0;\n\nexport function Counter() {\n  renders = renders + 1;\n  return <p>{renders}</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Counter.jsx",
+          "text": "import { useEffect, useRef } from \"react\";\n\nexport function Counter() {\n  const renders = useRef(0);\n  useEffect(() => {\n    renders.current += 1;\n  });\n  return <p>Counter</p>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-immutability",
+      "document": "rules/react-hooks-immutability.json",
+      "title": "eslint-plugin-react-hooks immutability: Validates against mutating props, state, and other values that are immutable",
+      "group": "eslint-plugin-react-hooks",
+      "examples": {
+        "caught": {
+          "path": "src/Card.jsx",
+          "text": "export function Card({ user }) {\n  user.name = user.name.trim();\n  return <h2>{user.name}</h2>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Card.jsx",
+          "text": "export function Card({ user }) {\n  const name = user.name.trim();\n  return <h2>{name}</h2>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-purity",
+      "document": "rules/react-hooks-purity.json",
+      "title": "eslint-plugin-react-hooks purity: Validates that components/hooks are pure by checking known-impure functions",
+      "group": "eslint-plugin-react-hooks",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Stamp.jsx",
+          "text": "export function Stamp() {\n  const now = Date.now();\n  return <time>{now}</time>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Stamp.jsx",
+          "text": "import { useState } from \"react\";\n\nexport function Stamp() {\n  const [now] = useState(() => Date.now());\n  return <time>{now}</time>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-refs",
+      "document": "rules/react-hooks-refs.json",
+      "title": "eslint-plugin-react-hooks refs: Validates correct usage of refs, not reading/writing during render",
+      "group": "eslint-plugin-react-hooks",
+      "examples": {
+        "caught": {
+          "path": "src/Counter.jsx",
+          "text": "import { useRef } from \"react\";\n\nexport function Counter() {\n  const count = useRef(0);\n  return <p>{count.current}</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Counter.jsx",
+          "text": "import { useRef } from \"react\";\n\nexport function Counter() {\n  const count = useRef(0);\n  const onClick = () => {\n    count.current += 1;\n  };\n  return <button type=\"button\" onClick={onClick}>Count</button>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-hooks-rules-of-hooks",
       "document": "rules/react-hooks-rules-of-hooks.json",
       "title": "eslint-plugin-react-hooks rules-of-hooks: Enforces the Rules of Hooks",
-      "group": "eslint-plugin-react-hooks"
+      "group": "eslint-plugin-react-hooks",
+      "examples": {
+        "caught": {
+          "path": "src/Profile.jsx",
+          "text": "import { useState } from \"react\";\n\nexport function Profile({ user }) {\n  if (!user) return null;\n  const [open, setOpen] = useState(false);\n  return <button type=\"button\" onClick={() => setOpen(!open)}>{user.name}</button>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Profile.jsx",
+          "text": "import { useState } from \"react\";\n\nexport function Profile({ user }) {\n  const [open, setOpen] = useState(false);\n  if (!user) return null;\n  return <button type=\"button\" onClick={() => setOpen(!open)}>{user.name}</button>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-set-state-in-effect",
+      "document": "rules/react-hooks-set-state-in-effect.json",
+      "title": "eslint-plugin-react-hooks set-state-in-effect: Validates against calling setState synchronously in an effect",
+      "group": "eslint-plugin-react-hooks",
+      "examples": {
+        "caught": {
+          "path": "src/Name.jsx",
+          "text": "import { useEffect, useState } from \"react\";\n\nexport function Name({ first, last }) {\n  const [full, setFull] = useState(\"\");\n  useEffect(() => {\n    setFull(first + \" \" + last);\n  }, [first, last]);\n  return <p>{full}</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Name.jsx",
+          "text": "export function Name({ first, last }) {\n  const full = first + \" \" + last;\n  return <p>{full}</p>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-set-state-in-render",
+      "document": "rules/react-hooks-set-state-in-render.json",
+      "title": "eslint-plugin-react-hooks set-state-in-render: Validates against setting state during render",
+      "group": "eslint-plugin-react-hooks",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Total.jsx",
+          "text": "import { useState } from \"react\";\n\nexport function Total({ items }) {\n  const [total, setTotal] = useState(0);\n  setTotal(items.length);\n  return <p>{total}</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Total.jsx",
+          "text": "export function Total({ items }) {\n  const total = items.length;\n  return <p>{total}</p>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-hooks-static-components",
+      "document": "rules/react-hooks-static-components.json",
+      "title": "eslint-plugin-react-hooks static-components: Validates that components are static, not recreated every render",
+      "group": "eslint-plugin-react-hooks",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Badge.jsx",
+          "text": "export function Badge({ label }) {\n  const Text = () => <span>{label}</span>;\n  return <Text />;\n}\n"
+        },
+        "passes": {
+          "path": "src/Badge.jsx",
+          "text": "function Text({ label }) {\n  return <span>{label}</span>;\n}\n\nexport function Badge({ label }) {\n  return <Text label={label} />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-iframe-missing-sandbox",
+      "document": "rules/react-iframe-missing-sandbox.json",
+      "title": "eslint-plugin-react iframe-missing-sandbox: Enforce sandbox attribute on iframe elements",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Preview.jsx",
+          "text": "export function Preview({ url }) {\n  return <iframe src={url} title=\"Preview\" />;\n}\n"
+        },
+        "passes": {
+          "path": "src/Preview.jsx",
+          "text": "export function Preview({ url }) {\n  return <iframe src={url} title=\"Preview\" sandbox=\"allow-scripts\" />;\n}\n"
+        }
+      }
     },
     {
       "id": "react-jsx-key",
       "document": "rules/react-jsx-key.json",
       "title": "eslint-plugin-react jsx-key: Disallow missing `key` props in iterators/collection literals",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/List.jsx",
+          "text": "export function List({ items }) {\n  return <ul>{items.map(item => <li>{item.name}</li>)}</ul>;\n}\n"
+        },
+        "passes": {
+          "path": "src/List.jsx",
+          "text": "export function List({ items }) {\n  return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-jsx-no-comment-textnodes",
       "document": "rules/react-jsx-no-comment-textnodes.json",
       "title": "eslint-plugin-react jsx-no-comment-textnodes: Disallow comments from being inserted as text nodes",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Banner.jsx",
+          "text": "export function Banner() {\n  return (\n    <div>\n      // TODO: copy\n      Welcome\n    </div>\n  );\n}\n"
+        },
+        "passes": {
+          "path": "src/Banner.jsx",
+          "text": "export function Banner() {\n  return (\n    <div>\n      {/* TODO: copy */}\n      Welcome\n    </div>\n  );\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-jsx-no-constructed-context-values",
+      "document": "rules/react-jsx-no-constructed-context-values.json",
+      "title": "eslint-plugin-react jsx-no-constructed-context-values: Disallows JSX context provider values from taking values that will cause needless rerenders",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/ThemeProvider.jsx",
+          "text": "import { createContext, useState } from \"react\";\n\nconst Theme = createContext(null);\n\nexport function ThemeProvider({ children }) {\n  const [dark, setDark] = useState(false);\n  return <Theme.Provider value={{ dark, setDark }}>{children}</Theme.Provider>;\n}\n"
+        },
+        "passes": {
+          "path": "src/ThemeProvider.jsx",
+          "text": "import { createContext, useMemo, useState } from \"react\";\n\nconst Theme = createContext(null);\n\nexport function ThemeProvider({ children }) {\n  const [dark, setDark] = useState(false);\n  const value = useMemo(() => ({ dark, setDark }), [dark]);\n  return <Theme.Provider value={value}>{children}</Theme.Provider>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-jsx-no-duplicate-props",
       "document": "rules/react-jsx-no-duplicate-props.json",
       "title": "eslint-plugin-react jsx-no-duplicate-props: Disallow duplicate properties in JSX",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Field.jsx",
+          "text": "export function Field() {\n  return <input name=\"email\" type=\"email\" name=\"login\" />;\n}\n"
+        },
+        "passes": {
+          "path": "src/Field.jsx",
+          "text": "export function Field() {\n  return <input name=\"email\" type=\"email\" />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-jsx-no-leaked-render",
+      "document": "rules/react-jsx-no-leaked-render.json",
+      "title": "eslint-plugin-react jsx-no-leaked-render: Disallow problematic leaked values from being rendered",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Inbox.jsx",
+          "text": "export function Inbox({ count }) {\n  return <div>{count && <span>{count} new</span>}</div>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Inbox.jsx",
+          "text": "export function Inbox({ count }) {\n  return <div>{count > 0 ? <span>{count} new</span> : null}</div>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-jsx-no-script-url",
+      "document": "rules/react-jsx-no-script-url.json",
+      "title": "eslint-plugin-react jsx-no-script-url: Disallow usage of `javascript:` URLs",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Menu.jsx",
+          "text": "export function Menu() {\n  return <a href=\"javascript:void(0)\">Open</a>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Menu.jsx",
+          "text": "export function Menu({ onOpen }) {\n  return <button type=\"button\" onClick={onOpen}>Open</button>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-jsx-no-target-blank",
       "document": "rules/react-jsx-no-target-blank.json",
       "title": "eslint-plugin-react jsx-no-target-blank: Disallow `target=\"_blank\"` attribute without `rel=\"noreferrer\"`",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Docs.jsx",
+          "text": "export function Docs() {\n  return <a href=\"https://example.com/docs\" target=\"_blank\">Docs</a>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Docs.jsx",
+          "text": "export function Docs() {\n  return <a href=\"https://example.com/docs\" target=\"_blank\" rel=\"noreferrer\">Docs</a>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-jsx-no-undef",
       "document": "rules/react-jsx-no-undef.json",
       "title": "eslint-plugin-react jsx-no-undef: Disallow undeclared variables in JSX",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Page.jsx",
+          "text": "export function Page() {\n  return <Header title=\"Home\" />;\n}\n"
+        },
+        "passes": {
+          "path": "src/Page.jsx",
+          "text": "import { Header } from \"./Header\";\n\nexport function Page() {\n  return <Header title=\"Home\" />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-access-state-in-setstate",
+      "document": "rules/react-no-access-state-in-setstate.json",
+      "title": "eslint-plugin-react no-access-state-in-setstate: Disallow when this.state is accessed within setState",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Counter.jsx",
+          "text": "import React from \"react\";\n\nexport class Counter extends React.Component {\n  increment() {\n    this.setState({ count: this.state.count + 1 });\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Counter.jsx",
+          "text": "import React from \"react\";\n\nexport class Counter extends React.Component {\n  increment() {\n    this.setState(state => ({ count: state.count + 1 }));\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-array-index-key",
+      "document": "rules/react-no-array-index-key.json",
+      "title": "eslint-plugin-react no-array-index-key: Disallow usage of Array index in keys",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Todos.jsx",
+          "text": "export function Todos({ todos }) {\n  return <ul>{todos.map((todo, index) => <li key={index}>{todo.title}</li>)}</ul>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Todos.jsx",
+          "text": "export function Todos({ todos }) {\n  return <ul>{todos.map(todo => <li key={todo.id}>{todo.title}</li>)}</ul>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-children-prop",
       "document": "rules/react-no-children-prop.json",
       "title": "eslint-plugin-react no-children-prop: Disallow passing of children as props",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Card.jsx",
+          "text": "import { Panel } from \"./Panel\";\n\nexport function Card() {\n  return <Panel children=\"Hello\" />;\n}\n"
+        },
+        "passes": {
+          "path": "src/Card.jsx",
+          "text": "import { Panel } from \"./Panel\";\n\nexport function Card() {\n  return <Panel>Hello</Panel>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-danger",
       "document": "rules/react-no-danger.json",
       "title": "eslint-plugin-react no-danger: Disallow usage of dangerous JSX properties",
       "group": "eslint-plugin-react",
-      "on": false
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Bio.jsx",
+          "text": "export function Bio({ html }) {\n  return <div dangerouslySetInnerHTML={{ __html: html }} />;\n}\n"
+        },
+        "passes": {
+          "path": "src/Bio.jsx",
+          "text": "export function Bio({ text }) {\n  return <div>{text}</div>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-danger-with-children",
       "document": "rules/react-no-danger-with-children.json",
       "title": "eslint-plugin-react no-danger-with-children: Disallow when a DOM element is using both children and dangerouslySetInnerHTML",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Note.jsx",
+          "text": "export function Note({ html }) {\n  return <div dangerouslySetInnerHTML={{ __html: html }}>Loading</div>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Note.jsx",
+          "text": "export function Note({ html }) {\n  return <div dangerouslySetInnerHTML={{ __html: html }} />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-deprecated",
+      "document": "rules/react-no-deprecated.json",
+      "title": "eslint-plugin-react no-deprecated: Disallow usage of deprecated methods",
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/main.jsx",
+          "text": "import ReactDOM from \"react-dom\";\nimport { App } from \"./App\";\n\nReactDOM.render(<App />, document.getElementById(\"root\"));\n"
+        },
+        "passes": {
+          "path": "src/main.jsx",
+          "text": "import { createRoot } from \"react-dom/client\";\nimport { App } from \"./App\";\n\ncreateRoot(document.getElementById(\"root\")).render(<App />);\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-did-mount-set-state",
+      "document": "rules/react-no-did-mount-set-state.json",
+      "title": "eslint-plugin-react no-did-mount-set-state: Disallow usage of setState in componentDidMount",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Clock.jsx",
+          "text": "import React from \"react\";\n\nexport class Clock extends React.Component {\n  componentDidMount() {\n    this.setState({ now: Date.now() });\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Clock.jsx",
+          "text": "import React from \"react\";\n\nexport class Clock extends React.Component {\n  state = { now: Date.now() };\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-did-update-set-state",
+      "document": "rules/react-no-did-update-set-state.json",
+      "title": "eslint-plugin-react no-did-update-set-state: Disallow usage of setState in componentDidUpdate",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Search.jsx",
+          "text": "import React from \"react\";\n\nexport class Search extends React.Component {\n  componentDidUpdate() {\n    this.setState({ query: this.props.query });\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Search.jsx",
+          "text": "import React from \"react\";\n\nexport class Search extends React.Component {\n  render() {\n    return <p>{this.props.query}</p>;\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-direct-mutation-state",
       "document": "rules/react-no-direct-mutation-state.json",
       "title": "eslint-plugin-react no-direct-mutation-state: Disallow direct mutation of this.state",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Counter.jsx",
+          "text": "import React from \"react\";\n\nexport class Counter extends React.Component {\n  increment() {\n    this.state.count = this.state.count + 1;\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Counter.jsx",
+          "text": "import React from \"react\";\n\nexport class Counter extends React.Component {\n  increment() {\n    this.setState(state => ({ count: state.count + 1 }));\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-find-dom-node",
       "document": "rules/react-no-find-dom-node.json",
       "title": "eslint-plugin-react no-find-dom-node: Disallow usage of findDOMNode",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Focus.jsx",
+          "text": "import React from \"react\";\nimport ReactDOM from \"react-dom\";\n\nexport class Focus extends React.Component {\n  componentDidMount() {\n    ReactDOM.findDOMNode(this).focus();\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Focus.jsx",
+          "text": "import React from \"react\";\n\nexport class Focus extends React.Component {\n  node = React.createRef();\n\n  componentDidMount() {\n    this.node.current.focus();\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-is-mounted",
       "document": "rules/react-no-is-mounted.json",
       "title": "eslint-plugin-react no-is-mounted: Disallow usage of isMounted",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Loader.jsx",
+          "text": "import React from \"react\";\n\nexport class Loader extends React.Component {\n  done(data) {\n    if (this.isMounted()) this.setState({ data });\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Loader.jsx",
+          "text": "import React from \"react\";\n\nexport class Loader extends React.Component {\n  componentWillUnmount() {\n    this.cancelled = true;\n  }\n\n  done(data) {\n    if (!this.cancelled) this.setState({ data });\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-object-type-as-default-prop",
+      "document": "rules/react-no-object-type-as-default-prop.json",
+      "title": "eslint-plugin-react no-object-type-as-default-prop: Disallow usage of referential-type variables as default param in functional component",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Tags.jsx",
+          "text": "export function Tags({ items = [] }) {\n  return <ul>{items.map(item => <li key={item}>{item}</li>)}</ul>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Tags.jsx",
+          "text": "const NO_ITEMS = [];\n\nexport function Tags({ items = NO_ITEMS }) {\n  return <ul>{items.map(item => <li key={item}>{item}</li>)}</ul>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-render-return-value",
       "document": "rules/react-no-render-return-value.json",
       "title": "eslint-plugin-react no-render-return-value: Disallow usage of the return value of ReactDOM.render",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/main.jsx",
+          "text": "import ReactDOM from \"react-dom\";\nimport { App } from \"./App\";\n\nconst app = ReactDOM.render(<App />, document.getElementById(\"root\"));\nexport default app;\n"
+        },
+        "passes": {
+          "path": "src/main.jsx",
+          "text": "import ReactDOM from \"react-dom\";\nimport { App } from \"./App\";\n\nReactDOM.render(<App />, document.getElementById(\"root\"));\n"
+        }
+      }
     },
     {
       "id": "react-no-string-refs",
       "document": "rules/react-no-string-refs.json",
       "title": "eslint-plugin-react no-string-refs: Disallow using string references",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Search.jsx",
+          "text": "import React from \"react\";\n\nexport class Search extends React.Component {\n  render() {\n    return <input ref=\"query\" />;\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Search.jsx",
+          "text": "import React from \"react\";\n\nexport class Search extends React.Component {\n  query = React.createRef();\n\n  render() {\n    return <input ref={this.query} />;\n  }\n}\n"
+        }
+      }
     },
     {
       "id": "react-no-unescaped-entities",
       "document": "rules/react-no-unescaped-entities.json",
       "title": "eslint-plugin-react no-unescaped-entities: Disallow unescaped HTML entities from appearing in markup",
-      "group": "eslint-plugin-react"
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Empty.jsx",
+          "text": "export function Empty() {\n  return <p>Nothing here, it's empty.</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Empty.jsx",
+          "text": "export function Empty() {\n  return <p>Nothing here, it&apos;s empty.</p>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-unknown-property",
+      "document": "rules/react-no-unknown-property.json",
+      "title": "eslint-plugin-react no-unknown-property: Disallow usage of unknown DOM property",
+      "group": "eslint-plugin-react",
+      "examples": {
+        "caught": {
+          "path": "src/Field.jsx",
+          "text": "export function Field() {\n  return <label class=\"field\">Name</label>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Field.jsx",
+          "text": "export function Field() {\n  return <label className=\"field\">Name</label>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-unsafe",
+      "document": "rules/react-no-unsafe.json",
+      "title": "eslint-plugin-react no-unsafe: Disallow usage of unsafe lifecycle methods",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Profile.jsx",
+          "text": "import React from \"react\";\n\nexport class Profile extends React.Component {\n  UNSAFE_componentWillMount() {\n    this.load();\n  }\n}\n"
+        },
+        "passes": {
+          "path": "src/Profile.jsx",
+          "text": "import React from \"react\";\n\nexport class Profile extends React.Component {\n  componentDidMount() {\n    this.load();\n  }\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-no-unstable-nested-components",
+      "document": "rules/react-no-unstable-nested-components.json",
+      "title": "eslint-plugin-react no-unstable-nested-components: Disallow creating unstable components inside components",
+      "group": "eslint-plugin-react",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/List.jsx",
+          "text": "export function List({ items }) {\n  function Row({ item }) {\n    return <li>{item.name}</li>;\n  }\n  return <ul>{items.map(item => <Row key={item.id} item={item} />)}</ul>;\n}\n"
+        },
+        "passes": {
+          "path": "src/List.jsx",
+          "text": "function Row({ item }) {\n  return <li>{item.name}</li>;\n}\n\nexport function List({ items }) {\n  return <ul>{items.map(item => <Row key={item.id} item={item} />)}</ul>;\n}\n"
+        }
+      }
     },
     {
       "id": "react-self-closing-comp",
       "document": "rules/react-self-closing-comp.json",
       "title": "eslint-plugin-react self-closing-comp: Disallow extra closing tags for components without children",
       "group": "eslint-plugin-react",
-      "on": false
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Layout.jsx",
+          "text": "import { Spinner } from \"./Spinner\";\n\nexport function Layout() {\n  return <Spinner size=\"small\"></Spinner>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Layout.jsx",
+          "text": "import { Spinner } from \"./Spinner\";\n\nexport function Layout() {\n  return <Spinner size=\"small\" />;\n}\n"
+        }
+      }
     },
     {
       "id": "react-void-dom-elements-no-children",
       "document": "rules/react-void-dom-elements-no-children.json",
       "title": "eslint-plugin-react void-dom-elements-no-children: Disallow void DOM elements (e.g. `<img />`, `<br />`) from receiving children",
       "group": "eslint-plugin-react",
-      "on": false
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/Avatar.jsx",
+          "text": "export function Avatar({ url }) {\n  return <img src={url}>avatar</img>;\n}\n"
+        },
+        "passes": {
+          "path": "src/Avatar.jsx",
+          "text": "export function Avatar({ url }) {\n  return <img src={url} alt=\"avatar\" />;\n}\n"
+        }
+      }
     }
   ]
 }

@@ -536,6 +536,20 @@ describe("validatePack", () => {
     expect(validation.pass).toBe(true);
   });
 
+  it("passes a pack with a publish request staged: check 6 judges pack data where a pull lays it, not under publish/", async () => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        const publish = join(directory, "upstream", "examplelint", "publish");
+        mkdirSync(join(publish, "tests"), { recursive: true });
+        writeFileSync(join(publish, "tests", "staged.py"), "pass\n");
+        mkdirSync(join(publish, "samples", "repo-src-a.py-0123456789ab", "src"), { recursive: true });
+        writeFileSync(join(publish, "samples", "repo-src-a.py-0123456789ab", "src", "a.py"), "pass\n");
+      }),
+    );
+    expect(failing(validation)).toEqual({});
+    expect(validation.pass).toBe(true);
+  });
+
   it("passes a rule whatever its message says: messages are left to review", async () => {
     const message = `NEVER keep this pass (pass-statement); Rerail flags it.${" Remove it.".repeat(20)}`;
     const validation = await validatePack(

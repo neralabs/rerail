@@ -21,7 +21,7 @@ which prints `file:line: [rule] message` for every import that crosses a boundar
 browser-safe `@neralabs/rerail/schemas` entry. Each layer's own `index.ts` is its public surface for code outside
 `src/`: tests of other layers, `integration/`, `conformance/`, `scripts/` and `benchmark/` import a layer only through
 it. Unit tests under `test/<layer>/` may import their own layer's modules, and a vitest mock seam (`vi.mock`,
-`vi.importActual`) names the module it replaces. The playground imports only the built package's `exports`.
+`vi.importActual`) names the module it replaces.
 
 `omp-semantic.ts` (runtime) and `omp-presentation.ts` (presentation) are named for OMP's session-entry and terminal
 formats, which Pi shares; they serve both hosts and the daemon's native sessions, so they sit below the hosts.

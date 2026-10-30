@@ -302,9 +302,24 @@ rerail daemon stop && rerail daemon start --host 0.0.0.0 --allow-remote   # in t
 docker run -p 127.0.0.1:4737:4737 …                                       # on the host
 ```
 
-`--allow-remote` lets anything that reaches that port read and change your rules. Publishing on `127.0.0.1` keeps it
-off the host's network, but inside the container the daemon now listens on every interface: any other container on
-the same Docker network (a Compose service, a sidecar) reaches it directly, without the published port.
+Off loopback the capability changes on every start, so open the new link (`rerail daemon start` prints it) after a
+restart. Anyone holding the link can read and change your rules, so do not paste it anywhere. Publishing on
+`127.0.0.1` keeps the port off the host's network, but inside the container the daemon now listens on every
+interface: any other container on the same Docker network (a Compose service, a sidecar) reaches it directly, and is
+refused without the capability.
+
+### The dashboard says "Needs the dashboard link"
+
+Every request for your data needs the daemon's access capability, which the page keeps in your browser once it has
+been opened from the link `rerail manage` opens or `rerail daemon start` prints. A bookmark, a new browser or
+profile, cleared site data, or a link pasted from a coding agent's session has none: run `rerail manage` (or
+`rerail daemon start --open`) and the page opens with it. On loopback the capability lasts across restarts
+(`access-token` in your Rerail home; delete it to rotate, then open the link again). `curl` and scripts send it as the
+`x-rerail-access` header, reading `accessToken` from `daemon.json`; without it they get
+`401 {"error":"access-required"}`.
+
+If `rerail status` says the daemon "refused the access capability in daemon.json", the running daemon and its state
+file disagree (one was edited or replaced): `rerail daemon stop`, then `rerail daemon start`.
 
 ## WSL
 

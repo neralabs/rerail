@@ -27,6 +27,7 @@ import {
   documentPath,
   isCandidate,
   MINIMUM_RULES,
+  packFamilies,
   RERAIL_ROOT,
   unitKey,
   type Divergence,
@@ -179,7 +180,8 @@ async function syntaxErrorLocations(loaded: LoadedPack, evaluation: Evaluation, 
   if (failed.size === 0) return locations;
   const runtime = loadNativeBinding().CodeRuleDslRuntime;
   const violation = { anchor: "witness.span", code: "SYNTAX-PROBE", message: "syntax probe" };
-  const probes = CODE_RULE_AST_LANGUAGES.filter(language => codeRuleLanguageFamily(language) === loaded.pack.family).map(language =>
+  const families: readonly string[] = packFamilies(loaded.pack);
+  const probes = CODE_RULE_AST_LANGUAGES.filter(language => families.includes(codeRuleLanguageFamily(language))).map(language =>
     runtime.compile(
       JSON.stringify({
         format: "rerail.policy/v1",
@@ -420,7 +422,8 @@ function collectActual(
 }
 
 function familyLanguages(loaded: LoadedPack): Set<string> {
-  return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => dialect.family === loaded.pack.family).map(dialect => dialect.label));
+  const families: readonly string[] = packFamilies(loaded.pack);
+  return new Set(Object.values(CODE_RULE_DIALECTS).filter(dialect => families.includes(dialect.family)).map(dialect => dialect.label));
 }
 
 /** A fixture's text; pack test data missing from the checkout fails with the instruction to pull it. */
@@ -488,7 +491,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
           continue;
         }
         if (language === undefined || !languages.has(language)) {
-          errors.push(`fixtures ${tool}: ${path} is not a ${loaded.pack.family} source by the host's routing`);
+          errors.push(`fixtures ${tool}: ${path} is not a ${packFamilies(loaded.pack).join(" or ")} source by the host's routing`);
           continue;
         }
         files.push({ path, language, source: readCaseSource(join(fixturesDirectory(loaded, tool), path)) });
@@ -631,7 +634,7 @@ async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[],
     const samples = readSamples(loaded, tool, tree, errors).filter(sample => {
       const language = languageFor(sample.path);
       if (language !== undefined && languages.has(language)) return true;
-      errors.push(`${SAMPLES_SOURCE} ${tool}: ${sample.path} is not a ${loaded.pack.family} source by the host's routing`);
+      errors.push(`${SAMPLES_SOURCE} ${tool}: ${sample.path} is not a ${packFamilies(loaded.pack).join(" or ")} source by the host's routing`);
       return false;
     });
     const texts = new Map<string, string>();

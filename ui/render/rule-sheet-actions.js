@@ -4,7 +4,7 @@
  */
 import { data, ui, panelRuleId, titleOf } from "../state.js";
 import { modeLabel, scopeText } from "../derive.js";
-import { copyText, invalidate, renderNow } from "../shell.js";
+import { copyText, invalidate, renderNow, toast } from "../shell.js";
 import { removeRule } from "../rule-remove.js";
 import { askPrompt, agentSeesPrompt } from "./rule-sheet-model.js";
 
@@ -65,4 +65,6 @@ export const ruleSheetActions = {
   },
   delcancel: () => { sheetState.delConfirm = false; invalidate(); },
   delgo: id => { sheetState.delConfirm = false; invalidate(); return removeRule(id); },
+  /** A mode button, read-only in this release: its title says why, and so does the toast. */
+  modeinfo: (_, b) => toast(`${b.title}.`),
 };

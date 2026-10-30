@@ -1,11 +1,12 @@
 /**
- * Parity of the complexity pack (packs/complexity/) with lizard 1.24.0. The corpus under
- * packs/complexity/upstream/lizard/fixtures/<language>/ is scored by lizard once, by hand (that directory's
- * generate.mjs), into lizard-1.24.0.tsv beside it; lizard is never a test or runtime dependency. Each rule must report
- * exactly the in-scope functions lizard scores above 6, with lizard's number in the message, apart from the deviations
- * listed here; a measuring variant of each rule (same counting, no threshold) must give every function lizard's number,
- * so functions at the limit and below are checked too. Test files are out of scope even where lizard scores them over
- * the limit.
+ * Parity of the complexity pack (packs/complexity/) with lizard, at the release its conformance.json pins. The corpus
+ * under packs/complexity/upstream/lizard/fixtures/<language>/ is scored by lizard once, by hand (that directory's
+ * generate.mjs), into lizard-<release>.tsv beside it; lizard is never a test or runtime dependency. Each rule must
+ * report exactly the in-scope functions lizard scores above 6, with lizard's number in the message, apart from the
+ * deviations listed here; a measuring variant of each rule (same counting, no threshold) must give every function
+ * lizard's number, so functions at the limit and below are checked too. Test files are out of scope even where lizard
+ * scores them over the limit. The conformance check judges the same rules on the findings alone
+ * (fixtures.expected.json, with packs/complexity/divergences.json); this test checks every number.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -31,6 +32,10 @@ const RULES = {
   python: "complexity-cyclomatic-python",
   typescript: "complexity-cyclomatic-typescript",
   javascript: "complexity-cyclomatic-javascript",
+  php: "complexity-cyclomatic-php",
+  blade: "complexity-cyclomatic-blade",
+  rust: "complexity-cyclomatic-rust",
+  vue: "complexity-cyclomatic-vue",
 } as const;
 type CorpusLanguage = keyof typeof RULES;
 const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
@@ -51,8 +56,8 @@ function ccnOf(language: CorpusLanguage, text: string): number {
 
 /**
  * Where Rerail's number differs from lizard's, on purpose: lizard 1.24.0 tokenizer and reader defects, each found on
- * real code. `lizard: null` is a function lizard does not list; `rerail: null` is one lizard lists that is not a
- * function.
+ * real code or read from lizard's readers. `lizard: null` is a function lizard does not list; `rerail: null` is one
+ * lizard lists that is not a function.
  * - `??` and `??=` count 0: lizard reads each as two `?` and counts 2.
  * - A `?` inside a regex literal, and `?.` right after `)` or `]`, count 0: lizard reads each as a ternary.
  * - An arrow function whose expression body starts on a later line is scored on its own: lizard adds its conditions to
@@ -61,6 +66,15 @@ function ccnOf(language: CorpusLanguage, text: string): number {
  *   brackets, is scored whole: lizard ends it inside its signature and scores it 1 (fixed in crapkit #72).
  * - A default-only switch counts 0 beside a cased one. The recorded number is min(standard, -m) over the whole function,
  *   which there gives the default-only switch the 1 that -m adds for any switch; the rule counts each switch on its own.
+ * - PHP: a nullable type's `?` counts 0, `and` and `or` count 1 each, a method named `match` counts 0, and a closure
+ *   inside a function is scored on its own: lizard counts the `?`, skips `and`/`or`, counts the name, and adds the
+ *   closure's decisions to the function around it.
+ * - Blade: a function in a `@php` block or an echo is scored; lizard reads both as template text.
+ * - Rust: `where` and `?Sized` count 0, a closure's empty `||` counts 0, and a macro's tokens are not read: lizard
+ *   counts the first three and the `&&` and `if` in a macro. A byte literal is no lifetime: lizard reads `b'0'` as one
+ *   and loses the `&&` after it. A trait's required method is no function: lizard runs it on into the next one, which
+ *   it scores under the required method's line.
+ * - Vue: a `<` directly before a letter is a comparison: lizard reads a tag up to the next `>` and loses what is between.
  */
 const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | null; rerail: number | null }> = [
   { path: "javascript/nullish.js", line: 4, lizard: 8, rerail: 4 },
@@ -79,10 +93,30 @@ const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | n
     { path, line: 14, lizard: null, rerail: 3 },
     { path, line: 15, lizard: 1, rerail: null },
   ]),
+  { path: "php/tokens.php", line: 5, lizard: 4, rerail: 1 },
+  { path: "php/tokens.php", line: 11, lizard: 1, rerail: 3 },
+  { path: "php/tokens.php", line: 18, lizard: 2, rerail: 1 },
+  { path: "php/tokens.php", line: 26, lizard: 8, rerail: 2 },
+  { path: "php/tokens.php", line: 28, lizard: null, rerail: 7 },
+  { path: "blade/blocks.blade.php", line: 4, lizard: null, rerail: 7 },
+  { path: "blade/blocks.blade.php", line: 22, lizard: null, rerail: 2 },
+  { path: "rust/nesting.rs", line: 42, lizard: 3, rerail: null },
+  { path: "rust/nesting.rs", line: 44, lizard: null, rerail: 3 },
+  { path: "rust/tokens.rs", line: 4, lizard: 2, rerail: 1 },
+  { path: "rust/tokens.rs", line: 12, lizard: 2, rerail: 1 },
+  { path: "rust/tokens.rs", line: 17, lizard: 4, rerail: 3 },
+  { path: "rust/tokens.rs", line: 24, lizard: 3, rerail: 1 },
+  { path: "rust/tokens.rs", line: 30, lizard: 2, rerail: 3 },
+  { path: "vue/tokens.vue", line: 5, lizard: 5, rerail: 1 },
+  { path: "vue/tokens.vue", line: 11, lizard: 1, rerail: 3 },
 ];
 
 const lizardRowSchema = z.object({ path: z.string().min(1), name: z.string().min(1), line: z.number().int().positive(), ccn: z.number().int().positive() });
-const lizardRows = readFileSync(requirePackFixture(join(LIZARD, "lizard-1.24.0.tsv")), "utf8")
+const release = z
+  .object({ tools: z.array(z.object({ name: z.string(), version: z.string() })) })
+  .parse(JSON.parse(readFileSync(repositoryPath("packs", "complexity", "conformance.json"), "utf8")))
+  .tools.find(tool => tool.name === "lizard")?.version;
+const lizardRows = readFileSync(requirePackFixture(join(LIZARD, `lizard-${release}.tsv`)), "utf8")
   .split("\n")
   .filter(line => line !== "" && !line.startsWith("#"))
   .slice(1)
@@ -200,7 +234,11 @@ describe("complexity rule pack", () => {
   it.each([
     ["typescript", "typescript/__tests__/excluded.ts", ["src/widget.test.ts", "src/widget.spec.tsx", "src/__tests__/widget.mts"], "src/widget.cts"],
     ["javascript", "javascript/__tests__/excluded.js", ["src/widget.test.js", "src/widget.spec.jsx", "lib/widget.test.mjs"], "src/widget.cjs"],
-  ] as const)("%s: excludes *.test.*, *.spec.* and __tests__ files, and scores the same source elsewhere", (language, fixture, testPaths, sourcePath) => {
+    ["php", "php/tests/helpers.php", ["tests/Unit/helpers.php", "src/Tests/helpers.php", "app/HelpersTest.php", "app/HelpersTestCase.php", "spec/helpers.php"], "app/helpers.php"],
+    ["blade", "blade/tests/excluded.blade.php", ["tests/views/excluded.blade.php", "Tests/excluded.blade.php"], "resources/views/excluded.blade.php"],
+    ["rust", "rust/tests/excluded.rs", ["tests/excluded.rs", "crates/core/tests/excluded.rs", "src/tests.rs", "src/excluded_test.rs", "src/excluded_tests.rs"], "src/excluded.rs"],
+    ["vue", "vue/__tests__/excluded.vue", ["src/__tests__/Widget.vue", "src/Widget.spec.vue", "src/Widget.test.vue"], "src/Widget.vue"],
+  ] as const)("%s: excludes test files, and scores the same source elsewhere", (language, fixture, testPaths, sourcePath) => {
     const compiled = compile(ruleJson(language));
     const source = readFileSync(join(CORPUS, fixture), "utf8");
     for (const path of testPaths) {
@@ -217,6 +255,10 @@ describe("complexity rule pack", () => {
     typescript: { file: "typescript/branches.ts", scores: { switchCountsOnce: 2, nestedSwitches: 3, switchDefaultOnly: 1, switchOverLimit: 8 } },
     javascript: { file: "javascript/branches.js", scores: { switchCountsOnce: 2, nestedSwitches: 3, switchDefaultOnly: 1, switchOverLimit: 8 } },
     python: { file: "python/match_case.py", scores: { match_counts_once: 2, nested_matches: 3, match_over_limit: 7, guarded_match_over_limit: 7 } },
+    php: { file: "php/branches.php", scores: { switchCountsOnce: 2, nestedSwitches: 3, switchDefaultOnly: 1, switchOverLimit: 8, matchCountsOnce: 2, matchOverLimit: 7 } },
+    blade: { file: "blade/functions.blade.php", scores: { tone: 2 } },
+    rust: { file: "rust/branches.rs", scores: { match_counts_once: 2, nested_matches: 3, match_over_limit: 8 } },
+    vue: { file: "vue/options.vue", scores: { level: 2 } },
   };
 
   it.each(LANGUAGES)("%s: a switch or match counts once however many cases it has, and only the functions over the limit are flagged", language => {
@@ -239,43 +281,98 @@ describe("complexity rule pack", () => {
     typescript: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} return 1;",
     javascript: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} return 1;",
     python: "if a: pass\n    if a: pass\n    if a: pass\n    if a: pass\n    if a: pass\n    if a: pass\n    return 1",
+    php: "if ($a) {} if ($a) {} if ($a) {} if ($a) {} if ($a) {} if ($a) {} return 1;",
+    blade: "if ($a) {} if ($a) {} if ($a) {} if ($a) {} if ($a) {} if ($a) {} return 1;",
+    rust: "if a {} if a {} if a {} if a {} if a {} if a {} 1",
+    vue: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} return 1;",
   };
 
-  // Seven functions at ccn 7, one per line of `$` (the decisions): each named as the steer should name it, the last
-  // a callback with no name at all.
+  // Functions at ccn 7, one per line of `%D%` (the decisions): each named as the steer should name it, and a callback
+  // with no name at all (`undefined`) as "This function".
   const NAMED_TS = [
-    "export function declared(a: number) { $ }",
+    "export function declared(a: number) { %D% }",
     "class Box {",
-    "  method(a: number) { $ }",
-    "  get level() { const a = 1; $ }",
-    "  field = (a: number) => { $ };",
+    "  method(a: number) { %D% }",
+    "  get level() { const a = 1; %D% }",
+    "  field = (a: number) => { %D% };",
     "}",
-    "const assigned = (a: number) => { $ };",
-    "const handlers = { onKey: function (a: number) { $ } };",
-    "[1].map((a: number) => { $ });",
+    "const assigned = (a: number) => { %D% };",
+    "const handlers = { onKey: function (a: number) { %D% } };",
+    "[1].map((a: number) => { %D% });",
   ];
   const NAMED_JS = NAMED_TS.map(line => line.replaceAll(": number", ""));
   const NAMED_PY = [
     "def declared(a):",
-    "    $",
+    "    %D%",
     "class Box:",
     "    def method(self, a):",
-    "        $",
+    "        %D%",
+  ];
+  const NAMED_PHP = [
+    "<?php",
+    "function declared($a) { %D% }",
+    "class Box {",
+    "    public function method($a) { %D% }",
+    "    public static function make($a) { %D% }",
+    "}",
+    "$assigned = function ($a) { %D% };",
+    "array_map(function ($a) { %D% }, [1]);",
+  ];
+  // The template's own logic (v-if, v-for) is no function's: only the script's functions are reported.
+  const NAMED_VUE = [
+    "<script>",
+    "export function declared(a) { %D% }",
+    "export default {",
+    "  methods: {",
+    "    method(a) { %D% },",
+    "  },",
+    "};",
+    "const assigned = (a) => { %D% };",
+    "[1].map((a) => { %D% });",
+    "</script>",
+    "<template>",
+    '  <p v-for="a in items" :key="a" v-if="a && b || c">{{ a ? (b ? 1 : 2) : c && d ? 3 : e || f ? 4 : 5 }}</p>',
+    "</template>",
+  ];
+  // A template's directives run in no function, and a function in an @php block or an echo is reported where it is.
+  const NAMED_BLADE = [
+    "<?php",
+    "function declared($a) { %D% }",
+    "?>",
+    "@if ($a && $b || $c) @foreach ($items as $item) @if ($item) {{ $a ? 1 : ($b ? 2 : ($c ? 3 : 4)) }} @endif @endforeach @endif",
+    "@php",
+    "    $assigned = function ($a) { %D% };",
+    "@endphp",
+    "<p>{{ collect([1])->map(function ($a) { %D% }) }}</p>",
+  ];
+  const NAMED_RUST = [
+    "fn declared(a: bool) -> i32 { %D% }",
+    "struct Boxed;",
+    "impl Boxed {",
+    "    pub fn method(&self, a: bool) -> i32 { %D% }",
+    "}",
+    "trait Shape {",
+    "    fn area(&self, a: bool) -> i32 { %D% }",
+    "}",
   ];
 
   it.each([
     ["typescript", "src/names.ts", NAMED_TS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
     ["javascript", "src/names.js", NAMED_JS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
     ["python", "src/names.py", NAMED_PY, ["declared", "method"]],
+    ["php", "src/names.php", NAMED_PHP, ["declared", "method", "make", "$assigned", undefined]],
+    ["blade", "resources/views/names.blade.php", NAMED_BLADE, ["declared", "$assigned", undefined]],
+    ["rust", "src/names.rs", NAMED_RUST, ["declared", "method", "area"]],
+    ["vue", "src/Names.vue", NAMED_VUE, ["declared", "method", "assigned", undefined]],
   ] as const)("%s: names the function in the steer, or says 'This function' when it has no name", (language, path, lines, names) => {
     // A function starts on its `def` line in Python, and on the line holding its decisions in the one-line sources.
-    const opens = (line: string) => (language === "python" ? /^\s*def /u.test(line) : line.includes("$"));
+    const opens = (line: string) => (language === "python" ? /^\s*def /u.test(line) : line.includes("%D%"));
     const starts: number[] = [];
     const written: string[] = [];
     for (const line of lines) {
       if (opens(line)) starts.push(written.length + 1);
       const indent = /^ */u.exec(line)![0];
-      written.push(...line.replace("$", OVER[language].replaceAll("\n    ", `\n${indent}`)).split("\n"));
+      written.push(...line.replace("%D%", OVER[language].replaceAll("\n    ", `\n${indent}`)).split("\n"));
     }
     const source = written.join("\n") + "\n";
     expect(starts.length).toBe(names.length);
@@ -288,6 +385,10 @@ describe("complexity rule pack", () => {
       python: { inside: ["app/service.py", "service.py"], outside: ["app/tests/service.py", "app/test_service.py", "app/service_test.py", "conftest.py", ".venv/lib/x.py", "app/service.ts"] },
       typescript: { inside: ["src/a.ts", "web/view.tsx", "lib/m.mts", "lib/c.cts"], outside: ["src/a.js", "node_modules/p/a.ts", "pkg/dist/a.ts", "src/generated/api.ts", "src/a.py"] },
       javascript: { inside: ["src/a.js", "web/view.jsx", "lib/m.mjs", "lib/c.cjs"], outside: ["src/a.ts", "node_modules/p/a.js", "pkg/dist/a.js", "src/a.min.js", "src/a.py"] },
+      php: { inside: ["app/Models/User.php", "index.php"], outside: ["resources/views/home.blade.php", "vendor/acme/lib/Client.php", "node_modules/p/x.php", "src/generated/Api.php", "app/User.py"] },
+      blade: { inside: ["resources/views/home.blade.php", "home.blade.php"], outside: ["app/Models/User.php", "vendor/acme/views/home.blade.php", "resources/views/home.vue"] },
+      rust: { inside: ["src/main.rs", "crates/core/src/lib.rs"], outside: ["target/debug/build/out/bindings.rs", "src/generated/api.rs", "src/main.py"] },
+      vue: { inside: ["src/App.vue", "components/Card.vue"], outside: ["node_modules/p/Card.vue", "dist/App.vue", ".nuxt/components/Card.vue", "src/App.ts"] },
     };
     for (const language of LANGUAGES) {
       const compiled = compile(ruleJson(language));

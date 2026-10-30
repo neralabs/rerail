@@ -1,9 +1,10 @@
 /**
  * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
- * by kind, as a list or as cards; each added or not, with Add pack or a quiet Remove pack that asks first. A pack is
- * added whole: its rules arrive as the pack starts them, opt-in ones off. The review (`#packs?review=1`, set-up's
- * `#rule-packs?review=1`): the packs set-up picked for this repository, each with why and a switch, then the others
- * with Add pack. The person starts Rerail back in the terminal or coding agent.
+ * by kind, as a list or as cards; each added or not, with Add pack or a quiet Remove pack that asks first, its
+ * question on a line of its own under the pack's text. A pack removed here reads Removed with Undo until the page is
+ * left. A pack is added whole: its rules arrive as the pack starts them, opt-in ones off. The review
+ * (`#packs?review=1`, set-up's `#rule-packs?review=1`): the packs set-up picked for this repository, each with why
+ * and a switch, then the others with Add pack. The person starts Rerail back in the terminal or coding agent.
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
@@ -11,9 +12,9 @@ import { isRerailPack, isRunning, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
-import { keepPack } from "../actions.js";
+import { commonActions, keepPack } from "../actions.js";
 import { catalogKinds, catalogPacks } from "../pack-model.js";
-import { packAction, packIcon, packKind } from "../render/pack-panel.js";
+import { packAction, packIcon, packKind, removePackControl } from "../render/pack-panel.js";
 
 export const needs = ["rules", "packs", "activity"];
 
@@ -31,21 +32,32 @@ function packMeta(pack) {
   return `${fmt(n)} ${plural(n, "rule")}${counted ? ` · ${fmt(on)} on` : ""}`;
 }
 
+/** Where a pack stands in the catalog: Added, Removed during this visit (with Undo), or neither. */
+function catalogState(pack) {
+  if (isAttached(pack)) return { status: h("span.added", null, icon("check"), "Added"), action: packAction(pack, { quiet: true }) };
+  if (ui.removedPacks.has(pack.id)) {
+    return { status: h("span.rmtag", null, "Removed"), action: h("button.btn.sm", { "data-act": "undoremove", "data-i": pack.id, title: `Add ${pack.name} back` }, "Undo") };
+  }
+  return { status: null, action: packAction(pack, { quiet: true }) };
+}
+
 function catalogItem(pack) {
   const asking = ui.removeAsk === pack.id;
-  const status = isAttached(pack) && !asking ? h("span.added", null, icon("check"), "Added") : null;
-  const action = packAction(pack, { quiet: true });
+  const { status, action } = asking ? { status: null, action: null } : catalogState(pack);
+  const question = asking ? h("div.rmline", null, removePackControl(pack)) : null;
   if (ui.catView === "cards") {
     return h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
       h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
         status ? h("span.pstatus", null, status) : null),
       h("span.sub", null, pack.covers),
+      question,
       h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
   }
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
     packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
       h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),
-    h(`div.pend${asking ? ".ask" : ""}`, null, asking ? null : h("span.pstatus", null, status), action));
+    asking ? null : h("div.pend", null, h("span.pstatus", null, status), action),
+    question);
 }
 
 function catalog() {
@@ -55,7 +67,7 @@ function catalog() {
   const added = shown.filter(isAttached).length;
   return h("div.catalog", null,
     h("div.ghead", null, h("h2", null, "Rule packs", h("span.n2", null, `${fmt(added)} of ${fmt(shown.length)} added`)),
-      h("p", null, `A pack per language or framework, for ${repoName() || "this repo"}. Each pack added gets its own page in the menu, where you turn its rules on or off.`)),
+      h("p", null, "Each pack checks one language or framework. Added packs get their own page in the menu.")),
     h("div.cattools", null,
       h("div.chips", { role: "group", "aria-label": "Pack kind" },
         kinds.map(([k, label]) => h("button.chip", { "data-act": "catkind", "data-i": k, "aria-pressed": String(kind === k) }, label))),
@@ -92,17 +104,17 @@ function review() {
     h("div.cathead", null, h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": "overview" }, icon("back"), repo)),
     h("div.ghead", null, h("h2", null, `Review the rule packs for ${repo}`,
       h("span.n2", null, `${fmt(keptPicked.length)} ${plural(keptPicked.length, "pack")} · ${fmt(keptRules)} ${plural(keptRules, "rule")}`)),
-    h("p", null, "Rerail read ", h("span.mono", null, repo), " and these rule packs look right for it. Switch off any you do not want, or add one from below. Then go back to your coding agent and say yes there; nothing starts from this page.")),
+    h("p", null, "Picked for ", h("span.mono", null, repo), " from its files. Switch off any you don't want, then finish in your coding agent.")),
     h("div.list", null, picked.map(pack => reviewRow(pack, reasons.get(pack.id)))),
     others.length ? h("div.ghead.top", null, h("h2", null, "Other rule packs", h("span.n2", null, `${fmt(others.length)} not picked`)),
-      h("p", null, "They come with Rerail and are off. Add one if it suits how your team works.")) : null,
+      h("p", null, "Not picked for this repo. Add any that fit.")) : null,
     others.length ? h("div.list", null, others.map(pack => reviewRow(pack, null))) : null);
 }
 
 export function render(root) {
   const view = ui.view;
   const sig = JSON.stringify([view, kind, data.packs.map(p => p.id), [...data.attachedPacks.keys()], isSetUp(), data.recommendations, ui.catView, ui.removeAsk,
-    repoName(), stateHere(), runningCount()]);
+    [...ui.removedPacks], repoName(), stateHere(), runningCount()]);
   setContent(root, sig, () => (view === "review" ? review() : catalog()));
 }
 
@@ -117,4 +129,6 @@ export const actions = {
   catkind: k => { kind = k; invalidate(); },
   catview: v => { ui.catView = v; invalidate(); },
   reviewtoggle: id => keepPack(id, !keptPacks().includes(id)),
+  // A pack removed from this page, wanted back: added again, as Add pack would.
+  undoremove: id => { ui.removedPacks.delete(id); commonActions.addpack(id); },
 };

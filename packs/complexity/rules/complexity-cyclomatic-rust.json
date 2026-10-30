@@ -1,0 +1,104 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "complexity-cyclomatic-rust",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep Rust functions at cyclomatic complexity 6 or below, counting each if, for, while, match, match guard, ? and && or ||; branch-heavy functions are hard to follow and test.",
+  "scope": {
+    "include": [
+      "**/*.rs"
+    ],
+    "exclude": [
+      "**/target/**",
+      "**/generated/**",
+      "**/tests/**",
+      "**/tests.rs",
+      "**/*_test.rs",
+      "**/*_tests.rs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "too-complex",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "boundary",
+                "count": {
+                  "has": {
+                    "matches": "decision",
+                    "stopBy": {
+                      "matches": "boundary"
+                    }
+                  },
+                  "min": 6,
+                  "as": "CCN",
+                  "offset": 1
+                }
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "boundary": {
+              "kind": "function_item"
+            },
+            "decision": {
+              "any": [
+                {
+                  "kind": "if_expression"
+                },
+                {
+                  "kind": "for_expression"
+                },
+                {
+                  "kind": "while_expression"
+                },
+                {
+                  "kind": "match_expression"
+                },
+                {
+                  "kind": "match_pattern",
+                  "has": {
+                    "field": "condition",
+                    "pattern": "$_"
+                  }
+                },
+                {
+                  "kind": "try_expression"
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\|)$"
+                  }
+                },
+                {
+                  "regex": "^&&$",
+                  "inside": {
+                    "kind": "let_chain",
+                    "stopBy": "neighbor"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CYCLOMATIC_COMPLEXITY",
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+      }
+    }
+  ]
+}

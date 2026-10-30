@@ -63,30 +63,29 @@ function stoppedBanner(repo) {
     h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey }, "Start Rerail"))));
 }
 
-function welcomeBanner(repo, packCount) {
+/** The welcome shows only where Rerail is started: a repository set up but never started reads as stopped. */
+function welcomeBanner(repo) {
   const on = rulesArray().filter(isRunning).length;
-  const from = packCount > 0 ? ` from ${fmt(packCount)} rule ${plural(packCount, "pack")}` : "";
   return h("div.welcome", { role: "status" }, icon("done", 22), h("div", null,
-    h("b", null, `Rerail is set up. ${fmt(on)} ${plural(on, "rule")}${from} ${on === 1 ? "is" : "are"} on.`),
-    h("p", null, `Open a new coding agent session in ${repo} and start coding. Sessions already open in Claude Code, Codex or Cursor pick up the rules from their next step; in OMP or Pi, start a new session or type `,
-      h("span.mono", null, "/rerail-start"), " in the open one.")),
+    h("b", null, `Rerail is on. ${fmt(on)} ${plural(on, "rule is", "rules are")} running in ${repo}.`),
+    h("p", null, "Start a coding agent session here and code as usual. Violations show on this page as they’re logged.")),
   h("button.x", { "data-act": "dismisswelcome", "aria-label": "Dismiss" }, "✕"));
 }
 
-function renderBanner(root, state, packCount) {
+function renderBanner(root, state) {
   const kind = data.loaded ? bannerFor(state, welcomeDismissed()) : null;
   const repo = repoName();
   const on = rulesArray().filter(isRunning).length;
-  setContent(root, JSON.stringify([kind, repo, on, packCount, data.repository?.repositoryKey]), () =>
-    kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo, packCount) : null);
+  setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey]), () =>
+    kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
 }
 
 /* ---------- tiles ---------- */
 
-/** Each tile and the view it opens; Rules on opens the first rule pack (`rulesOnHash`). */
+/** Each tile lands on the list that produced its number; Rules on opens the first rule pack (`rulesOnHash`). */
 const TILES = [
-  { key: "steered", label: "Violations steered", title: "Open History by rule" },
-  { key: "sessions", label: "Sessions with violations logged", title: "Open History by session" },
+  { key: "steered", label: "Violations steered", title: "Open History by rule, steered only" },
+  { key: "sessions", label: "Sessions with violations logged", title: "Open History by session, with violations" },
   { key: "fired", label: "Rules with violations logged", title: "Open History by rule" },
   { key: "on", label: "Rules on", title: "Open your rule packs" },
 ];
@@ -109,28 +108,29 @@ function rulesOnHash({ packs, mine }) {
   return first === undefined ? "packs" : `pack/${first.pack.id}`;
 }
 
-function renderTiles(tiles, sources, ruleCount) {
+/** Before any session the range says nothing, so the activity tiles say there has been none yet. */
+const NO_SESSIONS = "no sessions yet";
+
+function renderTiles(tiles, sources, ruleCount, sessionsEver) {
   const label = rangeLabel();
   const rules = rulesArray();
   const on = rules.filter(isRunning).length;
   const { steered, total } = steeredTally(data.activity);
-  setTile(tiles[0], "history", steered, total, total > 0 ? label : ruleCount === 0 ? "nothing to steer yet" : `none ${label}`);
+  setTile(tiles[0], "history?outcome=steered", steered, total, total > 0 ? label : ruleCount === 0 ? "nothing to steer yet" : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
 
   const started = data.activitySessions?.started ?? 0;
-  const sessionsEver = data.activityAllSessions?.started ?? 0;
-  setTile(tiles[1], "sessions", started > 0 ? data.activitySessions.withViolations : 0, started,
-    started > 0 ? label : sessionsEver > 0 ? `no sessions ${label}` : "your next coding agent session shows here");
+  setTile(tiles[1], "sessions?filter=violations", started > 0 ? data.activitySessions.withViolations : 0, started,
+    started > 0 ? label : sessionsEver > 0 ? `no sessions ${label}` : NO_SESSIONS);
 
   const fired = rules.filter(r => fires(r.rule.id) > 0).length;
-  setTile(tiles[2], "history", fired, on, fired > 0 ? label : `none ${label}`);
+  setTile(tiles[2], "history", fired, on, fired > 0 ? label : sessionsEver === 0 ? NO_SESSIONS : `none ${label}`);
 
   setTile(tiles[3], rulesOnHash(sources), on, rules.length, rulesOnSource(sources.packs.length, sources.mine));
 }
 
 /* ---------- Most violations logged ---------- */
 
-const colhead = () => h("div.colhead", { "aria-hidden": "true" },
-  h("span", null, "Rule"), h("span", null, h("span.long", null, "Violations logged"), h("span.short", null, "Violations")), h("span", null, "On/off"));
+const colhead = () => h("div.colhead", { "aria-hidden": "true" }, h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "On/off"));
 
 function ruleRow(item) {
   return h("div.row", { "data-act": "detail", "data-i": item.id },
@@ -172,7 +172,7 @@ function whenText(s) {
 
 const sessionRow = s => h("button.sesrow", { "data-act": "session", "data-i": s.sessionId, title: "Open this session" },
   h("span.l", null, h("span.t"), h("span.m", null, h("span.host"), h("span.when"), h("span.sid"))),
-  h("span.n.num.logged", null, h("b")), h("span.n.num.steered", null, h("b")));
+  h("span.n.num", null, h("b")));
 
 function updateSessionRow(row, s) {
   setText(row.querySelector(".t"), data.titles.get(s.sessionId) ?? "Untitled session");
@@ -183,11 +183,10 @@ function updateSessionRow(row, s) {
   setClass(whenEl, "live", when.cls === "live");
   setClass(whenEl, "stale", when.cls === "stale");
   setText(row.querySelector(".sid"), shortSessionId(s.sessionId, s.host));
-  for (const [cls, n] of [["logged", s.violationCount], ["steered", s.steeredViolations]]) {
-    const cell = row.querySelector(`.n.${cls}`);
-    setClass(cell, "zero", n === 0);
-    setText(cell.querySelector("b"), fmt(n));
-  }
+  const cell = row.querySelector(".n");
+  setClass(cell, "zero", s.violationCount === 0);
+  setText(cell.querySelector("b"), fmt(s.violationCount));
+  setAttr(cell, "title", `${fmt(s.violationCount)} ${plural(s.violationCount, "violation")} logged`);
 }
 
 /* ---------- empty blocks ---------- */
@@ -202,13 +201,18 @@ function emptyBlock(body, repo) {
         h("button.btn.sm.solid", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs"),
         h("button.btn.sm", { "data-act": "nav", "data-i": "create" }, "Create a rule"))));
   }
+  // The welcome banner above says what to do; this says what the space will hold, so it reads alone once dismissed.
   if (body === "no-sessions") {
     const on = rulesArray().filter(isRunning).length;
+    if (on > 0) {
+      return h("div.list", null, h("div.empty", null,
+        h("h3", null, "No sessions yet"),
+        h("p", null, "The rules that log the most violations, and your recent sessions, show here.")));
+    }
     return h("div.list", null, h("div.empty", null,
-      h("h3", null, on > 0 ? "Rules are on. No violations logged yet." : "Every rule is off."),
-      h("p", null, on > 0
-        ? `${fmt(on)} ${plural(on, "rule is", "rules are")} watching ${repo}. Start a coding agent session in this repo and the violations they log show here, grouped by rule.`
-        : `Switch rules on in their rule packs; the violations they log in coding agent sessions in ${repo} show here.`)));
+      h("h3", null, "Every rule is off"),
+      h("p", null, "Turn rules on in a rule pack, then start a coding agent session."),
+      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": rulesOnHash(ruleSources()) }, "Turn rules on"))));
   }
   return h("div.list", null, h("div.empty", null,
     h("h3", null, `No violations logged ${label}`),
@@ -236,7 +240,7 @@ function build() {
   const recentList = h("div.list");
   const recent = h("section.ovrecent", null,
     h("div.ghead", null, h("h2", null, "Recent sessions"), recentNote, h("div.act", null, recentAll)),
-    h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations logged"), h("span", null, "Steered")),
+    h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
   const root = h("div.ov", null, banner,
@@ -265,9 +269,9 @@ export function render(root) {
   const { state, ruleCount, sessionsEver } = facts();
   const sources = ruleSources();
   const repo = repoName();
-  renderBanner(page.banner, state, sources.packs.length);
+  renderBanner(page.banner, state);
   syncRange(page.range);
-  renderTiles(page.tiles, sources, ruleCount);
+  renderTiles(page.tiles, sources, ruleCount, sessionsEver);
 
   const top = topRules(rulesArray().map(stored => ({ id: stored.rule.id, title: titleOf(stored), fires: fires(stored.rule.id), stored })));
   const body = data.loaded ? overviewBody({ ruleCount, sessionsEver, topCount: top.length }) : "loading";
@@ -276,7 +280,7 @@ export function render(root) {
   if (body === "lists") renderLists(top, repo);
   else if (body !== "loading") {
     const on = rulesArray().filter(isRunning).length;
-    setContent(page.empty, JSON.stringify([body, repo, on, ui.range]), () => emptyBlock(body, repo));
+    setContent(page.empty, JSON.stringify([body, repo, on, ui.range, rulesOnHash(sources)]), () => emptyBlock(body, repo));
   }
 }
 

@@ -3,7 +3,7 @@
   "id": "python",
   "name": "Python",
   "category": "language",
-  "covers": "160 Ruff and Bandit rules ported to Rerail, each scored against the tool's own findings on its test fixtures.",
+  "covers": "Ruff and Bandit rules for correct, clean and secure Python.",
   "reason": "matches Python",
   "match": {
     "any": [

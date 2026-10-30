@@ -15,8 +15,6 @@
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 // Exemption `fixture-trees`: files below any `fixtures/` directory mimic the projects under test (framework
 // route files such as `pages/_app.tsx` or `app/(shop)/[id]/`); #3 decides where they may live.
-// Exemption `react-components`: under `playground/ui/src/`, React's convention names a component's `.tsx`
-// file after the component (PascalCase) and a hook's file after the hook (`useThing`, camelCase).
 
 import { extension, finding, isDataPath, isVendored, sortFindings } from "../lib.mjs";
 
@@ -34,10 +32,7 @@ function scriptProblem(path) {
   const base = segments.pop();
   const parts = base.split(".");
   parts.pop();
-  const react =
-    path.startsWith("playground/ui/src/") &&
-    ((base.endsWith(".tsx") && /^[A-Z][A-Za-z0-9]*$/.test(parts[0])) || /^use[A-Z][A-Za-z0-9]*$/.test(parts[0]));
-  if (!react && (!KEBAB.test(parts[0] ?? "") || !parts.slice(1).every((part) => SUFFIX.test(part)))) {
+  if (!KEBAB.test(parts[0] ?? "") || !parts.slice(1).every((part) => SUFFIX.test(part))) {
     return `${base} is not kebab-case`;
   }
   const bad = segments.find((segment) => !segment.startsWith(".") && !KEBAB.test(segment));

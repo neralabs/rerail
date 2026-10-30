@@ -286,21 +286,25 @@ fn load_ignore(
     case: gix::ignore::glob::pattern::Case,
 ) -> Result<IgnoreRules, DiscoveryError> {
     let mut mandatory = gix::ignore::Search::default();
-    mandatory.add_patterns_buffer(
-        BUILTIN_IGNORE,
-        worktree.join(".rerailignore.defaults"),
-        Some(worktree),
-        gix::ignore::search::Ignore::default(),
-    );
+    mandatory
+        .add_patterns_buffer(
+            BUILTIN_IGNORE,
+            worktree.join(".rerailignore.defaults"),
+            Some(worktree),
+            gix::ignore::search::Ignore::default(),
+        )
+        .map_err(|error| discovery_error("cannot load the built-in ignore rules", error))?;
     let mut workspace = gix::ignore::Search::default();
     let path = worktree.join(".rerailignore");
     match std::fs::read(&path) {
-        Ok(bytes) => workspace.add_patterns_buffer(
-            &bytes,
-            path,
-            Some(worktree),
-            gix::ignore::search::Ignore::default(),
-        ),
+        Ok(bytes) => workspace
+            .add_patterns_buffer(
+                &bytes,
+                path,
+                Some(worktree),
+                gix::ignore::search::Ignore::default(),
+            )
+            .map_err(|error| discovery_error("cannot load .rerailignore", error))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(discovery_error("cannot read .rerailignore", error)),
     }
@@ -585,6 +589,18 @@ impl GitWorkspace {
     }
 }
 
+/// Whether `gix::discover` failed because no repository encloses the path, rather than because one could not be read.
+pub(crate) fn is_no_repository(error: &gix::Error) -> bool {
+    matches!(
+        error.downcast_any_ref::<gix::discover::upwards::Error>(),
+        Some(
+            gix::discover::upwards::Error::NoGitRepository { .. }
+                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
+                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. }
+        )
+    )
+}
+
 /// Discover one repository without an external `git` process.
 ///
 /// The result is sorted by path and object identity. The caller can use the
@@ -592,13 +608,10 @@ impl GitWorkspace {
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     let repository = gix::discover(root).map_err(|error| {
         let message = format!("cannot discover Git repository: {error}");
-        match error {
-            gix::discover::Error::Discover(
-                gix::discover::upwards::Error::NoGitRepository { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. },
-            ) => DiscoveryError::NoRepository(message),
-            _ => DiscoveryError::Failed(message),
+        if is_no_repository(&error) {
+            DiscoveryError::NoRepository(message)
+        } else {
+            DiscoveryError::Failed(message)
         }
     })?;
     let worktree = repository
@@ -1299,19 +1312,23 @@ mod tests {
     #[test]
     fn rerailignore_uses_gitignore_negation() {
         let mut workspace = gix::ignore::Search::default();
-        workspace.add_patterns_buffer(
-            b"generated/\n!generated/keep.py\n!tmp/keep.py\n",
-            ".rerailignore",
-            None,
-            gix::ignore::search::Ignore::default(),
-        );
+        workspace
+            .add_patterns_buffer(
+                b"generated/\n!generated/keep.py\n!tmp/keep.py\n",
+                ".rerailignore",
+                None,
+                gix::ignore::search::Ignore::default(),
+            )
+            .expect("the patterns parse");
         let mut mandatory = gix::ignore::Search::default();
-        mandatory.add_patterns_buffer(
-            BUILTIN_IGNORE,
-            ".rerailignore.defaults",
-            None,
-            gix::ignore::search::Ignore::default(),
-        );
+        mandatory
+            .add_patterns_buffer(
+                BUILTIN_IGNORE,
+                ".rerailignore.defaults",
+                None,
+                gix::ignore::search::Ignore::default(),
+            )
+            .expect("the patterns parse");
         let rules = IgnoreRules {
             mandatory,
             workspace,

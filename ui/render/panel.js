@@ -48,10 +48,12 @@ function buildRule() {
     h("p.lbl", null, "Edit with coding agent"), el.askWhere, el.askChips,
     h("div.cmd", null, el.askText, h("button.btn.sm.solid", { "data-act": "askcopy" }, icon("copy"), "Copy")),
     el.askWhy);
+  // Read-only in this release: the buttons say why when clicked (a toast) or hovered (their title), not the description.
   el.modes = h("div.rangectl.modes", { role: "group", "aria-label": "What Rerail does on a violation" },
-    MODES.map(([v, l, o]) => h("button", { "data-v": v, disabled: true, "aria-pressed": "false" }, icon(o, 14), l)));
+    MODES.map(([v, l, o]) => h("button", { "data-v": v, "aria-disabled": "true", "aria-pressed": "false" }, icon(o, 14), l)));
   el.modeText = h("p");
   el.stats = h("div.pstats", null, h("div", null, h("b.num"), h("span")), h("div", null, h("b"), h("span", null, "last logged")), h("div", null, h("b.num"), h("span", null, "since install")));
+  el.statsNone = h("p.pstats-none", null, "No violations logged yet.");
   el.description = h("p.desc");
   el.source = h("dl.kv");
   el.applies = h("p");
@@ -60,7 +62,7 @@ function buildRule() {
   el.foot = h("div.pfoot");
   el.body = h("div.pbody", null, el.pask,
     h("div.enf", null, h("div.lbl", null, "On a violation"), el.modes, el.modeText),
-    el.stats,
+    el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
     h("section.psec", null, h("h3", null, "Source"), el.source),
     h("section.psec", null, h("h3", null, "Where it applies"), el.applies),
@@ -90,14 +92,29 @@ function renderAsk(stored) {
     : "Your coding agent changes the rule by its id. The change applies from the next audit."}`);
 }
 
+/** Why a mode button does nothing when clicked: its title and its toast. */
+const BLOCK_NOT_LIVE = "Block is not in this release";
+const MODE_READ_ONLY = "Change the mode with Edit with coding agent";
+
 function renderModes(stored) {
   const mode = ruleMode(stored);
-  for (const b of p.modes.children) setAttr(b, "aria-pressed", String(b.dataset.v === mode));
-  setText(p.modeText, mode === "block" ? MODE_PLAIN.block : `${MODE_PLAIN[mode] ?? ""} Block is not in this version.`);
+  for (const b of p.modes.children) {
+    const pressed = b.dataset.v === mode, why = b.dataset.v === "block" ? BLOCK_NOT_LIVE : MODE_READ_ONLY;
+    setAttr(b, "aria-pressed", String(pressed));
+    setAttr(b, "title", pressed ? null : why);
+    setAttr(b, "data-act", pressed ? null : "modeinfo");
+  }
+  // Only what the chosen mode does; that Block is not in this release is the Block button's to say.
+  setText(p.modeText, MODE_PLAIN[mode] ?? "");
 }
 
 function renderStats(id) {
   const measured = isMeasured(id), f = fires(id), all = allFires(id), lastSeen = activityAllOf(id).lastSeenAt;
+  // A measured rule that never logged one says so in a line; the three cells would all read nothing.
+  const none = measured && all === 0;
+  setAttr(p.stats, "hidden", none);
+  setAttr(p.statsNone, "hidden", !none);
+  if (none) return;
   const [s1, s2, s3] = p.stats.children;
   setText(s1.firstChild, measured ? fmt(f) : "–");
   setText(s1.lastChild, measured ? `logged ${rangeLabel()}` : "not counted yet");
@@ -167,7 +184,9 @@ function renderRecent(stored, id) {
   const top = ruleFindings(id).slice(0, RECENT_SHOWN), all = allFires(id), total = ruleFindingsTotal(id);
   const said = agentSees(stored, id);
   setContent(p.recent, `${id}|${top.map(x => `${x.auditId}:${x.id}`).join(",")}|${total}|${all}|${ui.range}|${said}`, () => {
-    if (top.length === 0) return h("p.muted", null, all ? `None logged ${rangeLabel()}. Widen the range to see earlier ones.` : "No violations logged yet. Rerail is silent until this rule matches.");
+    // A measured rule that never logged one already says so above the description.
+    if (top.length === 0) return h("p.muted", null, all ? `None logged ${rangeLabel()}. Widen the range to see earlier ones.`
+      : isMeasured(id) ? "None yet." : "No violations logged yet. Rerail is silent until this rule matches.");
     return [h("div.ract", null, top.map(x => violationRow(x, said))),
       h("button.btn.sm.ghost.link", { "data-act": "actrule", "data-i": id, style: "margin-top:6px" },
         total > RECENT_SHOWN ? `See all ${fmt(total)} in History` : "See it in History")];

@@ -3,7 +3,7 @@
   "id": "blade",
   "name": "Blade",
   "category": "language",
-  "covers": "10 Bladestan, tlint and stillat/blade-parser rules ported to Rerail, 8 of them on and 2 off until turned on, each scored against the tool's own findings on its test fixtures.",
+  "covers": "Bladestan, tlint and blade-parser rules for clean, correct Laravel Blade templates.",
   "reason": "matches Blade templates",
   "match": {
     "any": [

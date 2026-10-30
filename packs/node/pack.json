@@ -3,7 +3,7 @@
   "id": "node",
   "name": "Node.js",
   "category": "framework",
-  "covers": "21 eslint-plugin-n 18.4.1 rules ported to Rerail, 2 of them on and 19 off until turned on, each scored against eslint-plugin-n's own findings on its rule tests; 3 more ports are candidates until they pass the conformance check.",
+  "covers": "eslint-plugin-n rules for sound, modern use of Node.js modules and APIs.",
   "reason": "matches Node.js",
   "match": {
     "any": [
