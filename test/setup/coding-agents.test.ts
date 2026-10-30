@@ -1,15 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
+
+/** Pi's settings, after writing `{ packages }` when given, as Pi's gallery or set-up wrote them. */
+async function piSettings(home: string, packages?: unknown[]): Promise<unknown> {
+  const settings = join(home, ".pi", "agent", "settings.json");
+  if (packages !== undefined) {
+    await mkdir(dirname(settings), { recursive: true });
+    await writeFile(settings, JSON.stringify({ packages }));
+  }
+  return JSON.parse(await readFile(settings, "utf8"));
+}
 
 /** A Rerail package root and a coding-agent home with Claude Code registered against it, `/rerail-show-me` since deleted. */
 async function fixture() {
@@ -95,6 +106,21 @@ describe("refreshCodingAgents", () => {
     expect(await readFile(join(home, ".omp", "agent", "mcp.json"), "utf8")).toBe(mcp);
   });
 
+  // `pi install npm:@neralabs/rerail` from Pi's gallery stands in for the managed install, so `rerail update` swaps it.
+  it("swaps Pi's gallery entry for the managed install, and leaves it for any other root", async () => {
+    const { base, root, home, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_HOME", join(base, "rerail-home"));
+    await piSettings(home, ["npm:@other/pkg", "npm:@neralabs/rerail"]);
+
+    const checkout = await refreshCodingAgents(await packageRoot("checkout"), home);
+    expect(checkout.agents).toEqual([]);
+    expect(await piSettings(home)).toEqual({ packages: ["npm:@other/pkg", "npm:@neralabs/rerail"] });
+
+    const managed = await refreshCodingAgents(root, home);
+    expect(managed.agents).toEqual(["pi", "claude-code"]);
+    expect(await piSettings(home)).toEqual({ packages: ["npm:@other/pkg", root] });
+  });
+
   it("does nothing when no agent is registered", async () => {
     const base = await mkdtemp(join(tmpdir(), "rerail-coding-agents-"));
     temporaryDirectories.push(base);
@@ -137,6 +163,28 @@ describe("connectCodingAgents", () => {
     expect(result.all).toEqual(["claude-code"]);
     expect(result.changed).toEqual([]);
     expect(await readFile(settings, "utf8")).toBe(stale);
+  });
+
+  it("swaps a Pi gallery entry added since Pi was connected, though Pi is not named, and does not count Pi as newly connected", async () => {
+    const { base, root, home } = await fixture();
+    vi.stubEnv("RERAIL_HOME", join(base, "rerail-home"));
+    await piSettings(home, [root, "npm:@neralabs/rerail@0.1.0"]);
+
+    const result = await connectCodingAgents(root, home, []);
+    expect(result.changed).toEqual([]);
+    expect(result.all).toEqual(["pi", "claude-code"]);
+    expect(await piSettings(home)).toEqual({ packages: [root] });
+  });
+
+  it("says OMP loads its own plugin install of Rerail too whenever OMP is connected, named or not", async () => {
+    const { root, home } = await fixture();
+    await registerHarnesses({ root, home, harnesses: ["omp"] });
+    const copy = join(home, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
+    await mkdir(copy, { recursive: true });
+    await writeFile(join(copy, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0" }));
+
+    expect((await connectCodingAgents(root, home, [])).ompPlugin).toBe(true);
+    expect((await connectCodingAgents(root, home, ["omp"])).ompPlugin).toBe(true);
   });
 });
 

@@ -355,7 +355,9 @@ async function runRefresh(context: SetupContext): Promise<number> {
     const changed = result.changes.filter(change => change.action === "created" || change.action === "updated");
     const names = result.agents.map(id => CODING_AGENT_NAMES[id]).join(", ");
     process.stdout.write(changed.length === 0 ? `Coding agents up to date: ${names}\n` : `Refreshed Rerail in ${names}:\n`);
-    printReport({ changes: changed, notes: changed.length === 0 ? [] : result.notes }, false);
+    // Notes about a change come only with one; a note about the agent's state (OMP's plugin install loading Rerail
+    // too) holds whether or not this refresh changed anything, so every note is printed.
+    printReport({ changes: changed, notes: result.notes }, false);
   }
   for (const { agent, message } of result.unchecked) {
     process.stdout.write(`  note: left ${CODING_AGENT_NAMES[agent]} alone: its configuration could not be read to tell whether Rerail is connected (${message})\n`);

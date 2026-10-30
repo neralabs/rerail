@@ -295,6 +295,20 @@ describe("rerail install --refresh", () => {
     expect(output.stdout()).not.toContain(join(hostConfigHome, ".claude", "commands", "rerail.md"));
   });
 
+  it("says OMP loads its own plugin install of Rerail too, even when every coding agent is up to date", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "omp"], context);
+    const copy = join(hostConfigHome, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
+    await mkdir(copy, { recursive: true });
+    await writeFile(join(copy, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0" }));
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(output.stdout()).toContain("Coding agents up to date: OMP");
+    expect(output.stdout()).toContain("note: OMP also loads Rerail from its plugin install, so two copies run");
+  });
+
   it("says so and writes nothing when no coding agent is connected", async () => {
     const { context, hostConfigHome } = await fixture();
     const output = captureOutput();

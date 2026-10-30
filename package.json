@@ -54,7 +54,8 @@
     "claude-code",
     "codex",
     "cursor",
-    "omp"
+    "omp",
+    "pi"
   ],
   "workspaces": [
     "packs/*"

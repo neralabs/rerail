@@ -121,7 +121,7 @@ function plural(count: number, noun: string): string {
 }
 
 /** "Claude Code", "Claude Code and Cursor", "Claude Code, Cursor and Codex". */
-function andList(names: readonly string[]): string {
+export function andList(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }

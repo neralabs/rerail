@@ -31,9 +31,10 @@ import {
 } from "./claude-status-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
-import { shellQuote } from "../harness/setup-screens.js";
+import { andList, shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { pinnedNodePath } from "./node-path.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
@@ -71,6 +72,8 @@ type Mode = "register" | "unregister";
 interface Context {
   mode: Mode;
   root: string;
+  /** The managed install, `<Rerail home>/current`: the install Pi's gallery entry is swapped for. */
+  managedRoot: string;
   packageRoots: Map<string, Promise<boolean>>;
   home: string;
   nodePath: string;
@@ -790,16 +793,6 @@ function planCursor(context: Context): Promise<Plan> {
 }
 
 /**
- * Whether a Pi package source is this install or, on registration, another install of this package or one that is gone
- * (`isGoneInstallRoot`). Only an absolute path, the shape setup writes, can be gone; an `npm:` or `git:` source never is.
- */
-async function isPackagePiEntry(context: Context, agentDir: string, source: string): Promise<boolean> {
-  const root = resolve(agentDir, source);
-  if (context.mode === "unregister") return root === context.root;
-  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root));
-}
-
-/**
  * Rerail's own package as a Pi npm source, as Pi's package gallery installs it (`pi install npm:@neralabs/rerail`), at
  * any version, range or tag. Only the core package: a rule pack's `npm:@neralabs/rerail-pack-…` is another package.
  */
@@ -815,41 +808,73 @@ function piPackageSource(entry: unknown): string | undefined {
 }
 
 /**
- * Pi loads a package once per identity, and an npm source and a path are two, so registration keeps one Rerail entry:
- * this install, in the place of Rerail's npm source, or of this install's own entry, with an object's filters; appended
- * when there is neither. Removal takes out Rerail's npm source too.
+ * What a Pi package source is to this registration: this install (`own`), Rerail's npm source (`npm`), on registration
+ * another install of this package or one that is gone (`other`, `isGoneInstallRoot`: only an absolute path, the shape
+ * set-up writes, can be gone), or not Rerail's (undefined).
+ */
+type PiSourceKind = "own" | "npm" | "other" | undefined;
+
+async function piSourceKind(context: Context, agentDir: string, source: string): Promise<PiSourceKind> {
+  if (isRerailNpmSource(source)) return "npm";
+  const root = resolve(agentDir, source);
+  if (root === context.root) return "own";
+  if (context.mode === "unregister") return undefined;
+  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root)) ? "other" : undefined;
+}
+
+/** Whether Pi's settings hold Rerail's npm source, as Pi's package gallery writes it. Throws when they cannot be read. */
+export async function piHoldsRerailNpmSource(home: string): Promise<boolean> {
+  const { packages } = (await readJsonFile(join(home, ".pi", "agent", "settings.json"))).value;
+  return Array.isArray(packages) && packages.some((entry: unknown) => {
+    const source = piPackageSource(entry);
+    return source !== undefined && isRerailNpmSource(source);
+  });
+}
+
+/**
+ * Pi loads a package once per identity, and an npm source and a path are two, so registration keeps one Rerail entry,
+ * with an object's filters: this install's own, else the first other Rerail entry (Rerail's npm source, another install
+ * or one that is gone) with this install as its source, else this install appended. Removal takes out this install's
+ * entries, and Rerail's npm source only when this is the managed install: the npm source is what Pi's gallery wrote,
+ * which set-up swaps for the managed install, so removing a checkout registered with `--root` leaves it alone.
  */
 function planPi(context: Context): Promise<Plan> {
   const agentDir = join(context.home, ".pi", "agent");
   const path = join(agentDir, "settings.json");
-  const replaced: string[] = [];
+  let replaced: string | undefined;
+  const removed: string[] = [];
   const detail = (): string => {
     if (context.mode === "unregister") return "remove rerail from Pi packages";
-    return `register ${context.root} in Pi packages${replaced.length === 0 ? "" : `, replacing ${replaced.join(" and ")}`}`;
+    return [
+      `register ${context.root} in Pi packages`,
+      ...(replaced === undefined ? [] : [`replacing ${replaced}`]),
+      ...(removed.length === 0 ? [] : [`removing ${andList(removed)}`]),
+    ].join(", ");
   };
   return planJsonFile("pi", path, context, detail, async (value) => {
     const packages = value.packages ?? [];
     if (!Array.isArray(packages))
       throw new Error(`Cannot register rerail package: "packages" in ${path} is not an array`);
-    const kept: unknown[] = [];
-    let placed = false;
+    const entries: Array<{ entry: unknown; source: string | undefined; kind: PiSourceKind }> = [];
     for (const entry of packages as unknown[]) {
       const source = piPackageSource(entry);
-      if (source === undefined) {
-        kept.push(entry);
-        continue;
-      }
-      const npm = isRerailNpmSource(source);
-      if (npm && context.mode === "register") replaced.push(source);
-      if (context.mode === "register" && !placed && (npm || resolve(agentDir, source) === context.root)) {
-        kept.push(isObject(entry) ? { ...entry, source: context.root } : context.root);
-        placed = true;
-        continue;
-      }
-      if (npm || await isPackagePiEntry(context, agentDir, source)) continue;
-      kept.push(entry);
+      entries.push({ entry, source, kind: source === undefined ? undefined : await piSourceKind(context, agentDir, source) });
     }
-    if (context.mode === "register" && !placed) kept.push(context.root);
+    const kept: unknown[] = [];
+    if (context.mode === "unregister") {
+      const managed = context.root === context.managedRoot;
+      for (const { entry, kind } of entries) if (kind === undefined || (kind === "npm" && !managed)) kept.push(entry);
+    } else {
+      const ownSlot = entries.findIndex(({ kind }) => kind === "own");
+      const slot = ownSlot === -1 ? entries.findIndex(({ kind }) => kind !== undefined) : ownSlot;
+      entries.forEach(({ entry, source, kind }, index) => {
+        if (kind === undefined) kept.push(entry);
+        else if (index === slot) kept.push(isObject(entry) ? { ...entry, source: context.root } : context.root);
+        else if (kind !== "own" && source !== undefined) removed.push(source);
+      });
+      if (slot === -1) kept.push(context.root);
+      else if (entries[slot]!.kind !== "own") replaced = entries[slot]!.source;
+    }
     const next = { ...value };
     if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
     else delete next.packages;
@@ -1137,18 +1162,27 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
   return HARNESSES.filter((harness) => existsSync(join(base, CONFIG_DIRS[harness])));
 }
 
-async function run(options: RegistrationOptions, mode: Mode): Promise<RegistrationReport> {
-  const home = resolve(options.home ?? homedir());
-  const root = resolve(options.root);
-  const context: Context = {
+function newContext(options: RegistrationOptions, mode: Mode): Context {
+  return {
     mode,
-    root,
+    root: resolve(options.root),
+    managedRoot: join(defaultRerailHome(), "current"),
     packageRoots: new Map(),
-    home,
+    home: resolve(options.home ?? homedir()),
     nodePath: options.nodePath ?? pinnedNodePath(),
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
   };
+}
+
+/** Whether OMP loads its own plugin install of Rerail beside `root` (`hasOmpPluginCopy`). Changes nothing. */
+export function loadsOmpPluginCopy(root: string, home: string): Promise<boolean> {
+  return hasOmpPluginCopy(newContext({ root, home }, "register"));
+}
+
+async function run(options: RegistrationOptions, mode: Mode): Promise<RegistrationReport> {
+  const context = newContext(options, mode);
+  const { home } = context;
   const selected = new Set(options.harnesses ?? detectHarnesses(home));
   const plans: Plan[] = [];
 
@@ -1194,7 +1228,8 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
   if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
     notes.push(CODEX_TRUST_NOTE);
   }
-  if (mode === "register" && selected.has("omp") && await hasOmpPluginCopy(context)) notes.push(OMP_PLUGIN_NOTE);
+  // A dry run's caller (a status check) reads no note, so it skips looking in OMP's plugin folder.
+  if (mode === "register" && !context.dryRun && selected.has("omp") && await hasOmpPluginCopy(context)) notes.push(OMP_PLUGIN_NOTE);
   return { changes, notes };
 }
 

@@ -7,7 +7,9 @@ import {
   CODEX_TRUST_NOTE,
   detectHarnesses,
   HARNESSES,
+  loadsOmpPluginCopy,
   OMP_PLUGIN_NOTE,
+  piHoldsRerailNpmSource,
   registerHarnesses,
   UnreadableConfigError,
   unregisterHarnesses,
@@ -67,9 +69,10 @@ async function connection(root: string, home: string, id: Harness): Promise<Pick
 
 /**
  * Whether coding agent `id` holds any registration of `root`: a dry run of removing Rerail from it would change
- * something. An agent missing part of what this version registers (a command added
- * since) counts, and one the person never connected, or connected to another root, does not. Changes nothing; a
- * configuration that cannot be read throws.
+ * something. An agent missing part of what this version registers (a command added since) counts, and so does Pi with
+ * only Rerail's npm source from Pi's gallery when `root` is the managed install, which that source stands in for. One
+ * the person never connected, or connected to another root, does not. Changes nothing; a configuration that cannot be
+ * read throws.
  */
 async function isRegistered(root: string, home: string, id: Harness): Promise<boolean> {
   const plan = await unregisterHarnesses({ root, home, harnesses: [id], dryRun: true });
@@ -136,7 +139,10 @@ export interface ConnectResult {
    * still run, and `rerail update` brings it up to date.
    */
   all: Harness[];
-  /** The coding agents named that could not be connected, with the reason; their config is left as it was. */
+  /**
+   * The coding agents named, and Pi when its npm source was to be swapped, that could not be registered, with the
+   * reason; their config is left as it was.
+   */
   failures: ConnectProblem[];
   /** Codex's hooks were written: Codex runs them only once the person trusts them with `/hooks`. */
   codexTrust: boolean;
@@ -148,13 +154,18 @@ export interface ConnectResult {
  * Set-up's connection of `agents` to `root`, one coding agent at a time, as `refreshCodingAgents` does: a config that
  * cannot be read (a comment or trailing comma in a JSON file) stops only its own agent, untouched, and the others are
  * connected. `workspaceDir`: the repository the person said yes to, for Claude Code's project status line.
+ *
+ * A connected agent not named is otherwise left as it is, out-of-date registration and all, for `rerail update`, but for
+ * two copies of Rerail loading in it: Pi is registered again while its settings also hold Rerail's npm source (a
+ * `pi install npm:@neralabs/rerail` since), which swaps that source for `root`, and OMP's plugin install is looked for
+ * whenever OMP is connected.
  */
 export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
   const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false, ompPlugin: false };
-  for (const id of agents) {
+  for (const id of [...agents, ...await piToSwap(root, home, agents)]) {
     try {
       const report = await registerHarnesses({ root, home, harnesses: [id], ...(workspaceDir === undefined ? {} : { workspaceDir }) });
-      if (report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
+      if (agents.includes(id) && report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
       if (report.notes.includes(CODEX_TRUST_NOTE)) result.codexTrust = true;
       if (report.notes.includes(OMP_PLUGIN_NOTE)) result.ompPlugin = true;
     } catch (error) {
@@ -170,7 +181,19 @@ export async function connectCodingAgents(root: string, home: string, agents: re
       // A config that cannot be read connects nothing; set-up names it when it was asked to connect it.
     }
   }
+  if (!result.ompPlugin && !agents.includes("omp") && result.all.includes("omp")) result.ompPlugin = await loadsOmpPluginCopy(root, home);
   return result;
+}
+
+/** `["pi"]` when Pi, not among `agents`, is connected to `root` and its settings also hold Rerail's npm source. */
+async function piToSwap(root: string, home: string, agents: readonly Harness[]): Promise<Harness[]> {
+  if (agents.includes("pi") || !detectHarnesses(home).includes("pi")) return [];
+  try {
+    return await piHoldsRerailNpmSource(home) && await isRegistered(root, home, "pi") ? ["pi"] : [];
+  } catch {
+    // A config that cannot be read is left as it is, as for any agent not named.
+    return [];
+  }
 }
 
 /**
