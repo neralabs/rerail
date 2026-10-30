@@ -545,19 +545,18 @@ existing dispatch. GPU waves cost about 1.2–1.6 µs each, against 386–890 µ
 (metal-enqueue notes), so no pass may need the host between passes. Check: the S1 gate's root sets
 are equal on CPU and Metal (Bend's rule that every binding must give the same keys).
 
-**2026-10-30, S2 progress:**
-- *Done:*
-  - the labels travel to Metal in the class table (`transducer_supertypes`);
-  - the program passes run on the Metal interpreter, one dispatch per pass over the whole
-    batch;
+**2026-10-30, S2:**
+- *Done* (`metal_program_backend::label_passes`):
+  - the labels sit in a prefix of the supertype buffer, which `has_supertype` reads;
+  - every pass runs as kernels, a dependency level at a time, in one command buffer;
+  - the host waits only to grow the workspace, past 64 MB of uploads, and per round of a
+    recursive group;
   - the parity gate passes for 87 of 87 clauses.
 - *Still open:*
-  - the passes between programs (complement, constraints, count tallies) and pattern leaves run
-    on the host;
-  - each pass is a host round trip, which makes Metal about 10× the CPU interpreter on a small
-    batch.
-- *Next:* encode all passes in one command buffer, with complement and tally kernels (a
-  word-parallel not, a segmented count).
+  - pattern leaves are matched on the host, as `demand`'s pattern producers are, until the
+    packed pattern is compiled to words;
+  - label-domain programs start at every node;
+  - each clause is its own evaluation until S4 batches a wave's clauses.
 
 ## O24. Semantic predicates as labels from fact producers
 

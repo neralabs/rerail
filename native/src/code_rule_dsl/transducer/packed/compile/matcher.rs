@@ -61,8 +61,8 @@ enum Tally {
     Capture,
 }
 
-/// Where a clause's program passes run. Pattern leaves and the passes between programs
-/// (complement, constraints, counts) run on the host either way, as `demand`'s pattern producers do.
+/// Where a clause's passes run. On Metal every pass is a kernel in one command buffer
+/// (`roots_metal`); pattern leaves are matched on the host first, as `demand`'s pattern producers.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::code_rule_dsl) enum Backend {
     Cpu,
@@ -172,6 +172,10 @@ impl LoweredMatcher {
         backend: Backend,
         tapes: &[TapeDoc],
     ) -> Result<Vec<BTreeSet<u32>>, Error> {
+        #[cfg(target_os = "macos")]
+        if let Backend::MetalInterpreter = backend {
+            return self.roots_metal(tapes).map(|(roots, _)| roots);
+        }
         let mut sets = tapes
             .iter()
             .map(|tape| {
@@ -193,7 +197,7 @@ impl LoweredMatcher {
                         .zip(&sets)
                         .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
                         .collect::<Vec<_>>();
-                    let found = self.evaluate(backend, self.labels.def(id), &views, &sets)?;
+                    let found = self.evaluate(self.labels.def(id), &views, &sets)?;
                     for (sets, set) in sets.iter_mut().zip(found) {
                         let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
                         if *slot != set {
@@ -216,7 +220,7 @@ impl LoweredMatcher {
             .zip(&sets)
             .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
             .collect::<Vec<_>>();
-        let outputs = run(backend, &self.program, &views, &self.domain, &sets)?;
+        let outputs = run(&self.program, &views, &self.domain, &sets)?;
         Ok(outputs
             .into_iter()
             .map(|outputs| outputs.into_iter().map(|output| output.start).collect())
@@ -226,7 +230,6 @@ impl LoweredMatcher {
     /// A label's set on each tape of the batch.
     fn evaluate(
         &self,
-        backend: Backend,
         label: &Label,
         views: &[TapeDoc],
         sets: &[Arc<Vec<Vec<u64>>>],
@@ -265,7 +268,7 @@ impl LoweredMatcher {
                     .collect()
             }
             Label::Roots(program, starts) | Label::Targets(program, starts) => {
-                let outputs = run(backend, program, views, starts, sets)?;
+                let outputs = run(program, views, starts, sets)?;
                 Ok(views
                     .iter()
                     .zip(outputs)
@@ -288,7 +291,7 @@ impl LoweredMatcher {
                 min,
                 max,
             } => {
-                let outputs = run(backend, program, views, starts, sets)?;
+                let outputs = run(program, views, starts, sets)?;
                 Ok(views
                     .iter()
                     .zip(outputs)
@@ -335,30 +338,188 @@ fn has(sets: &[Vec<u64>], label: u16, node: u32) -> bool {
     sets[usize::from(label - LABEL_BASE)][node as usize / 64] >> (node % 64) & 1 != 0
 }
 
-/// `program`'s outputs from each tape's `starts`, one dispatch over the batch.
+/// `program`'s outputs from each tape's `starts`.
 fn run(
-    backend: Backend,
     program: &Program,
     views: &[TapeDoc],
     starts: &Domain,
     sets: &[Arc<Vec<Vec<u64>>>],
 ) -> Result<Vec<Vec<Output>>, Error> {
-    let roots = views
+    views
         .iter()
         .zip(sets)
-        .map(|(view, sets)| domain(starts, view, sets).collect::<Vec<_>>());
-    match backend {
-        Backend::Cpu => roots
-            .zip(views)
-            .map(|(roots, view)| program.execute_roots(view, roots))
-            .collect(),
-        #[cfg(target_os = "macos")]
-        Backend::MetalInterpreter => {
-            let anchors = roots.map(|roots| vec![roots]).collect::<Vec<_>>();
-            let engine = metal_program_backend::compile_interpreter_cached()?;
-            let outputs = metal_program_backend::execute(&engine, std::slice::from_ref(program), views, &anchors)?;
-            Ok(outputs.into_iter().map(|mut file| file.pop().unwrap_or_default()).collect())
+        .map(|(view, sets)| program.execute_roots(view, domain(starts, view, sets)))
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+impl LoweredMatcher {
+    /// The batch's roots with every pass on Metal in one command buffer
+    /// (`metal_program_backend::label_passes`): pattern leaves and constrained patterns' captures
+    /// come from the host pattern matcher first; the rest are kernels.
+    pub(in crate::code_rule_dsl) fn roots_metal(
+        &self,
+        tapes: &[TapeDoc],
+    ) -> Result<(Vec<BTreeSet<u32>>, metal_program_backend::label_passes::Outcome), Error> {
+        use metal_program_backend::label_passes::{Pass, Plan, run};
+        let bases = tapes
+            .iter()
+            .scan(0_u32, |base, tape| {
+                let at = *base;
+                *base += tape.transducer_len() as u32;
+                Some(at)
+            })
+            .collect::<Vec<_>>();
+        let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
+        let words = nodes.div_ceil(32).max(1);
+        let labels = self.labels.defs.len() + 1;
+        let mut initial = vec![0_u32; labels * words];
+        let no_labels = tapes
+            .iter()
+            .map(|tape| Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; self.labels.defs.len()]))
+            .collect::<Vec<_>>();
+        // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
+        // Metal, where the label is not known before the command buffer runs, it starts everywhere.
+        let roots = |starts: &Domain| {
+            tapes
+                .iter()
+                .zip(&no_labels)
+                .map(|(tape, sets)| match starts {
+                    Domain::Label(_) => (0..tape.transducer_len() as u32).collect(),
+                    _ => domain(starts, tape, sets).collect(),
+                })
+                .collect::<Vec<Vec<u32>>>()
+        };
+        let index = |label: u16| u32::from(label - LABEL_BASE);
+        // Segments: each run of single-label steps, and each recursive group, as its levels. A
+        // label's level is one past the deepest label of its segment it reads that is computed
+        // before it; in a recursive group, a read of a later member is the last round's.
+        let mut segments: Vec<(bool, Vec<u16>)> = Vec::new();
+        for step in &self.labels.steps {
+            let recursive = self.labels.recursive.values().any(|id| step.contains(id));
+            match segments.last_mut() {
+                Some((false, members)) if !recursive => members.extend(step),
+                _ => segments.push((recursive, step.clone())),
+            }
         }
+        let mut slots = 0_u32;
+        let mut steps = Vec::new();
+        for (recursive, members) in &segments {
+            let mut level = BTreeMap::<u16, usize>::new();
+            let mut levels: Vec<Vec<Pass<'_>>> = Vec::new();
+            for &id in members {
+                let at = self
+                    .labels
+                    .reads(id)
+                    .iter()
+                    .filter_map(|read| level.get(read))
+                    .map(|deepest| deepest + 1)
+                    .max()
+                    .unwrap_or(0);
+                let target = index(id);
+                let pass = match self.labels.def(id) {
+                    Label::Pattern(pattern, starts) => {
+                        for ((tape, sets), base) in tapes.iter().zip(&no_labels).zip(&bases) {
+                            for node in domain(starts, tape, sets) {
+                                if pattern.execute_ast_pattern(tape, node)?.is_some() {
+                                    let global = (base + node) as usize;
+                                    initial[target as usize * words + global / 32] |= 1 << (global % 32);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    Label::Constrained(pattern, starts, constraints) => {
+                        let mut rows = Vec::new();
+                        for ((tape, sets), base) in tapes.iter().zip(&no_labels).zip(&bases) {
+                            for node in domain(starts, tape, sets) {
+                                let Some(captures) = pattern.execute_ast_pattern(tape, node)? else {
+                                    continue;
+                                };
+                                // As the CPU pass: an unbound or multi-node capture is not checked.
+                                let checks = constraints
+                                    .iter()
+                                    .filter_map(|(name, label)| {
+                                        captures
+                                            .iter()
+                                            .find(|capture| capture.label == *name)
+                                            .filter(|capture| !capture.multi)
+                                            .map(|capture| (base + capture.node, index(*label)))
+                                    })
+                                    .collect();
+                                rows.push((base + node, checks));
+                            }
+                        }
+                        Pass::Constrained { target, rows }
+                    }
+                    Label::Roots(program, starts) | Label::Targets(program, starts) => Pass::Program {
+                        target,
+                        program,
+                        roots: roots(starts),
+                        captured: matches!(self.labels.def(id), Label::Targets(..)),
+                    },
+                    Label::Count {
+                        program,
+                        domain: starts,
+                        by,
+                        min,
+                        max,
+                    } => {
+                        slots += 1;
+                        Pass::Count {
+                            target,
+                            slot: slots - 1,
+                            program,
+                            roots: roots(starts),
+                            captured: matches!(by, Tally::Capture),
+                            min: u32::try_from(*min).unwrap_or(u32::MAX),
+                            max: max.map_or(u32::MAX, |max| u32::try_from(max).unwrap_or(u32::MAX)),
+                        }
+                    }
+                    Label::Complement(of) => Pass::Complement { target, of: index(*of) },
+                    Label::Empty => Pass::Empty { target },
+                };
+                level.insert(id, at);
+                if levels.len() <= at {
+                    levels.resize_with(at + 1, Vec::new);
+                }
+                levels[at].push(pass);
+            }
+            levels.retain(|level| !level.is_empty());
+            steps.push((*recursive, levels));
+        }
+        let last = labels as u32 - 1;
+        steps.push((
+            false,
+            vec![vec![Pass::Program {
+                target: last,
+                program: &self.program,
+                roots: roots(&self.domain),
+                captured: false,
+            }]],
+        ));
+        let outcome = run(
+            &Plan {
+                labels,
+                counts: slots as usize,
+                initial,
+                steps,
+            },
+            tapes,
+        )?;
+        let found = tapes
+            .iter()
+            .zip(&bases)
+            .map(|(tape, base)| {
+                (0..tape.transducer_len() as u32)
+                    .filter(|node| {
+                        let global = (base + node) as usize;
+                        outcome.labels[last as usize * words + global / 32] >> (global % 32) & 1 != 0
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok((found, outcome))
     }
 }
 

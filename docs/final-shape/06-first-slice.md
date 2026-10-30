@@ -131,26 +131,39 @@ interpreter.
   `follows`) runs forward from each match and is tallied by the node it reaches. The tally,
   compared with `min..=max`, is the label. The rule is always a label, so an `any` cannot fork one
   node into two paths.
-- **Labels on Metal.** `TapeDoc::transducer_supertypes` lists each label's nodes as members of its
-  derived class, so Metal's batch uploads them in the class table it already has (no new buffer,
-  no new operation). `LoweredMatcher::roots_batch(backend, tapes)` runs each pass once over the
-  whole batch: one Metal interpreter dispatch per program pass, with the interpreter compiled once
-  per process (`compile_interpreter_cached`).
+- **Labels on Metal, all passes on the GPU** (`metal_program_backend::label_passes`,
+  `metal_label_passes.metal`, `LoweredMatcher::roots_metal`):
+  - **Storage.** The labels live in a prefix of the batch's supertype buffer: element 0 is
+    {labels, words per label}, then one bitset per label over the batch's global nodes.
+    `has_supertype` reads a class at or above `0xf000` from the prefix, so `SUPERTYPE` tests a
+    label on Metal as on the CPU. No new operation.
+  - **Levels.** Passes run a dependency level at a time. A level's labels read only earlier
+    levels' labels. Each level is:
+    1. one interpreter `run_batch` dispatch with every program of the level, on one shared
+       workspace whose scheduler image a blit copies in;
+    2. `label_sink`: results become scratch bits, or count tallies routed by task;
+    3. `label_derive`: complements, count bounds, constrained-pattern rows;
+    4. `label_settle`: scratch becomes the label, and a change sets a flag.
+  - **Launches** grow with the depth of the label graph, not the number of passes. This keeps
+    them inside the evaluation's launch budget (`metal_launch_budget`, 600, target below 100).
+  - **Host.** Pattern leaves and constrained patterns' captures are matched on the host before
+    the command buffer, as `demand`'s pattern producers are. The host waits only at the end, to
+    grow the workspace, past 64 MB of per-level uploads, and once per round of a recursive group,
+    whose end is the changed flag.
 - **Gates:**
   - `lowered_python_clauses_match_where_ws_matcher_does` (CPU against W): 87 of 286 clauses
     lower, all exact. That is 10 more; the other 15 `count` clauses are refused for semantic
     leaves inside them.
   - `lowered_clauses_find_the_same_roots_on_metal` (`metal-tests`): 87 of 87 clauses give the
-    same root sets on CPU and Metal (4 fixtures, 85 matched nodes).
-  - Both take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
+    CPU's root sets on Metal. On 8 fixtures (164 matched nodes) that took 2,349 launches and 330
+    command buffers over 87 evaluations, about 27 launches each. Metal 20 s, CPU 14.6 s (test
+    wall time, debug build, load 14).
+  - Both gates take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
     fixtures) for targeted checks. The default sample is every eighth fixture.
-- **Left in O23:**
-  - Pattern leaves and the host passes (complement, constraints, count tallies) run on the
-    host, as `demand`'s pattern producers already do.
-  - Each program pass is its own dispatch with a host round trip. Metal took 77 s against the
-    CPU's 7.7 s for 87 clauses on 4 fixtures, debug build, load 12.
-  - One command buffer for all of a batch's passes, with the host passes as kernels, is the
-    remaining work. It is measured at S8.
+- **Left for later (O23):**
+  - A label-domain program starts at every node on Metal, because its label is not known when the
+    command buffer is encoded. Its first `SUPERTYPE` drops the others.
+  - Each clause is its own evaluation; batching every clause of a wave into one is S4's.
 
 ### S3. Ingest through the push path (closes O2's ingest side)
 

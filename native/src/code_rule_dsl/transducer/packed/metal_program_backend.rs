@@ -34,6 +34,9 @@ pub(super) fn metrics() -> (usize, usize) {
     (INVOCATIONS.get(), HOST_EVENTS.get())
 }
 
+#[path = "metal_label_passes.rs"]
+pub(super) mod label_passes;
+
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;
 static JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Engine>>> =

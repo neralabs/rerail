@@ -95,6 +95,7 @@ A clause becomes a sequence of **node-label passes**, then one root program
   operator lowering, recorded as O24.
 - **`count`** (S2): a counting label. Each path of its program is one counted node, tallied by its
   root, or for a backward walk by the node it reaches.
-- **Metal** (S2): labels are class-table members (`transducer_supertypes`), and program passes run
-  on the Metal interpreter. The parity gate passes for 87 of 87 clauses. Host passes and one
-  command buffer stay in O23.
+- **Metal** (S2): labels live in a prefix of the supertype buffer, which `has_supertype` reads.
+  Every pass is a kernel, run a dependency level at a time in one command buffer
+  (`metal_program_backend::label_passes`). The parity gate passes for 87 of 87 clauses. Pattern
+  leaves stay on the host, and recursive rounds wait for the host (O23).

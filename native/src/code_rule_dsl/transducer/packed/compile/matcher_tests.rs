@@ -254,16 +254,16 @@ fn the_gate_catches_a_widened_walk() {
     panic!("only {caught} widened clauses differ from W's matcher");
 }
 
-/// S2's parity gate (O23, F1): every lowered clause's passes run on the Metal interpreter over the
-/// whole batch of fixtures at once, the labels uploaded as derived classes in the tape's class
-/// table, and give the CPU interpreter's root sets on every fixture.
+/// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
+/// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
+/// CPU interpreter's root sets on every fixture.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_metal() {
     use super::compile_matcher::Backend;
     let tapes = fixtures();
     let compiled = clauses();
-    let (mut lowered, mut matched_nodes) = (0, 0);
+    let (mut lowered, mut matched_nodes, mut commands, mut dispatches) = (0, 0, 0, 0);
     let mut differ = Vec::new();
     let (mut cpu_time, mut metal_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     for (policy, compiled) in &compiled {
@@ -278,7 +278,11 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
             let cpu = program.roots_batch(Backend::Cpu, &tapes);
             cpu_time += started.elapsed();
             let started = std::time::Instant::now();
-            let metal = program.roots_batch(Backend::MetalInterpreter, &tapes);
+            let metal = program.roots_metal(&tapes).map(|(roots, outcome)| {
+                commands += outcome.command_buffers;
+                dispatches += outcome.dispatches;
+                roots
+            });
             metal_time += started.elapsed();
             match (cpu, metal) {
                 (Ok(cpu), Ok(metal)) if cpu == metal => {
@@ -298,7 +302,8 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     }
     eprintln!(
         "S2 Metal parity: {} of {lowered} lowered clauses equal on {} fixtures ({matched_nodes} \
-         matched nodes); CPU {cpu_time:?}, Metal {metal_time:?}",
+         matched nodes); CPU {cpu_time:?}, Metal {metal_time:?} ({commands} command buffers, \
+         {dispatches} dispatches)",
         lowered - differ.len(),
         tapes.len(),
     );
