@@ -25,7 +25,7 @@ Port of ESLint grouped-accessor-pairs, default order anyOrder. Reports the latte
 
 ### `eslint-id-length`
 
-Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties. As ESLint's parent-type table does, it also checks a class declaration's superclass identifier (`extends B`), the identifier key of a class method or field (`[a]() {}`), an arrow function's bare identifier body (`() => a`), a private name assigned through a member (`a.b.#x = …`) and a TypeScript parameter property only when it has a default; a class expression's name is not checked. Identifier names compare by their cooked name; an escaped identifier's length is still measured over its source text (`\u0061` counts 6).
+Port of ESLint id-length, default min 2 (graphemes), no max, properties always. Covers variables, parameters, functions, classes, members, imports, destructuring targets and assigned properties. As ESLint's parent-type table does, it also checks a class declaration's superclass identifier (`extends B`), the identifier key of a class method or field (`[a]() {}`), an arrow function's bare identifier body (`() => a`), a private name assigned through a member (`a.b.#x = …`) and a TypeScript parameter property only when it has a default; a class expression's name is not checked. Identifier names compare and are measured by their cooked name (`value: { name: true }`), so an escaped identifier counts its decoded graphemes (`\u0061` counts 1), and a private name is measured without its `#`.
 
 ### `eslint-max-classes-per-file`
 
@@ -45,11 +45,11 @@ Port of ESLint no-dupe-class-members. Static member names follow ESLint's getSta
 
 ### `eslint-no-dupe-else-if`
 
-Port of ESLint no-dupe-else-if. Flags an else-if test that repeats an earlier test of the chain, is an operand of an earlier `||` test, or is an `&&` whose operand repeats an earlier test (one level only). Tests are compared by tokens, with `||`/`&&` operands in either order (ESLint's equal). Divergence: ESLint's full or/and set-cover over the whole chain is not expressed.
+Port of ESLint no-dupe-else-if, ESLint's set cover written as nested quantifiers. A test is reported when it, or (for an `&&` test) one of its `&&` operands, has every `||` operand O covered: some earlier test of the else-if chain (`else if` only, not `else { if … }`) has an `||` operand whose `&&` operands each equal some `&&` operand of O. Operands split through parentheses (ESTree has none); "for every" is `not` over the failing operand, "some operand of O" climbs from a candidate through `&&` and parentheses to O (`compare` text `node`), and operands compare by tokens with `||`/`&&` in either order (ESLint's equal). No depth bound beyond the engine's utility recursion limit (256). Checked against ESLint 10.11.0 on its fixtures and on 4,500 random else-if chains (operand depth 3–4, nested chains): no difference.
 
 ### `eslint-no-eval`
 
-Port of ESLint no-eval, default allowIndirect false. Indirect uses flagged: references to the global eval; eval read from a global object (global/window/globalThis, when declared by the configured languageOptions or at the top level of a script); and `this.eval` where `this` is the global object (top level of a script or CommonJS file, or a non-strict function via `resolves.this` with `sloppyFunctions`, strictness from languageOptions) whose call binds the default `this`. Which calls rebind `this` (methods, bind/call/apply, thisArg callbacks, capitalized constructors) is ESLint's heuristic, approximated structurally. Shadowing resolved with `resolves`.
+Port of ESLint no-eval, default allowIndirect false. Indirect uses flagged: references to the global eval; eval read from a global object (global/window/globalThis, when declared by the configured languageOptions or at the top level of a script); and `this.eval` where `this` is the global object (top level of a script or CommonJS file, or a non-strict function via `resolves.this` with `sloppyFunctions`, strictness from languageOptions) whose call binds the default `this`. Which calls rebind `this` (methods, bind/call/apply, thisArg callbacks, capitalized constructors) is ESLint's heuristic, approximated structurally. Shadowing resolved with `resolves`. In a script, a top-level declaration of `eval` with an initializer (`var`/`let`/`const`, destructured, or a `for-in/of` `var` head) is reported at its name, as ESLint reports that write reference to the global eval variable.
 
 ### `eslint-no-extra-bind`
 
@@ -69,7 +69,7 @@ Port of ESLint no-labels. Options allowLoop and allowSwitch in the `options` def
 
 ### `eslint-no-loss-of-precision`
 
-Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's (String(v) through `transform` with `value: true`, overflow to Infinity and underflow to zero included); hex and octal literals checked like binary by significant-bit span. A candidate: on the real-code samples (`docs/upstream.md#samples`) it reports 28 decimal literals of 2^63 (`9223372036854775808`), which a double stores exactly and ESLint does not report, because their digits differ from `String(v)`'s.
+Port of ESLint no-loss-of-precision. Binary literals whose significant bits span more than 53; decimal literals whose significant digits differ from the stored number's `toPrecision(n)` at their own count `n` of significant digits (a float's trailing zeros count, an integer's do not; `n` is spelled out as decimal text by `replace` steps), as ESLint compares them, so `9223372036854775808`, which a double stores exactly, passes, and overflow to Infinity, underflow to zero and more than 100 digits report; hex and octal literals checked like binary by significant-bit span.
 
 ### `eslint-no-magic-numbers`
 
@@ -109,7 +109,7 @@ Unwraps parentheses and TS `as`/`<T>`/`!`/instantiation wrappers. Allowed: call,
 
 ### `eslint-no-unused-vars`
 
-Covers variables, parameters, caught errors, imports, types and type parameters. Reported where ESLint reports (the last write from the variable's own function, else its first definition) via `binds` and `resolves.write: "last"`; options filter on those. Also flags names matching an ignore pattern that are in fact used. An unused `/* global */` name with no declaration is reported at the name in the first comment that declares it (first three names of a comment).
+Covers variables, parameters, caught errors, imports, types and type parameters. Reported where ESLint reports (the last write from the variable's own function, else its first definition) via `binds` and `resolves.write: "last"`; options filter on those. Also flags names matching an ignore pattern that are in fact used. An unused `/* global */` name with no declaration is reported at the name in the first comment that declares it (first three names of a comment). Annex B: a `var` of a catch parameter's name with an initializer (or a `for-in/of` `var` head) in its catch body writes the parameter in ESLint, which then reports it at that write, not at the parameter; the engine binds that write to the hoisted `var`, so the port does not report the parameter there (and misses ESLint's report at the write).
 
 ### `eslint-no-useless-computed-key`
 
@@ -141,7 +141,7 @@ Reports an async non-generator function with a non-empty body that contains no a
 
 ### `eslint-strict`
 
-Default `safe` mode: `global` for CommonJS or globalReturn, else `function`. Each check gated on the case's languageOptions as ESLint picks the mode: module code reports every directive as 'module'; impliedStrict (outside modules) as 'implied'.
+Default `safe` mode: `global` for CommonJS or globalReturn, else `function`. Each check gated on the case's languageOptions as ESLint picks the mode: module code reports every directive as 'module'; impliedStrict (outside modules) as 'implied'. A missing directive is reported at the function as espree places it: a method's at its parameter list. A function in a method's computed key is outside the method. Non-simple parameters are read in both grammars (JavaScript's `assignment_pattern`/patterns, TypeScript's parameter wrappers).
 
 ### `eslint-vars-on-top`
 

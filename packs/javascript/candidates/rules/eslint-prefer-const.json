@@ -280,6 +280,15 @@
                     }
                   }
                 }
+              },
+              {
+                "not": {
+                  "binds": {
+                    "scope": "global",
+                    "exported": true,
+                    "directives": "eslint"
+                  }
+                }
               }
             ]
           }

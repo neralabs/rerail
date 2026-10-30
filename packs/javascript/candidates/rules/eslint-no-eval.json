@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "eslint-no-eval",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Avoid eval() in JavaScript, including indirect use through the global object; it runs arbitrary strings as code.",
   "scope": {
@@ -223,6 +223,86 @@
                     }
                   }
                 }
+              }
+            ]
+          },
+          "when": {
+            "option": {
+              "allowIndirect": null
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "no-eval",
+        "message": "Remove this use of eval; parse data with JSON.parse or dispatch through a map of functions instead.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-eval"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noGlobalEval"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "eval-declaration-write",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {},
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "shorthand_property_identifier_pattern"
+                  }
+                ]
+              },
+              {
+                "regex": "^eval$"
+              },
+              {
+                "binds": {
+                  "scope": [
+                    "global"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "variable_declarator",
+                      "stopBy": "end",
+                      "has": {
+                        "regex": "^=$"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "kind": "for_in_statement",
+                      "stopBy": "end",
+                      "field": "left"
+                    }
+                  }
+                ]
               }
             ]
           },

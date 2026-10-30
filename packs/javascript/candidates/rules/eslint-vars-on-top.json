@@ -12,6 +12,202 @@
   },
   "clauses": [
     {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "declaration": {
+            "any": [
+              {
+                "kind": "variable_declaration"
+              },
+              {
+                "kind": "lexical_declaration"
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "variable_declaration"
+                    },
+                    {
+                      "kind": "lexical_declaration"
+                    },
+                    {
+                      "regex": "^declare\\s+(?:var|let|const)\\b",
+                      "not": {
+                        "kind": "program"
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "variable_declaration"
+                          },
+                          {
+                            "kind": "lexical_declaration"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "regex": "^declare\\s+(?:var|let|const)\\b",
+                "not": {
+                  "kind": "program"
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "variable_declaration"
+                    },
+                    {
+                      "kind": "lexical_declaration"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "prologue": {
+            "any": [
+              {
+                "kind": "import_statement"
+              },
+              {
+                "kind": "expression_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string",
+                  "not": {
+                    "follows": {
+                      "regex": "[\\s\\S]",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                },
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "sequence_expression"
+                  }
+                }
+              }
+            ]
+          },
+          "statement": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "regex": "^[{}]$"
+                }
+              ]
+            }
+          },
+          "var": {
+            "any": [
+              {
+                "kind": "variable_declaration",
+                "not": {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "export_statement"
+                      },
+                      {
+                        "regex": "^declare\\s",
+                        "not": {
+                          "kind": "program"
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "variable_declaration"
+                    },
+                    {
+                      "regex": "^declare\\s+var\\b",
+                      "not": {
+                        "kind": "program"
+                      },
+                      "has": {
+                        "kind": "variable_declaration",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "regex": "^declare\\s+var\\b",
+                    "not": {
+                      "kind": "program"
+                    },
+                    "has": {
+                      "kind": "variable_declaration",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "kind": "export_statement",
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "function-body": {
+            "kind": "statement_block",
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "method_definition"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
       "id": "var-not-on-top",
       "forbid": {
         "ast": {
@@ -74,196 +270,6 @@
                 }
               }
             ]
-          },
-          "utils": {
-            "declaration": {
-              "any": [
-                {
-                  "kind": "variable_declaration"
-                },
-                {
-                  "kind": "lexical_declaration"
-                },
-                {
-                  "kind": "export_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "kind": "lexical_declaration"
-                      },
-                      {
-                        "regex": "^declare\\s+(?:var|let|const)\\b",
-                        "not": {
-                          "kind": "program"
-                        },
-                        "has": {
-                          "stopBy": "neighbor",
-                          "any": [
-                            {
-                              "kind": "variable_declaration"
-                            },
-                            {
-                              "kind": "lexical_declaration"
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "regex": "^declare\\s+(?:var|let|const)\\b",
-                  "not": {
-                    "kind": "program"
-                  },
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "kind": "lexical_declaration"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            "prologue": {
-              "any": [
-                {
-                  "kind": "import_statement"
-                },
-                {
-                  "kind": "expression_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "string",
-                    "not": {
-                      "follows": {
-                        "regex": "[\\s\\S]",
-                        "stopBy": "neighbor"
-                      }
-                    }
-                  },
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "sequence_expression"
-                    }
-                  }
-                }
-              ]
-            },
-            "statement": {
-              "not": {
-                "any": [
-                  {
-                    "kind": "comment"
-                  },
-                  {
-                    "regex": "^[{}]$"
-                  }
-                ]
-              }
-            },
-            "var": {
-              "any": [
-                {
-                  "kind": "variable_declaration",
-                  "not": {
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "export_statement"
-                        },
-                        {
-                          "regex": "^declare\\s",
-                          "not": {
-                            "kind": "program"
-                          }
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "kind": "export_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "regex": "^declare\\s+var\\b",
-                        "not": {
-                          "kind": "program"
-                        },
-                        "has": {
-                          "kind": "variable_declaration",
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "all": [
-                    {
-                      "regex": "^declare\\s+var\\b",
-                      "not": {
-                        "kind": "program"
-                      },
-                      "has": {
-                        "kind": "variable_declaration",
-                        "stopBy": "neighbor"
-                      }
-                    },
-                    {
-                      "not": {
-                        "inside": {
-                          "kind": "export_statement",
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            "function-body": {
-              "kind": "statement_block",
-              "inside": {
-                "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "function_declaration"
-                  },
-                  {
-                    "kind": "function_expression"
-                  },
-                  {
-                    "kind": "arrow_function"
-                  },
-                  {
-                    "kind": "method_definition"
-                  },
-                  {
-                    "kind": "generator_function"
-                  },
-                  {
-                    "kind": "generator_function_declaration"
-                  }
-                ]
-              }
-            }
           }
         }
       },
@@ -326,196 +332,6 @@
                 }
               }
             ]
-          },
-          "utils": {
-            "declaration": {
-              "any": [
-                {
-                  "kind": "variable_declaration"
-                },
-                {
-                  "kind": "lexical_declaration"
-                },
-                {
-                  "kind": "export_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "kind": "lexical_declaration"
-                      },
-                      {
-                        "regex": "^declare\\s+(?:var|let|const)\\b",
-                        "not": {
-                          "kind": "program"
-                        },
-                        "has": {
-                          "stopBy": "neighbor",
-                          "any": [
-                            {
-                              "kind": "variable_declaration"
-                            },
-                            {
-                              "kind": "lexical_declaration"
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "regex": "^declare\\s+(?:var|let|const)\\b",
-                  "not": {
-                    "kind": "program"
-                  },
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "kind": "lexical_declaration"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            "prologue": {
-              "any": [
-                {
-                  "kind": "import_statement"
-                },
-                {
-                  "kind": "expression_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "string",
-                    "not": {
-                      "follows": {
-                        "regex": "[\\s\\S]",
-                        "stopBy": "neighbor"
-                      }
-                    }
-                  },
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "sequence_expression"
-                    }
-                  }
-                }
-              ]
-            },
-            "statement": {
-              "not": {
-                "any": [
-                  {
-                    "kind": "comment"
-                  },
-                  {
-                    "regex": "^[{}]$"
-                  }
-                ]
-              }
-            },
-            "var": {
-              "any": [
-                {
-                  "kind": "variable_declaration",
-                  "not": {
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "export_statement"
-                        },
-                        {
-                          "regex": "^declare\\s",
-                          "not": {
-                            "kind": "program"
-                          }
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "kind": "export_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "regex": "^declare\\s+var\\b",
-                        "not": {
-                          "kind": "program"
-                        },
-                        "has": {
-                          "kind": "variable_declaration",
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "all": [
-                    {
-                      "regex": "^declare\\s+var\\b",
-                      "not": {
-                        "kind": "program"
-                      },
-                      "has": {
-                        "kind": "variable_declaration",
-                        "stopBy": "neighbor"
-                      }
-                    },
-                    {
-                      "not": {
-                        "inside": {
-                          "kind": "export_statement",
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            "function-body": {
-              "kind": "statement_block",
-              "inside": {
-                "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "function_declaration"
-                  },
-                  {
-                    "kind": "function_expression"
-                  },
-                  {
-                    "kind": "arrow_function"
-                  },
-                  {
-                    "kind": "method_definition"
-                  },
-                  {
-                    "kind": "generator_function"
-                  },
-                  {
-                    "kind": "generator_function_declaration"
-                  }
-                ]
-              }
-            }
           }
         }
       },
@@ -595,196 +411,6 @@
                 }
               }
             ]
-          },
-          "utils": {
-            "declaration": {
-              "any": [
-                {
-                  "kind": "variable_declaration"
-                },
-                {
-                  "kind": "lexical_declaration"
-                },
-                {
-                  "kind": "export_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "kind": "lexical_declaration"
-                      },
-                      {
-                        "regex": "^declare\\s+(?:var|let|const)\\b",
-                        "not": {
-                          "kind": "program"
-                        },
-                        "has": {
-                          "stopBy": "neighbor",
-                          "any": [
-                            {
-                              "kind": "variable_declaration"
-                            },
-                            {
-                              "kind": "lexical_declaration"
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "regex": "^declare\\s+(?:var|let|const)\\b",
-                  "not": {
-                    "kind": "program"
-                  },
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "kind": "lexical_declaration"
-                      }
-                    ]
-                  }
-                }
-              ]
-            },
-            "prologue": {
-              "any": [
-                {
-                  "kind": "import_statement"
-                },
-                {
-                  "kind": "expression_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "string",
-                    "not": {
-                      "follows": {
-                        "regex": "[\\s\\S]",
-                        "stopBy": "neighbor"
-                      }
-                    }
-                  },
-                  "not": {
-                    "has": {
-                      "stopBy": "neighbor",
-                      "kind": "sequence_expression"
-                    }
-                  }
-                }
-              ]
-            },
-            "statement": {
-              "not": {
-                "any": [
-                  {
-                    "kind": "comment"
-                  },
-                  {
-                    "regex": "^[{}]$"
-                  }
-                ]
-              }
-            },
-            "var": {
-              "any": [
-                {
-                  "kind": "variable_declaration",
-                  "not": {
-                    "inside": {
-                      "stopBy": "neighbor",
-                      "any": [
-                        {
-                          "kind": "export_statement"
-                        },
-                        {
-                          "regex": "^declare\\s",
-                          "not": {
-                            "kind": "program"
-                          }
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "kind": "export_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "any": [
-                      {
-                        "kind": "variable_declaration"
-                      },
-                      {
-                        "regex": "^declare\\s+var\\b",
-                        "not": {
-                          "kind": "program"
-                        },
-                        "has": {
-                          "kind": "variable_declaration",
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    ]
-                  }
-                },
-                {
-                  "all": [
-                    {
-                      "regex": "^declare\\s+var\\b",
-                      "not": {
-                        "kind": "program"
-                      },
-                      "has": {
-                        "kind": "variable_declaration",
-                        "stopBy": "neighbor"
-                      }
-                    },
-                    {
-                      "not": {
-                        "inside": {
-                          "kind": "export_statement",
-                          "stopBy": "neighbor"
-                        }
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            "function-body": {
-              "kind": "statement_block",
-              "inside": {
-                "stopBy": "neighbor",
-                "any": [
-                  {
-                    "kind": "function_declaration"
-                  },
-                  {
-                    "kind": "function_expression"
-                  },
-                  {
-                    "kind": "arrow_function"
-                  },
-                  {
-                    "kind": "method_definition"
-                  },
-                  {
-                    "kind": "generator_function"
-                  },
-                  {
-                    "kind": "generator_function_declaration"
-                  }
-                ]
-              }
-            }
           }
         }
       },
