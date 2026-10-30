@@ -39,6 +39,7 @@ import {
   type UnitOrigin,
   type UpstreamFinding,
 } from "./pack.js";
+import { GATES_MANIFEST, readGatesManifest, toolPackDirectory } from "./manifest.js";
 import { EXAMPLE_LIMIT, REPORT_FORMAT, type RuleRow, type SourceSummary, type SyntaxErrorLocation, type T4Report } from "./report.js";
 import { precisionRecall, scoreSamples, scoreSource, type JudgedSample, type Point, type SourceScore } from "./score.js";
 
@@ -906,7 +907,10 @@ function fixturesRow(entry: CompiledRule, run: FixturesRun, loaded: LoadedPack, 
     judgedSamples: 0,
     ...ownUnits(rule, units, findings, rerail),
     upstreamFindings: expected.length,
-    renamed: variantPaths.size === 0 ? null : renamedScore(rule, units, findings, expectedRenamed, run.renamedActual.get(rule.id) ?? noActual(), pointsOf, applicable, used),
+    renamed: variantPaths.size === 0 ? null : {
+      ...renamedScore(rule, units, findings, expectedRenamed, run.renamedActual.get(rule.id) ?? noActual(), pointsOf, applicable, used),
+      ...renameExemption(loaded, tool, rule.upstream.rule),
+    },
     // On the fixtures, which the port must read as upstream does, every failure but `source-partial` and the T1
     // syntax-error skips is an engine failure, parse-induced `source-incomplete` included.
     engineFailures: total(rerail.engineFailurePaths) + rerail.pathlessEngineFailures + total(rerail.incompletePaths) + rerail.pathlessIncomplete,
@@ -931,6 +935,14 @@ function ownUnits(rule: PackRule, units: readonly ScoredUnit[], findings: readon
     reported.has(path) || rerail.engineFailurePaths.has(path) || rerail.incompletePaths.has(path) || rerail.partialPaths.has(path) || rerail.syntaxErrorFiles.has(path);
   const silent = own.filter(unit => !rerail.pathlessUnits.has(unit.key) && unit.paths.every(path => !upstreamReports.has(path) && !unsure(path)));
   return { ownUnits: own.length, silentOwnUnits: silent.length };
+}
+
+/** gates.yaml's `rename_exempt` for an upstream rule, as the row's `renamed.exempt`; none when the tool has no gates.yaml. */
+function renameExemption(loaded: LoadedPack, tool: string, upstreamRule: string): { exempt?: string } {
+  const { pack } = loaded.pack;
+  if (!existsSync(join(toolPackDirectory(RERAIL_ROOT, pack, tool), GATES_MANIFEST))) return {};
+  const exempt = readGatesManifest(RERAIL_ROOT, pack, tool).rules[upstreamRule]?.rename_exempt;
+  return exempt === undefined ? {} : { exempt };
 }
 
 /**
@@ -1106,7 +1118,7 @@ export function reportFailures(report: T4Report): string[] {
         if (row.renamed !== null && row.renamed.fp > 0) problems.push(`${where}: ${row.renamed.fp} unexplained FP on rename variants, first ${JSON.stringify(row.renamed.falsePositives[0])}`);
         if (row.renamed !== null && row.renamed.fn > 0) problems.push(`${where}: ${row.renamed.fn} unexplained FN on rename variants, first ${JSON.stringify(row.renamed.falseNegatives[0])}`);
         if (row.renamed !== null && row.renamed.engineFailures > 0) problems.push(`${where}: ${row.renamed.engineFailures} engine failure(s) on rename variants`);
-        if (row.renamed !== null && row.renamed.tp === 0 && row.renamed.renamedAway > 0) problems.push(`${where}: the renaming took every finding from its ${row.renamed.renamedAway} rename variant(s) and none survives`);
+        if (row.renamed !== null && row.renamed.tp === 0 && row.renamed.renamedAway > 0 && row.renamed.exempt === undefined) problems.push(`${where}: the renaming took every finding from its ${row.renamed.renamedAway} rename variant(s) and none survives`);
       }
       if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
       return problems;

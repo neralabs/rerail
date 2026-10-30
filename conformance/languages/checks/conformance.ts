@@ -83,6 +83,7 @@ function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
     ...(renamed.engineFailures > 0 ? [`${renamed.engineFailures} engine failure(s) on rename variants`] : []),
   ];
   if (problems.length === 0 && renamed.tp === 0 && renamed.renamedAway > 0) {
+    if (renamed.exempt !== undefined) return { id, ok: true, detail: `n/a: exempt in gates.yaml (${renamed.exempt}); no finding survives on its ${renamed.units} rename variant unit(s)${notes}` };
     return {
       id,
       ok: false,

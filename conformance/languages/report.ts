@@ -93,9 +93,11 @@ export const ruleRowSchema = z.object({
       /**
        * Variant units whose original upstream reports the rule in and the variant itself not: the renaming took away
        * every finding (a name the rule keys on was renamed), so the variant tests only that the rule stays silent.
-       * Reported, never failing.
+       * When every variant is renamed away and no true positive survives, holds-under-rename fails, unless `exempt`.
        */
       renamedAway: z.number().int().nonnegative(),
+      /** gates.yaml's `rename_exempt` for the rule: why a variant renamed away is no evidence against it. */
+      exempt: z.string().min(1).optional(),
     })
     .nullable(),
   /**

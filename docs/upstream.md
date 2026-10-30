@@ -108,7 +108,8 @@ URL, a font name), so renaming them would change upstream's answer rather than t
 like any unit, so its expected findings are upstream's own answer on it, and its `source.units` entry carries
 `renamedFrom`, the key of the original. The conformance runner scores variants apart from the originals, as
 `holds-under-rename`: a port that matches the test cases' names instead of the construct fails it, and so does one
-that the renaming takes every finding from while none survives (it held vacuously, which blocks).
+that the renaming takes every finding from while none survives (it held vacuously, which blocks), unless the rule's
+`gates.yaml` entry gives a `rename_exempt` reason ([conformance/README.md](../conformance/README.md)).
 
 A generator that lints each upstream case under the case's own language (`ecmaVersion`, `sourceType`,
 `parserOptions`) records it in the unit's `source.units` entry as `languageOptions`, where it differs from ESLint's
