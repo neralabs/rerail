@@ -11,6 +11,22 @@
       "define": {
         "language": "python",
         "utils": {
+          "airflow-name": { "kind": "dotted_name", "regex": "^airflow([^0-9A-Za-z_]|$)" },
+          "imports-airflow": {
+            "has": {
+              "stopBy": "end",
+              "matches": "airflow-name",
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "import_statement" } },
+                { "inside": { "stopBy": "neighbor", "kind": "aliased_import", "inside": { "stopBy": "neighbor", "kind": "import_statement" } } },
+                { "inside": { "stopBy": "neighbor", "field": "module_name", "kind": "import_from_statement" } }
+              ]
+            }
+          },
+          "seen-airflow": { "inside": { "stopBy": "end", "kind": "module", "matches": "imports-airflow" } },
+          "string-literal": { "any": [{ "kind": "string" }, { "kind": "concatenated_string" }] },
+          "after-dot": { "follows": { "stopBy": "neighbor", "regex": "^\\.$" } },
+          "import-site": { "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] },
           "import-error": {
             "any": [
               {
@@ -240,7 +256,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
                                 }
                               }
@@ -306,7 +322,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-1",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
                                 }
                               }
@@ -374,7 +390,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-2",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "pattern": "$ORIG" }
                                 }
                               }
@@ -430,7 +446,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-EmptyOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^EmptyOperator$" }
                                 }
                               }
@@ -490,7 +506,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-ExternalDagLink",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^ExternalDagLink$" }
                                 }
                               }
@@ -550,7 +566,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-GoogleApiToS3Operator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^GoogleApiToS3Operator$" }
                                 }
                               }
@@ -615,7 +631,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-HiveToDruidOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^HiveToDruidOperator$" }
                                 }
                               }
@@ -680,7 +696,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-HiveToMySqlOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^HiveToMySqlOperator$" }
                                 }
                               }
@@ -741,7 +757,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-HttpOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^HttpOperator$" }
                                 }
                               }
@@ -801,7 +817,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-MsSqlToHiveOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^MsSqlToHiveOperator$" }
                                 }
                               }
@@ -866,7 +882,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-MySqlToHiveOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^MySqlToHiveOperator$" }
                                 }
                               }
@@ -927,7 +943,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-PodGenerator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^PodGenerator$" }
                                 }
                               }
@@ -987,7 +1003,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-PodManager",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^PodManager$" }
                                 }
                               }
@@ -1047,7 +1063,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-PrestoToMySqlOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^PrestoToMySqlOperator$" }
                                 }
                               }
@@ -1112,7 +1128,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-RedshiftToS3Operator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^RedshiftToS3Operator$" }
                                 }
                               }
@@ -1177,7 +1193,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-S3ToHiveOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^S3ToHiveOperator$" }
                                 }
                               }
@@ -1242,7 +1258,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-S3ToRedshiftOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^S3ToRedshiftOperator$" }
                                 }
                               }
@@ -1303,7 +1319,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-SQLCheckOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^SQLCheckOperator$" }
                                 }
                               }
@@ -1368,7 +1384,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-SQLExecuteQueryOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^SQLExecuteQueryOperator$" }
                                 }
                               }
@@ -1433,7 +1449,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-SQLIntervalCheckOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^SQLIntervalCheckOperator$" }
                                 }
                               }
@@ -1498,7 +1514,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-SQLThresholdCheckOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^SQLThresholdCheckOperator$" }
                                 }
                               }
@@ -1563,7 +1579,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-SQLValueCheckOperator",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^SQLValueCheckOperator$" }
                                 }
                               }
@@ -1622,7 +1638,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-V1ContainerPort",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1ContainerPort$" }
                                 }
                               }
@@ -1676,7 +1692,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-V1EnvVar",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1EnvVar$" }
                                 }
                               }
@@ -1732,7 +1748,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-V1ResourceRequirements",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1ResourceRequirements$" }
                                 }
                               }
@@ -1791,7 +1807,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-V1Volume",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1Volume$" }
                                 }
                               }
@@ -1845,7 +1861,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-V1VolumeMount",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^V1VolumeMount$" }
                                 }
                               }
@@ -1905,7 +1921,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-add_unique_suffix",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^add_unique_suffix$" }
                                 }
                               }
@@ -1970,7 +1986,7 @@
                                   "stopBy": "end",
                                   "kind": "dotted_name",
                                   "matches": "replacement-create_unique_id",
-                                  "all": [{ "any": [{ "inside": { "stopBy": "neighbor", "kind": "aliased_import" } }, { "follows": { "stopBy": "end", "regex": "^import$" } }] }],
+                                  "all": [{ "matches": "import-site" }],
                                   "has": { "stopBy": "neighbor", "kind": "identifier", "regex": "^create_unique_id$" }
                                 }
                               }
@@ -2014,21 +2030,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.S3_hook.S3Hook", "airflow.hooks.S3_hook.provide_bucket_name"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2051,21 +2073,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.gcs_to_s3.GCSToS3Operator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2088,21 +2116,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-GoogleApiToS3Operator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-GoogleApiToS3Operator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.google_api_to_s3_transfer.GoogleApiToS3Transfer", "airflow.operators.google_api_to_s3_transfer.GoogleApiToS3Operator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2125,21 +2159,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-RedshiftToS3Operator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-RedshiftToS3Operator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.redshift_to_s3_operator.RedshiftToS3Transfer", "airflow.operators.redshift_to_s3_operator.RedshiftToS3Operator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2162,21 +2202,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.s3_file_transform_operator.S3FileTransformOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2199,21 +2245,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-S3ToRedshiftOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-S3ToRedshiftOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.s3_to_redshift_operator.S3ToRedshiftTransfer", "airflow.operators.s3_to_redshift_operator.S3ToRedshiftOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2236,21 +2288,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.s3_key_sensor.S3KeySensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2273,21 +2331,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.config_templates.default_celery.DEFAULT_CELERY_CONFIG"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2310,21 +2374,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.executors.celery_executor.app"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2347,21 +2417,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.executors.celery_executor.CeleryExecutor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2384,21 +2460,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.executors.celery_kubernetes_executor.CeleryKubernetesExecutor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2421,21 +2503,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.dbapi.ConnectorProtocol", "airflow.hooks.dbapi.DbApiHook", "airflow.hooks.dbapi_hook.DbApiHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2458,21 +2546,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.sql.BaseSQLOperator", "airflow.operators.sql.BranchSQLOperator", "airflow.operators.sql.SQLTableCheckOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2495,7 +2589,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLCheckOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLCheckOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -2507,17 +2607,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2540,7 +2640,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLIntervalCheckOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLIntervalCheckOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -2551,17 +2657,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2584,7 +2690,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLThresholdCheckOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLThresholdCheckOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -2592,17 +2704,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2625,7 +2737,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLValueCheckOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLValueCheckOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -2636,17 +2754,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2669,21 +2787,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.sql.SQLColumnCheckOperator", "airflow.operators.sql._convert_to_float_if_possible", "airflow.operators.sql.parse_boolean"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2706,21 +2830,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.sql.SqlSensor", "airflow.sensors.sql_sensor.SqlSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2743,7 +2873,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLExecuteQueryOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLExecuteQueryOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -2754,17 +2890,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2787,21 +2923,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.executors.dask_executor.DaskExecutor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2824,21 +2966,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.docker_hook.DockerHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2861,21 +3009,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.docker_operator.DockerOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2898,21 +3052,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.druid_hook.DruidDbApiHook", "airflow.hooks.druid_hook.DruidHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2935,21 +3095,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HiveToDruidOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HiveToDruidOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.hive_to_druid.HiveToDruidTransfer", "airflow.operators.hive_to_druid.HiveToDruidOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -2972,7 +3138,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-in-1" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-in-1" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -2983,17 +3155,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3016,7 +3188,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-in-2" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-in-2" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -3029,17 +3207,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3062,21 +3240,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.auth.managers.fab.fab_auth_manager.FabAuthManager"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3099,7 +3283,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -3110,17 +3300,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3143,21 +3333,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.webhdfs_hook.WebHDFSHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3180,21 +3376,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.web_hdfs_sensor.WebHdfsSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3217,7 +3419,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -3227,17 +3435,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3260,21 +3468,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.macros.hive.closest_ds_partition", "airflow.macros.hive.max_partition"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3297,21 +3511,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.hive_operator.HiveOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3334,21 +3554,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.hive_stats_operator.HiveStatsCollectionOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3371,21 +3597,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HiveToMySqlOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HiveToMySqlOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.hive_to_mysql.HiveToMySqlTransfer", "airflow.operators.hive_to_mysql.HiveToMySqlOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3408,21 +3640,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.hive_to_samba_operator.HiveToSambaOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3445,21 +3683,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-MsSqlToHiveOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-MsSqlToHiveOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.mssql_to_hive.MsSqlToHiveTransfer", "airflow.operators.mssql_to_hive.MsSqlToHiveOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3482,21 +3726,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-MySqlToHiveOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-MySqlToHiveOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.mysql_to_hive.MySqlToHiveTransfer", "airflow.operators.mysql_to_hive.MySqlToHiveOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3519,21 +3769,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-S3ToHiveOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-S3ToHiveOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.s3_to_hive_operator.S3ToHiveTransfer", "airflow.operators.s3_to_hive_operator.S3ToHiveOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3556,21 +3812,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.hive_partition_sensor.HivePartitionSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3593,21 +3855,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.metastore_partition_sensor.MetastorePartitionSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3630,21 +3898,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.named_hive_partition_sensor.NamedHivePartitionSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3667,21 +3941,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.http_hook.HttpHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3704,21 +3984,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HttpOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HttpOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.http_operator.SimpleHttpOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3741,21 +4027,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.http_sensor.HttpSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3778,21 +4070,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.jdbc_hook.JdbcHook", "airflow.hooks.jdbc_hook.jaydebeapi"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3815,21 +4113,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.executors.kubernetes_executor_types.ALL_NAMESPACES", "airflow.executors.kubernetes_executor_types.POD_EXECUTOR_DONE_KEY"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3852,21 +4156,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.k8s_model.K8SModel", "airflow.kubernetes.k8s_model.append_to_pod", "airflow.kubernetes.secret.K8SModel"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3889,7 +4199,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -3900,17 +4216,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3933,21 +4249,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-add_unique_suffix" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-add_unique_suffix" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.kubernetes_helper_functions.add_pod_suffix", "airflow.kubernetes.pod_generator.add_pod_suffix"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -3970,21 +4292,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-create_unique_id" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-create_unique_id" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.kubernetes_helper_functions.create_pod_id"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4007,7 +4335,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -4018,17 +4352,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4051,21 +4385,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1ContainerPort" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1ContainerPort" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.pod.Port"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4088,21 +4428,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1ResourceRequirements" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1ResourceRequirements" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.pod.Resources"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4125,21 +4471,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1EnvVar" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1EnvVar" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.pod_runtime_info_env.PodRuntimeInfoEnv"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4162,21 +4514,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1Volume" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1Volume" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.volume.Volume"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4199,21 +4557,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1VolumeMount" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1VolumeMount" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.volume_mount.VolumeMount"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4236,7 +4600,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -4248,17 +4618,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4281,7 +4651,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PodGenerator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PodGenerator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -4289,17 +4665,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4322,7 +4698,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -4330,17 +4712,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4363,21 +4745,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PodManager" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PodManager" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.pod_launcher.PodLauncher", "airflow.kubernetes.pod_launcher_deprecated.PodLauncher"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4400,21 +4788,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-bare" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-bare" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.pod_launcher.PodStatus", "airflow.kubernetes.pod_launcher_deprecated.PodStatus"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4437,21 +4831,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.kubernetes.secret.Secret"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4474,21 +4874,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.mssql_hook.MsSqlHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4511,21 +4917,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.mysql_hook.MySqlHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4548,21 +4960,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PrestoToMySqlOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PrestoToMySqlOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.presto_to_mysql.PrestoToMySqlTransfer", "airflow.operators.presto_to_mysql.PrestoToMySqlOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4585,21 +5003,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.oracle_hook.OracleHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4622,21 +5046,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.papermill_operator.PapermillOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4659,21 +5089,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.pig_hook.PigCliHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4696,21 +5132,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.pig_operator.PigOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4733,21 +5175,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.postgres_hook.PostgresHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4770,21 +5218,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.presto_hook.PrestoHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4807,21 +5261,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.samba_hook.SambaHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4844,21 +5304,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.slack_hook.SlackHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4881,21 +5347,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.slack_operator.SlackAPIOperator", "airflow.operators.slack_operator.SlackAPIPostOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4918,21 +5390,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.email_operator.EmailOperator", "airflow.operators.email.EmailOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4955,21 +5433,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.sqlite_hook.SqliteHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -4992,21 +5476,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.zendesk_hook.ZendeskHook"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5029,21 +5519,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.hooks.subprocess.SubprocessResult", "airflow.hooks.subprocess.working_directory"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5066,21 +5562,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.bash_operator.BashOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5103,7 +5605,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -5111,17 +5619,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5144,21 +5652,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.datetime.target_times_as_dates"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5181,7 +5695,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-EmptyOperator" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-EmptyOperator" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -5191,17 +5711,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5224,21 +5744,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.operators.latest_only_operator.LatestOnlyOperator"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5261,7 +5787,13 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": {
               "resolves": {
@@ -5272,17 +5804,17 @@
               }
             },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5305,21 +5837,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-ExternalDagLink" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-ExternalDagLink" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.external_task.ExternalTaskSensorLink", "airflow.sensors.external_task_sensor.ExternalTaskSensorLink"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5342,21 +5880,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.external_task_sensor.ExternalTaskMarker", "airflow.sensors.external_task_sensor.ExternalTaskSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
@@ -5379,21 +5923,27 @@
       "forbid": {
         "ast": {
           "language": "python",
-          "rule": { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+          "rule": {
+            "all": [
+              { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
+              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
+              { "matches": "seen-airflow" }
+            ]
+          },
           "utils": {
             "old": { "resolves": { "import": ["airflow.sensors.time_delta.WaitSensor"] } },
             "quoted": {
-              "any": [{ "kind": "string" }, { "kind": "concatenated_string" }],
+              "matches": "string-literal",
               "parse": {
                 "grammar": "annotation",
                 "has": {
                   "stopBy": "end",
                   "any": [
-                    { "kind": "identifier", "matches": "old", "capture": "N", "all": [{ "capture": "ORIG" }] },
                     {
-                      "kind": "attribute",
-                      "matches": "old",
-                      "has": { "stopBy": "neighbor", "kind": "identifier", "follows": { "stopBy": "neighbor", "regex": "^\\.$" }, "capture": "N", "all": [{ "capture": "ORIG" }] }
+                      "kind": "identifier",
+                      "capture": "N",
+                      "all": [{ "capture": "ORIG" }],
+                      "any": [{ "matches": "old" }, { "matches": "after-dot", "inside": { "stopBy": "neighbor", "kind": "attribute", "matches": "old" } }]
                     },
                     { "matches": "quoted" }
                   ]
