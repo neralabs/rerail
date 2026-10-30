@@ -1,5 +1,24 @@
 # @neralabs/rerail-pack-javascript
 
+## 0.1.6
+
+### Patch Changes
+
+- c8352a7: JavaScript pack: ships four more ESLint core rules now that they pass the conformance check. `eslint-dot-notation`, `eslint-no-duplicate-imports`, `eslint-no-extra-label` and `eslint-no-lonely-if` start off, since `eslint:recommended` does not turn them on. Their documents share repeated structure through utilities instead of writing it out per clause; what they find is unchanged.
+  
+  `eslint-no-loss-of-precision`, `eslint-no-prototype-builtins` and `eslint-no-labels` leave the shipped pack and go back to candidates, and `eslint-no-self-assign` stays a candidate instead of shipping. The conformance check now also scores labelled real-code samples (real files from open-source history, with ESLint's own findings), and these four disagree with ESLint there: `eslint-no-loss-of-precision` reports decimal literals of 2^63, which a number stores exactly and ESLint accepts, and the other three miss findings in Flow-annotated files the engine cannot parse yet. `eslint-no-setter-return` now reports an arrow setter's parenthesized body at the expression inside the parentheses, where ESLint reports it.
+- e1b9a49: JavaScript pack: ships 8 more rules, 80 in all, now that they pass every conformance check. Starts on: `eslint-no-unexpected-multiline`. Start off, as no approved upstream configuration turns them on: `eslint-default-param-last`, `eslint-max-depth`, `eslint-max-nested-callbacks`, `eslint-max-params`, `eslint-max-statements`, `eslint-no-array-constructor` and `eslint-no-empty-function`.
+- c8352a7: JavaScript pack: `eslint-dot-notation` honours any `allowPattern`, with or without `allowKeywords`, as ESLint does: a bracket key that matches the pattern is no longer reported. Before, only one built-in pattern took effect and every other was ignored. The pattern is read as the engine's (Rust) regular expression, so one in JavaScript-only syntax, such as lookbehind or a backreference, is refused when it is set instead of being ignored.
+  
+  `eslint-no-duplicate-imports` with `allowSeparateTypeImports` treats `import type from 'm'`, a default import named `type`, as a value import, so it is reported beside another value import from the same module. `eslint-no-setter-return` no longer reports `return /* comment */;` in a setter, and again reports an arrow setter whose expression body follows a comment (`set: v => /* comment */ v`).
+  
+  The messages of `eslint-dot-notation`, `eslint-no-duplicate-imports`, `eslint-no-extra-label` and `eslint-no-setter-return` now say what to write instead, such as "Write .name instead of ["name"]." and "Merge this import into the earlier import from 'm'.".
+- 61cda45: Each pack's `covers`, the line the dashboard shows under the pack's name, says in one sentence what the pack's rules are for and where they come from. It no longer counts rules or says how many start on: the dashboard shows both beside it, and the counts went stale whenever a rule shipped.
+- 1e7042b: README: the note that deriving pack test data is paused is gone, since derive runs again; no rule changes.
+- c8352a7: README, `pack.json` descriptions and licence notes: the conformance check is the one gate a port passes to ship, the ECMAScript packs' tests carry rename variants that upstream labels (`holds-under-rename`), and new test data is published through a tool-pack's `publish/` directory; no rule changes.
+- c8352a7: Licence notes: each `licenses/<project>/UPSTREAM.md` records its upstream repository per repo (source, the path patterns taken, what is not copied) instead of one row per copied test file; no rule changes.
+- 3fb36af: The README describes only the rules the pack ships. What it said about the candidate ports moves to `candidates/README.md`, which is not published.
+
 ## 0.1.5
 
 ### Patch Changes

@@ -1,5 +1,21 @@
 # @neralabs/rerail-pack-react
 
+## 0.1.6
+
+### Patch Changes
+
+- 61cda45: Each pack's `covers`, the line the dashboard shows under the pack's name, says in one sentence what the pack's rules are for and where they come from. It no longer counts rules or says how many start on: the dashboard shows both beside it, and the counts went stale whenever a rule shipped.
+- 1e7042b: README: the note that deriving pack test data is paused is gone, since derive runs again; no rule changes.
+- c8352a7: README, `pack.json` descriptions and licence notes: the conformance check is the one gate a port passes to ship, the ECMAScript packs' tests carry rename variants that upstream labels (`holds-under-rename`), and new test data is published through a tool-pack's `publish/` directory; no rule changes.
+- c8352a7: Licence notes: each `licenses/<project>/UPSTREAM.md` records its upstream repository per repo (source, the path patterns taken, what is not copied) instead of one row per copied test file; no rule changes.
+- 3fb36af: The README describes only the rules the pack ships. What it said about the candidate ports moves to `candidates/README.md`, which is not published.
+- c8352a7: README and licence notes: the ports are scored on labelled real-code samples instead of pinned corpora; no rule changes.
+- 005ff00: React pack: ships its first 40 rules, 30 from eslint-plugin-react 7.37.5 and 10 from eslint-plugin-react-hooks 7.1.1, each checked against the plugins on their own test cases and on the pack's real-code samples, most of them from the React test set: 738 real files from 57 open-source repositories, each at the commit that introduced a violation, 631 hand-fixed copies, and 99 files whose own `eslint-disable` comment silences the rule.
+  
+  21 start on, as the plugins' recommended configurations have them: `react-jsx-key`, `react-jsx-no-comment-textnodes`, `react-jsx-no-duplicate-props`, `react-jsx-no-target-blank`, `react-jsx-no-undef`, `react-no-children-prop`, `react-no-danger-with-children`, `react-no-deprecated`, `react-no-direct-mutation-state`, `react-no-find-dom-node`, `react-no-is-mounted`, `react-no-render-return-value`, `react-no-string-refs`, `react-no-unescaped-entities`, `react-no-unknown-property`, `react-hooks-rules-of-hooks`, `react-hooks-exhaustive-deps` (in log mode, as the plugin warns), and the React Compiler checks `react-hooks-globals`, `react-hooks-immutability`, `react-hooks-refs` and `react-hooks-set-state-in-effect`.
+  
+  19 start off. Fifteen are off in the plugins' recommended configurations: `react-button-has-type`, `react-iframe-missing-sandbox`, `react-jsx-no-constructed-context-values`, `react-jsx-no-leaked-render`, `react-jsx-no-script-url`, `react-no-access-state-in-setstate`, `react-no-array-index-key`, `react-no-danger`, `react-no-did-mount-set-state`, `react-no-did-update-set-state`, `react-no-object-type-as-default-prop`, `react-no-unsafe`, `react-no-unstable-nested-components`, `react-self-closing-comp` and `react-void-dom-elements-no-children`. Four React Compiler checks the plugin recommends start off as experimental, since its test cases never report them: `react-hooks-error-boundaries`, `react-hooks-purity`, `react-hooks-set-state-in-render` and `react-hooks-static-components`.
+
 ## 0.1.5
 
 ### Patch Changes

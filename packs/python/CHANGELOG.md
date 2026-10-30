@@ -1,5 +1,18 @@
 # @neralabs/rerail-pack-python
 
+## 0.1.6
+
+### Patch Changes
+
+- 61cda45: Each pack's `covers`, the line the dashboard shows under the pack's name, says in one sentence what the pack's rules are for and where they come from. It no longer counts rules or says how many start on: the dashboard shows both beside it, and the counts went stale whenever a rule shipped.
+- 1e7042b: README: the note that deriving pack test data is paused is gone, since derive runs again; no rule changes.
+- c8352a7: README, `pack.json` descriptions and licence notes: the conformance check is the one gate a port passes to ship, the ECMAScript packs' tests carry rename variants that upstream labels (`holds-under-rename`), and new test data is published through a tool-pack's `publish/` directory; no rule changes.
+- c8352a7: Licence notes: each `licenses/<project>/UPSTREAM.md` records its upstream repository per repo (source, the path patterns taken, what is not copied) instead of one row per copied test file; no rule changes.
+- 3fb36af: The README describes only the rules the pack ships. What it said about the candidate ports moves to `candidates/README.md`, which is not published.
+- c8352a7: README and licence notes: the ports are scored on labelled real-code samples instead of pinned corpora; no rule changes.
+- f158c3b: Python pack: 51 more Ruff 0.16.9 rules ship, all off: Ruff's default selection leaves them off, and `gates.yaml` does not list the new ports yet (a follow-up adds the entries, and with them the 39 ports in Ruff's default selection that wait as candidates until they can start on). Four of the 24 rules #326 promoted go back to candidates, because this port's larger fixture set shows them disagreeing with Ruff: `ruff-b018-useless-expression` (a parenthesised t-string concatenation), `ruff-b035-static-key-dict-comprehension` (a comprehension split across lines by comments), `ruff-w605-invalid-escape-sequence` (an escape inside a string annotation in a stub) and `ruff-f722-forward-annotation-syntax-error` (`TypedDict` keyword fields). 207 rules, 75 of them off. 408 Ruff ports are candidates (48 before), every shipped Ruff rule has a `# noqa` case in the pack's own test data, and the README lists the 66 stable Ruff rules not ported, with reasons.
+- e1b9a49: Python pack: ships 24 more rules, 160 in all, now that they pass every conformance check. Start on: `bandit-b103-set-bad-file-permissions`, `bandit-b201-flask-debug-true`, `bandit-b304-ciphers`, `bandit-b406-import-xml-sax`, `bandit-b508-snmp-insecure-version`, `bandit-b509-snmp-weak-cryptography`, `bandit-b609-linux-commands-wildcard-injection`, `bandit-b610-django-extra-used`, `bandit-b612-logging-config-insecure-listen`, `bandit-b614-pytorch-load`, `bandit-b702-use-of-mako-templates`, `ruff-b015-useless-comparison`, `ruff-b018-useless-expression`, `ruff-b035-static-key-dict-comprehension`, `ruff-f402-import-shadowed-by-loop-var`, `ruff-f704-yield-outside-function`, `ruff-sim102-collapsible-if`, `ruff-sim103-needless-bool`, `ruff-sim117-multiple-with-statements`, `ruff-sim118-in-dict-keys`, `ruff-sim222-expr-or-true`, `ruff-sim223-expr-and-false` and `ruff-w605-invalid-escape-sequence`. Starts off, as no approved upstream configuration turns it on: `ruff-f722-forward-annotation-syntax-error`.
+
 ## 0.1.5
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 (2026-10-30)
 
 - Installing Rerail from Pi's package gallery (`pi install npm:@neralabs/rerail`) and then running `/rerail-start` no longer loads Rerail twice. Set-up replaces the `npm:@neralabs/rerail` entry in `~/.pi/agent/settings.json` (at any version, and in the `{ "source": … }` form with its filters kept) with the managed install, in its place, and says so, so Pi stops failing to load the second copy on its tools and `rerail update` governs the version Pi loads. Other `npm:` entries, rule packs included, stay, and `rerail install --remove` takes an `npm:@neralabs/rerail` entry out too. When OMP also has its own plugin install of Rerail (`omp plugin install @neralabs/rerail`), which it loads beside set-up's extension link, set-up's summary and `rerail install` say to remove it with `omp plugin uninstall @neralabs/rerail`; set-up changes nothing in OMP's plugin folder.
 - The npm package describes Rerail as it is today ("Checks the code your coding agent writes against your rules while it works, and steers it back in the same session"), with keywords for the coding agents it works with, and gives Pi's package gallery a preview image (`pi.image`).
