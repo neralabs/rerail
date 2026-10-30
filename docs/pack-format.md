@@ -496,6 +496,15 @@ them; core's `v*` release (`release.yml`) is separate.
    fails to move, or whose dist-tags cannot be read, does not stop the others; the run fails naming it and can be run
    again. A version that was never released fails the run. These runs go one at a time.
 
+Every released pack version gets a GitHub Release on its tag `@neralabs/rerail-pack-<id>@<version>`, whose notes are
+that version's section of the pack's `CHANGELOG.md`, so a pack's release notes are written once, in its changeset's
+summary, in words for the people who upgrade. After the **Published dist-tags** job passes, the run's **GitHub
+Releases** job makes one for each version it published (`scripts/release/github-release.mjs`). A pack's Release is
+never the repository's latest release, which is core's, and is a pre-release only for a held pack published under
+`next`. Run again, the job rewrites the notes of a Release that exists. Releases missing for tags released before
+this, or by a run that failed before its Release, are made by hand with the script's backfill
+([release.md](release.md#release)).
+
 The scripts are in `scripts/release/`. To check a pack's tarball locally:
 `node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id>`.
 

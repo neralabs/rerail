@@ -78,6 +78,11 @@ holds it there. Both use npm trusted publishing, so no one needs an npm login. T
 channels. Every publish from CI carries an npm provenance attestation: both workflows pass `--provenance`, so a publish
 npm cannot attest fails instead of going out without one.
 
+Every released version, core's and each pack's, also gets a GitHub Release on its tag, whose notes are that version's
+section of its `CHANGELOG.md`: release notes are written once, in the changelog, in words for the people who upgrade.
+Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases
+([release](release.md#release)).
+
 ## npm-backed explicit updates
 
 npm is the authenticated artifact transport for updates. Rerail uses the machine's existing npm configuration and authentication to resolve and install the package; it never copies, logs, or sends npm credentials to a control plane.
