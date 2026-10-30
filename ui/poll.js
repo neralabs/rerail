@@ -9,6 +9,7 @@
 import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { historyRuleId } from "./history-model.js";
+import { failed } from "./format.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -279,10 +280,10 @@ export async function saveFollowGitignore(follow, { toast, invalidate }) {
   data.followGitignore = follow; invalidate();
   try {
     if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
-    toast(follow ? "Files Git ignores are not checked in sessions started from now on." : "Files Git ignores are checked in sessions started from now on.");
+    toast(follow ? "Files Git ignores are skipped from the next session." : "Files Git ignores are checked from the next session.");
   } catch (error) {
     data.followGitignore = was;
-    toast(`Could not save: ${error.message}`);
+    toast(failed("Couldn’t change Follow .gitignore", error));
   }
   invalidate();
 }

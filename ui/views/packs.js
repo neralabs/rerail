@@ -7,7 +7,7 @@
  * and a switch, then the others with Add pack. The person starts Rerail back in the terminal or coding agent.
  */
 import { h, setContent, icon } from "../dom.js";
-import { fmt, plural } from "../format.js";
+import { failed, fmt, plural } from "../format.js";
 import { isRunning } from "../derive.js";
 import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
 import { loadRecommendations } from "../poll.js";
@@ -121,7 +121,7 @@ export function render(root) {
 export function enter() {
   if (ui.view === "packs") kind = "all";
   if (ui.view !== "review" || ui.scope === null || data.recommendations !== null) return;
-  loadRecommendations().then(invalidate, error => toast(`Could not read the repo: ${error.message}`));
+  loadRecommendations().then(invalidate, error => toast(failed(`Couldn’t read ${repoName() || "this repo"} to pick rule packs`, error)));
 }
 
 export const actions = {
