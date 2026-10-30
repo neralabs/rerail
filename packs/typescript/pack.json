@@ -63,6 +63,34 @@
       "on": false
     },
     {
+      "id": "typescript-eslint-class-literal-property-style",
+      "document": "rules/typescript-eslint-class-literal-property-style.json",
+      "title": "typescript-eslint class-literal-property-style: Enforce that literals on classes are exposed in a consistent style",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-class-methods-use-this",
+      "document": "rules/typescript-eslint-class-methods-use-this.json",
+      "title": "typescript-eslint class-methods-use-this: Enforce that class methods utilize `this`",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-consistent-generic-constructors",
+      "document": "rules/typescript-eslint-consistent-generic-constructors.json",
+      "title": "typescript-eslint consistent-generic-constructors: Enforce specifying generic type arguments on type annotation or constructor name of a constructor call",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-consistent-indexed-object-style",
+      "document": "rules/typescript-eslint-consistent-indexed-object-style.json",
+      "title": "typescript-eslint consistent-indexed-object-style: Require or disallow the `Record` type",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
       "id": "typescript-eslint-consistent-type-assertions",
       "document": "rules/typescript-eslint-consistent-type-assertions.json",
       "title": "typescript-eslint consistent-type-assertions: Enforce consistent usage of type assertions",
@@ -77,9 +105,23 @@
       "on": false
     },
     {
+      "id": "typescript-eslint-consistent-type-imports",
+      "document": "rules/typescript-eslint-consistent-type-imports.json",
+      "title": "typescript-eslint consistent-type-imports: Enforce consistent usage of type imports",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
       "id": "typescript-eslint-default-param-last",
       "document": "rules/typescript-eslint-default-param-last.json",
       "title": "typescript-eslint default-param-last: Enforce default parameters to be last",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-explicit-function-return-type",
+      "document": "rules/typescript-eslint-explicit-function-return-type.json",
+      "title": "typescript-eslint explicit-function-return-type: Require explicit return types on functions and class methods",
       "group": "typescript-eslint",
       "on": false
     },
@@ -101,6 +143,20 @@
       "id": "typescript-eslint-max-params",
       "document": "rules/typescript-eslint-max-params.json",
       "title": "typescript-eslint max-params: Enforce a maximum number of parameters in function definitions",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-member-ordering",
+      "document": "rules/typescript-eslint-member-ordering.json",
+      "title": "typescript-eslint member-ordering: Require a consistent member declaration order",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-method-signature-style",
+      "document": "rules/typescript-eslint-method-signature-style.json",
+      "title": "typescript-eslint method-signature-style: Enforce using a particular method signature syntax",
       "group": "typescript-eslint",
       "on": false
     },
@@ -151,6 +207,12 @@
       "group": "typescript-eslint"
     },
     {
+      "id": "typescript-eslint-no-explicit-any",
+      "document": "rules/typescript-eslint-no-explicit-any.json",
+      "title": "typescript-eslint no-explicit-any: Disallow the `any` type",
+      "group": "typescript-eslint"
+    },
+    {
       "id": "typescript-eslint-no-extra-non-null-assertion",
       "document": "rules/typescript-eslint-no-extra-non-null-assertion.json",
       "title": "typescript-eslint no-extra-non-null-assertion: Disallow extra non-null assertions",
@@ -174,6 +236,13 @@
       "id": "typescript-eslint-no-inferrable-types",
       "document": "rules/typescript-eslint-no-inferrable-types.json",
       "title": "typescript-eslint no-inferrable-types: Disallow explicit type declarations for variables or parameters initialized to a number, string, or boolean",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-invalid-this",
+      "document": "rules/typescript-eslint-no-invalid-this.json",
+      "title": "typescript-eslint no-invalid-this: Disallow `this` keywords outside of classes or class-like objects",
       "group": "typescript-eslint",
       "on": false
     },
@@ -247,6 +316,13 @@
       "group": "typescript-eslint"
     },
     {
+      "id": "typescript-eslint-no-shadow",
+      "document": "rules/typescript-eslint-no-shadow.json",
+      "title": "typescript-eslint no-shadow: Disallow variable declarations from shadowing variables declared in the outer scope",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
       "id": "typescript-eslint-no-this-alias",
       "document": "rules/typescript-eslint-no-this-alias.json",
       "title": "typescript-eslint no-this-alias: Disallow aliasing `this`",
@@ -291,9 +367,22 @@
       "on": false
     },
     {
+      "id": "typescript-eslint-no-unused-vars",
+      "document": "rules/typescript-eslint-no-unused-vars.json",
+      "title": "typescript-eslint no-unused-vars: Disallow unused variables",
+      "group": "typescript-eslint"
+    },
+    {
       "id": "typescript-eslint-no-use-before-define",
       "document": "rules/typescript-eslint-no-use-before-define.json",
       "title": "typescript-eslint no-use-before-define: Disallow the use of variables before they are defined",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-no-useless-constructor",
+      "document": "rules/typescript-eslint-no-useless-constructor.json",
+      "title": "typescript-eslint no-useless-constructor: Disallow unnecessary constructors",
       "group": "typescript-eslint",
       "on": false
     },
@@ -309,6 +398,13 @@
       "document": "rules/typescript-eslint-no-wrapper-object-types.json",
       "title": "typescript-eslint no-wrapper-object-types: Disallow using confusing built-in primitive class wrappers",
       "group": "typescript-eslint"
+    },
+    {
+      "id": "typescript-eslint-parameter-properties",
+      "document": "rules/typescript-eslint-parameter-properties.json",
+      "title": "typescript-eslint parameter-properties: Require or disallow parameter properties in class constructors",
+      "group": "typescript-eslint",
+      "on": false
     },
     {
       "id": "typescript-eslint-prefer-as-const",
@@ -327,6 +423,13 @@
       "id": "typescript-eslint-prefer-for-of",
       "document": "rules/typescript-eslint-prefer-for-of.json",
       "title": "typescript-eslint prefer-for-of: Enforce the use of `for-of` loop over the standard `for` loop where possible",
+      "group": "typescript-eslint",
+      "on": false
+    },
+    {
+      "id": "typescript-eslint-prefer-function-type",
+      "document": "rules/typescript-eslint-prefer-function-type.json",
+      "title": "typescript-eslint prefer-function-type: Enforce using function types instead of interfaces with call signatures",
       "group": "typescript-eslint",
       "on": false
     },
@@ -358,6 +461,13 @@
           "text": "import \"./globals.js\";\n\nexport function ready(): boolean {\n  return typeof window !== \"undefined\";\n}\n"
         }
       }
+    },
+    {
+      "id": "typescript-eslint-unified-signatures",
+      "document": "rules/typescript-eslint-unified-signatures.json",
+      "title": "typescript-eslint unified-signatures: Disallow two overloads that could be unified into one with a union or an optional/rest parameter",
+      "group": "typescript-eslint",
+      "on": false
     }
   ]
 }
