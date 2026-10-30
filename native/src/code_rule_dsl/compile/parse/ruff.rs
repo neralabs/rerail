@@ -264,6 +264,29 @@ fn f722_forward_annotation_syntax_errors() {
     assert_eq!(theirs, ["6:y", "7:y"], "F821: only Ruff");
 }
 
+/// A functional `TypedDict`'s keyword fields are types when the fields mapping is omitted or
+/// `None` and the target version is before 3.13 (Ruff's default is 3.10), so their strings are
+/// forward annotations F722 parses; `total` never is, nor a field beside a mapping.
+#[test]
+fn f722_typed_dict_keyword_fields_are_forward_annotations() {
+    let source = "\
+from typing import TypedDict
+E = TypedDict(\"E\", foo=\"a b\", total=\"c d\")
+F = TypedDict(\"F\", None, bar=\"e f\")
+G = TypedDict(\"G\", {}, baz=\"g h\")
+def f():
+    e: TypedDict(\"E\", foo=\"i j\") = 1
+";
+    let at = |text: &str| {
+        let start = source.find(text).expect(text) as u64;
+        [start, start + text.len() as u64]
+    };
+    assert_eq!(
+        ranges_in(f722(), "witness.span", None, source, "typed_dict.py", None),
+        [at("\"a b\""), at("\"e f\""), at("\"i j\"")]
+    );
+}
+
 /// The Ruff suite's F722 semantic-error check, recursive through strings nested in the string: a
 /// utility whose one `parse` captures the `ERROR` node and whose other `parse` reaches a nested
 /// string through the utility itself. Each error is reported at its host range, through every

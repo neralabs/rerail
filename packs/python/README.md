@@ -339,7 +339,7 @@ Port of Ruff's F707 (default-except-not-last) with default settings: a bare `exc
 
 ### `ruff-f822-undefined-export`
 
-Port of Ruff's F822 (undefined-export) with default settings, on the engine's name resolution (M10a `resolves.unresolved` on `__all__` entries): a string entry of a static module `__all__` definition (Ruff's extract_dunder_all_names) (an implicit concatenation is one entry) that names no module binding (a bare annotation included) and no builtin, in a module without a star import. `__init__.py` is exempt (Ruff reports it only in preview). Reported on the string. Divergence (engine gap): the engine's `__all__` extractor records no entry for a parenthesized string element (`[("a")]`, `((('a')))`) or for the elements of a bare tuple value (`__all__ += "a", "b"`, `__all__ = ("a"), "b"`), which Ruff's parenthesis-free AST reads as plain string elements of a tuple, so those entries are not reported (ruff/RUF022.py lines 11, 19, 23, 207, 214, 359).
+Port of Ruff's F822 (undefined-export) with default settings, on the engine's name resolution (M10a `resolves.unresolved` on `__all__` entries): a string entry of a static module `__all__` definition (Ruff's extract_dunder_all_names) (an implicit concatenation is one entry) that names no module binding (a bare annotation included) and no builtin, in a module without a star import. `__init__.py` is exempt (Ruff reports it only in preview). Reported on the string. A parenthesized string element (`[("a")]`, `((('a')))`) and the elements of a bare tuple value (`__all__ += "a", "b"`, `__all__ = ("a"), "b"`) are entries, as in Ruff's parenthesis-free AST.
 
 ### `ruff-f823-undefined-local`
 
