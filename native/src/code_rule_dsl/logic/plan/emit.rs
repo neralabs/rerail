@@ -16,6 +16,9 @@
 //! derived relation's count is then the one a previous run's boundary recorded (`rows.<relation>`,
 //! `schedule::Outcome::rows`), where `run` counts each stratum before planning the next; without
 //! one, the planner's estimate. The counts change the plans, never their rows.
+//!
+//! A wave's own program reads its chunk's batch (`waves::matches`): its inputs are batch inputs,
+//! read from their sources and planned from their row estimates, with no statistics (`batch`).
 
 use super::*;
 use crate::code_rule_dsl::waves::schedule;
@@ -28,16 +31,24 @@ pub(in crate::code_rule_dsl) struct Emitted {
 
 /// `lowered` as the wave program `name`, planned over the statistics in schema `stats` of `db`,
 /// in the product's input mode (`run_atoms`).
-/// `counts` are a previous run's `rows.<relation>`.
+/// `counts` are a previous run's `rows.<relation>`; `batch` maps the inputs a wave reads from its
+/// chunk's batch to their source and row estimate (`Inputs::batch`).
 pub(in crate::code_rule_dsl) fn emit(
     lowered: &lower::Lowered,
     db: &Connection,
     stats: &str,
     name: &str,
     counts: Option<&BTreeMap<String, u64>>,
+    batch: &HashMap<String, (String, f64)>,
 ) -> Result<Emitted> {
     let prog = &lowered.program;
-    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new() };
+    let inputs = Inputs {
+        facts: "main.".to_owned(),
+        stats: format!("{stats}."),
+        atoms: Some(lowered.ops),
+        native: BTreeSet::new(),
+        batch: batch.clone(),
+    };
     let mut model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
@@ -145,6 +156,19 @@ pub(in crate::code_rule_dsl) fn emit(
         program: schedule::Program { name: name.to_owned(), relations, steps, file_local: false, partitions: Vec::new(), lattices },
         setup,
     })
+}
+
+/// `source` (a program over batch inputs alone) as the wave program `name`: parsed, lowered (its
+/// names interned by `intern`) and emitted, with no statistics to read.
+pub(in crate::code_rule_dsl) fn emit_batch(
+    source: &str,
+    name: &str,
+    batch: &HashMap<String, (String, f64)>,
+    intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
+) -> Result<Emitted> {
+    let prog = crate::code_rule_dsl::logic::front::parse(source)?;
+    let lowered = lower::lower(&prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
+    emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.

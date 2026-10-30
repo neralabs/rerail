@@ -142,7 +142,8 @@ fn gate(default: usize, limits: Limits, backend: ExecutionBackend) {
     let documents = documents(&store, WS, &paths).unwrap();
     assert_eq!(documents.len(), paths.len(), "every fixture has core facts");
     let mut wave = Wave::new(&clauses, backend).unwrap();
-    let program = wave.program();
+    let program = wave.program(&store).unwrap();
+    assert_eq!(program.steps.len(), 1, "{:?}", program.steps.iter().map(|s| &s.sql).collect::<Vec<_>>());
     let backing = Backing::default();
     let scope = backing.enter(&store);
     let lease = scope.pool().take().unwrap();

@@ -3,13 +3,17 @@
 //! with the prefilter (`prefilter::select`, SQL over the tapes' published rows), evaluates every
 //! clause's label passes over the chunk's tapes together (`LoweredWave`), and registers the
 //! clauses' root programs from those candidates as the chunk's `demand(batch)` (the CPU JIT, over
-//! the chunk's files in one execution; it tests each label as one bit of the batch, `PackedBatch::derived`). The step's SQL reads
-//! the batch's terminal matches into `match(clause, d, node)`; the loop records the relation as one
+//! the chunk's files in one execution; it tests each label as one bit of the batch, `PackedBatch::derived`). The step
+//! reads the batch's terminal matches into `match(clause, d, node)`; the planner emits it from
+//! `SOURCE`, one rule over two batch inputs (O14, `logic::plan::emit_batch`). The loop records the relation as one
 //! fact family per clause (`partitions`) and `statistics` writes their row estimates to
 //! `fact_stats`, where the demand relations read them.
 
 use super::owner::Lease;
-use super::schedule::{Program, Step};
+use super::schedule::Program;
+use crate::code_rule_dsl::logic::plan::emit;
+use crate::content_store::ContentStore;
+use std::collections::HashMap;
 use crate::code_rule_dsl::demand::vtab::PackedDemand;
 use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::core;
@@ -27,6 +31,17 @@ pub(in crate::code_rule_dsl) const PROGRAM: &str = "matches";
 const RELATION: &str = "match";
 /// The demand relation the step reads, whose row estimate `statistics` writes.
 const TERMINAL: &str = "rerail_terminal_match";
+/// The wave's program: a batch's terminal matches by document. `terminal` is the chunk's
+/// `rerail_terminal_match` (file, clause, node); `document` is `temp.wave_document` (the batch's
+/// file index, the document's key).
+const SOURCE: &str = "
+.decl terminal(f: int, c: int, n: int)
+.decl document(f: int, d: int)
+.input terminal, document
+.decl match(c: int, d: int, n: int)
+.output match
+match($c, $d, $n) :- terminal($f, $c, $n), document($f, $d).
+";
 
 /// One lowered clause of the wave: its name (`policy/clause`), the prefilter's plan for its roots
 /// and its lowered matcher.
@@ -76,25 +91,22 @@ impl Wave {
         &self.lowered
     }
 
-    /// The wave program: one step that reads the chunk's batch into `match`. File-local, so one
-    /// wave per chunk.
-    pub(in crate::code_rule_dsl) fn program(&self) -> Program {
-        Program {
-            name: PROGRAM.to_owned(),
-            relations: vec![(RELATION.to_owned(), 3)],
-            steps: vec![Step {
-                output: RELATION.to_owned(),
-                stratum: 0,
-                reads: vec![TERMINAL.to_owned()],
-                sql: format!(
-                    "INSERT OR IGNORE INTO new_{RELATION} SELECT t.producer_id, w.d, t.node FROM {TERMINAL} t \
-                     JOIN temp.wave_document w ON w.position = t.file_index WHERE t.batch = :batch"
-                ),
-            }],
-            file_local: true,
-            partitions: vec![(RELATION.to_owned(), self.names.clone())],
-            lattices: Vec::new(),
-        }
+    /// The wave program: the planner's step that reads the chunk's batch into `match`.
+    /// File-local, so one wave per chunk. A batch holds at least one match per clause, the
+    /// terminal input's estimate; a chunk has documents in the hundreds at most.
+    pub(in crate::code_rule_dsl) fn program(&self, store: &ContentStore) -> StoreResult<Program> {
+        let batch = HashMap::from([
+            (
+                "terminal".to_owned(),
+                (format!("(SELECT file_index AS c0, producer_id AS c1, node AS c2 FROM {TERMINAL} WHERE batch = :batch)"), self.names.len() as f64),
+            ),
+            ("document".to_owned(), ("(SELECT position AS c0, d AS c1 FROM temp.wave_document)".to_owned(), 100.0)),
+        ]);
+        let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
+        let mut program = emit::emit_batch(SOURCE, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        program.file_local = true;
+        program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
+        Ok(program)
     }
 
     /// The chunk's batch: its documents' stored tapes, in order, labelled by every clause's

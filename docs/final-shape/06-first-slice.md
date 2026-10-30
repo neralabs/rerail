@@ -318,9 +318,12 @@ interpreter.
     workload, workload_demand and calls give `run_atoms`' outputs through `schedule::run`, planned
     from the estimates and again from a run's boundary counts (O14). The frontier loop now runs
     every stratum with nothing pending upstream in the same wave, so waves follow the dependency
-    depth (calls: 64, from 117). The wave's own step stays one statement: it reads the chunk's
-    demand relation through `:batch`, which is not a planner input (it has no statistics outside
-    a batch), and planning one join would emit the same statement.
+    depth (calls: 64, from 117). The wave's own step is planner-emitted too: `waves::matches`
+    writes it as one rule, `match($c, $d, $n) :- terminal($f, $c, $n), document($f, $d)`, over
+    two **batch inputs** (`Inputs::batch`: the chunk's `rerail_terminal_match` filtered by
+    `:batch`, and `temp.wave_document`). A batch input has no statistics, so it is planned from
+    its row estimate, and `emit_batch` emits the step. The CPU gates (4 fixtures in chunks of
+    one, 8 in one chunk) and the Metal gate still have 0 differ.
 
 ### S5. Findings layer (first version of §8)
 

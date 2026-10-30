@@ -79,6 +79,10 @@ pub(in crate::code_rule_dsl) struct Inputs {
     atoms: Option<[i64; 3]>,
     /// T's `RDL_NATIVE` modes (`native_modes`); empty is T's pure SQL mode.
     native: BTreeSet<String>,
+    /// Batch inputs: relations a wave reads from its chunk's `demand(batch)`, which have no
+    /// statistics outside a batch. Each is read from its source (a subquery whose columns are
+    /// `c0`, `c1`, …, filtered by `:batch`) and planned from its row estimate.
+    batch: HashMap<String, (String, f64)>,
 }
 
 /// T's `NATIVE`: the comma-separated modes, `all` as every one but `direct` and `upsert`, and `program` with the
@@ -108,7 +112,7 @@ fn unhex(s: &str) -> Option<String> {
 impl Inputs {
     /// T's facts file attached as `f`, statistics in it.
     fn file() -> Self {
-        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new() }
+        Inputs { facts: "f.".to_owned(), stats: "f.".to_owned(), atoms: None, native: BTreeSet::new(), batch: HashMap::new() }
     }
     /// `sym_text` of an expression in atoms mode, the expression itself in text mode.
     fn text(&self, e: &str) -> String {
@@ -250,7 +254,7 @@ impl Stats {
              UNION ALL SELECT 'edge', pkind, ckind, n, field, NULL, NULL FROM {s}stat_edge"
         );
         sql += &format!(" UNION ALL SELECT 'val', tbl, col, n, val, docs, sqd FROM {s}stat_val WHERE val IN ({holes})");
-        for t in &prog.inputs {
+        for t in prog.inputs.iter().filter(|t| !inputs.batch.contains_key(*t)) {
             sql += &format!(" UNION ALL SELECT 'rows', '{t}', NULL, count(*), NULL, NULL, NULL FROM {f}{t}");
         }
         let params: Vec<SqlValue> = consts
@@ -260,7 +264,12 @@ impl Stats {
                 Constant::Str(s) => SqlValue::Text(s.clone()),
             })
             .collect();
+        // A program over batch inputs alone reads no statistics.
+        let only_batch = prog.inputs.iter().all(|t| inputs.batch.contains_key(t));
         let rows: Vec<(String, [SqlValue; 6])> = (|| {
+            if only_batch {
+                return Ok(Vec::new());
+            }
             let mut st = db.prepare(&sql)?;
             let rows = st.query_map(rusqlite::params_from_iter(params), |r| {
                 Ok((r.get(0)?, [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?]))
@@ -721,7 +730,16 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
     let mut stats = Stats::new(db, prog, &inputs)?;
     let mut ndv = HashMap::new();
-    for rel in &prog.inputs {
+    for (rel, (_, rows)) in &inputs.batch {
+        let rows = rows.max(1.0);
+        stats.card.insert(rel.clone(), rows);
+        stats.indexes.insert(rel.clone(), Vec::new());
+        for col in 0..prog.decls.get(rel).map_or(0, Vec::len) {
+            ndv.insert((rel.clone(), col), rows);
+            stats.fan.insert((rel.clone(), col), 1.0);
+        }
+    }
+    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
         for col in 0..prog.decls[rel].len() {
             let name = sql_col(rel, col);
             let Some(&[rows, n, sq, _]) = stats.col.get(&(rel.clone(), name.clone())) else {
@@ -735,7 +753,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
     // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
     // vtabs answer the same probes as T's tables' indexes (`facts::vtab::syntax`), so they are listed as T's.
     if inputs.atoms.is_some() {
-        for rel in &prog.inputs {
+        for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             stats.indexes.insert(rel.clone(), vtab_indexes(rel));
         }
         return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs });
@@ -809,7 +827,9 @@ fn sql_term(t: &Term, env: &HashMap<String, String>, atoms: Option<[i64; 3]>) ->
 
 impl Model {
     fn table(&self, prog: &Program, rel: &str, which: &str) -> String {
-        if prog.inputs.iter().any(|i| i == rel) { format!("{}{rel}", self.inputs.facts) } else { format!("{which}{rel}") }
+        if let Some((source, _)) = self.inputs.batch.get(rel) {
+            source.clone()
+        } else if prog.inputs.iter().any(|i| i == rel) { format!("{}{rel}", self.inputs.facts) } else { format!("{which}{rel}") }
     }
 
     /// One SELECT for a planned rule body. `delta_at` is the plan position of the recursive atom that reads its delta
@@ -1958,7 +1978,8 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register_symbols(db)?;
-    let inputs = Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new() };
+    let inputs =
+        Inputs { facts: "main.".to_owned(), stats: format!("{stats}."), atoms: Some(lowered.ops), native: BTreeSet::new(), batch: HashMap::new() };
     let out = run(&lowered.program, db, inputs, Some(lowered));
     super::native::flush_symbols(db)?;
     out

@@ -300,7 +300,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
         let mut counts = None;
         let mut first: Option<Vec<String>> = None;
         for pass in ["estimates", "counts"] {
-            let emitted = emit::emit(&lowered, &db, "s", name, counts.as_ref()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let emitted = emit::emit(&lowered, &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
             let backing = Backing::default();
             let scope = backing.enter(&store);
             let lease = scope.pool().take().unwrap();

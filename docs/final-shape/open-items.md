@@ -310,6 +310,9 @@ lower strata), and per own positive atom one delta variant planned with its delt
   and 58 steps change plan.
 - `t_programs_as_wave_programs_give_run_atoms_outputs`: both emissions of workload,
   workload_demand and calls equal `run_atoms`.
+- **The wave's step.** `waves::matches` gives its program as RDL over two batch inputs (the
+  chunk's demand relation and `temp.wave_document`, `Inputs::batch`), planned from row
+  estimates in place of statistics, and `emit_batch` emits it; the S4 gates are unchanged.
 
 ## O15. S's oracle needs S's matcher deltas
 
