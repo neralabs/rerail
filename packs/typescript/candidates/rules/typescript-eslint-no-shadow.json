@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-no-shadow",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Don't declare a TypeScript variable, function or type with a name already declared in an enclosing scope; the inner one hides the outer.",
   "scope": {
@@ -2232,6 +2232,27 @@
                 ]
               }
             ]
+          },
+          "declare-function-only": {
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "name",
+                  "kind": "function_signature"
+                }
+              },
+              {
+                "binds": {
+                  "redefines": {
+                    "every": true,
+                    "site": {
+                      "kind": "function_signature"
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       }
@@ -2310,6 +2331,11 @@
               },
               {
                 "matches": "shadow"
+              },
+              {
+                "not": {
+                  "matches": "declare-function-only"
+                }
               }
             ]
           },
@@ -2415,6 +2441,11 @@
               },
               {
                 "matches": "shadow"
+              },
+              {
+                "not": {
+                  "matches": "declare-function-only"
+                }
               }
             ]
           },

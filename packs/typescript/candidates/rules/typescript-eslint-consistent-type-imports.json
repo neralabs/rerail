@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "typescript-eslint-consistent-type-imports",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Use import type for TypeScript imports that are only ever used as types; the import is then erased from the compiled output.",
+  "description": "Use import type for TypeScript imports whose bindings are only used as types, and use import type instead of import() type annotations.",
   "scope": {
     "include": [
       "**/*.ts",
@@ -36,87 +36,215 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "kind": "identifier",
-            "inside": {
-              "kind": "import_statement",
-              "stopBy": "end",
-              "not": {
-                "regex": "^import\\s+type\\b"
-              }
-            },
+            "kind": "import_statement",
             "not": {
-              "any": [
-                {
-                  "inside": {
-                    "kind": "import_specifier",
-                    "stopBy": "neighbor",
-                    "regex": "^type\\s"
-                  }
-                },
-                {
-                  "regex": "^React$",
-                  "inside": {
-                    "kind": "program",
-                    "stopBy": "end",
-                    "has": {
-                      "stopBy": "end",
-                      "any": [
-                        {
-                          "kind": "jsx_element"
-                        },
-                        {
-                          "kind": "jsx_self_closing_element"
-                        }
-                      ]
-                    }
-                  }
-                },
-                {
-                  "inside": {
-                    "kind": "program",
-                    "stopBy": "end",
-                    "has": {
-                      "stopBy": "end",
-                      "kind": "decorator"
-                    }
-                  }
-                }
-              ]
+              "regex": "^import\\s+type\\s*[{*]|^import\\s+type\\s+[A-Za-z_$][\\w$]*\\s*(,|from\\s)"
             },
-            "binds": {
-              "used": true
-            },
-            "all": [
-              {
-                "not": {
-                  "binds": {
-                    "occurrence": {
-                      "any": [
-                        {
-                          "kind": "identifier"
-                        },
-                        {
-                          "kind": "shorthand_property_identifier"
-                        }
-                      ],
-                      "not": {
+            "has": {
+              "stopBy": "end",
+              "kind": "identifier",
+              "inside": {
+                "kind": "import_clause",
+                "stopBy": "end"
+              },
+              "not": {
+                "any": [
+                  {
+                    "inside": {
+                      "kind": "import_specifier",
+                      "stopBy": "neighbor",
+                      "regex": "^type\\s"
+                    }
+                  },
+                  {
+                    "regex": "^React$",
+                    "inside": {
+                      "kind": "program",
+                      "stopBy": "end",
+                      "has": {
+                        "stopBy": "end",
                         "any": [
                           {
-                            "inside": {
-                              "kind": "import_statement",
-                              "stopBy": "end"
-                            }
+                            "kind": "jsx_element"
                           },
                           {
-                            "inside": {
-                              "kind": "nested_type_identifier",
-                              "stopBy": "neighbor"
-                            }
+                            "kind": "jsx_self_closing_element"
                           }
                         ]
                       }
                     }
                   }
+                ]
+              },
+              "binds": {
+                "used": true
+              },
+              "all": [
+                {
+                  "not": {
+                    "binds": {
+                      "occurrence": {
+                        "any": [
+                          {
+                            "kind": "identifier"
+                          },
+                          {
+                            "kind": "shorthand_property_identifier"
+                          }
+                        ],
+                        "not": {
+                          "any": [
+                            {
+                              "inside": {
+                                "kind": "import_statement",
+                                "stopBy": "end"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "nested_type_identifier",
+                                "stopBy": "end"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "type_query",
+                                "stopBy": "end"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "computed_property_name",
+                                "stopBy": "end",
+                                "inside": {
+                                  "kind": "property_signature",
+                                  "stopBy": "neighbor"
+                                }
+                              }
+                            },
+                            {
+                              "inside": {
+                                "kind": "export_statement",
+                                "stopBy": "end",
+                                "regex": "^export\\s+type\\s"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "@typescript-eslint/consistent-type-imports",
+        "message": "This import is only used as a type. Use import type.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "@typescript-eslint/consistent-type-imports"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "consistent-type-imports"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-type-annotation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "import"
+            },
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "type_annotation"
+                    },
+                    {
+                      "kind": "type_query"
+                    },
+                    {
+                      "kind": "type_alias_declaration"
+                    },
+                    {
+                      "kind": "type_arguments"
+                    },
+                    {
+                      "kind": "constraint"
+                    },
+                    {
+                      "kind": "default_type"
+                    },
+                    {
+                      "kind": "extends_type_clause"
+                    },
+                    {
+                      "kind": "implements_clause"
+                    },
+                    {
+                      "kind": "opting_type_annotation"
+                    },
+                    {
+                      "kind": "omitting_type_annotation"
+                    },
+                    {
+                      "kind": "asserts_annotation"
+                    },
+                    {
+                      "kind": "type_predicate_annotation"
+                    },
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "reverse": true
+                      },
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "as_expression"
+                          },
+                          {
+                            "kind": "satisfies_expression"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "nthChild": {
+                  "position": 1,
+                  "reverse": true
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "as_expression"
+                    },
+                    {
+                      "kind": "satisfies_expression"
+                    }
+                  ]
                 }
               }
             ]
@@ -124,9 +252,9 @@
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "witness.start",
         "code": "@typescript-eslint/consistent-type-imports",
-        "message": "This import is only used as a type. Use import type.",
+        "message": "import() type annotations are forbidden; import the type with import type.",
         "suppress": {
           "eslint": {
             "rules": [
