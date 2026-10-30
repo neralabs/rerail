@@ -135,11 +135,13 @@ jobs:
           output-credentials: true
           output-env-credentials: false
 
+      # GH_TOKEN reads each staged sample's licence files at its commit from GitHub (checkLicenceTexts).
       - id: pack
         name: Pack publish/ and check its licences
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           REPLACE: ${{ inputs.replace }}
+          GH_TOKEN: ${{ github.token }}
           AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
           AWS_SESSION_TOKEN: ${{ steps.credentials.outputs.aws-session-token }}

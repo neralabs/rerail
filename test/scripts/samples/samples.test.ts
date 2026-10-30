@@ -119,7 +119,7 @@ describe("licences", () => {
     expect(() => licenceTexts(cache, "django/django", COMMIT)).toThrow(/copyleft/u);
     write("dask/dask", "LICENSE.txt", "Permission is hereby granted, free of charge");
     expect(() => licenceTexts(cache, "dask/dask", COMMIT)).toThrow(/do not read as BSD-3-Clause/u);
-    expect(() => licenceTexts(cache, "someone/unknown", COMMIT)).toThrow(/no licence is recorded/u);
+    expect(() => licenceTexts(cache, "someone/unknown", COMMIT)).toThrow(/records no licence files for it/u);
   });
 
   it("are read at each commit from the files the table records for it, a package.json's `license` standing in for none", () => {

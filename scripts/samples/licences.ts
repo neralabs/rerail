@@ -463,12 +463,17 @@ function packageLicence(text: string): unknown {
  */
 export function licenceTexts(cacheRoot: string, repo: string, commit: string): { spdx: string; texts: LicenceText[] } {
   const source = SOURCE_LICENCES[repo.toLowerCase()];
-  if (source === undefined) throw new Error(`${repo}: no licence is recorded for it in scripts/samples/licences.ts; read its licence at ${commit} and add it`);
+  if (source === undefined) throw new Error(`${repo}: scripts/samples/licences.ts records no licence files for it (SOURCE_LICENCES); read its licence files at ${commit} and add them`);
   const licence = licenceAt(source, commit);
   const texts = licence.files.map((file) => {
     const cached = join(cacheRoot, "licences", repo.toLowerCase(), commit, file);
     if (!existsSync(cached)) {
-      const text = execFileSync("gh", ["api", "-H", "Accept: application/vnd.github.raw", `repos/${repo}/contents/${file}?ref=${commit}`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+      let text: string;
+      try {
+        text = execFileSync("gh", ["api", "-H", "Accept: application/vnd.github.raw", `repos/${repo}/contents/${file}?ref=${commit}`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+      } catch (error) {
+        throw new Error(`${repo} at ${commit}: ${file}, which scripts/samples/licences.ts records for this commit, could not be read from GitHub (${ghFailure(error)})`);
+      }
       mkdirSync(dirname(cached), { recursive: true });
       writeFileSync(cached, text);
     }
@@ -479,6 +484,13 @@ export function licenceTexts(cacheRoot: string, repo: string, commit: string): {
     if (!states(texts, term)) throw new Error(`${repo} at ${commit}: ${licence.files.join(", ")} do not read as ${term}`);
   }
   return { spdx: licence.spdx, texts };
+}
+
+/** What a failed `gh` call said: the last line of its stderr (`gh: Not Found (HTTP 404)`), else the error's message. */
+function ghFailure(error: unknown): string {
+  const stderr = typeof error === "object" && error !== null && "stderr" in error ? error.stderr : undefined;
+  if (typeof stderr === "string" && stderr.trim() !== "") return stderr.trim().split("\n").at(-1)!;
+  return error instanceof Error ? error.message : String(error);
 }
 
 const fence = (text: string): string => {

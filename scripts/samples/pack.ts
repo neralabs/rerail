@@ -1,14 +1,14 @@
 /**
  * Stages a sample set for publishing: its archive entries (`archiveEntries`, scripts/samples/samples.ts) go into the
  * tool-pack's tracked `publish/samples/`, with a `REUSE.toml` licensing each sample under its source's licence. The
- * publish workflow packs them (`publishedSamples`, scripts/samples/publish.ts) and writes `samples.lock`; the
- * contributor edits `SAMPLES.md` in the same pull request.
+ * publish workflow packs them (`publishedSamples` and `checkLicenceTexts`, scripts/samples/publish.ts) and writes
+ * `samples.lock`; the contributor edits `SAMPLES.md` in the same pull request.
  */
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { LABELS_SUFFIX, LICENSES_FILE, sampleLabelsSchema } from "./format.js";
-import { PUBLISH_REUSE, publishedSamples } from "./publish.js";
+import { checkLicenceTexts, licenceCache, PUBLISH_REUSE, publishedSamples } from "./publish.js";
 import { byText, type ToolPack } from "./samples.js";
 
 /** A tool-pack's staged samples, relative to the checkout. */
@@ -38,10 +38,12 @@ export function samplesReuseToml(entries: readonly Entry[]): string {
 
 /**
  * Replaces the tool-pack's `publish/samples/` in the checkout at `root` with `entries` and their REUSE.toml: the
- * samples to add or replace in the published set (all of it for a `replace` publish). Checked as prep checks them first.
+ * samples to add or replace in the published set (all of it for a `replace` publish). Checked as prep checks them first,
+ * each against its repository's licence files at its commit (read from GitHub into the checkout's licenceCache).
  */
 export function writeSampleSet(root: string, toolPack: ToolPack, entries: readonly Entry[]): void {
   publishedSamples(entries);
+  checkLicenceTexts(entries, licenceCache(root));
   const directory = join(root, publishSamplesDirectory(toolPack));
   rmSync(directory, { recursive: true, force: true });
   for (const { path, bytes } of entries) {

@@ -51,9 +51,9 @@ policy for trimming a set: a `SAMPLES.md` says how its set was trimmed, where it
 
 A sample is a whole file of another repository, so its licence comes from a recorded table, not from the sample's own
 labels. `RECORDED_LICENCES` in `scripts/samples/licences.ts` names every repository samples may be taken from
-(`owner/name`) with its SPDX licence: the repositories whose licence files the builders read at the samples' commits
-(`SOURCE_LICENCES`, checked against the text on every build), and the ESLint and React test sets' sources, with the
-licence the test set recorded. `COPYLEFT_SOURCES` lists the repositories found copyleft, with the evidence.
+(`owner/name`) with its SPDX licence: the repositories whose licence files are read at the samples' commits
+(`SOURCE_LICENCES`), and the sources of test sets converted with only the licence id the test set recorded
+(`TEST_SET_LICENCES`). `COPYLEFT_SOURCES` lists the repositories found copyleft, with the evidence.
 
 A licence is the one in force at the sample's commit, for the sample's file: the licence files of the nearest
 directory above the file that has any (a monorepo package's own, else the root's), or, at a commit with none, the
@@ -71,15 +71,23 @@ When samples are published, `publishedSamples` (`scripts/samples/publish.ts`) re
 - a path that is neither `LICENSES.md` nor `<sample-id>/<path>`, or a sample not staged whole: its file beside its
   labels, the file's sha256 equal to the labels' `source.sha256`.
 
+Then `checkLicenceTexts` reads, for each repository and commit the staged samples name, the licence files
+`SOURCE_LICENCES` records for that commit, from GitHub (`gh api`, cached in `.rerail/pack-data/licences/`), and refuses
+the commit when a file is not there, the files do not read as the recorded licence, they name a copyleft licence, or
+the commit has no licence (`NONE`). A repository with no `SOURCE_LICENCES` entry is refused too: its licence files
+must be recorded before samples of it are published. Both checks run when `writeSampleSet` stages a set and again in
+the publish workflow's prep, which is the only way a sample reaches S3.
+
 The publish's licence check then judges each sample's licence, which is now the recorded one, against the allowlist
 (`scripts/check/licence-allowlist.json`), and the approver's summary lists every repository the archive takes files
 from with that licence.
 
 The archive's `LICENSES.md` lists each repository, its licence and the files taken from it, with the licence texts
-the builders read at the samples' commits. The ESLint test set's sources carry only the licence id the test set
-recorded, with no text, so an archive holds licence texts only for the repositories whose licence files were read, and
-`SAMPLES.md` says which: all of them, none, or the ones it names. A pull request that takes samples from a new
-repository adds its entry, and the reviewer reads the repository's licence file at the samples' commits.
+the builders read at the samples' commits. A set converted from a test set without reading licence texts (the ESLint
+test set's) carries for those repositories only the licence id the test set recorded, so an archive holds licence
+texts only for the repositories whose licence files were read, and `SAMPLES.md` says which: all of them, none, or the
+ones it names. A pull request that takes samples from a new repository adds its entry, and the reviewer reads the
+repository's licence file at the samples' commits.
 
 ## Take a new snapshot
 
@@ -238,8 +246,9 @@ Two workflows carry a request. Neither runs any code of the pull request.
    that is no commit on a valid branch, and, for a branch of this repository, a head on the default branch or a
    protected one. It fetches `refs/pull/<n>/head` as objects, which must be the head GitHub names, and packs every
    `publish/` from those git blobs (`scripts/s3/pack-fixtures.mjs pack --from`), never checking the pull request out.
-   Staged samples go through `publishedSamples` ([Sample licences](#sample-licences)). Every file going to S3 must be
-   under a licence the allowlist takes: test data as pack check 6 decides it, through the same classifier
+   Staged samples go through `publishedSamples` and `checkLicenceTexts` ([Sample licences](#sample-licences)), the
+   second reading their licence files from GitHub with the workflow's token. Every file going to S3 must be under a
+   licence the allowlist takes: test data as pack check 6 decides it, through the same classifier
    ([pack-format.md, "Licensing"](pack-format.md#licensing)), samples by their recorded licence. A refusal fails prep,
    and no approval is asked. prep then writes the approver's summary: per archive its kind, tool-pack, sha256, files,
    bytes, its licences with their file counts and a Sources column (a samples archive's repositories with their
