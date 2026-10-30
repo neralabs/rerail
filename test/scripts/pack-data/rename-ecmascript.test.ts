@@ -68,6 +68,13 @@ describe("renameSource", () => {
     for (const renamed of ["thing", "inst", "Widget", "el"]) expect(renames.has(renamed), renamed).toBe(true);
   });
 
+  it("keeps Node's deprecated globals, members of Intl and the keys destructured from a host object", () => {
+    const source = "GLOBAL; root; COUNTER_NET_SERVER_CONNECTION(conn);\nIntl.v8BreakIterator;\nlet {env: {NODE_REPL_HISTORY_FILE: file}} = process;\n";
+    const { renames } = renameSource(source, "a.js");
+    for (const kept of ["GLOBAL", "root", "COUNTER_NET_SERVER_CONNECTION", "v8BreakIterator", "env", "NODE_REPL_HISTORY_FILE"]) expect(renames.has(kept), kept).toBe(false);
+    for (const renamed of ["conn", "file"]) expect(renames.has(renamed), renamed).toBe(true);
+  });
+
   it("renames the names a global comment lists with their uses", () => {
     const source = "/* global fooBar, bazQux: writable -- set by the page */\nfooBar(); bazQux = 1;\n// fooBar stays here\n";
     const { source: renamed, renames } = renameSource(source, "a.js");

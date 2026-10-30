@@ -25,10 +25,12 @@
  *   (sort-keys, sort-vars and sort-imports at their defaults), ignoring case, by locale and naturally (digit runs stay).
  * - Protected, the APIs a rule is about rather than the tests' own names: keywords and contextual keywords, the ES
  *   standard library (globals and every member declared in TypeScript's lib.es*.d.ts), the names `HOST_NAMES` lists (a
- *   few browser and Node globals, console methods, React's component API and lifecycle, Next's data-fetching exports,
- *   Node's callback conventions, the test runners' globals and modifiers: `vi`, `jest`, `only`, `skip`, `todo`), any
+ *   few browser and Node globals, Node's deprecated `GLOBAL`, `root` and `COUNTER_*`, console methods, React's component
+ *   API and lifecycle, Next's data-fetching exports, Node's callback conventions, the test runners' globals and
+ *   modifiers: `vi`, `jest`, `only`, `skip`, `todo`), any
  *   hook-shaped name (`use` and an uppercase letter) and any `…Sync` name; every member name chained on one of
- *   `MEMBER_ROOTS` (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `expect(x).toBe`); and what a package exports:
+ *   `MEMBER_ROOTS` (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `expect(x).toBe`, `Intl.v8BreakIterator`) and every
+ *   key destructured from one (`let { env: { NODE_REPL_HISTORY_FILE } } = process`); and what a package exports:
  *   the names an `import` or a destructuring `require` takes from a package (`import { Head } from "next/document"`,
  *   `const { TextDecoder } = require("util")`), the members read on a package's binding (`fs.access`) and the props
  *   of a package's component (`<Script strategy=…>`). The rule a variant then loses every finding of is one that
@@ -51,7 +53,7 @@ const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi"
  * Host objects whose members are their API: the member names of a chain of accesses and calls on one are kept
  * (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `jest.mock`, `it.only.each`, `expect(x).not.toBe`).
  */
-const MEMBER_ROOTS = new Set([...TEST_GLOBALS, "process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require"]);
+const MEMBER_ROOTS = new Set([...TEST_GLOBALS, "process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require", "Intl"]);
 
 /** The root identifier of a chain of member accesses and calls (`a` of `a.b(c).d`), if it has one. */
 function chainRoot(expression: ts.Expression): ts.Identifier | undefined {
@@ -92,6 +94,11 @@ function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: S
       if (named !== undefined && ts.isNamespaceImport(named)) bindings.add(named.name.text);
       if (named !== undefined && ts.isNamedImports(named)) for (const element of named.elements) exported.add((element.propertyName ?? element.name).text);
     }
+    // Destructuring a host object takes its API: `let { env: { NODE_REPL_HISTORY_FILE } } = process`.
+    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer !== undefined) {
+      const root = chainRoot(node.initializer);
+      if (root !== undefined && MEMBER_ROOTS.has(root.text)) for (const name of patternKeys(node.name)) exported.add(name);
+    }
     if (ts.isVariableDeclaration(node) && requiredPackage(node.initializer) !== undefined) {
       if (ts.isIdentifier(node.name)) bindings.add(node.name.text);
       else if (ts.isObjectBindingPattern(node.name)) {
@@ -105,6 +112,15 @@ function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: S
   };
   visit(file);
   return { exported, bindings };
+}
+
+/** The property names an object binding pattern reads, nested patterns' included (`env` and `X` of `{ env: { X } }`). */
+function patternKeys(pattern: ts.ObjectBindingPattern): string[] {
+  return pattern.elements.flatMap((element) => {
+    const key = element.propertyName ?? element.name;
+    const own = ts.isIdentifier(key) ? [key.text] : [];
+    return ts.isObjectBindingPattern(element.name) ? [...own, ...patternKeys(element.name)] : own;
+  });
 }
 
 /** Whether `node` is a member name chained on a host object or on a package's binding, or a prop of a package's component. */
@@ -125,7 +141,8 @@ function isApiName(node: ts.Identifier | ts.PrivateIdentifier, bindings: Readonl
 /** The host, module-system, React and test-runner names kept (not exhaustive: any name missing here is renamed). */
 const HOST_NAMES = [
   "window", "document", "navigator", "location", "globalThis", "self", "console", "process", "Buffer", "global", "require", "module", "exports",
-  "define", "__dirname", "__filename", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate",
+  "define", "__dirname", "__filename", "GLOBAL", "root", "COUNTER_HTTP_CLIENT_REQUEST", "COUNTER_HTTP_CLIENT_RESPONSE",
+  "COUNTER_HTTP_SERVER_REQUEST", "COUNTER_HTTP_SERVER_RESPONSE", "COUNTER_NET_SERVER_CONNECTION", "COUNTER_NET_SERVER_CONNECTION_CLOSE", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate",
   "requestAnimationFrame", "fetch", "alert", "confirm", "prompt", "localStorage", "sessionStorage", "addEventListener", "removeEventListener",
   "log", "warn", "error", "info", "debug", "trace", "time", "timeEnd", "dir", "table", "assert",
   "React", "ReactDOM", "Component", "PureComponent", "Fragment", "createElement", "props", "state", "setState", "render", "children", "key",
