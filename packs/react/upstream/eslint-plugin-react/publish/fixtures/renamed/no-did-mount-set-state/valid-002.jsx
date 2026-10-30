@@ -1,7 +1,7 @@
 
-        var Nguaj = kvduskGutzcBxzkh({
-          ksxljftfuRftRhqqc: function() {
-            suatGwyItdgayKpzdamtv(jxp);
+        var Eguaj = createReactClass({
+          componentDidMount: function() {
+            suatGwyItdgayKpzdamtv(bse);
             this.suatCjeromp = this.setState;
           }
         });

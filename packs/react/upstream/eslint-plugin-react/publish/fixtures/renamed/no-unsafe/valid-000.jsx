@@ -1,6 +1,6 @@
 
-        class Drh extends React.Component {
-          componentUxkVcttuj() {}
+        class Dux extends React.Component {
+          componentDidUpdate() {}
           render() {}
         }
       

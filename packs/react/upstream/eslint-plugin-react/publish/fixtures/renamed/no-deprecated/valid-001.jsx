@@ -1,1 +1,1 @@
-var bafzi = React.bafziNptwzxj(oopyhgr);
+var clone = React.cloneElement(fafzipw);

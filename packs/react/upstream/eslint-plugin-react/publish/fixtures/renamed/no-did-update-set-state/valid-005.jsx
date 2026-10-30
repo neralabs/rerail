@@ -1,8 +1,8 @@
 
-      var Qmcki = aymtydVgvsiTabmv({
-        apqttonjkTviOnmcgd: function() {
+      var Nqmck = createReactClass({
+        componentDidUpdate: function() {
           this.setState({
-            mwsk: mwsk
+            iiyg: iiyg
           });
         }
       });

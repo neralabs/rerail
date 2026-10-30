@@ -1,2 +1,2 @@
-import type { Ijd } from "module";
-export { gyq, type Gys } from "module";
+import type { Foo } from "module";
+export { cij, type Ciz } from "module";

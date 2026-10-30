@@ -1,8 +1,8 @@
 
-    var Ddizw = bpcwauGshsqVipoq({
-      bifqfyhqlJciXunyqg: function() {
+    var Pddiz = createReactClass({
+      componentDidUpdate: function() {
         this.setState({
-          cijr: cijr
+          owix: owix
         });
       }
     });

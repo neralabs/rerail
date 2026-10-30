@@ -1,8 +1,8 @@
 
-        var Oakmw = bnohidCuresWxqzo({
-          nke: (<div>{/* valid */}</div>),
+        var Otakm = createReactClass({
+          iwn: (<div>{/* valid */}</div>),
           render() {
-            return this.nke;
+            return this.iwn;
           },
         });
       

@@ -1,7 +1,7 @@
 
                 try {
-                    vkn();
-                } catch ({ edw }) {
-                    throw edw;
+                    xgk();
+                } catch ({ err }) {
+                    throw err;
                 }
             

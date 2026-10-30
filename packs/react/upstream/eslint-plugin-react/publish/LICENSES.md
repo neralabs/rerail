@@ -6,7 +6,7 @@ This archive is the test data of `packs/react/upstream/eslint-plugin-react/`. `p
 
 Repository https://github.com/jsx-eslint/eslint-plugin-react, tag `v7.37.5`, commit `2c98b83c451a4297edf1787d9a616e50687e27e8`. License: MIT.
 
-1991 file(s): 30 verbatim, 1137 extracted, 824 renamed. They remain under eslint-plugin-react's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+1962 file(s): 30 verbatim, 1137 extracted, 795 renamed. They remain under eslint-plugin-react's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

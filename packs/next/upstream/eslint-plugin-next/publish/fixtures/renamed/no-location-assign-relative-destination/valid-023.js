@@ -1,1 +1,1 @@
-function gbtljbk(location) { location.guph = '/foo'; location.assign('/foo') }
+function hguntlj(location) { location.href = '/foo'; location.assign('/foo') }

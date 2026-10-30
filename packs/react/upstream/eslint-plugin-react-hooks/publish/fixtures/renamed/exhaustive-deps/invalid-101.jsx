@@ -1,13 +1,13 @@
 
-import McvnjnzQsubi from 'store';
+import KjzqsubIppjf from 'store';
 let z = {};
 
-function MlPpjfgmsjp(props) {
-  let x = props.fka;
+function KkGmsjpduas(props) {
+  let x = props.fji;
   {
-    let y = props.asa;
-    const fd = useCallback(() => {
+    let y = props.aco;
+    const fa = useCallback(() => {
       // nothing
-    }, [McvnjnzQsubi?.jnicg?.vtbug, props.fka, x, y, z, global?.stpro]);
+    }, [KjzqsubIppjf?.hello?.world, props.fji, x, y, z, global?.stuff]);
   }
 }

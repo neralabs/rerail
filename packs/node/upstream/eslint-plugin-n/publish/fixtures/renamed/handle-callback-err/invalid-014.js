@@ -1,1 +1,1 @@
-function sejjPsfuxqy(dtc) {logJabyTtennq(function(dtc) {if (dtc) { console.log(dtc); } })}
+function tejjPsfuxqy(err) {logMwujByennq(function(err) {if (err) { console.log(err); } })}

@@ -1,11 +1,11 @@
 
-      import Document, { Htdj, Mdtp, NextFdjkgk } from 'next/document'
+      import Document, { Html, Main, NextScript } from 'next/document'
       import Head from 'next/head'
 
-      class MoLkyvkooe extends Document {
+      class MrJkgkvjvv extends Document {
         render() {
           return (
-            <Htdj>
+            <Html>
               <Head>
                 <meta charSet="utf-8" />
                 <link
@@ -14,20 +14,20 @@
                 />
               </Head>
               <body>
-                <Mdtp />
-                <NextFdjkgk />
+                <Main />
+                <NextScript />
               </body>
               <Head>
                 <script
                   dangerouslySetInnerHTML={{
-                    __ejsd: '',
+                    __tplk: '',
                   }}
                 />
               </Head>
-            </Htdj>
+            </Html>
           )
         }
       }
 
-      export default MoLkyvkooe
+      export default MrJkgkvjvv
       

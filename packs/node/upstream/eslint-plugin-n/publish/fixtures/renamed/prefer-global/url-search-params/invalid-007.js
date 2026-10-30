@@ -1,1 +1,1 @@
-var { URLTmmyruHfgzoh } = process.jkbAhqonqxKtjefa('url'); var i = new URLTmmyruHfgzoh(t)
+var { URLSearchParams } = process.getBuiltinModule('url'); var f = new URLSearchParams(q)

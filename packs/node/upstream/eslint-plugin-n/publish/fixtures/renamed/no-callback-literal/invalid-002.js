@@ -1,1 +1,0 @@
-fdhnshxf("help")

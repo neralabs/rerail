@@ -1,7 +1,7 @@
 
-        export default function Uzpw() {
+        export default function Zpul() {
           return <div></div>;
         }
-        export const jpuLgwmybmgdbk = async () => {};
-        export const jpuLgwmybMqmyo = async () => {};
+        export const getStaticpizpw = async () => {};
+        export const getStaticProps = async () => {};
       

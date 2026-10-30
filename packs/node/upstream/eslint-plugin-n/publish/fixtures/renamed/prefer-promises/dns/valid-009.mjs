@@ -1,1 +1,0 @@
-import * as dns from 'dns'; dns.ligdkaqi.ffxepi()

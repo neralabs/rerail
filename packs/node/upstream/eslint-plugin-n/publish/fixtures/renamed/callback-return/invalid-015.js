@@ -1,1 +1,1 @@
-class z { swgvr() { if (rbe) { fzsoguqw(); } fzsoguqw(); } } 
+class k { jhywg() { if (err) { callback(); } callback(); } } 

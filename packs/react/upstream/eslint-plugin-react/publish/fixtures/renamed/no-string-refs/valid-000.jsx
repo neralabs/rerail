@@ -1,10 +1,10 @@
 
-        var Mtesz = bybmqxGpwyoNrkof({
-          bmbxrpdmnUpjTyzdr: function() {
-            var bmbxrpdmn = this.mtesz;
+        var Fatel = createReactClass({
+          componentDidMount: function() {
+            var component = this.fatel;
           },
           render: function() {
-            return <div ref={b => this.mtesz = b}>Hello {this.props.name}</div>;
+            return <div ref={c => this.fatel = c}>Hello {this.props.name}</div>;
           }
         });
       

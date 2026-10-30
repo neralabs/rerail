@@ -1,1 +1,1 @@
-function Component() { const mlz = function aex(){}; return (<Cosvtkj.Qxcwrmli value={mlz}></Cosvtkj.Qxcwrmli>)}
+function Component() { const gjl = function aze(){}; return (<Coofvek.Provider value={gjl}></Coofvek.Provider>)}

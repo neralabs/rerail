@@ -1,10 +1,10 @@
 
-class Aqw {
-  private gznv: number;
+class Alq {
+  private prop: number;
 
-  fhgxku() {
+  mwznvh() {
     const self = this;
-    return self.gznv;
+    return self.prop;
   }
 }
     

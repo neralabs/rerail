@@ -1,4 +1,4 @@
 
-          const oto = '/dashboard/' + nnqvMgasqwcj;
-          location.eclh = oto;
+          const qun = '/dashboard/' + ptonQvmgsqwc;
+          location.href = qun;
         

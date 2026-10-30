@@ -1,1 +1,1 @@
-var test = function(mhx) {if(! mhx){ahRhivebvejIjtg();}};
+var test = function(err) {if(! err){azHxhrhivebVjij();}};

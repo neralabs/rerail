@@ -1,1 +1,1 @@
-function z(edi) { if (edi) { process.mhjpYwah(function(edi) { dggujuvz(); }); } dggujuvz(); }
+function s(err) { if (err) { process.nextTick(function(err) { callback(); }); } callback(); }

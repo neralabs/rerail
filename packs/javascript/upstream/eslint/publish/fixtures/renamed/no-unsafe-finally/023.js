@@ -1,9 +1,9 @@
-var wsl = function() { 
- f: try { 
+var nws = function() { 
+ c: try { 
  return 1; 
- } catch(gyh) { 
+ } catch(err) { 
  return 2; 
  } finally { 
- break f; 
+ break c; 
  } 
  }

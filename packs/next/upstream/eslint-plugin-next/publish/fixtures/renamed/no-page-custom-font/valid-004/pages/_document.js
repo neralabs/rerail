@@ -1,18 +1,18 @@
 
-      import Document, { Htlc, Hfbi } from "next/document";
-      class MoIbwzbkvn {
+      import Document, { Html, Head } from "next/document";
+      class MnUcbioibw {
         render() {
           return (
-            <Htlc>
-              <Hfbi>
+            <Html>
+              <Head>
                 <link
                   href="https://fonts.googleapis.com/css2?family=Krona+One&display=swap"
                   rel="stylesheet"
                 />
-              </Hfbi>
-            </Htlc>
+              </Head>
+            </Html>
           );
         }
       }
 
-      export default MoIbwzbkvn;
+      export default MnUcbioibw;

@@ -1,1 +1,1 @@
-function a(eth) { if (eth) { return next(eth) } else { dpykmzyh(); } }
+function b(err) { if (err) { return next(err) } else { callback(); } }

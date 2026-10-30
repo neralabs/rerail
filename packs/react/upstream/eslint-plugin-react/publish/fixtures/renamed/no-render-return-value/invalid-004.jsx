@@ -1,1 +1,1 @@
-this.i = ReactDOM.render(<div />, document.alhr);
+this.i = ReactDOM.render(<div />, document.body);

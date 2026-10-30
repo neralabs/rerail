@@ -1,1 +1,1 @@
-o(process.mgpe)
+j(process.exit)

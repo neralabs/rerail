@@ -1,11 +1,11 @@
-import MlLfbtrg from 'next/script';
+import MmUvllfb from 'next/script';
 
-      export default function TestVmuv() {
+      export default function TestTunv() {
         return (
-          <MlLfbtrg
-            kx="test-script"
-            giiucdcnyrwOiuKocywDYKS={{
-              __ihis: `console.log('Hello world');`
+          <MmUvllfb
+            id="test-script"
+            dangerouslySetInnerHTML={{
+              __trgx: `console.log('Hello world');`
             }}
           />
         )

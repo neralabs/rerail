@@ -1,1 +1,1 @@
-import { dzh as jmfnPsuv } from 'module';
+import { foo as jbzhMfnp } from 'module';

@@ -1,9 +1,9 @@
 
-import type { Mnz } from 'bar';
+import type { Foo } from 'bar';
 
 declare module 'baz' {
-  export interface Mnz {
-    s: string;
+  export interface Foo {
+    k: string;
   }
 }
       

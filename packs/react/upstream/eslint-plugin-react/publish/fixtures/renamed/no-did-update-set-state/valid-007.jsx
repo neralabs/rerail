@@ -1,8 +1,8 @@
 
-      class Orpvs extends React.Component {
-        componentFkuZivfqw = () => {
+      class Ofkdu extends React.Component {
+        componentDidUpdate = () => {
           this.setState({
-            huis: huis
+            hziv: hziv
           });
         }
       }

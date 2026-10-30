@@ -1,1 +1,1 @@
-function w(nbm) { if (nbm) return ftrszfns(); else return ftrszfns(); }
+function s(err) { if (err) return callback(); else return callback(); }

@@ -1,1 +1,1 @@
-function e(hsb) { if (hsb) { return rdn.jtqlut(hsb); } }
+function b(err) { if (err) { return rcs.frbdnt(err); } }

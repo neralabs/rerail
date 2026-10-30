@@ -1,4 +1,4 @@
 
-        import { yzkkbpsJpducwucgFeWssq } from 'react-dom';
-        ReactDOM.yzkkbpsJpducwucgFeWssq(aiuwjgmdu);
+        import { unmountComponentAtNode } from 'react-dom';
+        ReactDOM.unmountComponentAtNode(aizkkbpsj);
       

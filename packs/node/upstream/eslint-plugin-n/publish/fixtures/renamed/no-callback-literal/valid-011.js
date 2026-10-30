@@ -1,1 +1,1 @@
-cdmkciku(undefined, lfzw)
+callback(undefined, lwdm)

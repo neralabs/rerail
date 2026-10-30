@@ -1,1 +1,1 @@
-import {uahqfacv as dns} from 'dns'; dns.kaaujs()
+import {promises as dns} from 'dns'; dns.jtahqf()

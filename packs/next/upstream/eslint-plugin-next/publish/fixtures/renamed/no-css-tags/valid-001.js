@@ -1,5 +1,5 @@
-import {Hfzt} from 'next/document';
-      export class Aqgv extends Hfzt {
+import {Head} from 'next/document';
+      export class Aqzt extends Head {
         render() {
           return (
             <div>

@@ -1,1 +1,1 @@
-var qqm = function() { try { return 1 } catch(ayv) { return 2 } finally { return 3 } }
+var knq = function() { try { return 1 } catch(err) { return 2 } finally { return 3 } }

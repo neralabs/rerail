@@ -1,8 +1,8 @@
 
-        class Krm extends React.Component {
+        class Khd extends React.Component {
           constructor() {}
-          componentHdfwAfdar() {}
-          componentHdfwFxhqvucTnzvm() {}
-          componentHdfwJkwwus() {}
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         }
       

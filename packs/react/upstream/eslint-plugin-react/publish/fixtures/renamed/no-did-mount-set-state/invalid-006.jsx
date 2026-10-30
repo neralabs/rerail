@@ -1,9 +1,9 @@
 
-      class Kisgu extends React.Component {
-        componentUxkLyjol() {
-          sjkbHpumt.qwGfzbBglqa(function(hlsp) {
+      class Kzkbc extends React.Component {
+        componentDidMount() {
+          snxkLyjol.qcHpumTisgu(function(hwgf) {
             this.setState({
-              hlsp: hlsp
+              hwgf: hwgf
             });
           })
         }

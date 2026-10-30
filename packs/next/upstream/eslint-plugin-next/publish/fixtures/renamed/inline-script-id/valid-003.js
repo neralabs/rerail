@@ -1,9 +1,9 @@
-import MvCmugwu from 'next/script';
+import MjVmugwu from 'next/script';
 
-      export default function TestZtdj() {
+      export default function TestWztd() {
         return (
-          <MvCmugwu ky="test-script">
+          <MjVmugwu id="test-script">
             {`console.log('Hello world');`}
-          </MvCmugwu>
+          </MjVmugwu>
         )
       }

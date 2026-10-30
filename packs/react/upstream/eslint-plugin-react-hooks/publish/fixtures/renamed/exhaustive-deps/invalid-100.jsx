@@ -1,13 +1,13 @@
 
-import OizwqpuYsxtk from 'store';
+import NguysxtKgvmb from 'store';
 let z = {};
 
-function OpGvbnzwpdc(props) {
-  let w = props.fih;
+function NqNzwdcbjhn(props) {
+  let x = props.fye;
   {
-    let y = props.eni;
-    const fb = useCallback(() => {
+    let y = props.ezt;
+    const fi = useCallback(() => {
       // nothing
-    }, [OizwqpuYsxtk.lhezt.vmaiz, props.fih, w, y, z, global.stzcs]);
+    }, [NguysxtKgvmb.hello.world, props.fye, x, y, z, global.stuff]);
   }
 }

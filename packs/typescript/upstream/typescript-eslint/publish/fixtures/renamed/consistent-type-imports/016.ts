@@ -1,7 +1,7 @@
 
-import type { Foo, I } from 'foo';
-import { K } from 'foo';
-@elyb
+import type { Foo, T } from 'foo';
+import { V } from 'foo';
+@erly
 class D {
   constructor(foo: Foo) {}
 }

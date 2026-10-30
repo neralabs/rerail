@@ -1,1 +1,1 @@
-function Component() { const fmd = anf ? ann ? {} : null : null; return (<Coriljl.Ubymzkwv value={fmd}></Coriljl.Ubymzkwv>)}
+function Component() { const ilm = adn ? adq ? {} : null : null; return (<Coreilj.Provider value={ilm}></Coreilj.Provider>)}

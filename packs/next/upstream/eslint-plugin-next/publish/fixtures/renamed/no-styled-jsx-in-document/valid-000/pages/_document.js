@@ -1,20 +1,20 @@
-import Document, { Hfwg, Habw, Mkxy, NextHbqxqg } from 'next/document'
+import Document, { Html, Head, Main, NextScript } from 'next/document'
 
-        export class MrTatdanin extends Document {
-          static async ekyFkqshvwObgov(cwa) {
-            const jxyxhmsCixdn = await Document.ekyFkqshvwObgov(cwa)
-            return { ...jxyxhmsCixdn }
+        export class MwOhbqxqga extends Document {
+          static async getInitialProps(cew) {
+            const jgbwkfiXytat = await Document.getInitialProps(cew)
+            return { ...jgbwkfiXytat }
           }
 
           render() {
             return (
-              <Hfwg>
-                <Habw />
+              <Html>
+                <Head />
                 <body>
-                  <Mkxy />
-                  <NextHbqxqg />
+                  <Main />
+                  <NextScript />
                 </body>
-              </Hfwg>
+              </Html>
             )
           }
         }

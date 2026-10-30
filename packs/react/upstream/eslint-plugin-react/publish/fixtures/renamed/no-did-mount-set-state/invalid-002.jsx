@@ -1,8 +1,8 @@
 
-      class Nziuz extends React.Component {
-        componentTetWiitc = () => {
+      class Ntetw extends React.Component {
+        componentDidMount = () => {
           this.setState({
-            jtee: jtee
+            jiit: jiit
           });
         }
       }

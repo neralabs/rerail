@@ -1,7 +1,7 @@
 
-      import {Hhza} from 'next/document';
+      import {Head} from 'next/document';
 
-        export class Aoez extends Hhza {
+        export class Auza extends Head {
           render() {
             return (
               <div>

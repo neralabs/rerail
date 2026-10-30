@@ -1,6 +1,6 @@
 
-      export default function Tpqg() {
+      export default function Ywpq() {
         return <div></div>;
       }
-      export async function iwrArpwzaImfaAsygh() {};
+      export async function getServerSideProps() {};
     

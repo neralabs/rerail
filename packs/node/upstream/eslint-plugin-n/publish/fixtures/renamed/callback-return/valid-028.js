@@ -1,1 +1,1 @@
-class w { sdnpy() { cbrzcgjo(); } } 
+class p { fwdnp() { callback(); } } 

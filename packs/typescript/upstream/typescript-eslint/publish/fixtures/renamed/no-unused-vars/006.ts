@@ -1,7 +1,7 @@
 
-import { YipaduKjsxklydv } from 'decorators';
-export class Rjm {
-  @YipaduKjsxklydv
-  static cnu() {}
+import { MethodDecorator } from 'decorators';
+export class Jip {
+  @MethodDecorator
+  static cdu() {}
 }
     

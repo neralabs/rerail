@@ -1,4 +1,4 @@
 
-function useCustomCallback(akqgynyh, hfyo) {
-  return useCallback(akqgynyh, hfyo)
+function useCustomCallback(callback, gxkq) {
+  return useCallback(callback, gxkq)
 }

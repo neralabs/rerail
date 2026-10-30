@@ -1,1 +1,1 @@
-var test = function test(szd, hcnb) {};
+var test = function test(err, alzr) {};

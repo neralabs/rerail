@@ -1,7 +1,7 @@
 
-        var Nirdj = bvnfcaMfuvxMbldy({
-          bdbaefjhxEyfFrsgu: function() {
-            React.eelaNUKKwhh(this).woycvcTvijIlyl();
+        var Gcojg = createReactClass({
+          componentDidMount: function() {
+            React.findDOMNode(this).scrollIntoView();
           },
           render: function() {
             return <div>Hello</div>;

@@ -1,1 +1,1 @@
-var path = require("path"); var fsnjYvcs = __dirname + path.tnv + `foo.js`;
+var path = require("path"); var frnwNjyv = __dirname + path.sep + `foo.js`;

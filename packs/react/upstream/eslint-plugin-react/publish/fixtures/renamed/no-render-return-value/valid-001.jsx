@@ -1,4 +1,4 @@
 
-        let ixix;
-        ReactDOM.render(<div ref={ref => ixix = ref}/>, document.chbc);
+        let oexi;
+        ReactDOM.render(<div ref={ref => oexi = ref}/>, document.body);
       

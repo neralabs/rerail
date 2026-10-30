@@ -1,1 +1,1 @@
-React.render(<div ref={ref => this.ibjv = ref}/>, document.clcg);
+React.render(<div ref={ref => this.hebj = ref}/>, document.body);

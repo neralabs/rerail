@@ -1,1 +1,0 @@
-const b = process.lyeCqoknoqQvhotr('node:buffer'); new b.Buffer()

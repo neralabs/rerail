@@ -1,7 +1,7 @@
 
-        class Hnijf extends Component {
-          componentMrcWtgjd() {
-            this.mnnz = gweqPRJChao(this);
+        class Jrmrc extends Component {
+          componentDidMount() {
+            this.lwtg = findDOMNode(this);
           }
           render() {
             return <div>Hello</div>;

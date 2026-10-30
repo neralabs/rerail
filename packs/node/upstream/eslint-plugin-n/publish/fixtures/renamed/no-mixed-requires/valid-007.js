@@ -1,1 +1,1 @@
-var ebzabga = require('events').EventNtbpzku, fs = require('fs')
+var ebfbpzk = require('events').EventEmitter, fs = require('fs')

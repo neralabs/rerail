@@ -3400,14 +3400,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/callback-return/valid-018.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/callback-return/valid-019.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/callback-return/valid-020.js",
     "renamed/package.json"
    ],
@@ -3445,10 +3437,6 @@
    ],
    [
     "renamed/callback-return/valid-029.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/callback-return/valid-030.js",
     "renamed/package.json"
    ],
    [
@@ -3652,10 +3640,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/exports-style/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/exports-style/valid-004.js",
     "renamed/package.json"
    ],
@@ -3680,23 +3664,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/exports-style/valid-010.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/exports-style/valid-011.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/exports-style/valid-012.js",
     "renamed/package.json"
    ],
    [
     "renamed/exports-style/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/exports-style/invalid-002.js",
     "renamed/package.json"
    ],
    [
@@ -3709,10 +3681,6 @@
    ],
    [
     "renamed/exports-style/invalid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/exports-style/invalid-006.js",
     "renamed/package.json"
    ],
    [
@@ -3729,10 +3697,6 @@
    ],
    [
     "renamed/exports-style/invalid-010.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/exports-style/invalid-011.js",
     "renamed/package.json"
    ],
    [
@@ -3788,14 +3752,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/exports-style/invalid-027.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/exports-style/invalid-028.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/exports-style/invalid-029.js",
     "renamed/package.json"
    ],
@@ -3836,10 +3792,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/global-require/valid-007.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/global-require/valid-009.js",
     "renamed/package.json"
    ],
@@ -3853,10 +3805,6 @@
    ],
    [
     "renamed/global-require/valid-012.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/global-require/invalid-001.js",
     "renamed/package.json"
    ],
    [
@@ -3888,19 +3836,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/handle-callback-err/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/handle-callback-err/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/valid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/valid-005.js",
     "renamed/package.json"
    ],
    [
@@ -3909,10 +3845,6 @@
    ],
    [
     "renamed/handle-callback-err/valid-007.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/valid-008.js",
     "renamed/package.json"
    ],
    [
@@ -3948,23 +3880,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/handle-callback-err/valid-017.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/valid-018.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/valid-019.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/handle-callback-err/valid-022.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/valid-023.js",
     "renamed/package.json"
    ],
    [
@@ -3980,10 +3896,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/handle-callback-err/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/handle-callback-err/invalid-002.js",
     "renamed/package.json"
    ],
@@ -3992,27 +3904,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/handle-callback-err/invalid-004.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/handle-callback-err/invalid-005.js",
     "renamed/package.json"
    ],
    [
-    "renamed/handle-callback-err/invalid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/invalid-007.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/handle-callback-err/invalid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/handle-callback-err/invalid-009.js",
     "renamed/package.json"
    ],
    [
@@ -4328,23 +4224,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-callback-literal/valid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-007.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-callback-literal/valid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-009.js",
     "renamed/package.json"
    ],
    [
@@ -4392,47 +4272,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-callback-literal/valid-021.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-022.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-023.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-024.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-025.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/valid-026.ts",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/invalid-002.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-callback-literal/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/invalid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/invalid-005.js",
     "renamed/package.json"
    ],
    [
@@ -4444,27 +4284,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-callback-literal/invalid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-callback-literal/invalid-009.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-callback-literal/invalid-010.js",
     "renamed/package.json"
    ],
    [
     "renamed/no-deprecated-api/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-006.js",
     "renamed/package.json"
    ],
    [
@@ -4476,31 +4300,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-deprecated-api/valid-010.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-011.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-012.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-013.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-deprecated-api/valid-016.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-021.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/valid-022.js",
     "renamed/package.json"
    ],
    [
@@ -4512,266 +4312,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-deprecated-api/invalid-014.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-015.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-016.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-017.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-019.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-020.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-022.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-023.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-025.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-026.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-028.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-029.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-030.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-031.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-032.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-033.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-034.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-035.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-036.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-037.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-038.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-039.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-042.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-043.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-044.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-046.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-047.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-048.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-049.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-050.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-051.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-055.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-056.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-057.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-059.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-060.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-061.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-062.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-063.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-064.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-065.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-066.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-067.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-068.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-070.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-071.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-072.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-073.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-074.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-080.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-081.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-082.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-083.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-087.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-088.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-089.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-090.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-091.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-092.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-093.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-094.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-095.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-096.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-097.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-098.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-deprecated-api/invalid-101.js",
     "renamed/package.json"
    ],
@@ -4780,31 +4320,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-deprecated-api/invalid-103.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-deprecated-api/invalid-104.js",
     "renamed/package.json"
    ],
    [
-    "renamed/no-deprecated-api/invalid-105.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-deprecated-api/invalid-106.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-deprecated-api/invalid-107.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-exports-assign/valid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-exports-assign/valid-002.js",
     "renamed/package.json"
    ],
    [
@@ -4856,19 +4376,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-mixed-requires/invalid-010.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-new-require/valid-001.js",
     "renamed/package.json"
    ],
    [
     "renamed/no-new-require/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-new-require/valid-003.js",
     "renamed/package.json"
    ],
    [
@@ -5020,47 +4532,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-process-env/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/valid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/valid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/valid-007.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-process-env/invalid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/invalid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/invalid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-env/invalid-008.js",
     "renamed/package.json"
    ],
    [
@@ -5076,19 +4548,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-process-exit/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-process-exit/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-exit/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-process-exit/invalid-002.js",
     "renamed/package.json"
    ],
    [
@@ -5104,31 +4564,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-sync/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/valid-004.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-sync/valid-005.js",
     "renamed/package.json"
    ],
    [
-    "renamed/no-sync/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-sync/valid-007.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/valid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/valid-009.js",
     "renamed/package.json"
    ],
    [
@@ -5137,14 +4577,6 @@
    ],
    [
     "renamed/no-sync/invalid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/invalid-004.js",
     "renamed/package.json"
    ],
    [
@@ -5172,175 +4604,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/no-sync/valid-010.ts",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/valid-011.ts",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-sync/valid-012.ts",
     "renamed/package.json"
    ],
    [
-    "renamed/no-sync/invalid-011.ts",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/invalid-012.ts",
-    "renamed/package.json"
-   ],
-   [
     "renamed/no-sync/invalid-013.ts",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/valid-013.ts",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/no-sync/invalid-014.ts",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/valid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/valid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/valid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-007.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/buffer/invalid-009.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/console/valid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/console/valid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/console/invalid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/console/invalid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/console/invalid-007.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/console/invalid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/valid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/valid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/valid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-004.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-005.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-006.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-007.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-008.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-global/process/invalid-009.js",
     "renamed/package.json"
    ],
    [
@@ -5632,18 +4900,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-node-protocol/valid-032.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/valid-033.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/valid-034.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-node-protocol/valid-035.mjs",
     "renamed/package.json"
    ],
@@ -5652,23 +4908,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-node-protocol/valid-037.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/valid-038.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-node-protocol/valid-039.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/valid-040.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/valid-041.mjs",
     "renamed/package.json"
    ],
    [
@@ -5676,15 +4916,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-node-protocol/valid-043.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-node-protocol/valid-044.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/valid-045.mjs",
     "renamed/package.json"
    ],
    [
@@ -5700,15 +4932,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-node-protocol/invalid-007.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-node-protocol/invalid-008.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/invalid-009.mjs",
     "renamed/package.json"
    ],
    [
@@ -5720,43 +4944,7 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-node-protocol/invalid-015.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/invalid-024.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/invalid-025.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-node-protocol/invalid-026.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/invalid-027.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/invalid-028.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-node-protocol/invalid-029.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/valid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/valid-003.js",
     "renamed/package.json"
    ],
    [
@@ -5772,18 +4960,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-promises/dns/valid-007.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/valid-008.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/valid-009.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-promises/dns/valid-010.mjs",
     "renamed/package.json"
    ],
@@ -5792,135 +4968,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-promises/dns/valid-012.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/valid-013.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-promises/dns/valid-014.mjs",
     "renamed/package.json"
    ],
    [
     "renamed/prefer-promises/dns/valid-015.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-004.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-005.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-006.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-007.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-008.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-009.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-010.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-011.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-012.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-013.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-015.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-016.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-017.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-018.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-019.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-020.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-021.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-022.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-023.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-024.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-025.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/dns/invalid-027.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-004.js",
     "renamed/package.json"
    ],
    [
@@ -5936,18 +4988,6 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-promises/fs/valid-008.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-009.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-010.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-promises/fs/valid-011.mjs",
     "renamed/package.json"
    ],
@@ -5956,175 +4996,11 @@
     "renamed/package.json"
    ],
    [
-    "renamed/prefer-promises/fs/valid-013.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/valid-014.mjs",
-    "renamed/package.json"
-   ],
-   [
     "renamed/prefer-promises/fs/valid-015.mjs",
     "renamed/package.json"
    ],
    [
     "renamed/prefer-promises/fs/valid-016.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-001.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-002.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-003.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-004.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-005.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-006.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-007.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-008.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-009.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-010.mjs",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-011.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-012.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-013.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-014.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-015.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-016.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-017.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-018.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-019.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-020.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-021.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-023.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-024.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-025.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-026.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-027.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-028.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-029.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-030.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-031.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-032.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-033.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-034.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-035.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-036.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-037.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-038.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-039.js",
-    "renamed/package.json"
-   ],
-   [
-    "renamed/prefer-promises/fs/invalid-040.js",
     "renamed/package.json"
    ]
   ],
@@ -10536,18 +9412,6 @@
     ],
     "renamedFrom": "callback-return/valid-017.js"
    },
-   "renamed/callback-return/valid-018.js": {
-    "rules": [
-     "n/callback-return"
-    ],
-    "renamedFrom": "callback-return/valid-018.js"
-   },
-   "renamed/callback-return/valid-019.js": {
-    "rules": [
-     "n/callback-return"
-    ],
-    "renamedFrom": "callback-return/valid-019.js"
-   },
    "renamed/callback-return/valid-020.js": {
     "rules": [
      "n/callback-return"
@@ -10607,12 +9471,6 @@
      "n/callback-return"
     ],
     "renamedFrom": "callback-return/valid-029.js"
-   },
-   "renamed/callback-return/valid-030.js": {
-    "rules": [
-     "n/callback-return"
-    ],
-    "renamedFrom": "callback-return/valid-030.js"
    },
    "renamed/callback-return/valid-031.js": {
     "rules": [
@@ -10728,12 +9586,6 @@
     ],
     "renamedFrom": "exports-style/invalid-001.js"
    },
-   "renamed/exports-style/invalid-002.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/invalid-002.js"
-   },
    "renamed/exports-style/invalid-003.js": {
     "rules": [
      "n/exports-style"
@@ -10751,12 +9603,6 @@
      "n/exports-style"
     ],
     "renamedFrom": "exports-style/invalid-005.js"
-   },
-   "renamed/exports-style/invalid-006.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/invalid-006.js"
    },
    "renamed/exports-style/invalid-007.js": {
     "rules": [
@@ -10781,12 +9627,6 @@
      "n/exports-style"
     ],
     "renamedFrom": "exports-style/invalid-010.js"
-   },
-   "renamed/exports-style/invalid-011.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/invalid-011.js"
    },
    "renamed/exports-style/invalid-012.js": {
     "rules": [
@@ -10866,18 +9706,6 @@
     ],
     "renamedFrom": "exports-style/invalid-026.js"
    },
-   "renamed/exports-style/invalid-027.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/invalid-027.js"
-   },
-   "renamed/exports-style/invalid-028.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/invalid-028.js"
-   },
    "renamed/exports-style/invalid-029.js": {
     "rules": [
      "n/exports-style"
@@ -10913,12 +9741,6 @@
      "n/exports-style"
     ],
     "renamedFrom": "exports-style/valid-002.js"
-   },
-   "renamed/exports-style/valid-003.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/valid-003.js"
    },
    "renamed/exports-style/valid-004.js": {
     "rules": [
@@ -10956,29 +9778,11 @@
     ],
     "renamedFrom": "exports-style/valid-009.js"
    },
-   "renamed/exports-style/valid-010.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/valid-010.js"
-   },
-   "renamed/exports-style/valid-011.js": {
-    "rules": [
-     "n/exports-style"
-    ],
-    "renamedFrom": "exports-style/valid-011.js"
-   },
    "renamed/exports-style/valid-012.js": {
     "rules": [
      "n/exports-style"
     ],
     "renamedFrom": "exports-style/valid-012.js"
-   },
-   "renamed/global-require/invalid-001.js": {
-    "rules": [
-     "n/global-require"
-    ],
-    "renamedFrom": "global-require/invalid-001.js"
    },
    "renamed/global-require/invalid-002.js": {
     "rules": [
@@ -11058,12 +9862,6 @@
     ],
     "renamedFrom": "global-require/valid-006.js"
    },
-   "renamed/global-require/valid-007.js": {
-    "rules": [
-     "n/global-require"
-    ],
-    "renamedFrom": "global-require/valid-007.js"
-   },
    "renamed/global-require/valid-009.js": {
     "rules": [
      "n/global-require"
@@ -11088,12 +9886,6 @@
     ],
     "renamedFrom": "global-require/valid-012.js"
    },
-   "renamed/handle-callback-err/invalid-001.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/invalid-001.js"
-   },
    "renamed/handle-callback-err/invalid-002.js": {
     "rules": [
      "n/handle-callback-err"
@@ -11106,41 +9898,17 @@
     ],
     "renamedFrom": "handle-callback-err/invalid-003.js"
    },
-   "renamed/handle-callback-err/invalid-004.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/invalid-004.js"
-   },
    "renamed/handle-callback-err/invalid-005.js": {
     "rules": [
      "n/handle-callback-err"
     ],
     "renamedFrom": "handle-callback-err/invalid-005.js"
    },
-   "renamed/handle-callback-err/invalid-006.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/invalid-006.js"
-   },
-   "renamed/handle-callback-err/invalid-007.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/invalid-007.js"
-   },
    "renamed/handle-callback-err/invalid-008.js": {
     "rules": [
      "n/handle-callback-err"
     ],
     "renamedFrom": "handle-callback-err/invalid-008.js"
-   },
-   "renamed/handle-callback-err/invalid-009.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/invalid-009.js"
    },
    "renamed/handle-callback-err/invalid-010.js": {
     "rules": [
@@ -11184,29 +9952,11 @@
     ],
     "renamedFrom": "handle-callback-err/invalid-017.js"
    },
-   "renamed/handle-callback-err/valid-002.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-002.js"
-   },
    "renamed/handle-callback-err/valid-003.js": {
     "rules": [
      "n/handle-callback-err"
     ],
     "renamedFrom": "handle-callback-err/valid-003.js"
-   },
-   "renamed/handle-callback-err/valid-004.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-004.js"
-   },
-   "renamed/handle-callback-err/valid-005.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-005.js"
    },
    "renamed/handle-callback-err/valid-006.js": {
     "rules": [
@@ -11219,12 +9969,6 @@
      "n/handle-callback-err"
     ],
     "renamedFrom": "handle-callback-err/valid-007.js"
-   },
-   "renamed/handle-callback-err/valid-008.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-008.js"
    },
    "renamed/handle-callback-err/valid-009.js": {
     "rules": [
@@ -11274,35 +10018,11 @@
     ],
     "renamedFrom": "handle-callback-err/valid-016.js"
    },
-   "renamed/handle-callback-err/valid-017.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-017.js"
-   },
-   "renamed/handle-callback-err/valid-018.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-018.js"
-   },
-   "renamed/handle-callback-err/valid-019.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-019.js"
-   },
    "renamed/handle-callback-err/valid-022.js": {
     "rules": [
      "n/handle-callback-err"
     ],
     "renamedFrom": "handle-callback-err/valid-022.js"
-   },
-   "renamed/handle-callback-err/valid-023.js": {
-    "rules": [
-     "n/handle-callback-err"
-    ],
-    "renamedFrom": "handle-callback-err/valid-023.js"
    },
    "renamed/handle-callback-err/valid-025.js": {
     "rules": [
@@ -11736,35 +10456,11 @@
     ],
     "renamedFrom": "hashbang/valid-034/shebang/object-bin/bin/a.js"
    },
-   "renamed/no-callback-literal/invalid-001.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/invalid-001.js"
-   },
-   "renamed/no-callback-literal/invalid-002.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/invalid-002.js"
-   },
    "renamed/no-callback-literal/invalid-003.js": {
     "rules": [
      "n/no-callback-literal"
     ],
     "renamedFrom": "no-callback-literal/invalid-003.js"
-   },
-   "renamed/no-callback-literal/invalid-004.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/invalid-004.js"
-   },
-   "renamed/no-callback-literal/invalid-005.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/invalid-005.js"
    },
    "renamed/no-callback-literal/invalid-006.js": {
     "rules": [
@@ -11777,18 +10473,6 @@
      "n/no-callback-literal"
     ],
     "renamedFrom": "no-callback-literal/invalid-007.js"
-   },
-   "renamed/no-callback-literal/invalid-008.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/invalid-008.js"
-   },
-   "renamed/no-callback-literal/invalid-009.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/invalid-009.js"
    },
    "renamed/no-callback-literal/invalid-010.js": {
     "rules": [
@@ -11808,35 +10492,11 @@
     ],
     "renamedFrom": "no-callback-literal/valid-004.js"
    },
-   "renamed/no-callback-literal/valid-005.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-005.js"
-   },
-   "renamed/no-callback-literal/valid-006.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-006.js"
-   },
-   "renamed/no-callback-literal/valid-007.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-007.js"
-   },
    "renamed/no-callback-literal/valid-008.js": {
     "rules": [
      "n/no-callback-literal"
     ],
     "renamedFrom": "no-callback-literal/valid-008.js"
-   },
-   "renamed/no-callback-literal/valid-009.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-009.js"
    },
    "renamed/no-callback-literal/valid-010.js": {
     "rules": [
@@ -11904,432 +10564,6 @@
     ],
     "renamedFrom": "no-callback-literal/valid-020.js"
    },
-   "renamed/no-callback-literal/valid-021.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-021.js"
-   },
-   "renamed/no-callback-literal/valid-022.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-022.js"
-   },
-   "renamed/no-callback-literal/valid-023.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-023.js"
-   },
-   "renamed/no-callback-literal/valid-024.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-024.js"
-   },
-   "renamed/no-callback-literal/valid-025.js": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-025.js"
-   },
-   "renamed/no-callback-literal/valid-026.ts": {
-    "rules": [
-     "n/no-callback-literal"
-    ],
-    "renamedFrom": "no-callback-literal/valid-026.ts"
-   },
-   "renamed/no-deprecated-api/invalid-014.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-014.js"
-   },
-   "renamed/no-deprecated-api/invalid-015.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-015.js"
-   },
-   "renamed/no-deprecated-api/invalid-016.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-016.js"
-   },
-   "renamed/no-deprecated-api/invalid-017.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-017.js"
-   },
-   "renamed/no-deprecated-api/invalid-019.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-019.js"
-   },
-   "renamed/no-deprecated-api/invalid-020.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-020.js"
-   },
-   "renamed/no-deprecated-api/invalid-022.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-022.js"
-   },
-   "renamed/no-deprecated-api/invalid-023.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-023.js"
-   },
-   "renamed/no-deprecated-api/invalid-025.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-025.js"
-   },
-   "renamed/no-deprecated-api/invalid-026.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-026.js"
-   },
-   "renamed/no-deprecated-api/invalid-028.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-028.js"
-   },
-   "renamed/no-deprecated-api/invalid-029.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-029.js"
-   },
-   "renamed/no-deprecated-api/invalid-030.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-030.js"
-   },
-   "renamed/no-deprecated-api/invalid-031.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-031.js"
-   },
-   "renamed/no-deprecated-api/invalid-032.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-032.js"
-   },
-   "renamed/no-deprecated-api/invalid-033.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-033.js"
-   },
-   "renamed/no-deprecated-api/invalid-034.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-034.js"
-   },
-   "renamed/no-deprecated-api/invalid-035.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-035.js"
-   },
-   "renamed/no-deprecated-api/invalid-036.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-036.js"
-   },
-   "renamed/no-deprecated-api/invalid-037.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-037.js"
-   },
-   "renamed/no-deprecated-api/invalid-038.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-038.js"
-   },
-   "renamed/no-deprecated-api/invalid-039.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-039.js"
-   },
-   "renamed/no-deprecated-api/invalid-042.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-042.js"
-   },
-   "renamed/no-deprecated-api/invalid-043.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-043.js"
-   },
-   "renamed/no-deprecated-api/invalid-044.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-044.js"
-   },
-   "renamed/no-deprecated-api/invalid-046.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-046.js"
-   },
-   "renamed/no-deprecated-api/invalid-047.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-047.js"
-   },
-   "renamed/no-deprecated-api/invalid-048.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-048.js"
-   },
-   "renamed/no-deprecated-api/invalid-049.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-049.js"
-   },
-   "renamed/no-deprecated-api/invalid-050.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-050.js"
-   },
-   "renamed/no-deprecated-api/invalid-051.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-051.js"
-   },
-   "renamed/no-deprecated-api/invalid-055.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-055.js"
-   },
-   "renamed/no-deprecated-api/invalid-056.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-056.js"
-   },
-   "renamed/no-deprecated-api/invalid-057.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-057.js"
-   },
-   "renamed/no-deprecated-api/invalid-059.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-059.js"
-   },
-   "renamed/no-deprecated-api/invalid-060.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-060.js"
-   },
-   "renamed/no-deprecated-api/invalid-061.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-061.js"
-   },
-   "renamed/no-deprecated-api/invalid-062.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-062.js"
-   },
-   "renamed/no-deprecated-api/invalid-063.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-063.js"
-   },
-   "renamed/no-deprecated-api/invalid-064.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-064.js"
-   },
-   "renamed/no-deprecated-api/invalid-065.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-065.js"
-   },
-   "renamed/no-deprecated-api/invalid-066.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-066.js"
-   },
-   "renamed/no-deprecated-api/invalid-067.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-067.js"
-   },
-   "renamed/no-deprecated-api/invalid-068.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-068.js"
-   },
-   "renamed/no-deprecated-api/invalid-070.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-070.js"
-   },
-   "renamed/no-deprecated-api/invalid-071.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-071.js"
-   },
-   "renamed/no-deprecated-api/invalid-072.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-072.js"
-   },
-   "renamed/no-deprecated-api/invalid-073.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-073.js"
-   },
-   "renamed/no-deprecated-api/invalid-074.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-074.js"
-   },
-   "renamed/no-deprecated-api/invalid-080.mjs": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-080.mjs"
-   },
-   "renamed/no-deprecated-api/invalid-081.mjs": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-081.mjs"
-   },
-   "renamed/no-deprecated-api/invalid-082.mjs": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-082.mjs"
-   },
-   "renamed/no-deprecated-api/invalid-083.mjs": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-083.mjs"
-   },
-   "renamed/no-deprecated-api/invalid-087.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-087.js"
-   },
-   "renamed/no-deprecated-api/invalid-088.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-088.js"
-   },
-   "renamed/no-deprecated-api/invalid-089.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-089.js"
-   },
-   "renamed/no-deprecated-api/invalid-090.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-090.js"
-   },
-   "renamed/no-deprecated-api/invalid-091.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-091.js"
-   },
-   "renamed/no-deprecated-api/invalid-092.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-092.js"
-   },
-   "renamed/no-deprecated-api/invalid-093.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-093.js"
-   },
-   "renamed/no-deprecated-api/invalid-094.mjs": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-094.mjs"
-   },
-   "renamed/no-deprecated-api/invalid-095.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-095.js"
-   },
-   "renamed/no-deprecated-api/invalid-096.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-096.js"
-   },
-   "renamed/no-deprecated-api/invalid-097.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-097.js"
-   },
-   "renamed/no-deprecated-api/invalid-098.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-098.js"
-   },
    "renamed/no-deprecated-api/invalid-101.js": {
     "rules": [
      "n/no-deprecated-api"
@@ -12342,29 +10576,11 @@
     ],
     "renamedFrom": "no-deprecated-api/invalid-102.js"
    },
-   "renamed/no-deprecated-api/invalid-103.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-103.js"
-   },
    "renamed/no-deprecated-api/invalid-104.js": {
     "rules": [
      "n/no-deprecated-api"
     ],
     "renamedFrom": "no-deprecated-api/invalid-104.js"
-   },
-   "renamed/no-deprecated-api/invalid-105.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-105.js"
-   },
-   "renamed/no-deprecated-api/invalid-106.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/invalid-106.js"
    },
    "renamed/no-deprecated-api/invalid-107.js": {
     "rules": [
@@ -12378,18 +10594,6 @@
     ],
     "renamedFrom": "no-deprecated-api/valid-003.js"
    },
-   "renamed/no-deprecated-api/valid-005.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-005.js"
-   },
-   "renamed/no-deprecated-api/valid-006.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-006.js"
-   },
    "renamed/no-deprecated-api/valid-007.js": {
     "rules": [
      "n/no-deprecated-api"
@@ -12402,47 +10606,11 @@
     ],
     "renamedFrom": "no-deprecated-api/valid-008.js"
    },
-   "renamed/no-deprecated-api/valid-010.mjs": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-010.mjs"
-   },
-   "renamed/no-deprecated-api/valid-011.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-011.js"
-   },
-   "renamed/no-deprecated-api/valid-012.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-012.js"
-   },
-   "renamed/no-deprecated-api/valid-013.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-013.js"
-   },
    "renamed/no-deprecated-api/valid-016.js": {
     "rules": [
      "n/no-deprecated-api"
     ],
     "renamedFrom": "no-deprecated-api/valid-016.js"
-   },
-   "renamed/no-deprecated-api/valid-021.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-021.js"
-   },
-   "renamed/no-deprecated-api/valid-022.js": {
-    "rules": [
-     "n/no-deprecated-api"
-    ],
-    "renamedFrom": "no-deprecated-api/valid-022.js"
    },
    "renamed/no-deprecated-api/valid-025.js": {
     "rules": [
@@ -12455,18 +10623,6 @@
      "n/no-deprecated-api"
     ],
     "renamedFrom": "no-deprecated-api/valid-026.js"
-   },
-   "renamed/no-exports-assign/valid-001.js": {
-    "rules": [
-     "n/no-exports-assign"
-    ],
-    "renamedFrom": "no-exports-assign/valid-001.js"
-   },
-   "renamed/no-exports-assign/valid-002.js": {
-    "rules": [
-     "n/no-exports-assign"
-    ],
-    "renamedFrom": "no-exports-assign/valid-002.js"
    },
    "renamed/no-exports-assign/valid-005.js": {
     "rules": [
@@ -12497,12 +10653,6 @@
      "n/no-mixed-requires"
     ],
     "renamedFrom": "no-mixed-requires/invalid-009.js"
-   },
-   "renamed/no-mixed-requires/invalid-010.js": {
-    "rules": [
-     "n/no-mixed-requires"
-    ],
-    "renamedFrom": "no-mixed-requires/invalid-010.js"
    },
    "renamed/no-mixed-requires/valid-001.js": {
     "rules": [
@@ -12569,12 +10719,6 @@
      "n/no-new-require"
     ],
     "renamedFrom": "no-new-require/valid-002.js"
-   },
-   "renamed/no-new-require/valid-003.js": {
-    "rules": [
-     "n/no-new-require"
-    ],
-    "renamedFrom": "no-new-require/valid-003.js"
    },
    "renamed/no-path-concat/invalid-001.js": {
     "rules": [
@@ -12774,41 +10918,11 @@
     ],
     "renamedFrom": "no-path-concat/valid-013.mjs"
    },
-   "renamed/no-process-env/invalid-001.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/invalid-001.js"
-   },
-   "renamed/no-process-env/invalid-003.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/invalid-003.js"
-   },
    "renamed/no-process-env/invalid-004.js": {
     "rules": [
      "n/no-process-env"
     ],
     "renamedFrom": "no-process-env/invalid-004.js"
-   },
-   "renamed/no-process-env/invalid-005.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/invalid-005.js"
-   },
-   "renamed/no-process-env/invalid-006.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/invalid-006.js"
-   },
-   "renamed/no-process-env/invalid-008.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/invalid-008.js"
    },
    "renamed/no-process-env/invalid-009.js": {
     "rules": [
@@ -12834,48 +10948,6 @@
     ],
     "renamedFrom": "no-process-env/valid-002.js"
    },
-   "renamed/no-process-env/valid-003.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/valid-003.js"
-   },
-   "renamed/no-process-env/valid-004.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/valid-004.js"
-   },
-   "renamed/no-process-env/valid-005.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/valid-005.js"
-   },
-   "renamed/no-process-env/valid-006.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/valid-006.js"
-   },
-   "renamed/no-process-env/valid-007.js": {
-    "rules": [
-     "n/no-process-env"
-    ],
-    "renamedFrom": "no-process-env/valid-007.js"
-   },
-   "renamed/no-process-exit/invalid-001.js": {
-    "rules": [
-     "n/no-process-exit"
-    ],
-    "renamedFrom": "no-process-exit/invalid-001.js"
-   },
-   "renamed/no-process-exit/invalid-002.js": {
-    "rules": [
-     "n/no-process-exit"
-    ],
-    "renamedFrom": "no-process-exit/invalid-002.js"
-   },
    "renamed/no-process-exit/invalid-003.js": {
     "rules": [
      "n/no-process-exit"
@@ -12887,12 +10959,6 @@
      "n/no-process-exit"
     ],
     "renamedFrom": "no-process-exit/valid-001.js"
-   },
-   "renamed/no-process-exit/valid-002.js": {
-    "rules": [
-     "n/no-process-exit"
-    ],
-    "renamedFrom": "no-process-exit/valid-002.js"
    },
    "renamed/no-process-exit/valid-003.js": {
     "rules": [
@@ -12911,18 +10977,6 @@
      "n/no-sync"
     ],
     "renamedFrom": "no-sync/invalid-002.js"
-   },
-   "renamed/no-sync/invalid-003.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/invalid-003.js"
-   },
-   "renamed/no-sync/invalid-004.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/invalid-004.js"
    },
    "renamed/no-sync/invalid-005.js": {
     "rules": [
@@ -12960,29 +11014,11 @@
     ],
     "renamedFrom": "no-sync/invalid-010.js"
    },
-   "renamed/no-sync/invalid-011.ts": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/invalid-011.ts"
-   },
-   "renamed/no-sync/invalid-012.ts": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/invalid-012.ts"
-   },
    "renamed/no-sync/invalid-013.ts": {
     "rules": [
      "n/no-sync"
     ],
     "renamedFrom": "no-sync/invalid-013.ts"
-   },
-   "renamed/no-sync/invalid-014.ts": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/invalid-014.ts"
    },
    "renamed/no-sync/valid-001.js": {
     "rules": [
@@ -12996,29 +11032,11 @@
     ],
     "renamedFrom": "no-sync/valid-002.js"
    },
-   "renamed/no-sync/valid-003.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-003.js"
-   },
-   "renamed/no-sync/valid-004.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-004.js"
-   },
    "renamed/no-sync/valid-005.js": {
     "rules": [
      "n/no-sync"
     ],
     "renamedFrom": "no-sync/valid-005.js"
-   },
-   "renamed/no-sync/valid-006.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-006.js"
    },
    "renamed/no-sync/valid-007.js": {
     "rules": [
@@ -13026,251 +11044,11 @@
     ],
     "renamedFrom": "no-sync/valid-007.js"
    },
-   "renamed/no-sync/valid-008.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-008.js"
-   },
-   "renamed/no-sync/valid-009.js": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-009.js"
-   },
-   "renamed/no-sync/valid-010.ts": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-010.ts"
-   },
-   "renamed/no-sync/valid-011.ts": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-011.ts"
-   },
    "renamed/no-sync/valid-012.ts": {
     "rules": [
      "n/no-sync"
     ],
     "renamedFrom": "no-sync/valid-012.ts"
-   },
-   "renamed/no-sync/valid-013.ts": {
-    "rules": [
-     "n/no-sync"
-    ],
-    "renamedFrom": "no-sync/valid-013.ts"
-   },
-   "renamed/prefer-global/buffer/invalid-001.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-001.js"
-   },
-   "renamed/prefer-global/buffer/invalid-002.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-002.js"
-   },
-   "renamed/prefer-global/buffer/invalid-003.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-003.js"
-   },
-   "renamed/prefer-global/buffer/invalid-004.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-004.js"
-   },
-   "renamed/prefer-global/buffer/invalid-005.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-005.js"
-   },
-   "renamed/prefer-global/buffer/invalid-006.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-006.js"
-   },
-   "renamed/prefer-global/buffer/invalid-007.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-007.js"
-   },
-   "renamed/prefer-global/buffer/invalid-008.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-008.js"
-   },
-   "renamed/prefer-global/buffer/invalid-009.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/invalid-009.js"
-   },
-   "renamed/prefer-global/buffer/valid-001.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/valid-001.js"
-   },
-   "renamed/prefer-global/buffer/valid-002.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/valid-002.js"
-   },
-   "renamed/prefer-global/buffer/valid-003.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/valid-003.js"
-   },
-   "renamed/prefer-global/buffer/valid-004.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/valid-004.js"
-   },
-   "renamed/prefer-global/buffer/valid-005.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/valid-005.js"
-   },
-   "renamed/prefer-global/buffer/valid-006.js": {
-    "rules": [
-     "n/prefer-global/buffer"
-    ],
-    "renamedFrom": "prefer-global/buffer/valid-006.js"
-   },
-   "renamed/prefer-global/console/invalid-005.js": {
-    "rules": [
-     "n/prefer-global/console"
-    ],
-    "renamedFrom": "prefer-global/console/invalid-005.js"
-   },
-   "renamed/prefer-global/console/invalid-006.js": {
-    "rules": [
-     "n/prefer-global/console"
-    ],
-    "renamedFrom": "prefer-global/console/invalid-006.js"
-   },
-   "renamed/prefer-global/console/invalid-007.js": {
-    "rules": [
-     "n/prefer-global/console"
-    ],
-    "renamedFrom": "prefer-global/console/invalid-007.js"
-   },
-   "renamed/prefer-global/console/invalid-008.js": {
-    "rules": [
-     "n/prefer-global/console"
-    ],
-    "renamedFrom": "prefer-global/console/invalid-008.js"
-   },
-   "renamed/prefer-global/console/valid-005.js": {
-    "rules": [
-     "n/prefer-global/console"
-    ],
-    "renamedFrom": "prefer-global/console/valid-005.js"
-   },
-   "renamed/prefer-global/console/valid-006.js": {
-    "rules": [
-     "n/prefer-global/console"
-    ],
-    "renamedFrom": "prefer-global/console/valid-006.js"
-   },
-   "renamed/prefer-global/process/invalid-001.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-001.js"
-   },
-   "renamed/prefer-global/process/invalid-002.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-002.js"
-   },
-   "renamed/prefer-global/process/invalid-003.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-003.js"
-   },
-   "renamed/prefer-global/process/invalid-004.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-004.js"
-   },
-   "renamed/prefer-global/process/invalid-005.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-005.js"
-   },
-   "renamed/prefer-global/process/invalid-006.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-006.js"
-   },
-   "renamed/prefer-global/process/invalid-007.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-007.js"
-   },
-   "renamed/prefer-global/process/invalid-008.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-008.js"
-   },
-   "renamed/prefer-global/process/invalid-009.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/invalid-009.js"
-   },
-   "renamed/prefer-global/process/valid-001.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/valid-001.js"
-   },
-   "renamed/prefer-global/process/valid-002.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/valid-002.js"
-   },
-   "renamed/prefer-global/process/valid-003.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/valid-003.js"
-   },
-   "renamed/prefer-global/process/valid-004.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/valid-004.js"
-   },
-   "renamed/prefer-global/process/valid-005.js": {
-    "rules": [
-     "n/prefer-global/process"
-    ],
-    "renamedFrom": "prefer-global/process/valid-005.js"
    },
    "renamed/prefer-global/text-decoder/invalid-001.js": {
     "rules": [
@@ -13650,23 +11428,11 @@
     ],
     "renamedFrom": "prefer-node-protocol/invalid-006.mjs"
    },
-   "renamed/prefer-node-protocol/invalid-007.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-007.mjs"
-   },
    "renamed/prefer-node-protocol/invalid-008.mjs": {
     "rules": [
      "n/prefer-node-protocol"
     ],
     "renamedFrom": "prefer-node-protocol/invalid-008.mjs"
-   },
-   "renamed/prefer-node-protocol/invalid-009.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-009.mjs"
    },
    "renamed/prefer-node-protocol/invalid-010.mjs": {
     "rules": [
@@ -13680,47 +11446,11 @@
     ],
     "renamedFrom": "prefer-node-protocol/invalid-011.mjs"
    },
-   "renamed/prefer-node-protocol/invalid-015.js": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-015.js"
-   },
-   "renamed/prefer-node-protocol/invalid-024.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-024.mjs"
-   },
-   "renamed/prefer-node-protocol/invalid-025.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-025.mjs"
-   },
    "renamed/prefer-node-protocol/invalid-026.mjs": {
     "rules": [
      "n/prefer-node-protocol"
     ],
     "renamedFrom": "prefer-node-protocol/invalid-026.mjs"
-   },
-   "renamed/prefer-node-protocol/invalid-027.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-027.mjs"
-   },
-   "renamed/prefer-node-protocol/invalid-028.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-028.mjs"
-   },
-   "renamed/prefer-node-protocol/invalid-029.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/invalid-029.mjs"
    },
    "renamed/prefer-node-protocol/valid-001.mjs": {
     "rules": [
@@ -13794,24 +11524,6 @@
     ],
     "renamedFrom": "prefer-node-protocol/valid-025.js"
    },
-   "renamed/prefer-node-protocol/valid-032.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-032.mjs"
-   },
-   "renamed/prefer-node-protocol/valid-033.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-033.mjs"
-   },
-   "renamed/prefer-node-protocol/valid-034.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-034.mjs"
-   },
    "renamed/prefer-node-protocol/valid-035.mjs": {
     "rules": [
      "n/prefer-node-protocol"
@@ -13824,35 +11536,11 @@
     ],
     "renamedFrom": "prefer-node-protocol/valid-036.mjs"
    },
-   "renamed/prefer-node-protocol/valid-037.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-037.mjs"
-   },
-   "renamed/prefer-node-protocol/valid-038.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-038.mjs"
-   },
    "renamed/prefer-node-protocol/valid-039.mjs": {
     "rules": [
      "n/prefer-node-protocol"
     ],
     "renamedFrom": "prefer-node-protocol/valid-039.mjs"
-   },
-   "renamed/prefer-node-protocol/valid-040.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-040.mjs"
-   },
-   "renamed/prefer-node-protocol/valid-041.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-041.mjs"
    },
    "renamed/prefer-node-protocol/valid-042.mjs": {
     "rules": [
@@ -13860,191 +11548,11 @@
     ],
     "renamedFrom": "prefer-node-protocol/valid-042.mjs"
    },
-   "renamed/prefer-node-protocol/valid-043.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-043.mjs"
-   },
    "renamed/prefer-node-protocol/valid-044.mjs": {
     "rules": [
      "n/prefer-node-protocol"
     ],
     "renamedFrom": "prefer-node-protocol/valid-044.mjs"
-   },
-   "renamed/prefer-node-protocol/valid-045.mjs": {
-    "rules": [
-     "n/prefer-node-protocol"
-    ],
-    "renamedFrom": "prefer-node-protocol/valid-045.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-001.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-001.js"
-   },
-   "renamed/prefer-promises/dns/invalid-002.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-002.js"
-   },
-   "renamed/prefer-promises/dns/invalid-003.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-003.js"
-   },
-   "renamed/prefer-promises/dns/invalid-004.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-004.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-005.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-005.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-006.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-006.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-007.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-007.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-008.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-008.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-009.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-009.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-010.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-010.mjs"
-   },
-   "renamed/prefer-promises/dns/invalid-011.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-011.js"
-   },
-   "renamed/prefer-promises/dns/invalid-012.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-012.js"
-   },
-   "renamed/prefer-promises/dns/invalid-013.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-013.js"
-   },
-   "renamed/prefer-promises/dns/invalid-015.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-015.js"
-   },
-   "renamed/prefer-promises/dns/invalid-016.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-016.js"
-   },
-   "renamed/prefer-promises/dns/invalid-017.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-017.js"
-   },
-   "renamed/prefer-promises/dns/invalid-018.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-018.js"
-   },
-   "renamed/prefer-promises/dns/invalid-019.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-019.js"
-   },
-   "renamed/prefer-promises/dns/invalid-020.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-020.js"
-   },
-   "renamed/prefer-promises/dns/invalid-021.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-021.js"
-   },
-   "renamed/prefer-promises/dns/invalid-022.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-022.js"
-   },
-   "renamed/prefer-promises/dns/invalid-023.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-023.js"
-   },
-   "renamed/prefer-promises/dns/invalid-024.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-024.js"
-   },
-   "renamed/prefer-promises/dns/invalid-025.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-025.js"
-   },
-   "renamed/prefer-promises/dns/invalid-027.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/invalid-027.js"
-   },
-   "renamed/prefer-promises/dns/valid-001.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-001.js"
-   },
-   "renamed/prefer-promises/dns/valid-002.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-002.js"
-   },
-   "renamed/prefer-promises/dns/valid-003.js": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-003.js"
    },
    "renamed/prefer-promises/dns/valid-004.js": {
     "rules": [
@@ -14064,24 +11572,6 @@
     ],
     "renamedFrom": "prefer-promises/dns/valid-006.js"
    },
-   "renamed/prefer-promises/dns/valid-007.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-007.mjs"
-   },
-   "renamed/prefer-promises/dns/valid-008.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-008.mjs"
-   },
-   "renamed/prefer-promises/dns/valid-009.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-009.mjs"
-   },
    "renamed/prefer-promises/dns/valid-010.mjs": {
     "rules": [
      "n/prefer-promises/dns"
@@ -14094,18 +11584,6 @@
     ],
     "renamedFrom": "prefer-promises/dns/valid-011.mjs"
    },
-   "renamed/prefer-promises/dns/valid-012.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-012.mjs"
-   },
-   "renamed/prefer-promises/dns/valid-013.mjs": {
-    "rules": [
-     "n/prefer-promises/dns"
-    ],
-    "renamedFrom": "prefer-promises/dns/valid-013.mjs"
-   },
    "renamed/prefer-promises/dns/valid-014.mjs": {
     "rules": [
      "n/prefer-promises/dns"
@@ -14117,264 +11595,6 @@
      "n/prefer-promises/dns"
     ],
     "renamedFrom": "prefer-promises/dns/valid-015.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-001.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-001.js"
-   },
-   "renamed/prefer-promises/fs/invalid-002.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-002.js"
-   },
-   "renamed/prefer-promises/fs/invalid-003.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-003.js"
-   },
-   "renamed/prefer-promises/fs/invalid-004.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-004.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-005.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-005.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-006.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-006.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-007.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-007.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-008.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-008.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-009.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-009.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-010.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-010.mjs"
-   },
-   "renamed/prefer-promises/fs/invalid-011.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-011.js"
-   },
-   "renamed/prefer-promises/fs/invalid-012.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-012.js"
-   },
-   "renamed/prefer-promises/fs/invalid-013.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-013.js"
-   },
-   "renamed/prefer-promises/fs/invalid-014.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-014.js"
-   },
-   "renamed/prefer-promises/fs/invalid-015.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-015.js"
-   },
-   "renamed/prefer-promises/fs/invalid-016.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-016.js"
-   },
-   "renamed/prefer-promises/fs/invalid-017.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-017.js"
-   },
-   "renamed/prefer-promises/fs/invalid-018.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-018.js"
-   },
-   "renamed/prefer-promises/fs/invalid-019.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-019.js"
-   },
-   "renamed/prefer-promises/fs/invalid-020.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-020.js"
-   },
-   "renamed/prefer-promises/fs/invalid-021.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-021.js"
-   },
-   "renamed/prefer-promises/fs/invalid-023.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-023.js"
-   },
-   "renamed/prefer-promises/fs/invalid-024.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-024.js"
-   },
-   "renamed/prefer-promises/fs/invalid-025.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-025.js"
-   },
-   "renamed/prefer-promises/fs/invalid-026.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-026.js"
-   },
-   "renamed/prefer-promises/fs/invalid-027.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-027.js"
-   },
-   "renamed/prefer-promises/fs/invalid-028.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-028.js"
-   },
-   "renamed/prefer-promises/fs/invalid-029.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-029.js"
-   },
-   "renamed/prefer-promises/fs/invalid-030.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-030.js"
-   },
-   "renamed/prefer-promises/fs/invalid-031.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-031.js"
-   },
-   "renamed/prefer-promises/fs/invalid-032.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-032.js"
-   },
-   "renamed/prefer-promises/fs/invalid-033.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-033.js"
-   },
-   "renamed/prefer-promises/fs/invalid-034.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-034.js"
-   },
-   "renamed/prefer-promises/fs/invalid-035.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-035.js"
-   },
-   "renamed/prefer-promises/fs/invalid-036.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-036.js"
-   },
-   "renamed/prefer-promises/fs/invalid-037.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-037.js"
-   },
-   "renamed/prefer-promises/fs/invalid-038.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-038.js"
-   },
-   "renamed/prefer-promises/fs/invalid-039.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-039.js"
-   },
-   "renamed/prefer-promises/fs/invalid-040.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/invalid-040.js"
-   },
-   "renamed/prefer-promises/fs/valid-001.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-001.js"
-   },
-   "renamed/prefer-promises/fs/valid-002.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-002.js"
-   },
-   "renamed/prefer-promises/fs/valid-003.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-003.js"
-   },
-   "renamed/prefer-promises/fs/valid-004.js": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-004.js"
    },
    "renamed/prefer-promises/fs/valid-005.js": {
     "rules": [
@@ -14394,24 +11614,6 @@
     ],
     "renamedFrom": "prefer-promises/fs/valid-007.js"
    },
-   "renamed/prefer-promises/fs/valid-008.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-008.mjs"
-   },
-   "renamed/prefer-promises/fs/valid-009.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-009.mjs"
-   },
-   "renamed/prefer-promises/fs/valid-010.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-010.mjs"
-   },
    "renamed/prefer-promises/fs/valid-011.mjs": {
     "rules": [
      "n/prefer-promises/fs"
@@ -14423,18 +11625,6 @@
      "n/prefer-promises/fs"
     ],
     "renamedFrom": "prefer-promises/fs/valid-012.mjs"
-   },
-   "renamed/prefer-promises/fs/valid-013.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-013.mjs"
-   },
-   "renamed/prefer-promises/fs/valid-014.mjs": {
-    "rules": [
-     "n/prefer-promises/fs"
-    ],
-    "renamedFrom": "prefer-promises/fs/valid-014.mjs"
    },
    "renamed/prefer-promises/fs/valid-015.mjs": {
     "rules": [
@@ -14592,6 +11782,144 @@
   {
    "rule": "n/callback-return",
    "path": "callback-return/valid-036.js",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-001.js",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-002.js",
+   "line": 1,
+   "column": 63
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-003.js",
+   "line": 1,
+   "column": 61
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-004.js",
+   "line": 1,
+   "column": 35
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-005.js",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-006.js",
+   "line": 1,
+   "column": 31
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-007.js",
+   "line": 3,
+   "column": 2
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-008.js",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-009.js",
+   "line": 1,
+   "column": 19
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-010.js",
+   "line": 1,
+   "column": 19
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-011.js",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-012.js",
+   "line": 1,
+   "column": 20
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-013.js",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-014.js",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-015.js",
+   "line": 1,
+   "column": 32
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-016.js",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-016.js",
+   "line": 1,
+   "column": 50
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-017.js",
+   "line": 1,
+   "column": 52
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-018.js",
+   "line": 1,
+   "column": 18
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/invalid-019.js",
+   "line": 1,
+   "column": 42
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/valid-031.js",
+   "line": 1,
+   "column": 30
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/valid-032.js",
+   "line": 1,
+   "column": 56
+  },
+  {
+   "rule": "n/callback-return",
+   "path": "renamed/callback-return/valid-036.js",
    "line": 1,
    "column": 30
   },
@@ -14777,12 +12105,6 @@
   },
   {
    "rule": "n/exports-style",
-   "path": "renamed/exports-style/invalid-002.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "n/exports-style",
    "path": "renamed/exports-style/invalid-003.js",
    "line": 1,
    "column": 18
@@ -14796,12 +12118,6 @@
   {
    "rule": "n/exports-style",
    "path": "renamed/exports-style/invalid-005.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "n/exports-style",
-   "path": "renamed/exports-style/invalid-006.js",
    "line": 1,
    "column": 1
   },
@@ -14861,12 +12177,6 @@
   },
   {
    "rule": "n/exports-style",
-   "path": "renamed/exports-style/valid-003.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "n/exports-style",
    "path": "renamed/exports-style/valid-004.js",
    "line": 1,
    "column": 1
@@ -14912,18 +12222,6 @@
    "path": "renamed/exports-style/valid-009.js",
    "line": 1,
    "column": 38
-  },
-  {
-   "rule": "n/exports-style",
-   "path": "renamed/exports-style/valid-011.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "n/exports-style",
-   "path": "renamed/no-exports-assign/valid-002.js",
-   "line": 1,
-   "column": 1
   },
   {
    "rule": "n/global-require",
@@ -15041,12 +12339,6 @@
   },
   {
    "rule": "n/global-require",
-   "path": "renamed/global-require/invalid-001.js",
-   "line": 2,
-   "column": 2
-  },
-  {
-   "rule": "n/global-require",
    "path": "renamed/global-require/invalid-002.js",
    "line": 1,
    "column": 21
@@ -15090,12 +12382,6 @@
   {
    "rule": "n/global-require",
    "path": "renamed/no-new-require/valid-002.js",
-   "line": 1,
-   "column": 22
-  },
-  {
-   "rule": "n/global-require",
-   "path": "renamed/no-new-require/valid-003.js",
    "line": 1,
    "column": 22
   },
@@ -15212,6 +12498,84 @@
    "path": "handle-callback-err/invalid-018.js",
    "line": 1,
    "column": 12
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/callback-return/valid-027.js",
+   "line": 1,
+   "column": 9
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/callback-return/valid-048.js",
+   "line": 1,
+   "column": 47
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-002.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-003.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-005.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-005.js",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-008.js",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-010.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-012.js",
+   "line": 1,
+   "column": 9
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-013.js",
+   "line": 1,
+   "column": 9
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-013.js",
+   "line": 1,
+   "column": 52
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-014.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/handle-callback-err",
+   "path": "renamed/handle-callback-err/invalid-015.js",
+   "line": 1,
+   "column": 19
   },
   {
    "rule": "n/hashbang",
@@ -15720,6 +13084,30 @@
   {
    "rule": "n/no-callback-literal",
    "path": "no-callback-literal/invalid-010.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/no-callback-literal",
+   "path": "renamed/no-callback-literal/invalid-003.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/no-callback-literal",
+   "path": "renamed/no-callback-literal/invalid-006.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/no-callback-literal",
+   "path": "renamed/no-callback-literal/invalid-007.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "n/no-callback-literal",
+   "path": "renamed/no-callback-literal/invalid-010.js",
    "line": 1,
    "column": 1
   },
@@ -16570,12 +13958,6 @@
    "column": 1
   },
   {
-   "rule": "n/no-mixed-requires",
-   "path": "renamed/no-mixed-requires/invalid-010.js",
-   "line": 1,
-   "column": 1
-  },
-  {
    "rule": "n/no-new-require",
    "path": "no-new-require/invalid-001.js",
    "line": 1,
@@ -16745,6 +14127,24 @@
   },
   {
    "rule": "n/no-path-concat",
+   "path": "renamed/no-path-concat/invalid-005.js",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "n/no-path-concat",
+   "path": "renamed/no-path-concat/invalid-006.js",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "n/no-path-concat",
+   "path": "renamed/no-path-concat/invalid-007.js",
+   "line": 1,
+   "column": 44
+  },
+  {
+   "rule": "n/no-path-concat",
    "path": "renamed/no-path-concat/invalid-008.js",
    "line": 1,
    "column": 16
@@ -16901,19 +14301,19 @@
   },
   {
    "rule": "n/no-process-env",
-   "path": "renamed/no-process-env/invalid-008.js",
+   "path": "renamed/no-process-env/invalid-004.js",
+   "line": 1,
+   "column": 3
+  },
+  {
+   "rule": "n/no-process-env",
+   "path": "renamed/no-process-env/invalid-009.js",
    "line": 1,
    "column": 1
   },
   {
    "rule": "n/no-process-env",
    "path": "renamed/no-process-env/invalid-010.js",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "n/no-process-env",
-   "path": "renamed/no-process-env/valid-007.js",
    "line": 1,
    "column": 1
   },
@@ -16964,6 +14364,12 @@
    "path": "prefer-global/process/valid-004.js",
    "line": 1,
    "column": 40
+  },
+  {
+   "rule": "n/no-process-exit",
+   "path": "renamed/no-process-exit/invalid-003.js",
+   "line": 1,
+   "column": 3
   },
   {
    "rule": "n/no-sync",
@@ -17102,6 +14508,72 @@
    "path": "prefer-promises/fs/valid-002.js",
    "line": 1,
    "column": 27
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-001.js",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-002.js",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-005.js",
+   "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-006.js",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-007.js",
+   "line": 1,
+   "column": 26
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-008.js",
+   "line": 1,
+   "column": 26
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-009.js",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-010.js",
+   "line": 1,
+   "column": 8
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/invalid-013.ts",
+   "line": 3,
+   "column": 1
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/valid-007.js",
+   "line": 1,
+   "column": 12
+  },
+  {
+   "rule": "n/no-sync",
+   "path": "renamed/no-sync/valid-012.ts",
+   "line": 3,
+   "column": 1
   },
   {
    "rule": "n/prefer-global/buffer",
@@ -17380,42 +14852,6 @@
    "column": 5
   },
   {
-   "rule": "n/prefer-global/buffer",
-   "path": "renamed/prefer-global/buffer/invalid-001.js",
-   "line": 1,
-   "column": 7
-  },
-  {
-   "rule": "n/prefer-global/buffer",
-   "path": "renamed/prefer-global/buffer/invalid-002.js",
-   "line": 1,
-   "column": 7
-  },
-  {
-   "rule": "n/prefer-global/buffer",
-   "path": "renamed/prefer-global/buffer/invalid-003.js",
-   "line": 1,
-   "column": 7
-  },
-  {
-   "rule": "n/prefer-global/buffer",
-   "path": "renamed/prefer-global/buffer/invalid-004.js",
-   "line": 1,
-   "column": 7
-  },
-  {
-   "rule": "n/prefer-global/buffer",
-   "path": "renamed/prefer-global/buffer/valid-003.js",
-   "line": 1,
-   "column": 7
-  },
-  {
-   "rule": "n/prefer-global/buffer",
-   "path": "renamed/prefer-global/buffer/valid-004.js",
-   "line": 1,
-   "column": 7
-  },
-  {
    "rule": "n/prefer-global/console",
    "path": "prefer-global/console/invalid-001.js",
    "line": 1,
@@ -17548,42 +14984,6 @@
    "column": 15
   },
   {
-   "rule": "n/prefer-global/process",
-   "path": "renamed/prefer-global/process/invalid-001.js",
-   "line": 1,
-   "column": 16
-  },
-  {
-   "rule": "n/prefer-global/process",
-   "path": "renamed/prefer-global/process/invalid-002.js",
-   "line": 1,
-   "column": 16
-  },
-  {
-   "rule": "n/prefer-global/process",
-   "path": "renamed/prefer-global/process/invalid-003.js",
-   "line": 1,
-   "column": 16
-  },
-  {
-   "rule": "n/prefer-global/process",
-   "path": "renamed/prefer-global/process/invalid-004.js",
-   "line": 1,
-   "column": 16
-  },
-  {
-   "rule": "n/prefer-global/process",
-   "path": "renamed/prefer-global/process/valid-003.js",
-   "line": 1,
-   "column": 15
-  },
-  {
-   "rule": "n/prefer-global/process",
-   "path": "renamed/prefer-global/process/valid-004.js",
-   "line": 1,
-   "column": 15
-  },
-  {
    "rule": "n/prefer-global/text-decoder",
    "path": "prefer-global/text-decoder/invalid-001.js",
    "line": 1,
@@ -17656,6 +15056,78 @@
    "column": 7
   },
   {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-001.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-002.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-003.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-007.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/invalid-008.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/valid-003.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/valid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/valid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-decoder",
+   "path": "renamed/prefer-global/text-decoder/valid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/invalid-001.js",
    "line": 1,
@@ -17724,6 +15196,78 @@
   {
    "rule": "n/prefer-global/text-encoder",
    "path": "prefer-global/text-encoder/valid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-001.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-002.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-003.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-007.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/invalid-008.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/valid-003.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/valid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/valid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/text-encoder",
+   "path": "renamed/prefer-global/text-encoder/valid-006.js",
    "line": 1,
    "column": 7
   },
@@ -17825,6 +15369,30 @@
   },
   {
    "rule": "n/prefer-global/url",
+   "path": "renamed/prefer-global/url/invalid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url",
+   "path": "renamed/prefer-global/url/invalid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url",
+   "path": "renamed/prefer-global/url/invalid-007.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url",
+   "path": "renamed/prefer-global/url/invalid-008.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url",
    "path": "renamed/prefer-global/url/valid-003.js",
    "line": 1,
    "column": 7
@@ -17832,6 +15400,18 @@
   {
    "rule": "n/prefer-global/url",
    "path": "renamed/prefer-global/url/valid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url",
+   "path": "renamed/prefer-global/url/valid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url",
+   "path": "renamed/prefer-global/url/valid-006.js",
    "line": 1,
    "column": 7
   },
@@ -17904,6 +15484,78 @@
   {
    "rule": "n/prefer-global/url-search-params",
    "path": "prefer-global/url-search-params/valid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-001.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-002.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-003.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-006.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-007.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/invalid-008.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/valid-003.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/valid-004.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/valid-005.js",
+   "line": 1,
+   "column": 7
+  },
+  {
+   "rule": "n/prefer-global/url-search-params",
+   "path": "renamed/prefer-global/url-search-params/valid-006.js",
    "line": 1,
    "column": 7
   },
@@ -19583,345 +17235,9 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-014.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-016.js",
-   "line": 1,
-   "column": 17
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-017.js",
-   "line": 1,
-   "column": 31
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-019.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-020.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-022.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-023.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-025.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-026.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-028.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-029.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-030.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-031.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-032.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-033.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-034.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-035.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-036.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-037.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-038.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-039.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-042.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-043.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-044.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-046.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-047.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-048.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-049.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-050.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-051.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-055.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-056.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-057.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-059.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-060.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-061.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-062.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-063.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-064.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-065.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-066.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-067.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-068.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-070.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-071.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-072.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-073.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-074.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-080.mjs",
-   "line": 1,
-   "column": 15
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-081.mjs",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-082.mjs",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-083.mjs",
-   "line": 1,
-   "column": 31
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-087.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/invalid-088.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/no-deprecated-api/valid-003.js",
    "line": 1,
    "column": 13
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/valid-005.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/valid-006.js",
-   "line": 1,
-   "column": 25
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -19937,33 +17253,9 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/valid-010.mjs",
-   "line": 1,
-   "column": 23
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/valid-013.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/no-deprecated-api/valid-016.js",
    "line": 1,
    "column": 24
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/valid-021.js",
-   "line": 1,
-   "column": 9
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/no-deprecated-api/valid-022.js",
-   "line": 1,
-   "column": 9
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20009,42 +17301,6 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-global/buffer/invalid-001.js",
-   "line": 1,
-   "column": 26
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-global/buffer/invalid-003.js",
-   "line": 1,
-   "column": 26
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-global/buffer/valid-003.js",
-   "line": 1,
-   "column": 26
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-global/process/invalid-001.js",
-   "line": 1,
-   "column": 24
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-global/process/invalid-003.js",
-   "line": 1,
-   "column": 24
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-global/process/valid-003.js",
-   "line": 1,
-   "column": 23
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-global/text-decoder/invalid-001.js",
    "line": 1,
    "column": 31
@@ -20057,9 +17313,27 @@
   },
   {
    "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/text-decoder/invalid-005.js",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/text-decoder/invalid-007.js",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-global/text-decoder/valid-003.js",
    "line": 1,
    "column": 31
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/text-decoder/valid-005.js",
+   "line": 1,
+   "column": 48
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20075,9 +17349,27 @@
   },
   {
    "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/text-encoder/invalid-005.js",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/text-encoder/invalid-007.js",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-global/text-encoder/valid-003.js",
    "line": 1,
    "column": 31
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/text-encoder/valid-005.js",
+   "line": 1,
+   "column": 48
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20093,9 +17385,27 @@
   },
   {
    "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/url-search-params/invalid-005.js",
+   "line": 1,
+   "column": 52
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/url-search-params/invalid-007.js",
+   "line": 1,
+   "column": 52
+  },
+  {
+   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-global/url-search-params/valid-003.js",
    "line": 1,
    "column": 35
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/url-search-params/valid-005.js",
+   "line": 1,
+   "column": 52
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20111,9 +17421,27 @@
   },
   {
    "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/url/invalid-005.js",
+   "line": 1,
+   "column": 40
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/url/invalid-007.js",
+   "line": 1,
+   "column": 40
+  },
+  {
+   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-global/url/valid-003.js",
    "line": 1,
    "column": 23
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-global/url/valid-005.js",
+   "line": 1,
+   "column": 40
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20135,21 +17463,9 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-node-protocol/invalid-007.mjs",
-   "line": 1,
-   "column": 24
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-node-protocol/invalid-008.mjs",
    "line": 1,
    "column": 35
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-node-protocol/invalid-009.mjs",
-   "line": 1,
-   "column": 24
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20165,141 +17481,9 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-node-protocol/invalid-015.js",
+   "path": "renamed/prefer-node-protocol/invalid-026.mjs",
    "line": 1,
-   "column": 28
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-001.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-003.js",
-   "line": 1,
-   "column": 26
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-004.mjs",
-   "line": 1,
-   "column": 17
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-006.mjs",
-   "line": 1,
-   "column": 22
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-007.mjs",
-   "line": 1,
-   "column": 22
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-011.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-012.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-013.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-015.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-016.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-017.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-018.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-019.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-020.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-021.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-022.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-023.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-024.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-025.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/invalid-027.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/valid-001.js",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/valid-002.js",
-   "line": 1,
-   "column": 21
+   "column": 45
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20321,18 +17505,6 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/valid-007.mjs",
-   "line": 1,
-   "column": 17
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/dns/valid-009.mjs",
-   "line": 1,
-   "column": 22
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-promises/dns/valid-010.mjs",
    "line": 1,
    "column": 24
@@ -20345,225 +17517,15 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-001.js",
+   "path": "renamed/prefer-promises/dns/valid-014.mjs",
    "line": 1,
-   "column": 20
+   "column": 45
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-003.js",
+   "path": "renamed/prefer-promises/dns/valid-015.mjs",
    "line": 1,
-   "column": 26
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-004.mjs",
-   "line": 1,
-   "column": 16
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-006.mjs",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-007.mjs",
-   "line": 1,
-   "column": 22
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-011.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-012.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-013.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-014.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-015.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-016.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-017.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-018.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-019.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-020.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-021.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-023.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-024.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-025.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-026.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-027.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-028.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-029.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-030.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-031.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-032.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-033.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-034.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-035.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-036.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-037.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-038.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-039.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/invalid-040.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/valid-001.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/valid-002.js",
-   "line": 1,
-   "column": 20
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/valid-003.js",
-   "line": 1,
-   "column": 20
+   "column": 50
   },
   {
    "rule": "n/prefer-node-protocol",
@@ -20585,18 +17547,6 @@
   },
   {
    "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/valid-008.mjs",
-   "line": 1,
-   "column": 16
-  },
-  {
-   "rule": "n/prefer-node-protocol",
-   "path": "renamed/prefer-promises/fs/valid-010.mjs",
-   "line": 1,
-   "column": 21
-  },
-  {
-   "rule": "n/prefer-node-protocol",
    "path": "renamed/prefer-promises/fs/valid-011.mjs",
    "line": 1,
    "column": 24
@@ -20606,6 +17556,18 @@
    "path": "renamed/prefer-promises/fs/valid-012.mjs",
    "line": 1,
    "column": 30
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-promises/fs/valid-015.mjs",
+   "line": 1,
+   "column": 45
+  },
+  {
+   "rule": "n/prefer-node-protocol",
+   "path": "renamed/prefer-promises/fs/valid-016.mjs",
+   "line": 1,
+   "column": 49
   },
   {
    "rule": "n/prefer-promises/dns",

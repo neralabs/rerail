@@ -1,3 +1,3 @@
-function z(fwt) { if (fwt) {
+function o(err) { if (err) {
  log();
- exncjmhe(fwt); } }
+ callback(err); } }

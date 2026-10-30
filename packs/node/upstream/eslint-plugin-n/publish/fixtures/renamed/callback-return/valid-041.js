@@ -1,1 +1,1 @@
-function a(dif) { if (dif) { return wif.gbatab(dif); /*comment*/ } }
+function c(err) { if (err) { return oqi.gfifba(err); /*comment*/ } }

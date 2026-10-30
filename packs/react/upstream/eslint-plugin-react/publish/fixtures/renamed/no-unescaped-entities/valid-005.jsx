@@ -1,5 +1,5 @@
 
-        var Qvcvp = mbttvrDxqanWpfog({
+        var Ibvrv = createReactClass({
           render: function() {
             return <>Here is some text!</>;
           }

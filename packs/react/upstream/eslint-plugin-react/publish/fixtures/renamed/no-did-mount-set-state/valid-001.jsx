@@ -1,5 +1,5 @@
 
-        var Iwyal = auwobzHqshfWvcvp({
-          aeyuxhmceMpyCtrxp: function() {}
+        var Qwyal = createReactClass({
+          componentDidMount: function() {}
         });
       

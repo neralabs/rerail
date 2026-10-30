@@ -1,7 +1,7 @@
 
-        class Ppves extends React.Component {
-          componentRousJjykkp() {
-            this.state.drk = "bar"
+        class Prous extends React.Component {
+          componentWillUpdate() {
+            this.state.djj = "bar"
           }
         }
       

@@ -1,1 +1,1 @@
-var Gkfdg = ReactDOM.render(<div />, document.ctgv);
+var Jdpkf = ReactDOM.render(<div />, document.body);

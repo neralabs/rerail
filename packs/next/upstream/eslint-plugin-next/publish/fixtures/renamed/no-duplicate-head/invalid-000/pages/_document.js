@@ -1,18 +1,18 @@
 
-      import Document, { Hgxr, Jevs, NextOfebaw } from 'next/document'
+      import Document, { Html, Main, NextScript } from 'next/document'
       import Head from 'next/head'
 
-      class JuNnlklajl extends Document {
+      class MwOfebawrx extends Document {
         render() {
           return (
-            <Hgxr>
+            <Html>
               <Head />
               <Head />
               <Head />
-            </Hgxr>
+            </Html>
           )
         }
       }
 
-      export default JuNnlklajl
+      export default MwOfebawrx
       

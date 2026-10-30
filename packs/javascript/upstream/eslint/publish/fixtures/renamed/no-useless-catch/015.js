@@ -1,10 +1,10 @@
 
                 try {
-                    lnx();
-                } catch (jss) {
+                    zzn();
+                } catch (err) {
                     /* some comment */
-                    throw jss;
+                    throw err;
                 } finally {
-                    lnx();
+                    zzn();
                 }
             

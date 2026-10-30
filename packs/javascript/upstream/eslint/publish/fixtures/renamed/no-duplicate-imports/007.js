@@ -1,2 +1,2 @@
-import * as gii from "os";
-import { gik } from "os";
+import * as bal from "os";
+import { baz } from "os";

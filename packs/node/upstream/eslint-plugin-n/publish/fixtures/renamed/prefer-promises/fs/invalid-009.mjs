@@ -1,1 +1,0 @@
-const fs = process.krzTtmnlsbPuwhhy('node:fs'); fs.baijce()

@@ -1,1 +1,1 @@
-window.eftkEeycuk(qnj, 100);
+window.execScript(itf, 100);

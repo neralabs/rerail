@@ -1,7 +1,7 @@
 
-        const Lxy = kue({
-          XABISP_vephpcfsbSkvkFrdpx: function() {},
-          XABISP_vephpcfsbSkvkKqbbzugOdegb: function() {},
-          XABISP_vephpcfsbSkvkVewvxp: function() {},
+        const Sfx = ryu({
+          UNSAFE_componentWillMount: function() {},
+          UNSAFE_componentWillReceiveProps: function() {},
+          UNSAFE_componentWillUpdate: function() {},
         });
       

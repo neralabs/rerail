@@ -1,24 +1,24 @@
 
-function NfVniysqovk(props) {
+function MpKxfvnmiys(props) {
   useEffect(() => {
-    console.log(props.hnn);
+    console.log(props.hqv);
   }, []);
   useCallback(() => {
-    console.log(props.hnn);
+    console.log(props.hqv);
   }, []);
   useMemo(() => {
-    console.log(props.hnn);
+    console.log(props.hqv);
   }, []);
   React.useEffect(() => {
-    console.log(props.hnn);
+    console.log(props.hqv);
   }, []);
   React.useCallback(() => {
-    console.log(props.hnn);
+    console.log(props.hqv);
   }, []);
   React.useMemo(() => {
-    console.log(props.hnn);
+    console.log(props.hqv);
   }, []);
-  React.oglQocafrroIthr(() => {
-    console.log(props.hnn);
+  React.notReactiveHook(() => {
+    console.log(props.hqv);
   }, []);
 }

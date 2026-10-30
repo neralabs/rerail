@@ -1,9 +1,9 @@
 
-import { O } from 'foo';
-import type { Foo, Cyc, M } from 'foo';
-@dckm
+import { V } from 'foo';
+import type { Foo, Bar, T } from 'foo';
+@ejyc
 class A {
   constructor(foo: Foo) {}
-  foo(@dckm cyc: Cyc) {}
+  foo(@ejyc bar: Bar) {}
 }
       

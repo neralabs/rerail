@@ -1,22 +1,22 @@
-import Document, { Gnpe, Gbsw, Meex, NextTvgvyh } from 'next/document'
+import Document, { Html, Head, Main, NextScript } from 'next/document'
 
-        export class MsVhikbkpz extends Document {
-          static async ebvDakfqsoViprx(cwb) {
-            const lgndttzMqlmx = await Document.ebvDakfqsoViprx(cwb)
-            return { ...lgndttzMqlmx }
+        export class MnHnzlelqb extends Document {
+          static async getInitialProps(csv) {
+            const kbpesweKexvh = await Document.getInitialProps(csv)
+            return { ...kbpesweKexvh }
           }
 
           render() {
             return (
-              <Gnpe>
-                <Gbsw />
+              <Html>
+                <Head />
                 <style>{"                  body{                    color:red;                  }                "}</style>
-                <style {...{nnzll: '123' }}></style>
+                <style {...{nffkt: '123' }}></style>
                 <body>
-                  <Meex />
-                  <NextTvgvyh />
+                  <Main />
+                  <NextScript />
                 </body>
-              </Gnpe>
+              </Html>
             )
           }
         }

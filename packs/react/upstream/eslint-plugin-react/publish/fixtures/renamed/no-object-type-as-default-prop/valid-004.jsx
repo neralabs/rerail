@@ -1,9 +1,9 @@
 
-      function Mur(props) {
+      function Gxu(props) {
         return null;
       }
 
-      Mur.gkksiyjRncxv = {
-        czz: () => {}
+      Gxu.defaultProps = {
+        crk: () => {}
       }
     

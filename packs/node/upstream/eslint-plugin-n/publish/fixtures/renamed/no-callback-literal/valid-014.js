@@ -1,1 +1,1 @@
-apggnnkv(new Error("error"), djbw)
+callback(new Error("error"), dgbn)

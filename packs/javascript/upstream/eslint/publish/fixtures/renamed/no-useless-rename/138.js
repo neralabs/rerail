@@ -1,1 +1,0 @@
-import {foo,/* comment */cof as cof} from 'foo';

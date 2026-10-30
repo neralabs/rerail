@@ -1,1 +1,1 @@
-var glou = React.render(<div />, document.afoq);
+var glou = React.render(<div />, document.body);

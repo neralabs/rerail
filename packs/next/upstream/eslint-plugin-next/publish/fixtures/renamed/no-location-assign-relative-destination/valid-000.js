@@ -1,1 +1,0 @@
-location.hinj = 'https://example.com'

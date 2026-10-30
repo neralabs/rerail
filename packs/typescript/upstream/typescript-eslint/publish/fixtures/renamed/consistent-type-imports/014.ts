@@ -1,9 +1,9 @@
 
-import type { Lfrz } from 'foo';
-import { Foo, Cjp } from 'foo';
-@erxp
-class B {
+import type { Type } from 'foo';
+import { Foo, Bar } from 'foo';
+@erzj
+class A {
   constructor(foo: Foo) {}
 }
-type L = Cjp;
+type T = Bar;
       

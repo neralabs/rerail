@@ -1,1 +1,1 @@
-function Component() { const jwioCrhdo = /HelloWorld/; return (<Covpjvz.Efhbwcia value={jwioCrhdo}></Covpjvz.Efhbwcia>);}
+function Component() { const ujvzWiocr = /HelloWorld/; return (<Cotfwip.Provider value={ujvzWiocr}></Cotfwip.Provider>);}

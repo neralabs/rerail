@@ -1,1 +1,1 @@
-React.yjupbqcGskflditmUuGeov(fgqqddtmp);
+React.unmountComponentAtNode(fyjupbqcc);

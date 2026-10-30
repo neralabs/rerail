@@ -1,1 +1,1 @@
-bjewufrna.findLastIndex(function (bk) { return bk(eval); }, this);
+caewufrna.findLastIndex(function (cb) { return cb(eval); }, this);

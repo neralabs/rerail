@@ -1,7 +1,7 @@
 
-        var Evcjc = cbrgwmTgftgXduax({
+        var Lktrv = createReactClass({
           render: function() {
-            this.state.pduktr.name= "bar"
+            this.state.paqdtu.name= "bar"
             return <div>Hello {this.props.name}</div>;
           }
         });

@@ -1,7 +1,7 @@
 
-import { BqmoylxkZtvdzbmgzBzypwtf } from 'decorators';
-export class Qgm {
-  @BqmoylxkZtvdzbmgzBzypwtf(true)
-  get cpd() {}
+import { AccessorDecoratorFactory } from 'decorators';
+export class Vyq {
+  @AccessorDecoratorFactory(true)
+  get cmo() {}
 }
     

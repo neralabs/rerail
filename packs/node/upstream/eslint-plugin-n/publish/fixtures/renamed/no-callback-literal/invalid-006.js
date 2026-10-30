@@ -1,1 +1,1 @@
-bx("help", flqp)
+cb("help", fxlq)

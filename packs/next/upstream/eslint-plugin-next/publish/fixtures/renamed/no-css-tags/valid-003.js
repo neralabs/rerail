@@ -1,5 +1,5 @@
-import {Hzbo} from 'next/document';
-      export class Amtl extends Hzbo {
+import {Head} from 'next/document';
+      export class Azbo extends Head {
         render(props) {
           return (
             <div>

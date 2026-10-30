@@ -2962,17 +2962,10 @@
       "renamed/no-extraneous-class/021.ts",
       "renamed/no-import-type-side-effects/001.ts",
       "renamed/no-import-type-side-effects/002.ts",
-      "renamed/no-import-type-side-effects/003.ts",
-      "renamed/no-import-type-side-effects/004.ts",
-      "renamed/no-import-type-side-effects/005.ts",
-      "renamed/no-import-type-side-effects/006.ts",
-      "renamed/no-import-type-side-effects/007.ts",
       "renamed/no-import-type-side-effects/008.ts",
       "renamed/no-import-type-side-effects/009.ts",
       "renamed/no-import-type-side-effects/010.ts",
-      "renamed/no-import-type-side-effects/012.ts",
       "renamed/no-import-type-side-effects/013.ts",
-      "renamed/no-import-type-side-effects/014.ts",
       "renamed/no-import-type-side-effects/015.ts",
       "renamed/no-inferrable-types/001.ts",
       "renamed/no-inferrable-types/002.ts",
@@ -3320,7 +3313,6 @@
       "renamed/no-require-imports/004.ts",
       "renamed/no-require-imports/005.ts",
       "renamed/no-require-imports/007.ts",
-      "renamed/no-require-imports/008.ts",
       "renamed/no-require-imports/016.ts",
       "renamed/no-require-imports/017.ts",
       "renamed/no-shadow/001.ts",
@@ -3350,11 +3342,8 @@
       "renamed/no-shadow/025.ts",
       "renamed/no-shadow/026.ts",
       "renamed/no-shadow/027.ts",
-      "renamed/no-shadow/028.ts",
       "renamed/no-shadow/029.ts",
-      "renamed/no-shadow/030.ts",
       "renamed/no-shadow/031.ts",
-      "renamed/no-shadow/032.ts",
       "renamed/no-shadow/033.ts",
       "renamed/no-shadow/034.ts",
       "renamed/no-shadow/035.ts",
@@ -3608,25 +3597,17 @@
       "renamed/no-unused-vars/022.ts",
       "renamed/no-unused-vars/023.ts",
       "renamed/no-unused-vars/024.ts",
-      "renamed/no-unused-vars/025.ts",
       "renamed/no-unused-vars/027.ts",
-      "renamed/no-unused-vars/030.ts",
       "renamed/no-unused-vars/031.ts",
       "renamed/no-unused-vars/032.ts",
       "renamed/no-unused-vars/033.ts",
       "renamed/no-unused-vars/034.ts",
       "renamed/no-unused-vars/035.ts",
-      "renamed/no-unused-vars/036.ts",
-      "renamed/no-unused-vars/037.ts",
-      "renamed/no-unused-vars/038.ts",
-      "renamed/no-unused-vars/039.ts",
       "renamed/no-unused-vars/040.ts",
       "renamed/no-unused-vars/041.ts",
       "renamed/no-unused-vars/042.ts",
       "renamed/no-unused-vars/043.ts",
-      "renamed/no-unused-vars/044.ts",
       "renamed/no-unused-vars/045.ts",
-      "renamed/no-unused-vars/046.ts",
       "renamed/no-unused-vars/047.ts",
       "renamed/no-unused-vars/048.ts",
       "renamed/no-unused-vars/049.ts",
@@ -3723,7 +3704,6 @@
       "renamed/no-unused-vars/141.ts",
       "renamed/no-unused-vars/142.ts",
       "renamed/no-unused-vars/143.ts",
-      "renamed/no-unused-vars/144.ts",
       "renamed/no-unused-vars/145.ts",
       "renamed/no-unused-vars/146.ts",
       "renamed/no-unused-vars/147.d.ts",
@@ -3744,10 +3724,6 @@
       "renamed/no-unused-vars/163.ts",
       "renamed/no-unused-vars/164.ts",
       "renamed/no-unused-vars/165.ts",
-      "renamed/no-unused-vars/166.ts",
-      "renamed/no-unused-vars/167.ts",
-      "renamed/no-unused-vars/168.ts",
-      "renamed/no-unused-vars/169.ts",
       "renamed/no-unused-vars/170.ts",
       "renamed/no-unused-vars/171.ts",
       "renamed/no-unused-vars/172.ts",
@@ -3840,7 +3816,6 @@
       "renamed/no-use-before-define/026.ts",
       "renamed/no-use-before-define/027.ts",
       "renamed/no-use-before-define/028.ts",
-      "renamed/no-use-before-define/031.tsx",
       "renamed/no-use-before-define/033.ts",
       "renamed/no-use-before-define/034.ts",
       "renamed/no-use-before-define/035.ts",
@@ -3927,8 +3902,6 @@
       "renamed/no-useless-constructor/041.ts",
       "renamed/no-useless-empty-export/010.d.ts",
       "renamed/no-useless-empty-export/011.d.ts",
-      "renamed/no-useless-empty-export/012.d.ts",
-      "renamed/no-useless-empty-export/013.d.ts",
       "renamed/no-wrapper-object-types/001.ts",
       "renamed/no-wrapper-object-types/002.ts",
       "renamed/no-wrapper-object-types/014.ts",
@@ -18984,36 +18957,6 @@
         ],
         "renamedFrom": "no-import-type-side-effects/002.ts"
       },
-      "renamed/no-import-type-side-effects/003.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/003.ts"
-      },
-      "renamed/no-import-type-side-effects/004.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/004.ts"
-      },
-      "renamed/no-import-type-side-effects/005.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/005.ts"
-      },
-      "renamed/no-import-type-side-effects/006.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/006.ts"
-      },
-      "renamed/no-import-type-side-effects/007.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/007.ts"
-      },
       "renamed/no-import-type-side-effects/008.ts": {
         "rules": [
           "@typescript-eslint/no-import-type-side-effects"
@@ -19032,23 +18975,11 @@
         ],
         "renamedFrom": "no-import-type-side-effects/010.ts"
       },
-      "renamed/no-import-type-side-effects/012.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/012.ts"
-      },
       "renamed/no-import-type-side-effects/013.ts": {
         "rules": [
           "@typescript-eslint/no-import-type-side-effects"
         ],
         "renamedFrom": "no-import-type-side-effects/013.ts"
-      },
-      "renamed/no-import-type-side-effects/014.ts": {
-        "rules": [
-          "@typescript-eslint/no-import-type-side-effects"
-        ],
-        "renamedFrom": "no-import-type-side-effects/014.ts"
       },
       "renamed/no-import-type-side-effects/015.ts": {
         "rules": [
@@ -21132,12 +21063,6 @@
         ],
         "renamedFrom": "no-require-imports/007.ts"
       },
-      "renamed/no-require-imports/008.ts": {
-        "rules": [
-          "@typescript-eslint/no-require-imports"
-        ],
-        "renamedFrom": "no-require-imports/008.ts"
-      },
       "renamed/no-require-imports/016.ts": {
         "rules": [
           "@typescript-eslint/no-require-imports"
@@ -21312,35 +21237,17 @@
         ],
         "renamedFrom": "no-shadow/027.ts"
       },
-      "renamed/no-shadow/028.ts": {
-        "rules": [
-          "@typescript-eslint/no-shadow"
-        ],
-        "renamedFrom": "no-shadow/028.ts"
-      },
       "renamed/no-shadow/029.ts": {
         "rules": [
           "@typescript-eslint/no-shadow"
         ],
         "renamedFrom": "no-shadow/029.ts"
       },
-      "renamed/no-shadow/030.ts": {
-        "rules": [
-          "@typescript-eslint/no-shadow"
-        ],
-        "renamedFrom": "no-shadow/030.ts"
-      },
       "renamed/no-shadow/031.ts": {
         "rules": [
           "@typescript-eslint/no-shadow"
         ],
         "renamedFrom": "no-shadow/031.ts"
-      },
-      "renamed/no-shadow/032.ts": {
-        "rules": [
-          "@typescript-eslint/no-shadow"
-        ],
-        "renamedFrom": "no-shadow/032.ts"
       },
       "renamed/no-shadow/033.ts": {
         "rules": [
@@ -22860,23 +22767,11 @@
         ],
         "renamedFrom": "no-unused-vars/024.ts"
       },
-      "renamed/no-unused-vars/025.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/025.ts"
-      },
       "renamed/no-unused-vars/027.ts": {
         "rules": [
           "@typescript-eslint/no-unused-vars"
         ],
         "renamedFrom": "no-unused-vars/027.ts"
-      },
-      "renamed/no-unused-vars/030.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/030.ts"
       },
       "renamed/no-unused-vars/031.ts": {
         "rules": [
@@ -22908,30 +22803,6 @@
         ],
         "renamedFrom": "no-unused-vars/035.ts"
       },
-      "renamed/no-unused-vars/036.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/036.ts"
-      },
-      "renamed/no-unused-vars/037.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/037.ts"
-      },
-      "renamed/no-unused-vars/038.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/038.ts"
-      },
-      "renamed/no-unused-vars/039.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/039.ts"
-      },
       "renamed/no-unused-vars/040.ts": {
         "rules": [
           "@typescript-eslint/no-unused-vars"
@@ -22956,23 +22827,11 @@
         ],
         "renamedFrom": "no-unused-vars/043.ts"
       },
-      "renamed/no-unused-vars/044.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/044.ts"
-      },
       "renamed/no-unused-vars/045.ts": {
         "rules": [
           "@typescript-eslint/no-unused-vars"
         ],
         "renamedFrom": "no-unused-vars/045.ts"
-      },
-      "renamed/no-unused-vars/046.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/046.ts"
       },
       "renamed/no-unused-vars/047.ts": {
         "rules": [
@@ -23550,12 +23409,6 @@
         ],
         "renamedFrom": "no-unused-vars/143.ts"
       },
-      "renamed/no-unused-vars/144.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/144.ts"
-      },
       "renamed/no-unused-vars/145.ts": {
         "rules": [
           "@typescript-eslint/no-unused-vars"
@@ -23675,30 +23528,6 @@
           "@typescript-eslint/no-unused-vars"
         ],
         "renamedFrom": "no-unused-vars/165.ts"
-      },
-      "renamed/no-unused-vars/166.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/166.ts"
-      },
-      "renamed/no-unused-vars/167.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/167.ts"
-      },
-      "renamed/no-unused-vars/168.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/168.ts"
-      },
-      "renamed/no-unused-vars/169.ts": {
-        "rules": [
-          "@typescript-eslint/no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/169.ts"
       },
       "renamed/no-unused-vars/170.ts": {
         "rules": [
@@ -24252,12 +24081,6 @@
         ],
         "renamedFrom": "no-use-before-define/028.ts"
       },
-      "renamed/no-use-before-define/031.tsx": {
-        "rules": [
-          "@typescript-eslint/no-use-before-define"
-        ],
-        "renamedFrom": "no-use-before-define/031.tsx"
-      },
       "renamed/no-use-before-define/033.ts": {
         "rules": [
           "@typescript-eslint/no-use-before-define"
@@ -24773,18 +24596,6 @@
           "@typescript-eslint/no-useless-empty-export"
         ],
         "renamedFrom": "no-useless-empty-export/011.d.ts"
-      },
-      "renamed/no-useless-empty-export/012.d.ts": {
-        "rules": [
-          "@typescript-eslint/no-useless-empty-export"
-        ],
-        "renamedFrom": "no-useless-empty-export/012.d.ts"
-      },
-      "renamed/no-useless-empty-export/013.d.ts": {
-        "rules": [
-          "@typescript-eslint/no-useless-empty-export"
-        ],
-        "renamedFrom": "no-useless-empty-export/013.d.ts"
       },
       "renamed/no-wrapper-object-types/001.ts": {
         "rules": [
@@ -87603,54 +87414,6 @@
     },
     {
       "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/003.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/004.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/005.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/005.ts",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/006.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/006.ts",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/007.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/007.ts",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
       "path": "renamed/no-import-type-side-effects/008.ts",
       "line": 1,
       "column": 13
@@ -87675,18 +87438,6 @@
     },
     {
       "rule": "@typescript-eslint/no-import-type-side-effects",
-      "path": "renamed/no-import-type-side-effects/012.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/012.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-import-type-side-effects",
       "path": "renamed/no-import-type-side-effects/013.ts",
       "line": 1,
       "column": 1
@@ -87696,24 +87447,6 @@
       "path": "renamed/no-import-type-side-effects/013.ts",
       "line": 1,
       "column": 20
-    },
-    {
-      "rule": "@typescript-eslint/no-import-type-side-effects",
-      "path": "renamed/no-import-type-side-effects/014.ts",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/014.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-import-type-side-effects/014.ts",
-      "line": 1,
-      "column": 23
     },
     {
       "rule": "@typescript-eslint/no-import-type-side-effects",
@@ -93507,30 +93240,12 @@
     },
     {
       "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-shadow/028.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
       "path": "renamed/no-shadow/029.ts",
       "line": 2,
       "column": 15
     },
     {
       "rule": "@typescript-eslint/no-import-type-side-effects",
-      "path": "renamed/no-shadow/030.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-shadow/030.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-import-type-side-effects",
       "path": "renamed/no-shadow/031.ts",
       "line": 2,
       "column": 1
@@ -93538,18 +93253,6 @@
     {
       "rule": "@typescript-eslint/no-unused-vars",
       "path": "renamed/no-shadow/031.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "@typescript-eslint/no-import-type-side-effects",
-      "path": "renamed/no-shadow/032.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-shadow/032.ts",
       "line": 2,
       "column": 15
     },
@@ -99909,45 +99612,9 @@
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/025.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/025.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/array-type",
-      "path": "renamed/no-unused-vars/025.ts",
-      "line": 4,
-      "column": 19
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
       "path": "renamed/no-unused-vars/027.ts",
       "line": 2,
       "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/030.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/030.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/array-type",
-      "path": "renamed/no-unused-vars/030.ts",
-      "line": 4,
-      "column": 10
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
@@ -100059,108 +99726,6 @@
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/036.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/036.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/036.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-function-return-type",
-      "path": "renamed/no-unused-vars/036.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/036.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/037.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/037.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/037.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-function-return-type",
-      "path": "renamed/no-unused-vars/037.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/037.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/038.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/038.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/038.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/038.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/039.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/039.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/method-signature-style",
-      "path": "renamed/no-unused-vars/039.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
       "path": "renamed/no-unused-vars/040.ts",
       "line": 2,
       "column": 1
@@ -100203,36 +99768,6 @@
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/044.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/044.ts",
-      "line": 4,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/044.ts",
-      "line": 6,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-function-return-type",
-      "path": "renamed/no-unused-vars/044.ts",
-      "line": 6,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/044.ts",
-      "line": 6,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
       "path": "renamed/no-unused-vars/045.ts",
       "line": 2,
       "column": 1
@@ -100248,30 +99783,6 @@
       "path": "renamed/no-unused-vars/045.ts",
       "line": 4,
       "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/046.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/046.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/046.ts",
-      "line": 4,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/method-signature-style",
-      "path": "renamed/no-unused-vars/046.ts",
-      "line": 6,
-      "column": 3
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
@@ -101163,18 +100674,6 @@
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/144.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-magic-numbers",
-      "path": "renamed/no-unused-vars/144.ts",
-      "line": 4,
-      "column": 22
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
       "path": "renamed/no-unused-vars/145.ts",
       "line": 2,
       "column": 1
@@ -101400,108 +100899,6 @@
       "path": "renamed/no-unused-vars/165.ts",
       "line": 3,
       "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/166.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-unused-vars/166.ts",
-      "line": 3,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/166.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-function-return-type",
-      "path": "renamed/no-unused-vars/166.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/166.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/167.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-unused-vars/167.ts",
-      "line": 3,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/167.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-function-return-type",
-      "path": "renamed/no-unused-vars/167.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/167.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/168.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-unused-vars/168.ts",
-      "line": 3,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/class-methods-use-this",
-      "path": "renamed/no-unused-vars/168.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/explicit-member-accessibility",
-      "path": "renamed/no-unused-vars/168.ts",
-      "line": 5,
-      "column": 3
-    },
-    {
-      "rule": "@typescript-eslint/consistent-type-imports",
-      "path": "renamed/no-unused-vars/169.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-unused-vars/169.ts",
-      "line": 3,
-      "column": 10
-    },
-    {
-      "rule": "@typescript-eslint/method-signature-style",
-      "path": "renamed/no-unused-vars/169.ts",
-      "line": 5,
-      "column": 3
     },
     {
       "rule": "@typescript-eslint/consistent-type-imports",
@@ -102738,12 +102135,6 @@
       "path": "renamed/no-use-before-define/028.ts",
       "line": 5,
       "column": 7
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-use-before-define/031.tsx",
-      "line": 2,
-      "column": 10
     },
     {
       "rule": "@typescript-eslint/no-unused-vars",
@@ -104028,18 +103419,6 @@
       "path": "renamed/no-useless-empty-export/010.d.ts",
       "line": 2,
       "column": 25
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-useless-empty-export/012.d.ts",
-      "line": 2,
-      "column": 23
-    },
-    {
-      "rule": "@typescript-eslint/no-unused-vars",
-      "path": "renamed/no-useless-empty-export/013.d.ts",
-      "line": 2,
-      "column": 18
     },
     {
       "rule": "@typescript-eslint/no-unused-vars",

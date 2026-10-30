@@ -1,1 +1,1 @@
-function i(hlb) { if (hlb) return ebpbzzzc(); else ebpbzzzc(); }
+function w(err) { if (err) return callback(); else callback(); }

@@ -1,1 +1,1 @@
-l(process.dadv(1));
+l(process.exit(1));

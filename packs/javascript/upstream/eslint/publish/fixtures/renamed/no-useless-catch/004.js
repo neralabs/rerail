@@ -1,7 +1,7 @@
 
             try {
-                rdg();
-            } catch (onz) {
-                throw onz.zmx;
+                hpd();
+            } catch (err) {
+                throw err.ngn;
             }
         

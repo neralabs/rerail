@@ -1,4 +1,4 @@
-import { type Dqg } from "module";
-import { zvvtzfs } from "module";
-export { type Bcu } from "module";
-export { zvvtzfs as rzrra } from "module";
+import { type Foo } from "module";
+import { regular } from "module";
+export { type Cmz } from "module";
+export { regular as pqgvv } from "module";

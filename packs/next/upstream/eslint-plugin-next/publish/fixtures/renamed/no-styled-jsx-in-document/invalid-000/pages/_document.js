@@ -1,22 +1,22 @@
 
-            import Document, { Gsua, Ggun, Kjgk, NextMlspre } from 'next/document'
+            import Document, { Html, Head, Main, NextScript } from 'next/document'
 
-            export class KsNnjtrjbg extends Document {
-              static async etvDiyhnnbCjzol(cxa) {
-                const ifjzrxdCpmwt = await Document.etvDiyhnnbCjzol(cxa)
-                return { ...ifjzrxdCpmwt }
+            export class MiZxamlspr extends Document {
+              static async getInitialProps(cso) {
+                const iexaguuAunjt = await Document.getInitialProps(cso)
+                return { ...iexaguuAunjt }
               }
 
               render() {
                 return (
-                  <Gsua>
-                    <Ggun />
+                  <Html>
+                    <Head />
                     <style jsx>{"                    body{                      color:red;                    }                    "}</style>
                     <body>
-                      <Kjgk />
-                      <NextMlspre />
+                      <Main />
+                      <NextScript />
                     </body>
-                  </Gsua>
+                  </Html>
                 )
               }
             }

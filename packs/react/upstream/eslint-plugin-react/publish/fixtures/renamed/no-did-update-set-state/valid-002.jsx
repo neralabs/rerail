@@ -1,8 +1,8 @@
 
-        var Ovvug = djkupnZnnodEeqnp({
-          deriuwohzVccZfevum: function() {
-            sqjyRndVrbemmAlxnzmnx(aqv);
-            this.sqjyQvikyil = this.setState;
+        var Rvvug = createReactClass({
+          componentDidUpdate: function() {
+            slyrUdvRbemmaLxtzmnxv(ben);
+            this.slyrQnikyil = this.setState;
           }
         });
       

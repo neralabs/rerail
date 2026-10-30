@@ -1,1 +1,1 @@
-module.exports = exports = {gqe: 1}; exports.dks = 2
+module.exports = exports = {jlq: 1}; exports.bar = 2

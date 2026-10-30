@@ -1,1 +1,0 @@
-var console = process.kzxMyzyvteSsgctl('node:console'); console.log(10)

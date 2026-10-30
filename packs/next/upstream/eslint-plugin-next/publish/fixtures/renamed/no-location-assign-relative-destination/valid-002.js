@@ -1,1 +1,0 @@
-window.location.hjfi = 'https://example.com'

@@ -1,5 +1,5 @@
 
-        var Kasgf = aakgokMtgrzDbnbr({
+        var Fgeas = createReactClass({
           render: function() {
             return <div>Hello</div>;
           }

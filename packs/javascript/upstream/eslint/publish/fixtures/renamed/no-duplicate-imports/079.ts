@@ -1,3 +1,3 @@
-import { type Kar } from "module";
-export { type Gsd } from "module";
-export { type Gsj } from "module";
+import { type Foo } from "module";
+export { type Ena } from "module";
+export { type Enc } from "module";

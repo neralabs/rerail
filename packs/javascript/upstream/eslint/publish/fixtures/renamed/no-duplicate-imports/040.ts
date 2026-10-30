@@ -1,2 +1,2 @@
-import dax, * as cho from "os";
-import { type Chy } from "os";
+import gax, * as bad from "os";
+import { type Baz } from "os";

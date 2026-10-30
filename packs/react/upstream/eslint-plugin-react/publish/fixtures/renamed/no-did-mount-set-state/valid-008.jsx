@@ -1,8 +1,8 @@
 
-      var Lhykm = cwceblLnnncYjsbg({
-        ckfbkwlesXnuIslbj: function() {
+      var Ibhyk = createReactClass({
+        componentDidMount: function() {
           this.setState({
-            dsln: dsln
+            gmwm: gmwm
           });
         }
       });

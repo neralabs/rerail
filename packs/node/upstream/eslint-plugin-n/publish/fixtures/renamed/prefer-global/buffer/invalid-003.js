@@ -1,1 +1,0 @@
-var { Buffer } = require('buffer'); var b = Buffer.amnyw(10)

@@ -1,4 +1,4 @@
 
-          const wyt = '/dashboard';
-          location.kjuq = wyt;
+          const wdc = '/dashboard';
+          location.href = wdc;
         

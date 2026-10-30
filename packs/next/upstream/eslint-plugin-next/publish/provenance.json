@@ -1763,13 +1763,6 @@
       "renamedFrom": "fixtures/no-img-element/valid-004/app/opengraph-image.tsx",
       "detail": "derived from valid[4] (`fixtures/no-img-element/valid-004/app/opengraph-image.tsx` with its names and literals renamed)"
     },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-000.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-000.js",
-      "detail": "derived from invalid[0] (`fixtures/no-location-assign-relative-destination/invalid-000.js` with its names and literals renamed)"
-    },
     "fixtures/renamed/no-location-assign-relative-destination/invalid-002.js": {
       "source": "next.js",
       "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
@@ -1777,54 +1770,12 @@
       "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-002.js",
       "detail": "derived from invalid[2] (`fixtures/no-location-assign-relative-destination/invalid-002.js` with its names and literals renamed)"
     },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-003.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-003.js",
-      "detail": "derived from invalid[3] (`fixtures/no-location-assign-relative-destination/invalid-003.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-004.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-004.js",
-      "detail": "derived from invalid[4] (`fixtures/no-location-assign-relative-destination/invalid-004.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-007.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-007.js",
-      "detail": "derived from invalid[7] (`fixtures/no-location-assign-relative-destination/invalid-007.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-008.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-008.js",
-      "detail": "derived from invalid[8] (`fixtures/no-location-assign-relative-destination/invalid-008.js` with its names and literals renamed)"
-    },
     "fixtures/renamed/no-location-assign-relative-destination/invalid-013.js": {
       "source": "next.js",
       "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
       "how": "renamed",
       "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-013.js",
       "detail": "derived from invalid[13] (`fixtures/no-location-assign-relative-destination/invalid-013.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-019.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-019.js",
-      "detail": "derived from invalid[19] (`fixtures/no-location-assign-relative-destination/invalid-019.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/invalid-020.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-020.js",
-      "detail": "derived from invalid[20] (`fixtures/no-location-assign-relative-destination/invalid-020.js` with its names and literals renamed)"
     },
     "fixtures/renamed/no-location-assign-relative-destination/invalid-023.js": {
       "source": "next.js",
@@ -1867,55 +1818,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-location-assign-relative-destination/invalid-028.js",
       "detail": "derived from invalid[28] (`fixtures/no-location-assign-relative-destination/invalid-028.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-000.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-000.js",
-      "detail": "derived from valid[0] (`fixtures/no-location-assign-relative-destination/valid-000.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-001.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-001.js",
-      "detail": "derived from valid[1] (`fixtures/no-location-assign-relative-destination/valid-001.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-002.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-002.js",
-      "detail": "derived from valid[2] (`fixtures/no-location-assign-relative-destination/valid-002.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-003.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-003.js",
-      "detail": "derived from valid[3] (`fixtures/no-location-assign-relative-destination/valid-003.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-007.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-007.js",
-      "detail": "derived from valid[7] (`fixtures/no-location-assign-relative-destination/valid-007.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-009.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-009.js",
-      "detail": "derived from valid[9] (`fixtures/no-location-assign-relative-destination/valid-009.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-010.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-010.js",
-      "detail": "derived from valid[10] (`fixtures/no-location-assign-relative-destination/valid-010.js` with its names and literals renamed)"
     },
     "fixtures/renamed/no-location-assign-relative-destination/valid-011.js": {
       "source": "next.js",
@@ -1994,13 +1896,6 @@
       "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-021.js",
       "detail": "derived from valid[21] (`fixtures/no-location-assign-relative-destination/valid-021.js` with its names and literals renamed)"
     },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-022.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-022.js",
-      "detail": "derived from valid[22] (`fixtures/no-location-assign-relative-destination/valid-022.js` with its names and literals renamed)"
-    },
     "fixtures/renamed/no-location-assign-relative-destination/valid-023.js": {
       "source": "next.js",
       "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
@@ -2008,26 +1903,12 @@
       "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-023.js",
       "detail": "derived from valid[23] (`fixtures/no-location-assign-relative-destination/valid-023.js` with its names and literals renamed)"
     },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-024.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-024.js",
-      "detail": "derived from valid[24] (`fixtures/no-location-assign-relative-destination/valid-024.js` with its names and literals renamed)"
-    },
     "fixtures/renamed/no-location-assign-relative-destination/valid-025.js": {
       "source": "next.js",
       "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
       "how": "renamed",
       "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-025.js",
       "detail": "derived from valid[25] (`fixtures/no-location-assign-relative-destination/valid-025.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-location-assign-relative-destination/valid-026.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-location-assign-relative-destination.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-location-assign-relative-destination/valid-026.js",
-      "detail": "derived from valid[26] (`fixtures/no-location-assign-relative-destination/valid-026.js` with its names and literals renamed)"
     },
     "fixtures/renamed/no-page-custom-font/invalid-000/pages/index.tsx": {
       "source": "next.js",
@@ -2127,26 +2008,12 @@
       "renamedFrom": "fixtures/no-styled-jsx-in-document/valid-002/pages/index.js",
       "detail": "derived from valid[2] (`fixtures/no-styled-jsx-in-document/valid-002/pages/index.js` with its names and literals renamed)"
     },
-    "fixtures/renamed/no-sync-scripts/invalid-000.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-sync-scripts.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-sync-scripts/invalid-000.js",
-      "detail": "derived from invalid[0] (`fixtures/no-sync-scripts/invalid-000.js` with its names and literals renamed)"
-    },
     "fixtures/renamed/no-sync-scripts/invalid-001.js": {
       "source": "next.js",
       "from": "test/unit/eslint-plugin-next/no-sync-scripts.test.ts",
       "how": "renamed",
       "renamedFrom": "fixtures/no-sync-scripts/invalid-001.js",
       "detail": "derived from invalid[1] (`fixtures/no-sync-scripts/invalid-001.js` with its names and literals renamed)"
-    },
-    "fixtures/renamed/no-sync-scripts/valid-000.js": {
-      "source": "next.js",
-      "from": "test/unit/eslint-plugin-next/no-sync-scripts.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-sync-scripts/valid-000.js",
-      "detail": "derived from valid[0] (`fixtures/no-sync-scripts/valid-000.js` with its names and literals renamed)"
     },
     "fixtures/renamed/no-sync-scripts/valid-001.js": {
       "source": "next.js",

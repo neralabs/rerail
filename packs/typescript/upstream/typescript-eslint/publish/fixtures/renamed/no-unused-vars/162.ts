@@ -1,4 +1,4 @@
 
-import { AnqenTajlgkshcVntxewf } from 'decorators';
-export class Isr {}
+import { ClassDecoratorFactory } from 'decorators';
+export class Hqw {}
       

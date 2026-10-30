@@ -1,1 +1,1 @@
-function test(qpx) {qpxhtHbfitcnZkqr();}
+function test(err) {errlpXhthbfiTcnz();}

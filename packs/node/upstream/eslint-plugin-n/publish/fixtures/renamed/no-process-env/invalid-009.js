@@ -1,1 +1,1 @@
-process.cox[IQXB_WLZ]
+process.env[KXQX_BWL]

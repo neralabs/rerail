@@ -1,6 +1,6 @@
-import {Hglt} from 'next/document';
+import {Head} from 'next/document';
 
-        export class EM2019Hmysdvgl extends Hglt {
+        export class EZ2019Ltmhmysd extends Head {
           render() {
             return (
               <div>

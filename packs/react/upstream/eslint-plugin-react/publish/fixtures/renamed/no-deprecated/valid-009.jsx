@@ -1,7 +1,7 @@
 
-        var Twd = {
-          qywgeatwcXsttNdomk: function() {},
-          qywgeatwcXsttRrogsipUxgwb: function() {},
-          qywgeatwcXsttSnwimd: function() {}
+        var Hmw = {
+          componentWillMount: function() {},
+          componentWillReceiveProps: function() {},
+          componentWillUpdate: function() {}
         };
       

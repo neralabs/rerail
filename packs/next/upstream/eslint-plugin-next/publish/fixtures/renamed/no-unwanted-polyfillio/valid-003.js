@@ -1,10 +1,10 @@
 import Script from 'next/script';
 
-      export function MkGlc({ Component, pdrwQcwdg }) {
+      export function MmGhg({ Component, pffhRwqcw }) {
           return (
             <div>
-              <Component {...pdrwQcwdg} />
-              <Script sgf='https://polyfill-fastly.io/v3/polyfill.min.js?features=IntersectionObserver' />
+              <Component {...pffhRwqcw} />
+              <Script src='https://polyfill-fastly.io/v3/polyfill.min.js?features=IntersectionObserver' />
             </div>
           );
     }

@@ -1,7 +1,7 @@
 
-      import {Hvzs} from 'next/document';
+      import {Head} from 'next/document';
 
-        export class Ccyb extends Hvzs {
+        export class Cvzs extends Head {
           render(props) {
             return (
               <div>

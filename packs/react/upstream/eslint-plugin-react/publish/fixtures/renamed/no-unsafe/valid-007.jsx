@@ -1,7 +1,7 @@
 
-        class Jei extends React.Component {
-          WLXTTT_vajnlxhbyRlfmIkbde() {}
-          WLXTTT_vajnlxhbyRlfmQsaghbhZlynz() {}
-          WLXTTT_vajnlxhbyRlfmRjxrnm() {}
+        class Jae extends React.Component {
+          UNSAFE_componentWillMount() {}
+          UNSAFE_componentWillReceiveProps() {}
+          UNSAFE_componentWillUpdate() {}
         }
       

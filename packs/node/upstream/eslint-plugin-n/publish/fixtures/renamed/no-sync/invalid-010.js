@@ -1,1 +1,1 @@
-() => {oq.oalFfti();}
+() => {fu.fooSync();}

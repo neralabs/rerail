@@ -1,1 +1,1 @@
-function fivntfi(djh) {logFpkdInwgnb(function(djh) {if (djh) {}}); console.log(djh);}
+function givntfi(err) {logFpkdInwgnb(function(err) {if (err) {}}); console.log(err);}

@@ -1,1 +1,1 @@
-const {mbgeaxfj} = require('dns'); mbgeaxfj.jpugla()
+const {promises} = require('dns'); promises.hbbgea()

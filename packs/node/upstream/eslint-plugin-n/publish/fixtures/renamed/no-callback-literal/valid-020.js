@@ -1,1 +1,1 @@
-onnxjqnb(a ? n : 1, vxfg)
+callback(a ? b : 1, qnbx)

@@ -1,11 +1,11 @@
 
-import { Kry, TwjkV, Ckttq } from 'test';
-export default class Lyt {
+import { Dec, TypeA, Class } from 'test';
+export default class Exs {
   constructor(
-    @Kry(Ckttq)
-    ...nmbz: TwjkV<Ckttq>
+    @Dec(Class)
+    ...hjjk: TypeA<Class>
   ) {
-    nmbz();
+    hjjk();
   }
 }
     

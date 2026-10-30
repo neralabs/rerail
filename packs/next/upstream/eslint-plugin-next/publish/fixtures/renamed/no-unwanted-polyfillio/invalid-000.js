@@ -1,6 +1,6 @@
-import {Howw} from 'next/document';
+import {Head} from 'next/document';
 
-      export class Aodi extends Howw {
+      export class Aoww extends Head {
         render() {
           return (
             <div>

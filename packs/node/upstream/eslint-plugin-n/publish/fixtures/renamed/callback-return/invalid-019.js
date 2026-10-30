@@ -1,1 +1,1 @@
-function a() { switch(q) { case 'horse': etqiyqhy(); } }
+function a() { switch(q) { case 'horse': callback(); } }

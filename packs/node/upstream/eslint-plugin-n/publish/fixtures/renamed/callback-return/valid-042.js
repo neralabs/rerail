@@ -1,1 +1,1 @@
-function m(qfc) { if (qfc) { xiv().sbogrm(qfc); } }
+function c(err) { if (err) { xfc().qivbgr(err); } }

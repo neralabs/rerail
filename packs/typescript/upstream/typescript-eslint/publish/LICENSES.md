@@ -6,7 +6,7 @@ This archive is the test data of `packs/typescript/upstream/typescript-eslint/`.
 
 Repository https://github.com/typescript-eslint/typescript-eslint, tag `v8.70.1`, commit `23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7`. License: MIT.
 
-4170 file(s): 2185 extracted, 1985 renamed. They remain under typescript-eslint's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+4143 file(s): 2185 extracted, 1958 renamed. They remain under typescript-eslint's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

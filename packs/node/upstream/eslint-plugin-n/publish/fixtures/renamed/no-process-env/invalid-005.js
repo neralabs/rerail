@@ -1,1 +1,0 @@
-process.kru['OTHER_VARIABLE']

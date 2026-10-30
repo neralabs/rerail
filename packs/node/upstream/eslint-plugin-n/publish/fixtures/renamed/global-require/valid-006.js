@@ -1,1 +1,1 @@
-var s = require('y').lcu;
+var s = require('y').foo;

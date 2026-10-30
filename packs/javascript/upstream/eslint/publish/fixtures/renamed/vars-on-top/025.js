@@ -1,1 +1,1 @@
-import titXwqfbnr, { ocefs1, ocefs2 } from 'src/mylib'; 'use strict'; var y; function k() { 'use strict'; var w; var y; k(); }
+import tfiItxwqfb, { named1, named2 } from 'src/mylib'; 'use strict'; var z; function k() { 'use strict'; var x; var z; k(); }

@@ -1,7 +1,7 @@
 
-        class Pxpez extends Component {
-          componentWewOyiua() {
-            mfaaTCLWmwd(this).zlmlinQtfqHerh();
+        class Lrwew extends Component {
+          componentDidMount() {
+            findDOMNode(this).voyiuaXpezFaad();
           }
           render() {
             return <div>Hello</div>;

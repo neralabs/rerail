@@ -1,1 +1,1 @@
-function test(qyu, dgkt) {}
+function test(err, ayyu) {}

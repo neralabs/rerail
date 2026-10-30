@@ -1,8 +1,8 @@
 
-import { Ohjac, Sjrbhb, EfvxiFveoiyj } from 'decorators';
-export class XninAyqmbbkay {
-  @Ohjac() dcxv;
-  @Sjrbhb()
-  bbvpx = new EfvxiFveoiyj();
+import { Input, Output, EventEmitter } from 'decorators';
+export class ZmcxVhjacjrbh {
+  @Input() ddmk;
+  @Output()
+  bbfvx = new EventEmitter();
 }
     

@@ -1,10 +1,10 @@
 
 import { Nullable } from 'nullable';
-import { PtxyWoplk } from 'other';
-interface A<Y extends Nullable> {
-  bar: Y;
+import { SomeOther } from 'other';
+interface A<V extends Nullable> {
+  bar: V;
 }
-export const a: A<PtxyWoplk> = {
-  izf: 'bar',
+export const a: A<SomeOther> = {
+  itx: 'bar',
 };
     

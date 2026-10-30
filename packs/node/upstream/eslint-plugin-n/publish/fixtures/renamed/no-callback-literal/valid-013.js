@@ -1,1 +1,1 @@
-cmzikfmi(y, sqop)
+callback(m, dsmz)

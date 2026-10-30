@@ -1,1 +1,0 @@
-var test = fie => fie;

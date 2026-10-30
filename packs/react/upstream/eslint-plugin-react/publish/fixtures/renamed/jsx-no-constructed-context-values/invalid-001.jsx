@@ -1,1 +1,1 @@
-function Component() { const izr = []; return (<Coshslz.Qhsjfqij value={izr}></Coshslz.Qhsjfqij>) }
+function Component() { const ilz = []; return (<Cotshsx.Provider value={ilz}></Cotshsx.Provider>) }

@@ -1,1 +1,1 @@
-var test = function(jak, dkwj) {if(!jak) { ldmi(); } else { cks(); }}
+var test = function(err, coak) {if(!err) { pkwj(); } else { adm(); }}

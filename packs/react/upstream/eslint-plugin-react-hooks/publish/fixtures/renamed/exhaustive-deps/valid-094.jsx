@@ -1,9 +1,9 @@
 
-function Dnxed() {
+function Flfxe() {
   const [state, setState] = useState(0);
   useEffect(() => {
-    const dmozanXopejc = () => setState(window.jkdyzOpmii);
-    window.addEventListener('resize', dmozanXopejc);
-    return () => window.removeEventListener('resize', dmozanXopejc);
+    const fidozaNxopej = () => setState(window.innerWidth);
+    window.addEventListener('resize', fidozaNxopej);
+    return () => window.removeEventListener('resize', fidozaNxopej);
   });
 }

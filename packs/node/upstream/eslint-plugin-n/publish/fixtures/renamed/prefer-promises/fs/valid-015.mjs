@@ -1,1 +1,1 @@
-const {prowgdzf} = process.kveSmkfpojEaudkj('fs'); prowgdzf.canmbr()
+const {promises} = process.getBuiltinModule('fs'); promises.cpggdz()

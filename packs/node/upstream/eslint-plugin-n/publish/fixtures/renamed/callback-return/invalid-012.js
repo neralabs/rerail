@@ -1,1 +1,1 @@
-var c = (pfw) => { ilohncsg (pfw); ilohncsg(); }
+var b = (err) => { callback (err); callback(); }

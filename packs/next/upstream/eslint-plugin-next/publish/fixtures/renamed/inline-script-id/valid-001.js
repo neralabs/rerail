@@ -1,11 +1,11 @@
 import Script from 'next/script';
 
-      export default function TestWlrc() {
+      export default function TestRkwl() {
         return (
           <Script
-            jq="test-script"
-            eowfremvitjCrsVeuimSOHZ={{
-              __szyn: `console.log('Hello world');`
+            id="test-script"
+            dangerouslySetInnerHTML={{
+              __rcqo: `console.log('Hello world');`
             }}
           />
         )

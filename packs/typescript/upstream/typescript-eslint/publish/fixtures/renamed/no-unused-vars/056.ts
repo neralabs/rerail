@@ -1,6 +1,6 @@
 
 import { Nullable } from 'nullable';
-import { XqzuTspke } from 'other';
-function iab<Y extends Nullable>(): Y {}
-iab<XqzuTspke>();
+import { SomeOther } from 'other';
+function ilq<X extends Nullable>(): X {}
+ilq<SomeOther>();
     

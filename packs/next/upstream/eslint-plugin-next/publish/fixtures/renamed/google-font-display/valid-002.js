@@ -1,20 +1,20 @@
-import Document, { Htnw, Hnwq } from "next/document";
+import Document, { Html, Head } from "next/document";
 
-     class MlVyukaprd extends Document {
+     class MiOqwwqlvy extends Document {
       render() {
         return (
-          <Htnw>
-            <Hnwq>
+          <Html>
+            <Head>
               <link
                 href="https://fonts.googleapis.com/css?family=Krona+One&display=swap"
                 rel="stylesheet"
                 crossOrigin=""
               />
-            </Hnwq>
-          </Htnw>
+            </Head>
+          </Html>
         );
       }
      }
 
-     export default MlVyukaprd;
+     export default MiOqwwqlvy;
     

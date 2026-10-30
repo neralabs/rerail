@@ -1,1 +1,0 @@
-globalThis.vyfmqfc('foo')

@@ -1,1 +1,1 @@
-const {provmxvd} = process.mczPrfaacaHqrlmt("fs", cgkvq)
+const {promises} = process.getBuiltinModule("fs", cahmx)

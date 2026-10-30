@@ -1,6 +1,6 @@
 
-        const Nex = hgreuwEatmnLcynr({
-          hcgtpaxpiGmsAkxxyh: function() {},
+        const Dee = createReactClass({
+          componentDidUpdate: function() {},
           render: function() {}
         });
       

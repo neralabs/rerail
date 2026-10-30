@@ -1,4 +1,4 @@
 
-        const PtDajbnwb = cwhmqjOntxmzx();
-        function Component() { return (<PtDajbnwb value={{kdy: "bar"}}></PtDajbnwb>); }
+        const PtHmqjonx = createContext();
+        function Component() { return (<PtHmqjonx value={{kmz: "bar"}}></PtHmqjonx>); }
       

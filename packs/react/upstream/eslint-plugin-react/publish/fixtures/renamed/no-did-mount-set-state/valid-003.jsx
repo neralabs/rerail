@@ -1,9 +1,9 @@
 
-        var Gloak = amkbpdCtcuwApizp({
-          aktcuiwapAwvRxttf: function() {
-            srqaPpsnm.htHgppKlizo(function(elhi) {
+        var Nloak = createReactClass({
+          componentDidMount: function() {
+            smkqAppnm.qkOekaBpdce(function(jtcu) {
               this.setState({
-                elhi: elhi
+                jtcu: jtcu
               });
             })
           }

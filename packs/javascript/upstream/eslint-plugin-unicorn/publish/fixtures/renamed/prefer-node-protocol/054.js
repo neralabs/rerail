@@ -1,1 +1,1 @@
-const cb = process.kyuVixmzrgZkqojv()
+const db = process.getBuiltinModule()

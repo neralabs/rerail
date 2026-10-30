@@ -1,1 +1,1 @@
-const {pnantqlz: {igwirm}} = require('dns'); igwirm()
+const {promises: {fxnant}} = require('dns'); fxnant()

@@ -1,11 +1,11 @@
 
-        var Jjuwa = React.fmdxwmZwdcq({
-          orjxhjmxPdgpf: function(qaa) {
-            return qaa.value*2
+        var Itjuw = React.createClass({
+          oamdaxwmZwdcq: function(qlx) {
+            return qlx.value*2
           },
-          qiYsmiq: function() {
+          qrHjmxp: function() {
             var value = this.state.value
-            this.orjxhjmxPdgpf({ value: value })
+            this.oamdaxwmZwdcq({ value: value })
           }
         });
       

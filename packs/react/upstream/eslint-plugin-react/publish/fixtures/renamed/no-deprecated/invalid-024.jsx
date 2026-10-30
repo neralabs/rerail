@@ -1,7 +1,7 @@
 
-        class Cwk extends PureComponent {
-          mzfqgyvwlLmmdJarvn() {}
-          mzfqgyvwlLmmdUxyistwUukgg() {}
-          mzfqgyvwlLmmdVwjbgl() {}
+        class Azw extends PureComponent {
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         };
       

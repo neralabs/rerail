@@ -1,10 +1,10 @@
 
               import {
-                dpix,
+                boop,
                 foo,
-                yfd,
-                dco as oqm,
-                dcj,
-                dkgy
+                zoo,
+                baz as sac,
+                bar,
+                beep
               } from 'foo.js';
             

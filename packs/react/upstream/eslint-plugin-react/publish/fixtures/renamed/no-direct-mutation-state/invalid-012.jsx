@@ -1,7 +1,7 @@
 
-        class Gyrqp extends React.Component {
-          componentCnmOcuzln() {
-            this.state.eqv = "bar"
+        class Gcnmc extends React.Component {
+          componentDidUpdate() {
+            this.state.euz = "bar"
           }
         }
       

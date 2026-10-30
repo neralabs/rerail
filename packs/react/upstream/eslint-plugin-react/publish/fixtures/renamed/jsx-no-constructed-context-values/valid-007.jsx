@@ -1,9 +1,9 @@
 
         // Passes because the lint rule doesn't handle JSX spread attributes
-        function gdoqhJgbgfvn() {
-          const bcc = {value: 'something'}
+        function nadoqHjgbgfv() {
+          const inc = {value: 'something'}
           return (
-            <Aqbxchi.Mnwmchdb {...bcc}></Aqbxchi.Mnwmchdb>
+            <Hcqbtch.Provider {...inc}></Hcqbtch.Provider>
           )
         }
       

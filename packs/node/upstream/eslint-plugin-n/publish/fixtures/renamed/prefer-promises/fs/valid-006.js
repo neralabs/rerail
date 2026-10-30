@@ -1,1 +1,1 @@
-const {qkbanpma: fs} = require('fs'); fs.enllcm()
+const {promises: fs} = require('fs'); fs.eykban()

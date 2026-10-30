@@ -1,12 +1,12 @@
-function u(){}
+function t(){}
 
 
-u();
+t();
 
 
-if (u > y) {
-	oeKwwupjwuq()
+if (t > y) {
+	btIekwwupjw()
 
 }
 
-var u = require('y').pea;
+var t = require('y').foo;

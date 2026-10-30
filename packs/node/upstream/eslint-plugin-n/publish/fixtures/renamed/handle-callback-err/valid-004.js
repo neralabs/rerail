@@ -1,1 +1,0 @@
-var test = function(kit) {console.log(kit);};

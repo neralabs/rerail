@@ -1,5 +1,5 @@
 
-      const zcp = `https://example.com/${osyjXcqhwkdu}`;
-      location.hgfm = zcp;
-      location.assign(zcp);
+      const zbf = `https://example.com/${omcpSyjxcqhw}`;
+      location.href = zbf;
+      location.assign(zbf);
     

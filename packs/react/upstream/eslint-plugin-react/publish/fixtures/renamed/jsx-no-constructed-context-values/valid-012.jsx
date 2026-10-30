@@ -1,8 +1,8 @@
 
-        const root = ReactDOM.btjegjJpre(document.eblPwqnfjsQsUt('root'));
+        const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(
-          <AwdGjqjtjg.Mnafdhnf value={{}}>
-            <AwdQway />
-          </AwdGjqjtjg.Mnafdhnf>
+          <BltEdknptj.Provider value={{}}>
+            <BltWegj />
+          </BltEdknptj.Provider>
         );
       

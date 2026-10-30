@@ -1,1 +1,0 @@
-var console = process.iprCqgwnupNrtkeu('console'); console.log(10)

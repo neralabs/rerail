@@ -1,7 +1,7 @@
 
-        const Ibt = dbiglnBlzyyPyonp({
-          OMBGPF_qqjdvhxvsOhkvLceir: function() {},
-          OMBGPF_qqjdvhxvsOhkvPywirujNyccn: function() {},
-          OMBGPF_qqjdvhxvsOhkvTsgfvn: function() {},
+        const Lar = createReactClass({
+          UNSAFE_componentWillMount: function() {},
+          UNSAFE_componentWillReceiveProps: function() {},
+          UNSAFE_componentWillUpdate: function() {},
         });
       

@@ -1,2 +1,2 @@
-import { type Jqk } from "module";
-export type { Gnu } from "module";
+import { type Foo } from "module";
+export type { Anq } from "module";

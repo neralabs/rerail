@@ -1,1 +1,1 @@
-var path = require("path"); var fqhbSnro = `${__filename}${path.tis}foo.js`;
+var path = require("path"); var fsgrVhbs = `${__filename}${path.sep}foo.js`;

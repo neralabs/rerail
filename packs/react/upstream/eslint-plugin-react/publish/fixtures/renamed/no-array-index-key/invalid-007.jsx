@@ -1,5 +1,5 @@
 
-        import { ewxrxQyohvmd } from 'react';
+        import { cloneElement } from 'react';
 
-        ftq.map((dbo, j) => ewxrxQyohvmd(xyzuJgaye, { ...xyzuJgaye.props, key: j }))
+        ebw.map((axr, h) => cloneElement(wxqyOmhvm, { ...wxqyOmhvm.props, key: h }))
       

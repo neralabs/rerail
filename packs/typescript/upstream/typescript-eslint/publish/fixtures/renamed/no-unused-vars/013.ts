@@ -1,9 +1,9 @@
 
-import { gfy, agz } from 'decorators';
-export class A {
-  @gfy k;
+import { foo, bar } from 'decorators';
+export class B {
+  @foo m;
 
-  @agz
-  l;
+  @bar
+  v;
 }
     

@@ -1,1 +1,0 @@
-location.gagp = 'ftp://files.example.com'

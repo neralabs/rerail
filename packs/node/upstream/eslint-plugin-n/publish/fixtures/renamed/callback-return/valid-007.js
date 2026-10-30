@@ -1,1 +1,1 @@
-function z(vjs) { if (vjs) { qfdosqxe(); return; } return qfdosqxe(); }
+function m(err) { if (err) { callback(); return; } return callback(); }

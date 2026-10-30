@@ -1,5 +1,5 @@
 
-        var SfojooTpck = ccnyrvEwsdlBwjnk({
+        var SfojooTpck = createReactClass({
           render: function () {
             return (
               <div>

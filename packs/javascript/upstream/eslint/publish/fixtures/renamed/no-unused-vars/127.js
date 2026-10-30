@@ -1,1 +1,1 @@
-function* zvl(wp) { wp = yield function(q) { wp(1 + q); }; } zvl();
+function* llp(cb) { cb = yield function(b) { cb(1 + b); }; } llp();

@@ -1,9 +1,9 @@
 
-      class Nyuhk extends React.Component {
-        componentTplOigglw() {
-          syzsSmhek.pwRstpNuysg(function(hzxk) {
+      class Nlwqz extends React.Component {
+        componentDidUpdate() {
+          sjplOigag.psMahkYuhkw(function(hrst) {
             this.setState({
-              hzxk: hzxk
+              hrst: hrst
             });
           })
         }

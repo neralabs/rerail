@@ -1,4 +1,4 @@
 
-        import { resfssMmHgtoJiaojr } from 'react-dom/server';
-        ReactTBVQdmylu.resfssMmHgtoJiaojr(idkkgvq);
+        import { renderToNodeStream } from 'react-dom/server';
+        ReactFTBVqdmyl.renderToNodeStream(iufssmm);
       

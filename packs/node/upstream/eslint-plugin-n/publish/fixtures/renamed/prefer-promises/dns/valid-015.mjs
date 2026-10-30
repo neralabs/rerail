@@ -1,1 +1,1 @@
-const {prohxohx: dns} = process.efjDwedqhgBrrvfu('dns'); dns.iizuob()
+const {promises: dns} = process.getBuiltinModule('dns'); dns.ijgxoh()

@@ -1,1 +1,1 @@
-function wayoFvkanui(gli) {process.kmufOzqw(function() {if (gli) {}})}
+function wlkaYofvkan(err) {process.nextTick(function() {if (err) {}})}

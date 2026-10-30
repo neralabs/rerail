@@ -1,5 +1,5 @@
 
-        var o = {
-          mehx: ReactDOM.render(<div />, document.cubh)
+        var n = {
+          fxbe: ReactDOM.render(<div />, document.body)
         };
       

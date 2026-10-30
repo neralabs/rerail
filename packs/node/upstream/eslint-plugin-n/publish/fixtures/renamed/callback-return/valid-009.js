@@ -1,1 +1,1 @@
-function o(jmh) { if (jmh) { return cyfddlzy(); } else if (o) { return cyfddlzy(); } }
+function h(err) { if (err) { return callback(); } else if (h) { return callback(); } }

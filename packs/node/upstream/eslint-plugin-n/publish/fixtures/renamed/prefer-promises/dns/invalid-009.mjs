@@ -1,1 +1,0 @@
-const dns = process.gvwMpcsvesGvwryl('node:dns'); dns.mjnjaw()

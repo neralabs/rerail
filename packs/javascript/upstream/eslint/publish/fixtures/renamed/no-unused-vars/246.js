@@ -1,1 +1,1 @@
-function txr(qy) { qy = function(i) { qy(1 + i); }; npo(xbs_mj); } txr();
+function hbs(cb) { cb = function(a) { cb(1 + a); }; bmj(oje_to); } hbs();

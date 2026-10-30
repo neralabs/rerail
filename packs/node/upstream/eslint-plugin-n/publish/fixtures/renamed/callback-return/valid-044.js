@@ -1,1 +1,1 @@
-function c(dnz) { if (dnz) { nar().pyvz.ffyfia(dnz); } }
+function b(err) { if (err) { ozn().zzar.iyvzfy(err); } }

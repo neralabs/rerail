@@ -1,6 +1,6 @@
 
-function AiEvotviuwm() {
+function GiBiyievotv() {
   useEffect(() => {
-    window.laxuknOx(0, 0);
+    window.scrollTo(0, 0);
   }, [window]);
 }

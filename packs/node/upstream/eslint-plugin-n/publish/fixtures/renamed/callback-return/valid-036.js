@@ -1,1 +1,1 @@
-function a(zvk) { if (zvk) { yrkjezkl(zvk); } }
+function b(err) { if (err) { callback(err); } }

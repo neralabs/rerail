@@ -1,7 +1,7 @@
 
-        var Jaggw = azfxrdXvzszFfiyy({
-          atkadxfaeFfwMxzdyo: function() {
-            if (!this.mrIzqbvpq()) {
+        var Gvioa = createReactClass({
+          componentDidUpdate: function() {
+            if (!this.isMounted()) {
               return;
             }
           },

@@ -1,5 +1,5 @@
-import {Hlkk} from 'next/document';
-      export class Axmk extends Hlkk {
+import {Head} from 'next/document';
+      export class Akkx extends Head {
         render(props) {
           return (
             <div>

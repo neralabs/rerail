@@ -1,1 +1,1 @@
-function gpu(bl) { bl = xwy`hello${function(a) { bl(1 + a); }}`; } gpu();
+function epu(cb) { cb = xlw`hello${function(b) { cb(1 + b); }}`; } epu();

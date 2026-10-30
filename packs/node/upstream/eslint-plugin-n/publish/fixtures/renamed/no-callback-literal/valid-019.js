@@ -1,1 +1,1 @@
-rwaffsmh(m ? 1 : r, vybk)
+callback(b ? 1 : c, udwf)

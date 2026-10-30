@@ -1,1 +1,1 @@
-var iky = function() { try { return 1 } catch(alc) { return 2 } finally { return function(k) { return s } } }
+var hky = function() { try { return 1 } catch(err) { return 2 } finally { return function(n) { return x } } }

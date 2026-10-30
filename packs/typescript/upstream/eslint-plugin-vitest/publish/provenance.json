@@ -827,12 +827,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-disabled-tests/020.test.ts"
     },
-    "fixtures/renamed/no-disabled-tests/021.test.ts": {
-      "source": "eslint-plugin-vitest",
-      "from": "tests/no-disabled-tests.test.ts",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-disabled-tests/021.test.ts"
-    },
     "fixtures/renamed/no-disabled-tests/023.test.ts": {
       "source": "eslint-plugin-vitest",
       "from": "tests/no-disabled-tests.test.ts",

@@ -1,5 +1,5 @@
 
-        var Lmbbr = azdmlqAshgzVgprn({
+        var Echmb = createReactClass({
           render: function() {
             return <div>'</div>;
           }

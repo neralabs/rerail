@@ -1,6 +1,6 @@
-import {Hhgh} from 'next/document';
+import {Head} from 'next/document';
 
-      export class Cyca extends Hhgh {
+      export class Cigy extends Head {
         render() {
           return (
             <div>

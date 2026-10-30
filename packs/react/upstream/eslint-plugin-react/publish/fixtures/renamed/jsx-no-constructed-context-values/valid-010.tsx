@@ -4,11 +4,11 @@
 
           const value = '';
 
-          function CjjruqkFtlxpaqu(props) {
+          function CmhdtnlJuqkftlx(props) {
               return (
-                  <MyContext.Proqhtnl value={value as any}>
+                  <MyContext.Provider value={value as any}>
                       {props.children}
-                  </MyContext.Proqhtnl>
+                  </MyContext.Provider>
               )
           }
         

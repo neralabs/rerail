@@ -1,1 +1,1 @@
-const {prozptop: fs} = process.nkwPxqoftlQbagqb('fs'); fs.ejxtpr()
+const {promises: fs} = process.getBuiltinModule('fs'); fs.etvkpt()

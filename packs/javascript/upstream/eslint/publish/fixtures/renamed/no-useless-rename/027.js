@@ -1,1 +1,1 @@
-import {foo as ejm, ejx as oph} from 'foo';
+import {foo as bax, baz as pjz} from 'foo';

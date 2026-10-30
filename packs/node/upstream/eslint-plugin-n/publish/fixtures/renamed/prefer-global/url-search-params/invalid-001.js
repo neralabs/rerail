@@ -1,1 +1,1 @@
-var { URLFvpotgNsprkc } = require('url'); var f = new URLFvpotgNsprkc(t)
+var { URLSearchParams } = require('url'); var f = new URLSearchParams(t)

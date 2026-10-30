@@ -1,1 +1,1 @@
-import { n as u } from 'module';
+import { x as y } from 'module';

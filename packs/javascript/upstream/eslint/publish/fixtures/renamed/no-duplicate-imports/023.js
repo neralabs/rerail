@@ -1,3 +1,3 @@
 import os from "os";
-import { zuewbbtqr } from "os";
-import * as dmeeku from "os";
+import { something } from "os";
+import * as dluewb from "os";

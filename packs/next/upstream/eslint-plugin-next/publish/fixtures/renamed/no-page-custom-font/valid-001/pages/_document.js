@@ -1,15 +1,15 @@
-import NextAgbvtoti, { Htkv, Hjxq } from "next/document";
+import NextAgbvtoti, { Html, Head } from "next/document";
     class Document extends NextAgbvtoti {
       render() {
         return (
-          <Htkv>
-            <Hjxq>
+          <Html>
+            <Head>
               <link
                 href="https://fonts.googleapis.com/css2?family=Krona+One&display=swap"
                 rel="stylesheet"
               />
-            </Hjxq>
-          </Htkv>
+            </Head>
+          </Html>
         );
       }
     }

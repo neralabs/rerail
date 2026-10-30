@@ -1,12 +1,12 @@
 
-        var Kxfmg = cuwtlfJzvocBrpqp({
-          cmuuplnjwCxaNrijc: function() {
-            function kkgwbwShakj(dmik) {
+        var Ktcfm = createReactClass({
+          componentDidMount: function() {
+            function kpggwbWesha(fkju) {
               this.setState({
-                dmik: dmik
+                fkju: fkju
               });
             }
-            slviMghpp.puZwhyIbglx(kkgwbwShakj)
+            subvImghp.rcWtlfJzvoc(kpggwbWesha)
           }
         });
       

@@ -1,5 +1,5 @@
 
-import { Foo, Ayb } from 'foo';
-function ayh<Foo>(): Foo {}
-ayh<Ayb>();
+import { Foo, Bar } from 'foo';
+function bas<Foo>(): Foo {}
+bas<Bar>();
       

@@ -1,2 +1,2 @@
-function e(lss) { if (lss) { //comment
-tya.rfwbtt(lss); } }
+function d(err) { if (err) { //comment
+txs.msyafw(err); } }

@@ -1,1 +1,1 @@
-function Component() { const Ysmwupf = (<QuijPvtz />); return (<Coxjpoo.Eqhhdmms value={Ysmwupf}></Coxjpoo.Eqhhdmms>);}
+function Component() { const Ysmwupf = (<UuijPvtz />); return (<Coxjpoo.Provider value={Ysmwupf}></Coxjpoo.Provider>);}

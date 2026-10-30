@@ -1,2 +1,2 @@
-import { jup, type Aet } from "module";
-export { type Aez } from "module2";
+import { foo, type Bar } from "module";
+export { type Baw } from "module2";

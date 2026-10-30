@@ -1,1 +1,1 @@
-import { b as gdb } from 'module';
+import { a as cbi } from 'module';

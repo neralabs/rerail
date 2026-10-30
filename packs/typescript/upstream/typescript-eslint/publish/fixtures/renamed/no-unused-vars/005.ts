@@ -1,7 +1,7 @@
 
-import { ZkyutbOxzkvtxdpJuolbdc } from 'decorators';
-export class Wfe {
-  @ZkyutbOxzkvtxdpJuolbdc(false)
-  ava() {}
+import { MethodDecoratorFactory } from 'decorators';
+export class Emk {
+  @MethodDecoratorFactory(false)
+  ayu() {}
 }
     

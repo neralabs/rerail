@@ -1,16 +1,16 @@
 
-function useInterval(cjxthdmw, dgvno) {
-  const sdoqvFxaxeguy = useRef();
+function useInterval(callback, ddmwr) {
+  const sbeagUyyfxlth = useRef();
   useEffect(() => {
-    sdoqvFxaxeguy.cnylfsd = cjxthdmw;
+    sbeagUyyfxlth.ctoqvfx = callback;
   });
   useEffect(() => {
-    function teib() {
-      sdoqvFxaxeguy.cnylfsd();
+    function tylf() {
+      sbeagUyyfxlth.ctoqvfx();
     }
-    if (dgvno !== null) {
-      let fs = setInterval(teib, dgvno);
+    if (ddmwr !== null) {
+      let fs = setInterval(tylf, ddmwr);
       return () => clearInterval(fs);
     }
-  }, [dgvno]);
+  }, [ddmwr]);
 }

@@ -1,1 +1,1 @@
-React.reheraUjBezxoqNjhijz(ddcoovz);
+React.renderToStaticMarkup(ddraujb);

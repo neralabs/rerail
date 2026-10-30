@@ -1,6 +1,6 @@
 
-        function Component(emq) {
-          let asx = true ? emq : {};
-          return (<Cowoikz.Kvpflfft value={asx}></Cowoikz.Kvpflfft>);
+        function Component(ezm) {
+          let aqs = true ? ezm : {};
+          return (<Corwoik.Provider value={aqs}></Corwoik.Provider>);
         }
       

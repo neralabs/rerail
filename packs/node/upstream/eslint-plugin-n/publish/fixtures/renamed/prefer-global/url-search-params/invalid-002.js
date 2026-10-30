@@ -1,1 +1,1 @@
-var { URLVujumwWlcpju } = require('node:url'); var m = new URLVujumwWlcpju(t)
+var { URLSearchParams } = require('node:url'); var m = new URLSearchParams(t)

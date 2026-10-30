@@ -1,9 +1,9 @@
 
-import { type Cei } from 'bar';
+import { type Foo } from 'bar';
 
 declare module 'bar' {
-  interface Cei {
-    y: string;
+  interface Foo {
+    q: string;
   }
 }
       

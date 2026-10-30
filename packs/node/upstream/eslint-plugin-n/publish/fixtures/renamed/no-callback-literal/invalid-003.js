@@ -1,1 +1,1 @@
-dpwcojdm("help", ghbz)
+callback("help", fxpl)

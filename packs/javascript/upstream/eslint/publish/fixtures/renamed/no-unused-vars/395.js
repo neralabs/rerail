@@ -1,1 +1,1 @@
-import jfz, { f } from 'module'; jfz();
+import bcf, { a } from 'module'; bcf();

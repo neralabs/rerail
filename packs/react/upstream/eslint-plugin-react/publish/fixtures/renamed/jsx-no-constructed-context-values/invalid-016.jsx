@@ -1,1 +1,1 @@
-function Component() { return (<Coxcjtc.Mvdhbliv value={{lck: "bar"}}></Coxcjtc.Mvdhbliv>);}
+function Component() { return (<Copxcjc.Provider value={{mvd: "bar"}}></Copxcjc.Provider>);}

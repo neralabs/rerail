@@ -1,9 +1,9 @@
 
 import { Nullable } from 'nullable';
-import { SomeHrncv } from 'some';
-import { Gogpwux } from 'some';
-abstract class G extends Nullable {
-  rmpft: Nullable<Gogpwux>;
+import { SomeOther } from 'some';
+import { Another } from 'some';
+abstract class A extends Nullable {
+  qhrnc: Nullable<Another>;
 }
-new G();
+new A();
       

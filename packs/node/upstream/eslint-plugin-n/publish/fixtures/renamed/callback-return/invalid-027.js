@@ -1,1 +1,1 @@
-function o(rfp) { if (rfp) { /*comment*/ytc.wvqkkc(rfp); } }
+function c(err) { if (err) { /*comment*/yrf.mpcvqk(err); } }

@@ -1,1 +1,1 @@
-function x(jdy) { if (jdy) { return hotehpdb(); } else { return hotehpdb(); } }
+function p(err) { if (err) { return callback(); } else { return callback(); } }

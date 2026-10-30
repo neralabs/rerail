@@ -1,7 +1,7 @@
 
-      var Hrvmc = armfmwWwxuqPkhno({
-        agssskcrbIhqDlwmhf: function() {
-          svomDtgor.jkIkkhGixqi((dyxz) => this.setState({dyxz: dyxz}));
+      var Jrvmc = createReactClass({
+        componentDidUpdate: function() {
+          svomDtgor.qgMfwwWxuqp((gkhn) => this.setState({gkhn: gkhn}));
         }
       });
     

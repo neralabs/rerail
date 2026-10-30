@@ -1,1 +1,1 @@
-const ded = cnt ? cny: globalThis.Rjilhixe; ded();
+const dke = cdb ? cdn: globalThis.Temporal; dke();

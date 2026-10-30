@@ -1,9 +1,9 @@
 
-        var Jhqoa = auwrfrOoloaZftwn({
+        var Jhqoa = createReactClass({
           render: function() {
-            var pww = {state: {}};
-            pww.state.name = "foo";
-            return <div>Hello {pww.state.name}</div>;
+            var puw = {state: {}};
+            puw.state.name = "foo";
+            return <div>Hello {puw.state.name}</div>;
           }
         });
       

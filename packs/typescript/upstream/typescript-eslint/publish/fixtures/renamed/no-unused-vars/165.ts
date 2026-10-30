@@ -1,6 +1,6 @@
 
 import { Nullable } from 'nullable';
-import { WxjrEheah } from 'other';
+import { SomeOther } from 'other';
 const b: Nullable<string> = 'hello';
 console.log(b);
       

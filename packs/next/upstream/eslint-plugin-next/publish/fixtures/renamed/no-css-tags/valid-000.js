@@ -1,6 +1,6 @@
-import {Hojj} from 'next/document';
+import {Head} from 'next/document';
 
-      export class Crxy extends Hojj {
+      export class Cojj extends Head {
         render() {
           return (
             <div>

@@ -1,5 +1,5 @@
 window.setTimeout('foo' + (function() {
    setTimeout(lgqott);
-   window.ditzAxcohm('str');
+   window.execScript('str');
    return 'bar';
 })())

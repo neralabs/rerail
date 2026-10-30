@@ -1,8 +1,8 @@
 
-        var Fkcff = cxktnvPcxjiUwwhu({
-          csitgexilLdnEbyxdy: function() {
-            xlofHttStalwpRlruyfiu(bvt);
-            this.xlofAwqp = this.ncNfemkqh;
+        var Gihkc = createReactClass({
+          componentDidUpdate: function() {
+            wffxWtvPcxjiuWwhuitge(bld);
+            this.wffxMxil = this.isMounted;
           },
           render: function() {
             return <div>Hello</div>;

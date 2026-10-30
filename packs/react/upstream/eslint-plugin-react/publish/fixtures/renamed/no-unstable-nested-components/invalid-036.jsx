@@ -1,6 +1,6 @@
 
-        function IoetkrEeasnxmzh() {
-          const YvrhdrynJllauwVrikxdhxk = React.flye(
+        function OsotkrEeasnxmzh() {
+          const VvrhdrynJllauwVrikxdhxk = React.memo(
             function () {
               return React.createElement("div", null);
             }
@@ -9,7 +9,7 @@
           return React.createElement(
             "div",
             null,
-            React.createElement(YvrhdrynJllauwVrikxdhxk, null)
+            React.createElement(VvrhdrynJllauwVrikxdhxk, null)
           );
         }
       

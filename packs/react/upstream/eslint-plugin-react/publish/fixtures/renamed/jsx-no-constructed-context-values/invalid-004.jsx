@@ -1,1 +1,1 @@
-function Component() { const fky = class NzfwXnlzl{}; return (<Cozxmmf.Govqekoj value={fky}></Cozxmmf.Govqekoj>)}
+function Component() { const mfk = class RyzfWxnlz{}; return (<Cownzmm.Provider value={mfk}></Cownzmm.Provider>)}

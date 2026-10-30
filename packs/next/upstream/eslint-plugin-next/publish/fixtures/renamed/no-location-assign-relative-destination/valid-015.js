@@ -1,1 +1,1 @@
-window.location.hcgc = bzguqlljYhg()
+window.location.href = dacgffczGuq()

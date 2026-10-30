@@ -1,8 +1,8 @@
 
-        const ParentComponent = apotnzJynzzAfoey({
-          dicaugiMjfx: "ParentComponent",
-          xdzmzqb: {
-            ltvTsjkdnpoZqomjhDdxxci: function () {
+        const ParentComponent = createReactClass({
+          displayName: "ParentComponent",
+          zkkraua: {
+            getSnapshotBeforeUpdate: function () {
               return null;
             },
           },

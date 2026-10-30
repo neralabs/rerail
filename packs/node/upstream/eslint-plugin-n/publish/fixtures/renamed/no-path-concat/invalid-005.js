@@ -1,1 +1,1 @@
-var path = require("path"); var frnmRvsa = `${__dirname}${path.wux}foo.js`;
+var path = require("path"); var fyaeNmrv = `${__dirname}${path.sep}foo.js`;

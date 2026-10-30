@@ -1,8 +1,8 @@
 
-        var Jkedq = ctuuquJogfkApdbw({
-          cscssbbqcPcnLbmye: function() {
-            wqkhSkuZkvuztIvdmjkjm(bvp);
-            this.wqkhRxor = React.hfxyQJNMgab;
+        var Mikek = createReactClass({
+          componentDidMount: function() {
+            yeldZzuUqujogKapdbwcs(bqc);
+            this.yeldQsbb = React.findDOMNode;
           },
           render: function() {
             return <div>Hello</div>;

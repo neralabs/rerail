@@ -1,3 +1,3 @@
-function n(fol) { if (fol) { 
+function s(err) { if (err) { 
  log();
- abqvgdrz(); return; } }
+ callback(); return; } }

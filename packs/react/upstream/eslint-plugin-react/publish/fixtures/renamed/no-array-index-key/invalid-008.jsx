@@ -1,7 +1,7 @@
 
-        cah.map((dibu, d) => {
-          return React.bjpaxIbwqrgy(vencXeazz, {
-            key: d
+        eja.map((ihib, i) => {
+          return React.cloneElement(tujpAxbwq, {
+            key: i
           })
         })
       

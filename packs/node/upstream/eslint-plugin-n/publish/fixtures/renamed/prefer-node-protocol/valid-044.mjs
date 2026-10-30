@@ -1,1 +1,1 @@
-const jo = process.kycTklNnzznvdGavjoy("eslint-plugin-n");
+const fc = process.getNotBuiltinModule("eslint-plugin-n");

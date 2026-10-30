@@ -1,1 +1,0 @@
-import {foo as foo, dbp as dbp} from 'foo';

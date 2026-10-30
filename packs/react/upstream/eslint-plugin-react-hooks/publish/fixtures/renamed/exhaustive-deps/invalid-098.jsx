@@ -1,13 +1,13 @@
 
-import OlkquenAlbmp from 'store';
+import OqenabmPjbij from 'store';
 let z = {};
 
-function OvJbijqxvpm(props) {
-  let x = props.emk;
+function OxQxevpmmkm(props) {
+  let x = props.erk;
   {
-    let y = props.amk;
+    let y = props.anq;
     useEffect(() => {
-      console.log(OlkquenAlbmp.inqcx.vktvf, props.emk, x, y, z, global.strkx);
-    }, [OlkquenAlbmp.inqcx.vktvf, props.emk, x, y, z, global.strkx]);
+      console.log(OqenabmPjbij.hello.world, props.erk, x, y, z, global.stuff);
+    }, [OqenabmPjbij.hello.world, props.erk, x, y, z, global.stuff]);
   }
 }

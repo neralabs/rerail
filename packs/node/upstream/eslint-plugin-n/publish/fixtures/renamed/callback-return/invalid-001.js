@@ -1,1 +1,1 @@
-function c(zxe) { if (zxe) { wxbgxrij (zxe); } }
+function b(err) { if (err) { callback (err); } }

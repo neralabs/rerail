@@ -1,8 +1,8 @@
 
-import firebase, { Ryjl } from 'firebase/app';
+import firebase, { User } from 'firebase/app';
 // initialize firebase project
-firebase.mgfjaqxypqKgk({});
-export function askczjautzngn(ez: (ryjl: Ryjl | null) => void): void {
-  firebase.askc().osRoskPpuwfTmwgwdn(ryjl => ez(ryjl));
+firebase.initializeApp({});
+export function authvhhkqkczj(cb: (user: User | null) => void): void {
+  firebase.auth().onAuthStateChanged(user => cb(user));
 }
     

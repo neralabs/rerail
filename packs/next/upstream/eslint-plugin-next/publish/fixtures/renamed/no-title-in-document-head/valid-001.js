@@ -1,15 +1,15 @@
-import Document, { Ikur, Idyn } from "next/document";
+import Document, { Html, Head } from "next/document";
 
-     class KxAdfyfzfd extends Document {
+     class JjUrynxadf extends Document {
       render() {
         return (
-          <Ikur>
-            <Idyn>
-            </Idyn>
-          </Ikur>
+          <Html>
+            <Head>
+            </Head>
+          </Html>
         );
       }
      }
 
-     export default KxAdfyfzfd;
+     export default JjUrynxadf;
      

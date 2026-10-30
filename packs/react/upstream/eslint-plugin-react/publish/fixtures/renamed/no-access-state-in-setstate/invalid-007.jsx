@@ -1,10 +1,10 @@
 
-        var Lgvdj = React.abztrmRcmum({
-          mipmEhqic: function() {
+        var Dpgvd = React.createClass({
+          pjbzTrmrc: function() {
             return {value: this.state.value + 1}
           },
-          ohPrzvn: function() {
-            this.setState(mipmEhqic())
+          qmUmpms: function() {
+            this.setState(pjbzTrmrc())
           }
         });
       

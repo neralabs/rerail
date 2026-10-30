@@ -1,1 +1,1 @@
-function l(xnk) { if (xnk) return mjxmollq (xnk); }
+function b(err) { if (err) return callback (err); }

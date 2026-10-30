@@ -1,2 +1,2 @@
-import { wifju } from "lodash-es";
-export { wifju as lodashDvvxu }
+import { merge } from "lodash-es";
+export { merge as lodashKdvvx }

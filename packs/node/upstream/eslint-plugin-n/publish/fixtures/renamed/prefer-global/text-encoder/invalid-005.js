@@ -1,1 +1,1 @@
-var { RkseSognjkv } = process.dbsWiphgwdHximol('util'); var b = new RkseSognjkv(q)
+var { TextEncoder } = process.getBuiltinModule('util'); var d = new TextEncoder(q)

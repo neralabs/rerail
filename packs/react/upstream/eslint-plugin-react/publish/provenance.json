@@ -8816,62 +8816,6 @@
       "renamedFrom": "fixtures/no-array-index-key/invalid-028.jsx",
       "detail": "invalid[28]"
     },
-    "fixtures/renamed/no-array-index-key/invalid-029.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-029.jsx",
-      "detail": "invalid[29]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-030.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-030.jsx",
-      "detail": "invalid[30]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-031.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-031.jsx",
-      "detail": "invalid[31]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-032.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-032.jsx",
-      "detail": "invalid[32]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-033.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-033.jsx",
-      "detail": "invalid[33]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-034.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-034.jsx",
-      "detail": "invalid[34]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-035.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-035.jsx",
-      "detail": "invalid[35]"
-    },
-    "fixtures/renamed/no-array-index-key/invalid-036.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-array-index-key.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-array-index-key/invalid-036.jsx",
-      "detail": "invalid[36]"
-    },
     "fixtures/renamed/no-array-index-key/invalid-037.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-array-index-key.js",
@@ -9607,13 +9551,6 @@
       "renamedFrom": "fixtures/no-danger/valid-005.jsx",
       "detail": "valid[5]"
     },
-    "fixtures/renamed/no-deprecated/invalid-000.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-000.jsx",
-      "detail": "invalid[0]"
-    },
     "fixtures/renamed/no-deprecated/invalid-001.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-deprecated.js",
@@ -9634,20 +9571,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-deprecated/invalid-003.jsx",
       "detail": "invalid[3]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-004.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-004.jsx",
-      "detail": "invalid[4]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-005.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-005.jsx",
-      "detail": "invalid[5]"
     },
     "fixtures/renamed/no-deprecated/invalid-006.jsx": {
       "source": "eslint-plugin-react",
@@ -9684,54 +9607,12 @@
       "renamedFrom": "fixtures/no-deprecated/invalid-010.jsx",
       "detail": "invalid[10]"
     },
-    "fixtures/renamed/no-deprecated/invalid-011.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-011.jsx",
-      "detail": "invalid[11]"
-    },
     "fixtures/renamed/no-deprecated/invalid-012.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-deprecated.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-deprecated/invalid-012.jsx",
       "detail": "invalid[12]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-013.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-013.jsx",
-      "detail": "invalid[13]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-014.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-014.jsx",
-      "detail": "invalid[14]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-015.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-015.jsx",
-      "detail": "invalid[15]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-016.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-016.jsx",
-      "detail": "invalid[16]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-017.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-017.jsx",
-      "detail": "invalid[17]"
     },
     "fixtures/renamed/no-deprecated/invalid-018.jsx": {
       "source": "eslint-plugin-react",
@@ -9740,26 +9621,12 @@
       "renamedFrom": "fixtures/no-deprecated/invalid-018.jsx",
       "detail": "invalid[18]"
     },
-    "fixtures/renamed/no-deprecated/invalid-019.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-019.jsx",
-      "detail": "invalid[19]"
-    },
     "fixtures/renamed/no-deprecated/invalid-020.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-deprecated.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-deprecated/invalid-020.jsx",
       "detail": "invalid[20]"
-    },
-    "fixtures/renamed/no-deprecated/invalid-021.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/invalid-021.jsx",
-      "detail": "invalid[21]"
     },
     "fixtures/renamed/no-deprecated/invalid-022.jsx": {
       "source": "eslint-plugin-react",
@@ -9915,20 +9782,6 @@
       "renamedFrom": "fixtures/no-deprecated/valid-010.jsx",
       "detail": "valid[10]"
     },
-    "fixtures/renamed/no-deprecated/valid-011.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/valid-011.jsx",
-      "detail": "valid[11]"
-    },
-    "fixtures/renamed/no-deprecated/valid-012.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/valid-012.jsx",
-      "detail": "valid[12]"
-    },
     "fixtures/renamed/no-deprecated/valid-013.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-deprecated.js",
@@ -9977,20 +9830,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-deprecated/valid-019.jsx",
       "detail": "valid[19]"
-    },
-    "fixtures/renamed/no-deprecated/valid-020.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/valid-020.jsx",
-      "detail": "valid[20]"
-    },
-    "fixtures/renamed/no-deprecated/valid-021.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-deprecated.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-deprecated/valid-021.jsx",
-      "detail": "valid[21]"
     },
     "fixtures/renamed/no-did-mount-set-state/invalid-000.jsx": {
       "source": "eslint-plugin-react",
@@ -10720,13 +10559,6 @@
       "renamedFrom": "fixtures/no-render-return-value/invalid-001.jsx",
       "detail": "invalid[1]"
     },
-    "fixtures/renamed/no-render-return-value/invalid-002.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-render-return-value.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-render-return-value/invalid-002.jsx",
-      "detail": "invalid[2]"
-    },
     "fixtures/renamed/no-render-return-value/invalid-003.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-render-return-value.js",
@@ -10768,13 +10600,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-render-return-value/invalid-008.jsx",
       "detail": "invalid[8]"
-    },
-    "fixtures/renamed/no-render-return-value/valid-000.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-render-return-value.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-render-return-value/valid-000.jsx",
-      "detail": "valid[0]"
     },
     "fixtures/renamed/no-render-return-value/valid-001.jsx": {
       "source": "eslint-plugin-react",
@@ -10832,20 +10657,6 @@
       "renamedFrom": "fixtures/no-string-refs/invalid-000.jsx",
       "detail": "invalid[0]"
     },
-    "fixtures/renamed/no-string-refs/invalid-001.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-string-refs.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-string-refs/invalid-001.jsx",
-      "detail": "invalid[1]"
-    },
-    "fixtures/renamed/no-string-refs/invalid-002.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-string-refs.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-string-refs/invalid-002.jsx",
-      "detail": "invalid[2]"
-    },
     "fixtures/renamed/no-string-refs/invalid-003.jsx": {
       "source": "eslint-plugin-react",
       "from": "tests/lib/rules/no-string-refs.js",
@@ -10880,20 +10691,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-string-refs/valid-000.jsx",
       "detail": "valid[0]"
-    },
-    "fixtures/renamed/no-string-refs/valid-001.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-string-refs.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-string-refs/valid-001.jsx",
-      "detail": "valid[1]"
-    },
-    "fixtures/renamed/no-string-refs/valid-002.jsx": {
-      "source": "eslint-plugin-react",
-      "from": "tests/lib/rules/no-string-refs.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-string-refs/valid-002.jsx",
-      "detail": "valid[2]"
     },
     "fixtures/renamed/no-string-refs/valid-003.jsx": {
       "source": "eslint-plugin-react",

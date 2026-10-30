@@ -1,1 +1,1 @@
-kyosqhqt(ssnnhbdw, qiob)
+callback(mcyosqhq, itsi)

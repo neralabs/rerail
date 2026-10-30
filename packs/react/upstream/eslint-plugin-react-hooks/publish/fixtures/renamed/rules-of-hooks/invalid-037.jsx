@@ -1,6 +1,6 @@
 
 // This is invalid because "use"-prefixed functions used in named
 // functions are assumed to be hooks.
-React.urtstssKvdlgchh(function qiqQSjemytnpe(iah, gls) {
-  useProbablyAHook(gls)
+React.unknownFunction(function qbsTSskvdlgch(ihi, gqq) {
+  useProbablyAHook(gqq)
 });

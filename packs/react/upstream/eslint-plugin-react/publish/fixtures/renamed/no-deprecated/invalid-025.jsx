@@ -1,7 +1,7 @@
 
-        class Ksi extends React.Component {
-          componentLvffGvksy() {}
-          componentLvffJxvcnisJpeyn() {}
-          componentLvffYzftxs() {}
+        class Klv extends React.Component {
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         }
       

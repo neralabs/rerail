@@ -1,1 +1,1 @@
-const fk = process.lcsSxhDzkigkaVzgyvi();
+const cw = process.getNotBuiltinModule();

@@ -1,1 +1,1 @@
-ofkizuoq(b ? k : o, ubam)
+callback(a ? b : c, uoqb)

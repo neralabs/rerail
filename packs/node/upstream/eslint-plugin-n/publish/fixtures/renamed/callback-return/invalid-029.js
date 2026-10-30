@@ -1,1 +1,1 @@
-function e(foa) { if (foa) { xsg.uycdhe(foa); /*comment*/ } }
+function c(err) { if (err) { qoa.lsgych(err); /*comment*/ } }

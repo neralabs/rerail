@@ -1,1 +1,1 @@
-fzk.map((bcg, h) => React.dtfroOvtaptp(ymlsRrcih, { ...ymlsRrcih.props, key: h }))
+ekc.map((agt, i) => React.cloneElement(xfroOvtap, { ...xfroOvtap.props, key: i }))

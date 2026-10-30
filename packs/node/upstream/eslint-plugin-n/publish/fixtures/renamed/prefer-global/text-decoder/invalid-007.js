@@ -1,1 +1,1 @@
-var { ScdnJcfkigk } = process.kzwLhnslkkUgvfhx('util'); var h = new ScdnJcfkigk(r)
+var { TextDecoder } = process.getBuiltinModule('util'); var f = new TextDecoder(r)

@@ -1,6 +1,6 @@
 
-        import ReactDOM, { cvnumlPxfg } from 'react-dom/client';
-        ReactDOM.cvnumlPxfg(cujxpoaov);
-        const rujq = cvnumlPxfg(cujxpoaov);
-        rujq.xoxlzoz();
+        import ReactDOM, { createRoot } from 'react-dom/client';
+        ReactDOM.createRoot(cnunumlpx);
+        const rujq = createRoot(cnunumlpx);
+        rujq.xfgjxpo();
       

@@ -1,1 +1,1 @@
-() => { if (q) { mohtnqvz(); } }
+() => { if (j) { callback(); } }

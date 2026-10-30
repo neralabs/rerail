@@ -1,1 +1,1 @@
-ddpughunv.findLastIndex(function (dv) { return dv(this.eval); }, this);
+caughunvf.findLastIndex(function (cb) { return cb(this.eval); }, this);

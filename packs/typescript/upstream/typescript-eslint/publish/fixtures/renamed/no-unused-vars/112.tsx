@@ -1,7 +1,7 @@
 
-import { g } from 'some-other-jsx-lib';
+import { h } from 'some-other-jsx-lib';
 
-export const BzlgnaigmRtk: g.FF = () => {
+export const BlgnaigmrTkf: h.GR = () => {
   return <div>Foo Foo</div>;
 };
       

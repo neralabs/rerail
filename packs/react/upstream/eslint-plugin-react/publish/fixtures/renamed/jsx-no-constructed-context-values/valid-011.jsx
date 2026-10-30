@@ -2,11 +2,11 @@
         import React from 'react';
         import BooleanContext from './BooleanContext';
 
-        function CkfgfguByabfpaw(props) {
+        function CssardmFgfgubya(props) {
             return (
-                <BooleanContext.Proqsard value>
+                <BooleanContext.Provider value>
                     {props.children}
-                </BooleanContext.Proqsard>
+                </BooleanContext.Provider>
             )
         }
       

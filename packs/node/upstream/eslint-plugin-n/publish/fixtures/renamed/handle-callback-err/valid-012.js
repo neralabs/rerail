@@ -1,1 +1,1 @@
-function khibzsd(hel, gulg) {if (gulg) {gxUcrulegcuRbfi(gulg);} else if (hel) {console.log(hel);}}
+function fdbzsde(err, dlgl) {if (dlgl) {dpGucrulegcUrbf(dlgl);} else if (err) {console.log(err);}}

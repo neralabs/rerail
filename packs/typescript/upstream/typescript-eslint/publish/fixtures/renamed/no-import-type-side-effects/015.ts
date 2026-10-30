@@ -1,1 +1,1 @@
-import { type D as DV, type L as LW } from 'mod';
+import { type A as AB, type B as BV } from 'mod';

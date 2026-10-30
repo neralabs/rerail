@@ -1,1 +1,0 @@
-var {mjjdgaVspbd} = require('react');

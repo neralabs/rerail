@@ -1,9 +1,9 @@
 
-import { type Ede } from 'bar';
+import { type Foo } from 'bar';
 
 declare module 'baz' {
-  export interface Ede {
-    f: string;
+  export interface Foo {
+    m: string;
   }
 }
       

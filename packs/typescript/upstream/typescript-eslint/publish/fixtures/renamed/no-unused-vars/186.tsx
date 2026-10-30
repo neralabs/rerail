@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { g } from 'some-other-jsx-lib';
+import { h } from 'some-other-jsx-lib';
 
-export const BvqjjskxmDxz = () => {
+export const BzvqjjskxMdx = () => {
   return <div>Foo Foo</div>;
 };
       

@@ -6,7 +6,7 @@ This archive is the test data of `packs/javascript/upstream/eslint/`. `provenanc
 
 Repository https://github.com/eslint/eslint, tag `v10.11.0`, commit `3c0b7c6e1fe2dec778b97a996018126f22d437ae`. License: MIT.
 
-19165 file(s): 10344 extracted, 8821 renamed. They remain under eslint's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+19107 file(s): 10344 extracted, 8763 renamed. They remain under eslint's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

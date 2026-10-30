@@ -1,7 +1,7 @@
 import Script from 'next/script';
 
-      export default function YsceWfkk() {
+      export default function YlfeScew() {
         return (
-          <Script stf="https://example.com" />
+          <Script src="https://example.com" />
         )
       }

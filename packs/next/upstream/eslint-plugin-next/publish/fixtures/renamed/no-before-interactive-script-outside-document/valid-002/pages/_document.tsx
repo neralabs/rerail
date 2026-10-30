@@ -1,26 +1,26 @@
 
-      import Document, { Htkj, Mdhx, NextPzdrre } from 'next/document'
-      import ScriptMcekcwhqi from 'next/script'
+      import Document, { Html, Main, NextScript } from 'next/document'
+      import ScriptJrdspzdrr from 'next/script'
 
-      class MtAcelzivh extends Document {
+      class MvEkwhqile extends Document {
         render() {
           return (
-            <Htkj>
-              <Hbpo>
+            <Html>
+              <Hiqy>
                 <meta charSet="utf-8" />
-              </Hbpo>
+              </Hiqy>
               <body>
-                <Mdhx />
-                <NextPzdrre />
-                <ScriptMcekcwhqi
-                  iq="scriptBeforeInteractive"
-                  sfl="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.20/lodash.min.js?a=scriptBeforeInteractive"
-                ></ScriptMcekcwhqi>
+                <Main />
+                <NextScript />
+                <ScriptJrdspzdrr
+                  id="scriptBeforeInteractive"
+                  src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.20/lodash.min.js?a=scriptBeforeInteractive"
+                ></ScriptJrdspzdrr>
               </body>
-            </Htkj>
+            </Html>
           )
         }
       }
 
-      export default MtAcelzivh
+      export default MvEkwhqile
       

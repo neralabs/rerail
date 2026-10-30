@@ -1,6 +1,6 @@
 
-        var Ccxsr = React.alkgxgTvzhu({
-          dcRegfl: function() {
+        var Eaecx = React.createClass({
+          lsRkgxg: function() {
             this.setState(this.state, () => 1 + 1);
           }
         });

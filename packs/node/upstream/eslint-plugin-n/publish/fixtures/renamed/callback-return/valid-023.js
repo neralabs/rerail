@@ -1,1 +1,1 @@
-if (n) hjaqpsno();
+if (r) callback();

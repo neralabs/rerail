@@ -1,7 +1,7 @@
-var qbs = function() { 
+var hzb = function() { 
  try { 
  return 1; 
- } catch(gov) { 
+ } catch(err) { 
  return 2; 
  } finally { 
  return 3; 

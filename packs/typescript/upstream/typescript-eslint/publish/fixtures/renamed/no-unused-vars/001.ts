@@ -1,5 +1,5 @@
 
-import { AtsxtKldlujgwyMxjfxqn } from 'decorators';
-@AtsxtKldlujgwyMxjfxqn()
-export class Ukn {}
+import { ClassDecoratorFactory } from 'decorators';
+@ClassDecoratorFactory()
+export class Wyt {}
     

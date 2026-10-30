@@ -1,1 +1,1 @@
-function g(ltp) { jpurokbl (ltp); jpurokbl(); }
+function b(err) { callback (err); callback(); }

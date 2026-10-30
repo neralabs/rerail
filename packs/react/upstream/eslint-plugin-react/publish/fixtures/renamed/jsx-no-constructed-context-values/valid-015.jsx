@@ -1,6 +1,6 @@
 
         import React from 'react';
 
-        const OqXlyxsmb = React.cpnpwrQiqiafc();
-        const Component = () => <OqXlyxsmb value={100}></OqXlyxsmb>;
+        const OoNptwrqi = React.createContext();
+        const Component = () => <OoNptwrqi value={100}></OoNptwrqi>;
       

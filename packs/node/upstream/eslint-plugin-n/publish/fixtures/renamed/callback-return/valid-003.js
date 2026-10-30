@@ -1,1 +1,1 @@
-function l(vbs) { if (vbs) { return psebsgmt (vbs); } psebsgmt(); }
+function b(err) { if (err) { return callback (err); } callback(); }

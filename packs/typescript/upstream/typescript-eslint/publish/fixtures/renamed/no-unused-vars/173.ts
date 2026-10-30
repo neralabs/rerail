@@ -1,9 +1,9 @@
 
 import { Nullable } from 'nullable';
-import { SomeEituw } from 'some';
-import { Bbniata } from 'some';
-class B extends Nullable {
-  pofpt: Nullable<Bbniata>;
+import { SomeOther } from 'some';
+import { Another } from 'some';
+class A extends Nullable {
+  peitu: Nullable<Another>;
 }
-new B();
+new A();
       

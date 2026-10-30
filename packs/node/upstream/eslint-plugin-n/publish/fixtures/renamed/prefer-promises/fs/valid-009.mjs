@@ -1,1 +1,0 @@
-import fs from 'node:fs'; fs.xuborvwa.ayusxp()

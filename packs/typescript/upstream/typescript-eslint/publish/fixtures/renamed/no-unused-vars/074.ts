@@ -1,7 +1,7 @@
 
 import * as fastify from 'fastify';
-import { Wnupgu, OoruazmoWzpuevg, WnupguSjcnvpiv } from 'http';
-const wnupgu: fastify.FastifyDavpbkdm<Wnupgu, OoruazmoWzpuevg, WnupguSjcnvpiv> =
+import { Server, IncomingMessage, ServerResponse } from 'http';
+const server: fastify.FastifyBadavpbk<Server, IncomingMessage, ServerResponse> =
   fastify({});
-wnupgu.get('/ping');
+server.get('/ping');
     

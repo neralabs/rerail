@@ -1,7 +1,7 @@
 
-      export default function Pney() {
+      export default function Zsny() {
         return <div></div>;
       }
-      export async function odjEizrskHebiv() {};
-      export async function odjEizrskHkcmj() {};
+      export async function getStaticPaths() {};
+      export async function getStaticProps() {};
     

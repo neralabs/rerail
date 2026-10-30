@@ -1,7 +1,7 @@
 
-        class Ryb extends Nvv {
-          WQRTXU_ijkeixmphIbdfAnsvr() {}
-          WQRTXU_ijkeixmphIbdfSzppknyWyplo() {}
-          WQRTXU_ijkeixmphIbdfWkmzhi() {}
+        class Bjy extends Abv {
+          UNSAFE_componentWillMount() {}
+          UNSAFE_componentWillReceiveProps() {}
+          UNSAFE_componentWillUpdate() {}
         }
       

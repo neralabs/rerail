@@ -1,21 +1,21 @@
 
-        import React, { GU, useRef, useState } from 'react';
+        import React, { FC, useRef, useState } from 'react';
 
         import './ResourceVideo.sass';
         import VimeoVideoPlayInModal from '../vimeoVideoPlayInModal/VimeoVideoPlayInModal';
 
-        type Odtco = {
-          videoXis: string;
-          videoNndki: string;
+        type Qtcov = {
+          videoInd: string;
+          videoHkiud: string;
         };
-        const ResourceVideo: GU<Odtco> = ({
-          videoXis,
-          videoNndki,
-        }: Odtco): JVF.Fkywfel => {
+        const ResourceVideo: FC<Qtcov> = ({
+          videoInd,
+          videoHkiud,
+        }: Qtcov): IFK.Eywflsg => {
           return (
             <div className="resource-video">
-              <VimeoVideoPlayInModal videoXis={videoXis} />
-              <h3>{videoNndki}</h3>
+              <VimeoVideoPlayInModal videoInd={videoInd} />
+              <h3>{videoHkiud}</h3>
             </div>
           );
         };

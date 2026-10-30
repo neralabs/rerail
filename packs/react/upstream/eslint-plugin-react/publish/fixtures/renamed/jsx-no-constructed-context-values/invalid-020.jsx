@@ -1,9 +1,9 @@
 
         import React from 'react';
 
-        const Coxsbqx = React.cwiknvOdulplr();
+        const Cotksbq = React.createContext();
         function Component() {
-          function eze() {};
-          return (<Coxsbqx value={eze}></Coxsbqx>)
+          function exi() {};
+          return (<Cotksbq value={exi}></Cotksbq>)
         }
       

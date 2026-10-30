@@ -1,1 +1,1 @@
-var { TgzqXxtgiuu } = require('node:util'); var c = new TgzqXxtgiuu(s)
+var { TextDecoder } = require('node:util'); var c = new TextDecoder(s)

@@ -1,1 +1,1 @@
-location.bnqm = `/users/${hj}`
+location.href = `/users/${kq}`

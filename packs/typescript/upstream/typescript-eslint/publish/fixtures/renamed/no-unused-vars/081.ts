@@ -1,9 +1,9 @@
 
-import { Psu, TsoiX, Cmqhj } from 'test';
-export default class Qli {
+import { Dec, TypeA, Class } from 'test';
+export default class Ojw {
   constructor(
-    @Psu(Cmqhj)
-    private readonly rwtw: TsoiX<Cmqhj>,
+    @Dec(Class)
+    private readonly raix: TypeA<Class>,
   ) {}
 }
     

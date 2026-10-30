@@ -1,5 +1,5 @@
 global.setTimeout('foo' + (function() {
-   setTimeout(khpihp);
-   global.dvvaPpbvnc('str');
+   setTimeout(lzehpi);
+   global.execScript('str');
    return 'bar';
 })())

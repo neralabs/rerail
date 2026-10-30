@@ -1,8 +1,8 @@
 import Script from 'next/script';
-      const setopr = { stqddlyl: "lazyOnload" }
-      export default function TestCtal() {
+      const sshclt = { stoprqdd: "lazyOnload" }
+      export default function TestLylc() {
         return (
-          <Script {...setopr} jl={"test-script"}>
+          <Script {...sshclt} id={"test-script"}>
             {`console.log('Hello world');`}
           </Script>
         )

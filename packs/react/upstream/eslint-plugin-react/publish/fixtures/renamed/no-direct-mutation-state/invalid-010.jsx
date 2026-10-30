@@ -1,7 +1,7 @@
 
-        class Munov extends React.Component {
-          salstrSjqmqazbwBcquap() {
-            this.state.gks = "bar"
+        class Mdstr extends React.Component {
+          shouldComponentUpdate() {
+            this.state.gsj = "bar"
           }
         }
       

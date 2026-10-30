@@ -55255,18 +55255,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/id-length/015.js"
     },
-    "fixtures/renamed/id-length/016.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/id-length.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/id-length/016.js"
-    },
-    "fixtures/renamed/id-length/017.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/id-length.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/id-length/017.js"
-    },
     "fixtures/renamed/id-length/018.js": {
       "source": "eslint",
       "from": "tests/lib/rules/id-length.js",
@@ -55405,29 +55393,11 @@
       "how": "renamed",
       "renamedFrom": "fixtures/id-length/040.js"
     },
-    "fixtures/renamed/id-length/041.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/id-length.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/id-length/041.js"
-    },
-    "fixtures/renamed/id-length/042.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/id-length.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/id-length/042.js"
-    },
     "fixtures/renamed/id-length/044.js": {
       "source": "eslint",
       "from": "tests/lib/rules/id-length.js",
       "how": "renamed",
       "renamedFrom": "fixtures/id-length/044.js"
-    },
-    "fixtures/renamed/id-length/045.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/id-length.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/id-length/045.js"
     },
     "fixtures/renamed/id-length/046.js": {
       "source": "eslint",
@@ -60205,18 +60175,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-case/029.js"
     },
-    "fixtures/renamed/no-duplicate-imports/002.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/002.js"
-    },
-    "fixtures/renamed/no-duplicate-imports/003.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/003.js"
-    },
     "fixtures/renamed/no-duplicate-imports/004.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-duplicate-imports.js",
@@ -60265,12 +60223,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/015.js"
     },
-    "fixtures/renamed/no-duplicate-imports/016.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/016.js"
-    },
     "fixtures/renamed/no-duplicate-imports/017.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-duplicate-imports.js",
@@ -60282,18 +60234,6 @@
       "from": "tests/lib/rules/no-duplicate-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/019.js"
-    },
-    "fixtures/renamed/no-duplicate-imports/021.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/021.js"
-    },
-    "fixtures/renamed/no-duplicate-imports/022.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/022.js"
     },
     "fixtures/renamed/no-duplicate-imports/023.js": {
       "source": "eslint",
@@ -60324,18 +60264,6 @@
       "from": "tests/lib/rules/no-duplicate-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/029.js"
-    },
-    "fixtures/renamed/no-duplicate-imports/034.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/034.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/035.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/035.ts"
     },
     "fixtures/renamed/no-duplicate-imports/036.ts": {
       "source": "eslint",
@@ -60373,12 +60301,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/041.ts"
     },
-    "fixtures/renamed/no-duplicate-imports/042.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/042.ts"
-    },
     "fixtures/renamed/no-duplicate-imports/045.ts": {
       "source": "eslint",
       "from": "tests/lib/rules/no-duplicate-imports.js",
@@ -60397,12 +60319,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/048.ts"
     },
-    "fixtures/renamed/no-duplicate-imports/049.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/049.ts"
-    },
     "fixtures/renamed/no-duplicate-imports/050.ts": {
       "source": "eslint",
       "from": "tests/lib/rules/no-duplicate-imports.js",
@@ -60414,24 +60330,6 @@
       "from": "tests/lib/rules/no-duplicate-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/052.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/053.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/053.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/054.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/054.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/055.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/055.ts"
     },
     "fixtures/renamed/no-duplicate-imports/056.ts": {
       "source": "eslint",
@@ -60462,24 +60360,6 @@
       "from": "tests/lib/rules/no-duplicate-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/060.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/062.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/062.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/063.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/063.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/064.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/064.ts"
     },
     "fixtures/renamed/no-duplicate-imports/065.ts": {
       "source": "eslint",
@@ -60522,24 +60402,6 @@
       "from": "tests/lib/rules/no-duplicate-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-duplicate-imports/072.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/075.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/075.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/076.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/076.ts"
-    },
-    "fixtures/renamed/no-duplicate-imports/077.ts": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-duplicate-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-duplicate-imports/077.ts"
     },
     "fixtures/renamed/no-duplicate-imports/078.ts": {
       "source": "eslint",
@@ -74989,24 +74851,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-eval/001.js"
     },
-    "fixtures/renamed/no-eval/008.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-eval/008.js"
-    },
-    "fixtures/renamed/no-eval/011.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-eval/011.js"
-    },
-    "fixtures/renamed/no-eval/015.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-eval/015.js"
-    },
     "fixtures/renamed/no-eval/017.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-eval.js",
@@ -75829,24 +75673,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-implied-eval/103.js"
     },
-    "fixtures/renamed/no-implied-eval/106.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/106.js"
-    },
-    "fixtures/renamed/no-implied-eval/114.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/114.js"
-    },
-    "fixtures/renamed/no-implied-eval/124.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/124.js"
-    },
     "fixtures/renamed/no-implied-eval/125.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-implied-eval.js",
@@ -75949,24 +75775,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-implied-eval/146.js"
     },
-    "fixtures/renamed/no-implied-eval/149.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/149.js"
-    },
-    "fixtures/renamed/no-implied-eval/150.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/150.js"
-    },
-    "fixtures/renamed/no-implied-eval/153.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/153.js"
-    },
     "fixtures/renamed/no-implied-eval/161.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-implied-eval.js",
@@ -75996,18 +75804,6 @@
       "from": "tests/lib/rules/no-implied-eval.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-implied-eval/165.js"
-    },
-    "fixtures/renamed/no-implied-eval/170.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/170.js"
-    },
-    "fixtures/renamed/no-implied-eval/171.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-implied-eval.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-implied-eval/171.js"
     },
     "fixtures/renamed/no-inline-comments/001.jsx": {
       "source": "eslint",
@@ -78859,12 +78655,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-obj-calls/020.js"
     },
-    "fixtures/renamed/no-obj-calls/021.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-obj-calls.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-obj-calls/021.js"
-    },
     "fixtures/renamed/no-obj-calls/022.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-obj-calls.js",
@@ -79170,12 +78960,6 @@
       "from": "tests/lib/rules/no-obj-calls.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-obj-calls/098.js"
-    },
-    "fixtures/renamed/no-obj-calls/099.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-obj-calls.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-obj-calls/099.js"
     },
     "fixtures/renamed/no-obj-calls/100.js": {
       "source": "eslint",
@@ -86377,12 +86161,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-unused-vars/109.js"
     },
-    "fixtures/renamed/no-unused-vars/110.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-unused-vars.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-unused-vars/110.js"
-    },
     "fixtures/renamed/no-unused-vars/112.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-unused-vars.js",
@@ -87018,12 +86796,6 @@
       "from": "tests/lib/rules/no-unused-vars.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-unused-vars/232.js"
-    },
-    "fixtures/renamed/no-unused-vars/234.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-unused-vars.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-unused-vars/234.js"
     },
     "fixtures/renamed/no-unused-vars/235.js": {
       "source": "eslint",
@@ -87906,24 +87678,6 @@
       "from": "tests/lib/rules/no-unused-vars.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-unused-vars/386.js"
-    },
-    "fixtures/renamed/no-unused-vars/387.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-unused-vars.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-unused-vars/387.js"
-    },
-    "fixtures/renamed/no-unused-vars/388.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-unused-vars.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-unused-vars/388.js"
-    },
-    "fixtures/renamed/no-unused-vars/389.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-unused-vars.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-unused-vars/389.js"
     },
     "fixtures/renamed/no-unused-vars/390.js": {
       "source": "eslint",
@@ -89491,12 +89245,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/no-useless-rename/048.js"
     },
-    "fixtures/renamed/no-useless-rename/049.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-useless-rename.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-useless-rename/049.js"
-    },
     "fixtures/renamed/no-useless-rename/050.js": {
       "source": "eslint",
       "from": "tests/lib/rules/no-useless-rename.js",
@@ -89916,18 +89664,6 @@
       "from": "tests/lib/rules/no-useless-rename.js",
       "how": "renamed",
       "renamedFrom": "fixtures/no-useless-rename/136.js"
-    },
-    "fixtures/renamed/no-useless-rename/138.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-useless-rename.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-useless-rename/138.js"
-    },
-    "fixtures/renamed/no-useless-rename/144.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/no-useless-rename.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/no-useless-rename/144.js"
     },
     "fixtures/renamed/no-useless-rename/145.js": {
       "source": "eslint",
@@ -96505,47 +96241,11 @@
       "how": "renamed",
       "renamedFrom": "fixtures/sort-imports/001.js"
     },
-    "fixtures/renamed/sort-imports/004.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/004.js"
-    },
-    "fixtures/renamed/sort-imports/005.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/005.js"
-    },
-    "fixtures/renamed/sort-imports/006.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/006.js"
-    },
     "fixtures/renamed/sort-imports/009.js": {
       "source": "eslint",
       "from": "tests/lib/rules/sort-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/sort-imports/009.js"
-    },
-    "fixtures/renamed/sort-imports/013.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/013.js"
-    },
-    "fixtures/renamed/sort-imports/014.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/014.js"
-    },
-    "fixtures/renamed/sort-imports/015.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/015.js"
     },
     "fixtures/renamed/sort-imports/017.js": {
       "source": "eslint",
@@ -96558,54 +96258,6 @@
       "from": "tests/lib/rules/sort-imports.js",
       "how": "renamed",
       "renamedFrom": "fixtures/sort-imports/026.js"
-    },
-    "fixtures/renamed/sort-imports/033.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/033.js"
-    },
-    "fixtures/renamed/sort-imports/035.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/035.js"
-    },
-    "fixtures/renamed/sort-imports/039.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/039.js"
-    },
-    "fixtures/renamed/sort-imports/040.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/040.js"
-    },
-    "fixtures/renamed/sort-imports/041.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/041.js"
-    },
-    "fixtures/renamed/sort-imports/042.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/042.js"
-    },
-    "fixtures/renamed/sort-imports/043.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/043.js"
-    },
-    "fixtures/renamed/sort-imports/044.js": {
-      "source": "eslint",
-      "from": "tests/lib/rules/sort-imports.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/sort-imports/044.js"
     },
     "fixtures/renamed/sort-imports/045.js": {
       "source": "eslint",

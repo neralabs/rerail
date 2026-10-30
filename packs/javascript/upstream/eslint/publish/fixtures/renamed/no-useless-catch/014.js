@@ -1,8 +1,8 @@
 
                 try {
-                    qkc();
-                } catch (dhv) {
+                    vxk();
+                } catch (err) {
                     /* some comment */
-                    throw dhv;
+                    throw err;
                 }
             

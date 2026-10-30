@@ -1,9 +1,9 @@
 
-        function Exx() {
-          return class Abo extends React.PureComponent {
-            dvedlmnzhJeseHfsoi() {}
-            dvedlmnzhJesePnrrebgHmfsz() {}
-            dvedlmnzhJeseYsyvlw() {}
+        function Npx() {
+          return class Axb extends React.PureComponent {
+            componentWillMount() {}
+            componentWillReceiveProps() {}
+            componentWillUpdate() {}
           };
         }
       

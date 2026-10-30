@@ -1,9 +1,9 @@
 
-import { TestYttaulo, Test } from 'fake-module';
+import { TestGeneric, Test } from 'fake-module';
 
-declare function avfx(..._metia: any): any;
-export class TestRmqhr {
-  @avfx
-  public test(): TestYttaulo<Test> {}
+declare function alom(..._qhvfx: any): any;
+export class TestBttau {
+  @alom
+  public test(): TestGeneric<Test> {}
 }
       

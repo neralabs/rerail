@@ -1,8 +1,8 @@
 
-import { CpcxkxbnalfIkoloiskpLqbkuixnb } from 'decorators';
-export class Yra {
-  constructor(@CpcxkxbnalfIkoloiskpLqbkuixnb aml) {
-    this.aml = aml;
+import { ConstructorParameterDecorator } from 'decorators';
+export class Rcx {
+  constructor(@ConstructorParameterDecorator akx) {
+    this.akx = akx;
   }
 }
     

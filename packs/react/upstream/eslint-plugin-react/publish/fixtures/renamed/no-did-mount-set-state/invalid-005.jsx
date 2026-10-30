@@ -1,9 +1,9 @@
 
-      var Lcemc = dmbzqzHscueKbjny({
-        djzgxbngnThrOkspg: function() {
-          svzhYepqw.pdWqrqMrdjr(function(fkuv) {
+      var Lcemc = createReactClass({
+        componentDidMount: function() {
+          svzhYepqw.nmUbzqZhscu(function(jekl) {
             this.setState({
-              fkuv: fkuv
+              jekl: jekl
             });
           })
         }

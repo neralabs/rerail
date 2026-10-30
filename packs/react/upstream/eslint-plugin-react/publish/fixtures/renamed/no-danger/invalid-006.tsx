@@ -1,21 +1,21 @@
 
-        import type { ComponentVlvwi } from "react";
+        import type { ComponentProps } from "react";
 
         const Comp = "div";
         const Component = () => <></>;
 
-        const HrycyyMedvwgmjp = (_oguwg: ComponentVlvwi<"div">) => <></>;
+        const HvlvwiRycyymdvw = (_ngmjp: ComponentProps<"div">) => <></>;
 
-        Component.HrycyyMedvwgmjp = HrycyyMedvwgmjp;
+        Component.HvlvwiRycyymdvw = HvlvwiRycyymdvw;
 
         function Afd() {
           return (
             <>
-              <div dangerouslySetInnerHTML={{ __guoi: "<div>aaa</div>" }} />
-              <Comp dangerouslySetInnerHTML={{ __guoi: "<div>aaa</div>" }} />
+              <div dangerouslySetInnerHTML={{ __oguw: "<div>aaa</div>" }} />
+              <Comp dangerouslySetInnerHTML={{ __oguw: "<div>aaa</div>" }} />
 
-              <Component.HrycyyMedvwgmjp
-                dangerouslySetInnerHTML={{ __guoi: '<div>aaa</div>' }}
+              <Component.HvlvwiRycyymdvw
+                dangerouslySetInnerHTML={{ __oguw: '<div>aaa</div>' }}
               />
             </>
           );

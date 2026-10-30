@@ -304,13 +304,6 @@
    "renamed/no-img-element/invalid-000.js",
    "renamed/no-img-element/invalid-001.js",
    "renamed/no-img-element/invalid-002/some/non-metadata-route-image.tsx",
-   "renamed/no-location-assign-relative-destination/valid-000.js",
-   "renamed/no-location-assign-relative-destination/valid-001.js",
-   "renamed/no-location-assign-relative-destination/valid-002.js",
-   "renamed/no-location-assign-relative-destination/valid-003.js",
-   "renamed/no-location-assign-relative-destination/valid-007.js",
-   "renamed/no-location-assign-relative-destination/valid-009.js",
-   "renamed/no-location-assign-relative-destination/valid-010.js",
    "renamed/no-location-assign-relative-destination/valid-011.js",
    "renamed/no-location-assign-relative-destination/valid-012.js",
    "renamed/no-location-assign-relative-destination/valid-013.js",
@@ -322,20 +315,10 @@
    "renamed/no-location-assign-relative-destination/valid-019.js",
    "renamed/no-location-assign-relative-destination/valid-020.js",
    "renamed/no-location-assign-relative-destination/valid-021.js",
-   "renamed/no-location-assign-relative-destination/valid-022.js",
    "renamed/no-location-assign-relative-destination/valid-023.js",
-   "renamed/no-location-assign-relative-destination/valid-024.js",
    "renamed/no-location-assign-relative-destination/valid-025.js",
-   "renamed/no-location-assign-relative-destination/valid-026.js",
-   "renamed/no-location-assign-relative-destination/invalid-000.js",
    "renamed/no-location-assign-relative-destination/invalid-002.js",
-   "renamed/no-location-assign-relative-destination/invalid-003.js",
-   "renamed/no-location-assign-relative-destination/invalid-004.js",
-   "renamed/no-location-assign-relative-destination/invalid-007.js",
-   "renamed/no-location-assign-relative-destination/invalid-008.js",
    "renamed/no-location-assign-relative-destination/invalid-013.js",
-   "renamed/no-location-assign-relative-destination/invalid-019.js",
-   "renamed/no-location-assign-relative-destination/invalid-020.js",
    "renamed/no-location-assign-relative-destination/invalid-023.js",
    "renamed/no-location-assign-relative-destination/invalid-024.js",
    "renamed/no-location-assign-relative-destination/invalid-025.js",
@@ -356,9 +339,7 @@
    "renamed/no-styled-jsx-in-document/valid-001/pages/_document.js",
    "renamed/no-styled-jsx-in-document/valid-002/pages/index.js",
    "renamed/no-styled-jsx-in-document/invalid-000/pages/_document.js",
-   "renamed/no-sync-scripts/valid-000.js",
    "renamed/no-sync-scripts/valid-001.js",
-   "renamed/no-sync-scripts/invalid-000.js",
    "renamed/no-sync-scripts/invalid-001.js",
    "renamed/no-title-in-document-head/valid-000.js",
    "renamed/no-title-in-document-head/valid-001.js",
@@ -1842,59 +1823,17 @@
     ],
     "renamedFrom": "no-img-element/valid-004/app/opengraph-image.tsx"
    },
-   "renamed/no-location-assign-relative-destination/invalid-000.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-000.js"
-   },
    "renamed/no-location-assign-relative-destination/invalid-002.js": {
     "rules": [
      "@next/next/no-location-assign-relative-destination"
     ],
     "renamedFrom": "no-location-assign-relative-destination/invalid-002.js"
    },
-   "renamed/no-location-assign-relative-destination/invalid-003.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-003.js"
-   },
-   "renamed/no-location-assign-relative-destination/invalid-004.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-004.js"
-   },
-   "renamed/no-location-assign-relative-destination/invalid-007.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-007.js"
-   },
-   "renamed/no-location-assign-relative-destination/invalid-008.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-008.js"
-   },
    "renamed/no-location-assign-relative-destination/invalid-013.js": {
     "rules": [
      "@next/next/no-location-assign-relative-destination"
     ],
     "renamedFrom": "no-location-assign-relative-destination/invalid-013.js"
-   },
-   "renamed/no-location-assign-relative-destination/invalid-019.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-019.js"
-   },
-   "renamed/no-location-assign-relative-destination/invalid-020.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/invalid-020.js"
    },
    "renamed/no-location-assign-relative-destination/invalid-023.js": {
     "rules": [
@@ -1931,48 +1870,6 @@
      "@next/next/no-location-assign-relative-destination"
     ],
     "renamedFrom": "no-location-assign-relative-destination/invalid-028.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-000.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-000.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-001.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-001.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-002.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-002.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-003.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-003.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-007.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-007.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-009.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-009.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-010.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-010.js"
    },
    "renamed/no-location-assign-relative-destination/valid-011.js": {
     "rules": [
@@ -2040,35 +1937,17 @@
     ],
     "renamedFrom": "no-location-assign-relative-destination/valid-021.js"
    },
-   "renamed/no-location-assign-relative-destination/valid-022.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-022.js"
-   },
    "renamed/no-location-assign-relative-destination/valid-023.js": {
     "rules": [
      "@next/next/no-location-assign-relative-destination"
     ],
     "renamedFrom": "no-location-assign-relative-destination/valid-023.js"
    },
-   "renamed/no-location-assign-relative-destination/valid-024.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-024.js"
-   },
    "renamed/no-location-assign-relative-destination/valid-025.js": {
     "rules": [
      "@next/next/no-location-assign-relative-destination"
     ],
     "renamedFrom": "no-location-assign-relative-destination/valid-025.js"
-   },
-   "renamed/no-location-assign-relative-destination/valid-026.js": {
-    "rules": [
-     "@next/next/no-location-assign-relative-destination"
-    ],
-    "renamedFrom": "no-location-assign-relative-destination/valid-026.js"
    },
    "renamed/no-page-custom-font/invalid-000/pages/index.tsx": {
     "rules": [
@@ -2154,23 +2033,11 @@
     ],
     "renamedFrom": "no-styled-jsx-in-document/valid-002/pages/index.js"
    },
-   "renamed/no-sync-scripts/invalid-000.js": {
-    "rules": [
-     "@next/next/no-sync-scripts"
-    ],
-    "renamedFrom": "no-sync-scripts/invalid-000.js"
-   },
    "renamed/no-sync-scripts/invalid-001.js": {
     "rules": [
      "@next/next/no-sync-scripts"
     ],
     "renamedFrom": "no-sync-scripts/invalid-001.js"
-   },
-   "renamed/no-sync-scripts/valid-000.js": {
-    "rules": [
-     "@next/next/no-sync-scripts"
-    ],
-    "renamedFrom": "no-sync-scripts/valid-000.js"
    },
    "renamed/no-sync-scripts/valid-001.js": {
     "rules": [
@@ -2447,45 +2314,27 @@
   },
   {
    "rule": "@next/next/inline-script-id",
+   "path": "renamed/inline-script-id/invalid-001.js",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/inline-script-id",
    "path": "renamed/inline-script-id/invalid-002.js",
    "line": 5,
    "column": 13
   },
   {
    "rule": "@next/next/inline-script-id",
-   "path": "renamed/inline-script-id/valid-000.js",
+   "path": "renamed/inline-script-id/invalid-003.js",
    "line": 5,
-   "column": 11
-  },
-  {
-   "rule": "@next/next/inline-script-id",
-   "path": "renamed/inline-script-id/valid-003.js",
-   "line": 5,
-   "column": 11
-  },
-  {
-   "rule": "@next/next/inline-script-id",
-   "path": "renamed/inline-script-id/valid-005.js",
-   "line": 5,
-   "column": 11
+   "column": 13
   },
   {
    "rule": "@next/next/inline-script-id",
    "path": "renamed/inline-script-id/valid-006.js",
    "line": 5,
    "column": 11
-  },
-  {
-   "rule": "@next/next/inline-script-id",
-   "path": "renamed/next-script-for-ga/valid-001.js",
-   "line": 8,
-   "column": 15
-  },
-  {
-   "rule": "@next/next/inline-script-id",
-   "path": "renamed/next-script-for-ga/valid-002.js",
-   "line": 8,
-   "column": 17
   },
   {
    "rule": "@next/next/next-script-for-ga",
@@ -2640,6 +2489,42 @@
   {
    "rule": "@next/next/no-before-interactive-script-outside-document",
    "path": "no-before-interactive-script-outside-document/invalid-005/C/Users/username/projects/project-name/src/pages/layout.tsx",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-before-interactive-script-outside-document",
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-000/pages/index.js",
+   "line": 7,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-before-interactive-script-outside-document",
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-001/components/outside-known-dirs.js",
+   "line": 7,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-before-interactive-script-outside-document",
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-002/Users/user_name/projects/project-name/pages/layout.tsx",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-before-interactive-script-outside-document",
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-003/C/Users/username/projects/project-name/pages/layout.tsx",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-before-interactive-script-outside-document",
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-004/Users/user_name/projects/project-name/src/pages/layout.tsx",
+   "line": 8,
+   "column": 13
+  },
+  {
+   "rule": "@next/next/no-before-interactive-script-outside-document",
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-005/C/Users/username/projects/project-name/src/pages/layout.tsx",
    "line": 8,
    "column": 13
   },
@@ -2831,21 +2716,9 @@
   },
   {
    "rule": "@next/next/no-document-import-in-page",
-   "path": "renamed/no-sync-scripts/invalid-000.js",
-   "line": 2,
-   "column": 7
-  },
-  {
-   "rule": "@next/next/no-document-import-in-page",
    "path": "renamed/no-sync-scripts/invalid-001.js",
    "line": 2,
    "column": 7
-  },
-  {
-   "rule": "@next/next/no-document-import-in-page",
-   "path": "renamed/no-sync-scripts/valid-000.js",
-   "line": 1,
-   "column": 1
   },
   {
    "rule": "@next/next/no-document-import-in-page",
@@ -3263,9 +3136,45 @@
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "renamed/no-location-assign-relative-destination/invalid-002.js",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
    "path": "renamed/no-location-assign-relative-destination/invalid-013.js",
    "line": 1,
    "column": 1
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "renamed/no-location-assign-relative-destination/invalid-023.js",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "renamed/no-location-assign-relative-destination/invalid-024.js",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "renamed/no-location-assign-relative-destination/invalid-025.js",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "renamed/no-location-assign-relative-destination/invalid-026.js",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "@next/next/no-location-assign-relative-destination",
+   "path": "renamed/no-location-assign-relative-destination/invalid-027.js",
+   "line": 3,
+   "column": 13
   },
   {
    "rule": "@next/next/no-location-assign-relative-destination",
@@ -3479,12 +3388,6 @@
   },
   {
    "rule": "@next/next/no-sync-scripts",
-   "path": "renamed/no-sync-scripts/invalid-000.js",
-   "line": 9,
-   "column": 17
-  },
-  {
-   "rule": "@next/next/no-sync-scripts",
    "path": "renamed/no-sync-scripts/invalid-001.js",
    "line": 9,
    "column": 17
@@ -3522,6 +3425,12 @@
   {
    "rule": "@next/next/no-title-in-document-head",
    "path": "no-title-in-document-head/invalid-000.js",
+   "line": 8,
+   "column": 15
+  },
+  {
+   "rule": "@next/next/no-title-in-document-head",
+   "path": "renamed/no-title-in-document-head/invalid-000.js",
    "line": 8,
    "column": 15
   },
@@ -3588,6 +3497,12 @@
   {
    "rule": "@next/next/no-unwanted-polyfillio",
    "path": "renamed/no-unwanted-polyfillio/invalid-001.js",
+   "line": 7,
+   "column": 15
+  },
+  {
+   "rule": "@next/next/no-unwanted-polyfillio",
+   "path": "renamed/no-unwanted-polyfillio/invalid-002.js",
    "line": 7,
    "column": 15
   },

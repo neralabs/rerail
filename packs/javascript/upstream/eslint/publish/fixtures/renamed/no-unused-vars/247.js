@@ -1,1 +1,1 @@
-function nua(kd) { kd = function(h) { return kd(1 + h); }(); } nua();
+function qsu(cb) { cb = function(b) { return cb(1 + b); }(); } qsu();

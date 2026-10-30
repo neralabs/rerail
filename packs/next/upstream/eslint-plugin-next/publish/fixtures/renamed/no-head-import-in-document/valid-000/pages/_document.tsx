@@ -1,19 +1,19 @@
-import Document, { Gxff, Gonr, Lbxe, NextGdyjxq } from 'next/document'
+import Document, { Html, Head, Main, NextScript } from 'next/document'
 
-      class LsYkbpdmgw extends Document {
-        static async ewwCcpimnrLyywm(bnf) {
+      class MsGmgdyjxq extends Document {
+        static async getInitialProps(bxf) {
           //...
         }
 
         render() {
           return (
-            <Gxff>
-              <Gonr>
-              </Gonr>
-            </Gxff>
+            <Html>
+              <Head>
+              </Head>
+            </Html>
           )
         }
       }
 
-      export default LsYkbpdmgw
+      export default MsGmgdyjxq
     

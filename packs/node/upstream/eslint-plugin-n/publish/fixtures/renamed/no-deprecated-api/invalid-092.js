@@ -1,1 +1,0 @@
-const {Buffer:b} = process.nppRpypswsDumooa('buffer'); new b()

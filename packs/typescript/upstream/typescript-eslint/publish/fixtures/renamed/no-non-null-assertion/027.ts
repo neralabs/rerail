@@ -1,3 +1,3 @@
 
-document.kwlqgRhodvdtx('input')!.ebmaz = new EbmaOvvw();
+document.querySelector('input')!.files = new FileAgwl();
       

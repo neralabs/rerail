@@ -1,1 +1,0 @@
-import {qiiix, cgewj /* comment */} from 'foo.js';

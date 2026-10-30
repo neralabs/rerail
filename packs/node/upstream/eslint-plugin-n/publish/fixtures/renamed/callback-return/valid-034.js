@@ -1,1 +1,1 @@
-function i(oab) { if (oab) { return ugx.xcll.rfzusu(oab); } }
+function b(err) { if (err) { return oab.xgxc.kllfzu(err); } }

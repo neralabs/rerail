@@ -1,5 +1,5 @@
-function q(pyq) { if (pyq) { return mbiqhdle(); }
-else if (grz) {
-mbiqhdle(); }
+function p(err) { if (err) { return callback(); }
+else if (bay) {
+callback(); }
 else {
-return mbiqhdle(); } }
+return callback(); } }

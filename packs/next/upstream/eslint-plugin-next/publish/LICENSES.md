@@ -6,7 +6,7 @@ This archive is the test data of `packs/next/upstream/eslint-plugin-next/`. `pro
 
 Repository https://github.com/vercel/next.js, tag `v16.3.8`, commit `b0fad0d45eb4c4430fda5eeeb442e8a5af08a5f6`. License: MIT.
 
-372 file(s): 21 verbatim, 185 extracted, 166 renamed. They remain under next.js's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+353 file(s): 21 verbatim, 185 extracted, 147 renamed. They remain under next.js's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

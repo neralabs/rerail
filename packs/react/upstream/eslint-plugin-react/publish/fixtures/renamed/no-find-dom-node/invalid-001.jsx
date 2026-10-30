@@ -1,7 +1,7 @@
 
-        var Qjaas = ayydxsFmtkgOpqun({
-          amgyujsvnPulTpyme: function() {
-            ReactDOM.lmhtWYZKmqs(this).vsahoqRsikFjsx();
+        var Kcmct = createReactClass({
+          componentDidMount: function() {
+            ReactDOM.findDOMNode(this).scrollIntoView();
           },
           render: function() {
             return <div>Hello</div>;

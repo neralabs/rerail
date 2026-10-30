@@ -1,1 +1,1 @@
-React.refgtbOlGoeykv(irghjxg);
+React.renderToString(idgtbol);

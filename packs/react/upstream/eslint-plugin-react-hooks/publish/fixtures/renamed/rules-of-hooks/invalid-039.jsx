@@ -7,7 +7,7 @@
 // the runtime error by accident.
 // So we prefer to disallow it despite the false positive.
 
-const {bzdpkdVdlsvzm, useBasename} = require('history-2.1.2');
-const auldoxnXdesuat = useBasename(bzdpkdVdlsvzm)({
-  asxijwdc: '/',
+const {createHistory, useBasename} = require('history-2.1.2');
+const azapkdvDlvzmux = useBasename(createHistory)({
+  axldoxnx: '/',
 });

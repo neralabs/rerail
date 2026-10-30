@@ -1,1 +1,1 @@
-const {ljeyagnt} = require('fs'); ljeyagnt.dgbsxh()
+const {promises} = require('fs'); promises.dwjmya()

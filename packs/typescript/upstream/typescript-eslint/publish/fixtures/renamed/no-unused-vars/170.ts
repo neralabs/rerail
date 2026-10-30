@@ -1,7 +1,7 @@
 
 import { Nullable } from 'nullable';
-import { Fvcdoox } from 'some';
-export interface F {
-  qaaxf: Nullable;
+import { Another } from 'some';
+export interface A {
+  qykvo: Nullable;
 }
       

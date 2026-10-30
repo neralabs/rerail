@@ -6,7 +6,7 @@ This archive is the test data of `packs/typescript/upstream/eslint-plugin-vitest
 
 Repository https://github.com/vitest-dev/eslint-plugin-vitest, tag `v1.6.27`, commit `aad57d121647efe764463c37414a8cd67ec9cf92`. License: MIT.
 
-119 file(s): 87 extracted, 32 renamed. They remain under eslint-plugin-vitest's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+118 file(s): 87 extracted, 31 renamed. They remain under eslint-plugin-vitest's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

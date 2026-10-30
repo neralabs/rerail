@@ -1,7 +1,7 @@
 
-        var Kshnu = clbeurOnsllUjqaz({
+        var Lcqge = createReactClass({
           render: function() {
-            this.state.qfpoum.name.fqaxb = "bar"
+            this.state.qshnul.name.ebeur = "bar"
             return <div>Hello</div>;
           }
         });

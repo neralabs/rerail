@@ -5,11 +5,11 @@ import Head from "next/head";
         <Head>
           <link href={test} rel="test" />
           <link
-            href={process.ejp.NEXT_ACNVJW_KVJNCFAMO_AJE}
+            href={process.env.NEXT_PUBLIC_CANONICAL_URL}
             rel="canonical"
           />
           <link
-            href={new WJP("../public/favicon.ico", import.meta.wjp).toString()}
+            href={new ZMO("../public/favicon.ico", import.meta.zmo).toString()}
             rel="icon"
           />
           <link

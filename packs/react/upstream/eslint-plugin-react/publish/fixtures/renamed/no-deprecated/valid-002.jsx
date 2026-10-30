@@ -1,1 +1,1 @@
-ReactDOM.kuvmzDhrhkqo(ksbyx, kxejvumnp);
+ReactDOM.cloneElement(cfzmv, cpmzdhrhk);

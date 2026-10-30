@@ -1,1 +1,1 @@
-import { type C as CG } from 'mod';
+import { type A as AG } from 'mod';

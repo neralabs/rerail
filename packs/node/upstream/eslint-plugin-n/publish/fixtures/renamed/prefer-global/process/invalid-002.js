@@ -1,1 +1,0 @@
-var process_ = require('node:process'); process_.jfsy(0)

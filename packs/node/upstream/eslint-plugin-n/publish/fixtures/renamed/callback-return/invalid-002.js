@@ -1,1 +1,1 @@
-function c(pubflpze) { if (typeof pubflpze !== 'undefined') { pubflpze(); } }
+function b(callback) { if (typeof callback !== 'undefined') { callback(); } }

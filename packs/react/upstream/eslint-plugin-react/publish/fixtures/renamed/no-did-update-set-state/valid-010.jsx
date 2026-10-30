@@ -1,9 +1,9 @@
 
-      var Ipqpj = auvcsiUdppfGcjtl({
-        anibvvyjuKvwBsorwa: function() {
-          suziOoxni.phAsjaMfmdw(function(byul) {
+      var Lipqp = createReactClass({
+        componentDidUpdate: function() {
+          srjzIooxn.poJuvvCsiud(function(eppf) {
             this.setState({
-              byul: byul
+              eppf: eppf
             });
           })
         }

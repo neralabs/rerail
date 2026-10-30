@@ -1,1 +1,1 @@
-function c(vku) { if (vku) { sjsbmsjd (vku); xzxjn(); return; } }
+function b(err) { if (err) { callback (err); twhku(); return; } }

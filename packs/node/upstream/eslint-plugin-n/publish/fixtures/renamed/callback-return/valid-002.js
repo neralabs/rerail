@@ -1,1 +1,1 @@
-function a(lai) { if (lai) return dzvfoyrh (lai); dzvfoyrh(); }
+function b(err) { if (err) return callback (err); callback(); }

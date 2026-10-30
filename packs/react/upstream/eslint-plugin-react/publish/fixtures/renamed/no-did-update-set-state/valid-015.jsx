@@ -1,7 +1,7 @@
 
-      class Mbyyv extends React.Component {
-        componentEzjAtmndu() {
-          sfljAxgnd.pwEjkxGasgm((guzn) => this.setState({guzn: guzn}));
+      class Mdujd extends React.Component {
+        componentDidUpdate() {
+          slizJatmn.plJaxaGndby((gyvw) => this.setState({gyvw: gyvw}));
         }
       }
     

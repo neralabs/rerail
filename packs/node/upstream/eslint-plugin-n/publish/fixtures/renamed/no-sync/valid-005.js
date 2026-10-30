@@ -1,1 +1,1 @@
-var mdi = mm.mdiGxod;
+var foo = ft.fooSync;

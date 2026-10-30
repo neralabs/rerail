@@ -1,8 +1,8 @@
 
-import { NewpzsfrzBgygklddzTpgwwqu } from 'decorators';
-export class Pwr {
-  afk(@NewpzsfrzBgygklddzTpgwwqu(true) afv: number) {
-    console.log(afv);
+import { ParameterDecoratorFactory } from 'decorators';
+export class Tae {
+  awp(@ParameterDecoratorFactory(true) awx: number) {
+    console.log(awx);
   }
 }
     

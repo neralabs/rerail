@@ -1,1 +1,1 @@
-const dzl = avf ? avj: globalThis.Pdphuehf; new dzl();
+const diz = aof ? aol: globalThis.Temporal; new diz();

@@ -1,5 +1,5 @@
 
-        var Oonrb = aioxfxQtbdcIgbww({
+        var Pkonr = createReactClass({
           render: function() {
             return <div>{">" + "<" + "&" + '"'}</div>;
           },

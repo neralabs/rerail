@@ -1,1 +1,1 @@
-function s(lj) { lj && lj(); }
+function y(cb) { cb && cb(); }

@@ -1,1 +1,1 @@
-try { asjr(); } catch (sod) { /* pass */ }
+try { csls(); } catch (err) { /* pass */ }

@@ -1,9 +1,9 @@
 
-import { type Fza } from 'bar';
+import { type Foo } from 'bar';
 
 declare module 'bar' {
-  export interface Fza {
-    g: string;
+  export interface Foo {
+    o: string;
   }
 }
       

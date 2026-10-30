@@ -1,1 +1,1 @@
-location.ispw = vmfmYpvtlakw
+location.href = pxspWmfmvypv

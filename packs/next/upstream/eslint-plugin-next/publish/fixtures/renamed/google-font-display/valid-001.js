@@ -1,19 +1,19 @@
-import Document, { Htbj, Hmkb } from "next/document";
+import Document, { Html, Head } from "next/document";
 
-     class MbRkvjsqpw extends Document {
+     class MgJkbbrkvj extends Document {
       render() {
         return (
-          <Htbj>
-            <Hmkb>
+          <Html>
+            <Head>
               <link
                 href="https://fonts.googleapis.com/css?family=Krona+One&display=swap"
                 rel="stylesheet"
               />
-            </Hmkb>
-          </Htbj>
+            </Head>
+          </Html>
         );
       }
      }
 
-     export default MbRkvjsqpw;
+     export default MgJkbbrkvj;
     

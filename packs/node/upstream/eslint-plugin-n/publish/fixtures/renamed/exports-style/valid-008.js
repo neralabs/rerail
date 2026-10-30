@@ -1,1 +1,1 @@
-exports = module.exports = {hiq: 1}; exports.dqi = 2
+exports = module.exports = {ihi: 1}; exports.bar = 2

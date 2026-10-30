@@ -1,1 +1,1 @@
-var pef = function() { try { return 1 } catch(mdw) { return 2 } finally { var i = function(w) { while(true) { if(w) { break } else { continue } } } } }
+var oef = function() { try { return 1 } catch(err) { return 2 } finally { var c = function(u) { while(true) { if(u) { break } else { continue } } } } }

@@ -1,1 +1,0 @@
-import {/* comment */ xctfv, ceoor} from 'foo.js';

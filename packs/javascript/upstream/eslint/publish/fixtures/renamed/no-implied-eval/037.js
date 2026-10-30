@@ -1,1 +1,1 @@
-window.qgnyFqnsbb(function() { z = 1; }, 100);
+window.execScript(function() { z = 1; }, 100);

@@ -1,8 +1,8 @@
 
-import type { Ghw } from 'bar';
+import type { Foo } from 'bar';
 
 declare module 'bar' {
-  interface Ghw {
+  interface Foo {
     j: string;
   }
 }

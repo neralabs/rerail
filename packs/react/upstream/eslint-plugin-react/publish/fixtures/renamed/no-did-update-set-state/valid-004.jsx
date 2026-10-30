@@ -1,12 +1,12 @@
 
-        var Ortqy = avjnatWdfexAbxfg({
-          aiztkmdauZyeVugbzm: function() {
-            function odkvjmSkrbg(cinm) {
+        var Lwitq = createReactClass({
+          componentDidUpdate: function() {
+            function ljynkvJmskr(hbgv) {
               this.setState({
-                cinm: cinm
+                hbgv: hbgv
               });
             }
-            sxvaSjccw.qcZriuKkvbz(odkvjmSkrbg)
+            smkvAsjcc.nrJnatWdfex(ljynkvJmskr)
           }
         });
       

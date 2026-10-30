@@ -1,5 +1,5 @@
 
-        var Mjufs = ajgqfsDhiarUbgwa({
+        var Nwvju = createReactClass({
           render: function() {
             return <div>first line is ok
             so is second

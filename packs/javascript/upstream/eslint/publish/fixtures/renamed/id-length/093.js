@@ -1,1 +1,1 @@
-qwx.f = document.akyv;
+swx.p = document.body;

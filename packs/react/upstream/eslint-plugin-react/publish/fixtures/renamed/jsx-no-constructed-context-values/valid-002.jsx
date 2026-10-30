@@ -1,1 +1,1 @@
-const Component = () => <Coyddmr.Jlasxqpo value="Some string"></Coyddmr.Jlasxqpo>
+const Component = () => <Coqlddm.Provider value="Some string"></Coqlddm.Provider>

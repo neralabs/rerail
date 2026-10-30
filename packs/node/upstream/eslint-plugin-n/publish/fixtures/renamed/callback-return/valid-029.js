@@ -1,1 +1,1 @@
-class x { tunfj() { if (mtf) { return cbdmiuvv(); } cbdmiuvv(); } } 
+class w { fjuun() { if (err) { return callback(); } callback(); } } 

@@ -1,7 +1,7 @@
 
-        class Lut extends Cpc {
-          kxafvjoluGkqxDsycg() {}
-          kxafvjoluGkqxJkyytcdYixig() {}
-          kxafvjoluGkqxRwwoes() {}
+        class Oiu extends Atp {
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         }
       

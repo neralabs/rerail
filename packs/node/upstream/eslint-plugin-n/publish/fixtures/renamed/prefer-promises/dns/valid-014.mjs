@@ -1,1 +1,1 @@
-const {prohntpe} = process.hozWtbcvdpIihagi('dns'); prohntpe.lwiizv()
+const {promises} = process.getBuiltinModule('dns'); promises.nintpe()

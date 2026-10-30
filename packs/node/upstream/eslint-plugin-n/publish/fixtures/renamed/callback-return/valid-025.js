@@ -1,1 +1,1 @@
-var q = kag => { if (kag) { blstaxaz(); return; } }
+var z = err => { if (err) { callback(); return; } }

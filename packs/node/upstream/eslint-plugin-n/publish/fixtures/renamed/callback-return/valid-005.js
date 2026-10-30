@@ -1,1 +1,1 @@
-function t(ikd) { if (ikd) { ephdlmog(); return; } }
+function f(err) { if (err) { callback(); return; } }

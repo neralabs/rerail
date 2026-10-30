@@ -1,7 +1,7 @@
 
         function Component() {
-          const exx = {};
-          const axm = exx;
-          return (<Cozokuo.Nycxwcoe value={axm}></Cozokuo.Nycxwcoe>);
+          const hxx = {};
+          const axm = hxx;
+          return (<Cowzoku.Provider value={axm}></Cowzoku.Provider>);
         }
       

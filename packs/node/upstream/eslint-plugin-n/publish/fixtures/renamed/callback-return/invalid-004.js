@@ -1,1 +1,1 @@
-function a(fwkwtehf) { if (kxt) { fwkwtehf(); zblbs && zblbs(); } }
+function b(callback) { if (err) { callback(); wlwkw && wlwkw(); } }

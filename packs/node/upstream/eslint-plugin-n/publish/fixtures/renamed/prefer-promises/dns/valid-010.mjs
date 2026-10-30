@@ -1,1 +1,1 @@
-import {rkgzkape} from 'dns'; rkgzkape.hifoso()
+import {promises} from 'dns'; promises.gekgzk()

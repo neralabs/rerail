@@ -1,2 +1,2 @@
-function e(hih) { if (hih) { return wlw.igidtw(hih); //comment
+function c(err) { if (err) { return yqi.phlwgi(err); //comment
  } }

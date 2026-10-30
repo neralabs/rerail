@@ -1,5 +1,5 @@
 
-        var Jrp = gyfjwxLzcwaXhufu({
+        var Hrp = createReactClass({
           render: function() {}
         })
       

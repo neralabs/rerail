@@ -1,1 +1,1 @@
-function f(kfb) { if (kfb) { zvt.skojej(kfb); } }
+function c(err) { if (err) { tfb.hvkoje(err); } }

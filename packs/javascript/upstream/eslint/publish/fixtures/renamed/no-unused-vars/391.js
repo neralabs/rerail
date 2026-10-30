@@ -1,1 +1,1 @@
-import { a as fwd, e } from 'module'; alert(e);
+import { a as ewd, b } from 'module'; alert(b);

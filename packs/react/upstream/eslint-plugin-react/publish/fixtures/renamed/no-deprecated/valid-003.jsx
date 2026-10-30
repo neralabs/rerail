@@ -1,1 +1,1 @@
-ReactDOM.cgdoPDSZgfd(ftqbiotz);
+ReactDOM.findDOMNode(ggdopdsz);

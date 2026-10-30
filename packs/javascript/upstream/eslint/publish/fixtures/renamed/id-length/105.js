@@ -1,1 +1,1 @@
-import { glr as n } from 'module';
+import { foo as y } from 'module';

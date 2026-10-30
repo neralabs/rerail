@@ -1,1 +1,1 @@
-const t = globalThis.Rtszievv();
+const u = globalThis.Temporal();

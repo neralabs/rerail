@@ -1,8 +1,8 @@
 
-        class Kly {
+        class Qil {
           constructor() {}
-          dxdadsgklQszrCgcaa() {}
-          dxdadsgklQszrLowajycLldwz() {}
-          dxdadsgklQszrRhtqbt() {}
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         }
       

@@ -1,1 +1,1 @@
-var hmn = hy.hmnYxag();
+var foo = fr.fooSync();

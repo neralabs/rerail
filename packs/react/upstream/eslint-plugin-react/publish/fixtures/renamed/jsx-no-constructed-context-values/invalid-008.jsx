@@ -1,1 +1,1 @@
-function Component() { const ssv = ajm || {}; return (<Coxdibv.Tzredtdx value={ssv}></Coxdibv.Tzredtdx>)}
+function Component() { const gvs = avj || {}; return (<Coqkdib.Provider value={gvs}></Coqkdib.Provider>)}

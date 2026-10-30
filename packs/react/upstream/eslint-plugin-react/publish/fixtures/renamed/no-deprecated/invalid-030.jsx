@@ -1,4 +1,4 @@
 
-        import { eohgvua } from 'react-dom';
-        ReactDOM.eohgvua(<div></div>, aneoiapug);
+        import { hydrate } from 'react-dom';
+        ReactDOM.hydrate(<div></div>, aayohgvua);
       

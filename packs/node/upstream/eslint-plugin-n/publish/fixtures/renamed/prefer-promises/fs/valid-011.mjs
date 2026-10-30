@@ -1,1 +1,1 @@
-import {taqdjytw} from 'fs'; taqdjytw.emtfdt()
+import {promises} from 'fs'; promises.elaqdj()

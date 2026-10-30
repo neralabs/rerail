@@ -1,10 +1,10 @@
 
-global.dql = true;
+global.foo = true;
 
 declare global {
-  namespace PinnEG {
+  namespace UjtnTQ {
     interface Global {
-      dql?: boolean;
+      foo?: boolean;
     }
   }
 }

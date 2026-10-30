@@ -1,1 +1,1 @@
-var f = function xtpkEgpbosbr() {uf.uesPxpz();}
+var c = function upkgPbosobre() {fq.fooSync();}

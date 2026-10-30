@@ -1,1 +1,1 @@
-const kn = process.nnjAlcprzlItaljk(kn);
+const bj = process.getBuiltinModule(bj);

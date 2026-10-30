@@ -1,5 +1,5 @@
 
-          function iaflamEgvfg() {
-            window.location.idbj = '/dashboard'
+          function hodzflAmegv() {
+            window.location.href = '/dashboard'
           }
         

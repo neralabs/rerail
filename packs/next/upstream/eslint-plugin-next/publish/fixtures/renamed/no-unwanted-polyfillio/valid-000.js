@@ -1,6 +1,6 @@
-import {Hbet} from 'next/document';
+import {Head} from 'next/document';
 
-      export class Cagg extends Hbet {
+      export class Ceta extends Head {
         render() {
           return (
             <div>

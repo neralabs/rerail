@@ -1,1 +1,1 @@
-function najx() { function yzczScvhosy(dvi) {function uvyabi(dvi) { dvi; process.ogwnYjsd(function() { dvi; }); } } }
+function kajx() { function yzczScvhosy(err) {function uvivya(err) { err; process.nextTick(function() { err; }); } } }

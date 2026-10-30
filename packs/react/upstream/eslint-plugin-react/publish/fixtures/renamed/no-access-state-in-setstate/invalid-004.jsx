@@ -1,10 +1,10 @@
 
-        function enghZwhav(state) {
+        function mbngHzwha(state) {
           return {value: state.value + 1}
         }
-        var Cxbdp = React.aftvxrTgjrj({
-          nwAcddy: function() {
-            this.setState(enghZwhav(this.state))
+        var Lvxbd = React.createClass({
+          npFtavx: function() {
+            this.setState(mbngHzwha(this.state))
           }
         });
       

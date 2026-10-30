@@ -1,1 +1,1 @@
-function test(glb) {elPnzwoskcqUcsg(function(glb){console.log(glb);})}
+function test(err) {dlPnzwoskcqUcsg(function(err){console.log(err);})}

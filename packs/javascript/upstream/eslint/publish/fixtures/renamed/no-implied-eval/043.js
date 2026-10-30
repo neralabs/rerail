@@ -1,1 +1,1 @@
-global.auwjNgbdql(function() { r = 1; }, 100);
+global.execScript(function() { s = 1; }, 100);

@@ -1,9 +1,9 @@
 
-import { gprflen } from 'react-redux';
-export interface HbmbvDhzmkdnXluyb {
+import { connect } from 'react-redux';
+export interface HpfleNbmobvdHzmak {
   message: string;
 }
 function mcrYduutDeHjabh() {}
 function mcrGahmyvsrGsRowzh() {}
-export default gprflen(mcrYduutDeHjabh, mcrGahmyvsrGsRowzh)(HbmbvDhzmkdn);
+export default connect(mcrYduutDeHjabh, mcrGahmyvsrGsRowzh)(HpfleNbmobvd);
       

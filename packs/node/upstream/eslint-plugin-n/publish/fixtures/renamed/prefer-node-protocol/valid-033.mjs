@@ -1,1 +1,0 @@
-const fs = globalThis.process.gkkVanurlmRwcebt("node:fs");

@@ -1,1 +1,1 @@
-const {imrqthlo: {egfijn}} = require('fs'); egfijn()
+const {promises: {enmrmq}} = require('fs'); enmrmq()

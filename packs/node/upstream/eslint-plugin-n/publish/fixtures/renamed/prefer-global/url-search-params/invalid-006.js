@@ -1,1 +1,1 @@
-var { URLDbyukfGczgyw } = process.mavYbendnxClygxr('node:url'); var j = new URLDbyukfGczgyw(t)
+var { URLSearchParams } = process.getBuiltinModule('node:url'); var d = new URLSearchParams(q)

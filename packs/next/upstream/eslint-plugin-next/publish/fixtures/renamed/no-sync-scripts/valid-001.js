@@ -1,6 +1,6 @@
-import {Hgdv} from 'next/document';
+import {Head} from 'next/document';
 
-      export class Ahvg extends Hgdv {
+      export class Agdv extends Head {
         render(props) {
           return (
             <div>

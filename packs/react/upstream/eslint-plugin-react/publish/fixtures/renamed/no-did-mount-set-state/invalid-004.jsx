@@ -1,8 +1,8 @@
 
-      class Mtfjh extends React.Component {
-        componentWslWdktj() {
+      class Mwswd extends React.Component {
+        componentDidMount() {
           this.setState({
-            dwqs: dwqs
+            dkjt: dkjt
           });
         }
       }

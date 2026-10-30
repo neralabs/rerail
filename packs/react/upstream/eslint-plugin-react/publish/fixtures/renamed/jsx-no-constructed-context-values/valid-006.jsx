@@ -1,8 +1,8 @@
 
         import foo from 'foo';
-        function iioqxHihklnj() {
+        function mioqxHihklnj() {
           return (
-            <Arlgfow.Nbydthzs value={foo.ospfckfar}></Arlgfow.Nbydthzs>
+            <Arlgfow.Provider value={foo.something}></Arlgfow.Provider>
           )
         }
       

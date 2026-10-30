@@ -1,1 +1,0 @@
-import { a, j } from 'module'; alert(a);

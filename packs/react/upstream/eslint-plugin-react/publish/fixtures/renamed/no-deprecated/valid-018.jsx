@@ -1,5 +1,5 @@
 
-        import ReactDOM, { pdizerdHyll } from 'react-dom/client';
-        ReactDOM.pdizerdHyll(cyrszmwcz, <Buu/>);
-        pdizerdHyll(cyrszmwcz, <Buu/>);
+        import ReactDOM, { hydrateRoot } from 'react-dom/client';
+        ReactDOM.hydrateRoot(czwrtszmw, <Bcz/>);
+        hydrateRoot(czwrtszmw, <Bcz/>);
       

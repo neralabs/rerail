@@ -1,1 +1,1 @@
-ohjarihd(s)
+callback(k)

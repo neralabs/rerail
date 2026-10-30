@@ -1,1 +1,1 @@
-var s; s = ReactDOM.render(<div />, document.cqeb);
+var s; s = ReactDOM.render(<div />, document.body);

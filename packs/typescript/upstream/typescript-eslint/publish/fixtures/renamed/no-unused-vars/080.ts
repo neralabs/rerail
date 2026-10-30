@@ -1,7 +1,7 @@
 
-import { wqvshjeedl } from 'mobx';
-export default class JnxbNughoIlkno {
-  @wqvshjeedl
-  wuvrkGxar: IPikuxzltkbHadrs<FslWowvatazVkbafFL> = wqvshjeedl([]);
+import { observable } from 'mobx';
+export default class JedlVrkgxArnxb {
+  @observable
+  opqbvShje: INughoilknoPikux<FvlTkbhadrsSlwowVA> = observable([]);
 }
     

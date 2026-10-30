@@ -1,1 +1,1 @@
-const Component = () => <Cooiasf.Lmlgqgjz value={100}></Cooiasf.Lmlgqgjz>
+const Component = () => <Cotbias.Provider value={100}></Cotbias.Provider>

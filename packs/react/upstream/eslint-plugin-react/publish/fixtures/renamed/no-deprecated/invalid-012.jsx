@@ -1,1 +1,1 @@
-Kfv.dnydjaNikzm({});
+Dbf.createClass({});

@@ -1,7 +1,7 @@
 
-        var Jooop = bhrpfaWwgeuMylzr({
+        var Jmjqe = createReactClass({
           render: function() {
-            this.state.hxu++;
+            this.state.eph++;
             return <div>Hello {this.props.name}</div>;
           }
         });

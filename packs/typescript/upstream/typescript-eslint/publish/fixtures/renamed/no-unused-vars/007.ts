@@ -1,10 +1,10 @@
 
-import { BmftqlaactmVxypobkmfFatbclwmoIndelff } from 'decorators';
-export class Osfkztb {
+import { ConstructorParameterDecoratorFactory } from 'decorators';
+export class Gjsqlaa {
   constructor(
-    @BmftqlaactmVxypobkmfFatbclwmoIndelff(AMU_EQPNHJ) bmfjck: AmuRssmvi,
+    @ConstructorParameterDecoratorFactory(BCT_VXYPOB) concmf: BctMkmatb,
   ) {
-    this.tcuyk = bmfjck.tcuyk;
+    this.yclwm = concmf.yclwm;
   }
 }
     

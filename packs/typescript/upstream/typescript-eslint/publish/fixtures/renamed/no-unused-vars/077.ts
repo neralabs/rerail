@@ -1,5 +1,5 @@
 
 import foo from 'foo';
-import cbo from 'foo';
-export interface Cbo extends foo.o18t<cbo> {}
+import cib from 'foo';
+export interface Cib extends foo.i18n<cib> {}
     

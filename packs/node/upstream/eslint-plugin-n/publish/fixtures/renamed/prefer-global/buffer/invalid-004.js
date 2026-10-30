@@ -1,1 +1,0 @@
-var { Buffer } = require('node:buffer'); var b = Buffer.atkfe(10)

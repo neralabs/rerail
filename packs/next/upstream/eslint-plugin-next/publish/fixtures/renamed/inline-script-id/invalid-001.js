@@ -1,10 +1,10 @@
 import Script from 'next/script';
 
-        export default function VwokKmod() {
+        export default function VnwoKkmo() {
           return (
             <Script
-              fuvrggplohfGifXhbtdORED={{
-                __gmrg: `console.log('Hello world');`
+              dangerouslySetInnerHTML={{
+                __duvr: `console.log('Hello world');`
               }}
             />
           )

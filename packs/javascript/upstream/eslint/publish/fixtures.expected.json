@@ -11764,8 +11764,6 @@
       "renamed/id-length/013.js",
       "renamed/id-length/014.js",
       "renamed/id-length/015.js",
-      "renamed/id-length/016.js",
-      "renamed/id-length/017.js",
       "renamed/id-length/018.js",
       "renamed/id-length/019.js",
       "renamed/id-length/020.js",
@@ -11789,10 +11787,7 @@
       "renamed/id-length/038.js",
       "renamed/id-length/039.js",
       "renamed/id-length/040.js",
-      "renamed/id-length/041.js",
-      "renamed/id-length/042.js",
       "renamed/id-length/044.js",
-      "renamed/id-length/045.js",
       "renamed/id-length/046.js",
       "renamed/id-length/047.js",
       "renamed/id-length/048.js",
@@ -12589,8 +12584,6 @@
       "renamed/no-duplicate-case/027.js",
       "renamed/no-duplicate-case/028.js",
       "renamed/no-duplicate-case/029.js",
-      "renamed/no-duplicate-imports/002.js",
-      "renamed/no-duplicate-imports/003.js",
       "renamed/no-duplicate-imports/004.js",
       "renamed/no-duplicate-imports/006.js",
       "renamed/no-duplicate-imports/007.js",
@@ -12599,42 +12592,29 @@
       "renamed/no-duplicate-imports/012.js",
       "renamed/no-duplicate-imports/014.js",
       "renamed/no-duplicate-imports/015.js",
-      "renamed/no-duplicate-imports/016.js",
       "renamed/no-duplicate-imports/017.js",
       "renamed/no-duplicate-imports/019.js",
-      "renamed/no-duplicate-imports/021.js",
-      "renamed/no-duplicate-imports/022.js",
       "renamed/no-duplicate-imports/023.js",
       "renamed/no-duplicate-imports/024.js",
       "renamed/no-duplicate-imports/025.js",
       "renamed/no-duplicate-imports/026.js",
       "renamed/no-duplicate-imports/029.js",
-      "renamed/no-duplicate-imports/034.ts",
-      "renamed/no-duplicate-imports/035.ts",
       "renamed/no-duplicate-imports/036.ts",
       "renamed/no-duplicate-imports/037.ts",
       "renamed/no-duplicate-imports/038.ts",
       "renamed/no-duplicate-imports/039.ts",
       "renamed/no-duplicate-imports/040.ts",
       "renamed/no-duplicate-imports/041.ts",
-      "renamed/no-duplicate-imports/042.ts",
       "renamed/no-duplicate-imports/045.ts",
       "renamed/no-duplicate-imports/047.ts",
       "renamed/no-duplicate-imports/048.ts",
-      "renamed/no-duplicate-imports/049.ts",
       "renamed/no-duplicate-imports/050.ts",
       "renamed/no-duplicate-imports/052.ts",
-      "renamed/no-duplicate-imports/053.ts",
-      "renamed/no-duplicate-imports/054.ts",
-      "renamed/no-duplicate-imports/055.ts",
       "renamed/no-duplicate-imports/056.ts",
       "renamed/no-duplicate-imports/057.ts",
       "renamed/no-duplicate-imports/058.ts",
       "renamed/no-duplicate-imports/059.ts",
       "renamed/no-duplicate-imports/060.ts",
-      "renamed/no-duplicate-imports/062.ts",
-      "renamed/no-duplicate-imports/063.ts",
-      "renamed/no-duplicate-imports/064.ts",
       "renamed/no-duplicate-imports/065.ts",
       "renamed/no-duplicate-imports/066.ts",
       "renamed/no-duplicate-imports/067.ts",
@@ -12642,9 +12622,6 @@
       "renamed/no-duplicate-imports/069.ts",
       "renamed/no-duplicate-imports/070.ts",
       "renamed/no-duplicate-imports/072.ts",
-      "renamed/no-duplicate-imports/075.ts",
-      "renamed/no-duplicate-imports/076.ts",
-      "renamed/no-duplicate-imports/077.ts",
       "renamed/no-duplicate-imports/078.ts",
       "renamed/no-duplicate-imports/079.ts",
       "renamed/no-duplicate-imports/080.ts",
@@ -15053,9 +15030,6 @@
       "renamed/no-eq-null/004.js",
       "renamed/no-eq-null/005.js",
       "renamed/no-eval/001.js",
-      "renamed/no-eval/008.js",
-      "renamed/no-eval/011.js",
-      "renamed/no-eval/015.js",
       "renamed/no-eval/017.js",
       "renamed/no-eval/023.js",
       "renamed/no-eval/024.js",
@@ -15193,9 +15167,6 @@
       "renamed/no-implied-eval/097.js",
       "renamed/no-implied-eval/098.js",
       "renamed/no-implied-eval/103.js",
-      "renamed/no-implied-eval/106.js",
-      "renamed/no-implied-eval/114.js",
-      "renamed/no-implied-eval/124.js",
       "renamed/no-implied-eval/125.js",
       "renamed/no-implied-eval/126.js",
       "renamed/no-implied-eval/127.js",
@@ -15213,16 +15184,11 @@
       "renamed/no-implied-eval/144.js",
       "renamed/no-implied-eval/145.js",
       "renamed/no-implied-eval/146.js",
-      "renamed/no-implied-eval/149.js",
-      "renamed/no-implied-eval/150.js",
-      "renamed/no-implied-eval/153.js",
       "renamed/no-implied-eval/161.js",
       "renamed/no-implied-eval/162.js",
       "renamed/no-implied-eval/163.js",
       "renamed/no-implied-eval/164.js",
       "renamed/no-implied-eval/165.js",
-      "renamed/no-implied-eval/170.js",
-      "renamed/no-implied-eval/171.js",
       "renamed/no-inline-comments/001.jsx",
       "renamed/no-inline-comments/002.jsx",
       "renamed/no-inline-comments/004.jsx",
@@ -15698,7 +15664,6 @@
       "renamed/no-obj-calls/017.js",
       "renamed/no-obj-calls/019.js",
       "renamed/no-obj-calls/020.js",
-      "renamed/no-obj-calls/021.js",
       "renamed/no-obj-calls/022.js",
       "renamed/no-obj-calls/023.js",
       "renamed/no-obj-calls/025.js",
@@ -15750,7 +15715,6 @@
       "renamed/no-obj-calls/096.js",
       "renamed/no-obj-calls/097.js",
       "renamed/no-obj-calls/098.js",
-      "renamed/no-obj-calls/099.js",
       "renamed/no-obj-calls/100.js",
       "renamed/no-obj-calls/101.js",
       "renamed/no-obj-calls/102.js",
@@ -16951,7 +16915,6 @@
       "renamed/no-unused-vars/107.js",
       "renamed/no-unused-vars/108.js",
       "renamed/no-unused-vars/109.js",
-      "renamed/no-unused-vars/110.js",
       "renamed/no-unused-vars/112.js",
       "renamed/no-unused-vars/114.js",
       "renamed/no-unused-vars/115.js",
@@ -17058,7 +17021,6 @@
       "renamed/no-unused-vars/228.js",
       "renamed/no-unused-vars/230.js",
       "renamed/no-unused-vars/232.js",
-      "renamed/no-unused-vars/234.js",
       "renamed/no-unused-vars/235.js",
       "renamed/no-unused-vars/237.js",
       "renamed/no-unused-vars/238.js",
@@ -17206,9 +17168,6 @@
       "renamed/no-unused-vars/384.js",
       "renamed/no-unused-vars/385.js",
       "renamed/no-unused-vars/386.js",
-      "renamed/no-unused-vars/387.js",
-      "renamed/no-unused-vars/388.js",
-      "renamed/no-unused-vars/389.js",
       "renamed/no-unused-vars/390.js",
       "renamed/no-unused-vars/391.js",
       "renamed/no-unused-vars/392.js",
@@ -17470,7 +17429,6 @@
       "renamed/no-useless-rename/045.js",
       "renamed/no-useless-rename/046.js",
       "renamed/no-useless-rename/048.js",
-      "renamed/no-useless-rename/049.js",
       "renamed/no-useless-rename/050.js",
       "renamed/no-useless-rename/051.js",
       "renamed/no-useless-rename/052.js",
@@ -17541,8 +17499,6 @@
       "renamed/no-useless-rename/134.js",
       "renamed/no-useless-rename/135.js",
       "renamed/no-useless-rename/136.js",
-      "renamed/no-useless-rename/138.js",
-      "renamed/no-useless-rename/144.js",
       "renamed/no-useless-rename/145.js",
       "renamed/no-useless-rename/146.js",
       "renamed/no-useless-rename/147.js",
@@ -18639,23 +18595,9 @@
       "renamed/require-yield/014.js",
       "renamed/require-yield/015.js",
       "renamed/sort-imports/001.js",
-      "renamed/sort-imports/004.js",
-      "renamed/sort-imports/005.js",
-      "renamed/sort-imports/006.js",
       "renamed/sort-imports/009.js",
-      "renamed/sort-imports/013.js",
-      "renamed/sort-imports/014.js",
-      "renamed/sort-imports/015.js",
       "renamed/sort-imports/017.js",
       "renamed/sort-imports/026.js",
-      "renamed/sort-imports/033.js",
-      "renamed/sort-imports/035.js",
-      "renamed/sort-imports/039.js",
-      "renamed/sort-imports/040.js",
-      "renamed/sort-imports/041.js",
-      "renamed/sort-imports/042.js",
-      "renamed/sort-imports/043.js",
-      "renamed/sort-imports/044.js",
       "renamed/sort-imports/045.js",
       "renamed/sort-keys/001.js",
       "renamed/sort-keys/002.js",
@@ -101526,18 +101468,6 @@
         ],
         "renamedFrom": "id-length/015.js"
       },
-      "renamed/id-length/016.js": {
-        "rules": [
-          "id-length"
-        ],
-        "renamedFrom": "id-length/016.js"
-      },
-      "renamed/id-length/017.js": {
-        "rules": [
-          "id-length"
-        ],
-        "renamedFrom": "id-length/017.js"
-      },
       "renamed/id-length/018.js": {
         "rules": [
           "id-length"
@@ -101733,38 +101663,11 @@
           "ecmaVersion": 6
         }
       },
-      "renamed/id-length/041.js": {
-        "rules": [
-          "id-length"
-        ],
-        "renamedFrom": "id-length/041.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/id-length/042.js": {
-        "rules": [
-          "id-length"
-        ],
-        "renamedFrom": "id-length/042.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
       "renamed/id-length/044.js": {
         "rules": [
           "id-length"
         ],
         "renamedFrom": "id-length/044.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/id-length/045.js": {
-        "rules": [
-          "id-length"
-        ],
-        "renamedFrom": "id-length/045.js",
         "languageOptions": {
           "ecmaVersion": 6
         }
@@ -107783,24 +107686,6 @@
         ],
         "renamedFrom": "no-duplicate-case/029.js"
       },
-      "renamed/no-duplicate-imports/002.js": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/002.js",
-        "languageOptions": {
-          "ecmaVersion": 12
-        }
-      },
-      "renamed/no-duplicate-imports/003.js": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/003.js",
-        "languageOptions": {
-          "ecmaVersion": 12
-        }
-      },
       "renamed/no-duplicate-imports/004.js": {
         "rules": [
           "no-duplicate-imports"
@@ -107873,15 +107758,6 @@
           "ecmaVersion": 12
         }
       },
-      "renamed/no-duplicate-imports/016.js": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/016.js",
-        "languageOptions": {
-          "ecmaVersion": 12
-        }
-      },
       "renamed/no-duplicate-imports/017.js": {
         "rules": [
           "no-duplicate-imports"
@@ -107896,24 +107772,6 @@
           "no-duplicate-imports"
         ],
         "renamedFrom": "no-duplicate-imports/019.js",
-        "languageOptions": {
-          "ecmaVersion": 12
-        }
-      },
-      "renamed/no-duplicate-imports/021.js": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/021.js",
-        "languageOptions": {
-          "ecmaVersion": 12
-        }
-      },
-      "renamed/no-duplicate-imports/022.js": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/022.js",
         "languageOptions": {
           "ecmaVersion": 12
         }
@@ -107963,18 +107821,6 @@
           "ecmaVersion": 12
         }
       },
-      "renamed/no-duplicate-imports/034.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/034.ts"
-      },
-      "renamed/no-duplicate-imports/035.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/035.ts"
-      },
       "renamed/no-duplicate-imports/036.ts": {
         "rules": [
           "no-duplicate-imports"
@@ -108011,12 +107857,6 @@
         ],
         "renamedFrom": "no-duplicate-imports/041.ts"
       },
-      "renamed/no-duplicate-imports/042.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/042.ts"
-      },
       "renamed/no-duplicate-imports/045.ts": {
         "rules": [
           "no-duplicate-imports"
@@ -108035,12 +107875,6 @@
         ],
         "renamedFrom": "no-duplicate-imports/048.ts"
       },
-      "renamed/no-duplicate-imports/049.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/049.ts"
-      },
       "renamed/no-duplicate-imports/050.ts": {
         "rules": [
           "no-duplicate-imports"
@@ -108052,24 +107886,6 @@
           "no-duplicate-imports"
         ],
         "renamedFrom": "no-duplicate-imports/052.ts"
-      },
-      "renamed/no-duplicate-imports/053.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/053.ts"
-      },
-      "renamed/no-duplicate-imports/054.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/054.ts"
-      },
-      "renamed/no-duplicate-imports/055.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/055.ts"
       },
       "renamed/no-duplicate-imports/056.ts": {
         "rules": [
@@ -108100,24 +107916,6 @@
           "no-duplicate-imports"
         ],
         "renamedFrom": "no-duplicate-imports/060.ts"
-      },
-      "renamed/no-duplicate-imports/062.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/062.ts"
-      },
-      "renamed/no-duplicate-imports/063.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/063.ts"
-      },
-      "renamed/no-duplicate-imports/064.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/064.ts"
       },
       "renamed/no-duplicate-imports/065.ts": {
         "rules": [
@@ -108160,24 +107958,6 @@
           "no-duplicate-imports"
         ],
         "renamedFrom": "no-duplicate-imports/072.ts"
-      },
-      "renamed/no-duplicate-imports/075.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/075.ts"
-      },
-      "renamed/no-duplicate-imports/076.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/076.ts"
-      },
-      "renamed/no-duplicate-imports/077.ts": {
-        "rules": [
-          "no-duplicate-imports"
-        ],
-        "renamedFrom": "no-duplicate-imports/077.ts"
       },
       "renamed/no-duplicate-imports/078.ts": {
         "rules": [
@@ -129714,36 +129494,6 @@
           "sourceType": "script"
         }
       },
-      "renamed/no-eval/008.js": {
-        "rules": [
-          "no-eval"
-        ],
-        "renamedFrom": "no-eval/008.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-eval/011.js": {
-        "rules": [
-          "no-eval"
-        ],
-        "renamedFrom": "no-eval/011.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "commonjs"
-        }
-      },
-      "renamed/no-eval/015.js": {
-        "rules": [
-          "no-eval"
-        ],
-        "renamedFrom": "no-eval/015.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
-          "sourceType": "script"
-        }
-      },
       "renamed/no-eval/017.js": {
         "rules": [
           "no-eval"
@@ -130935,36 +130685,6 @@
           "sourceType": "script"
         }
       },
-      "renamed/no-implied-eval/106.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/106.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-implied-eval/114.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/114.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "commonjs"
-        }
-      },
-      "renamed/no-implied-eval/124.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/124.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
-          "sourceType": "script"
-        }
-      },
       "renamed/no-implied-eval/125.js": {
         "rules": [
           "no-implied-eval"
@@ -131135,36 +130855,6 @@
           "sourceType": "commonjs"
         }
       },
-      "renamed/no-implied-eval/149.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/149.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-implied-eval/150.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/150.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-implied-eval/153.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/153.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "script"
-        }
-      },
       "renamed/no-implied-eval/161.js": {
         "rules": [
           "no-implied-eval"
@@ -131212,26 +130902,6 @@
         "renamedFrom": "no-implied-eval/165.js",
         "languageOptions": {
           "ecmaVersion": 6,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-implied-eval/170.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/170.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-implied-eval/171.js": {
-        "rules": [
-          "no-implied-eval"
-        ],
-        "renamedFrom": "no-implied-eval/171.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
           "sourceType": "script"
         }
       },
@@ -135037,16 +134707,6 @@
           "sourceType": "script"
         }
       },
-      "renamed/no-obj-calls/021.js": {
-        "rules": [
-          "no-obj-calls"
-        ],
-        "renamedFrom": "no-obj-calls/021.js",
-        "languageOptions": {
-          "ecmaVersion": 6,
-          "sourceType": "script"
-        }
-      },
       "renamed/no-obj-calls/022.js": {
         "rules": [
           "no-obj-calls"
@@ -135552,16 +135212,6 @@
           "no-obj-calls"
         ],
         "renamedFrom": "no-obj-calls/098.js",
-        "languageOptions": {
-          "ecmaVersion": 2020,
-          "sourceType": "script"
-        }
-      },
-      "renamed/no-obj-calls/099.js": {
-        "rules": [
-          "no-obj-calls"
-        ],
-        "renamedFrom": "no-obj-calls/099.js",
         "languageOptions": {
           "ecmaVersion": 2020,
           "sourceType": "script"
@@ -145846,16 +145496,6 @@
           "sourceType": "script"
         }
       },
-      "renamed/no-unused-vars/110.js": {
-        "rules": [
-          "no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/110.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "script"
-        }
-      },
       "renamed/no-unused-vars/112.js": {
         "rules": [
           "no-unused-vars"
@@ -146902,16 +146542,6 @@
         "renamedFrom": "no-unused-vars/232.js",
         "languageOptions": {
           "ecmaVersion": 6
-        }
-      },
-      "renamed/no-unused-vars/234.js": {
-        "rules": [
-          "no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/234.js",
-        "languageOptions": {
-          "ecmaVersion": 5,
-          "sourceType": "script"
         }
       },
       "renamed/no-unused-vars/235.js": {
@@ -148376,33 +148006,6 @@
           "no-unused-vars"
         ],
         "renamedFrom": "no-unused-vars/386.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/no-unused-vars/387.js": {
-        "rules": [
-          "no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/387.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/no-unused-vars/388.js": {
-        "rules": [
-          "no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/388.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/no-unused-vars/389.js": {
-        "rules": [
-          "no-unused-vars"
-        ],
-        "renamedFrom": "no-unused-vars/389.js",
         "languageOptions": {
           "ecmaVersion": 6
         }
@@ -150577,15 +150180,6 @@
           "ecmaVersion": 6
         }
       },
-      "renamed/no-useless-rename/049.js": {
-        "rules": [
-          "no-useless-rename"
-        ],
-        "renamedFrom": "no-useless-rename/049.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
       "renamed/no-useless-rename/050.js": {
         "rules": [
           "no-useless-rename"
@@ -151212,24 +150806,6 @@
           "no-useless-rename"
         ],
         "renamedFrom": "no-useless-rename/136.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/no-useless-rename/138.js": {
-        "rules": [
-          "no-useless-rename"
-        ],
-        "renamedFrom": "no-useless-rename/138.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/no-useless-rename/144.js": {
-        "rules": [
-          "no-useless-rename"
-        ],
-        "renamedFrom": "no-useless-rename/144.js",
         "languageOptions": {
           "ecmaVersion": 6
         }
@@ -161616,65 +161192,11 @@
           "ecmaVersion": 6
         }
       },
-      "renamed/sort-imports/004.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/004.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/005.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/005.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/006.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/006.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
       "renamed/sort-imports/009.js": {
         "rules": [
           "sort-imports"
         ],
         "renamedFrom": "sort-imports/009.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/013.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/013.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/014.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/014.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/015.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/015.js",
         "languageOptions": {
           "ecmaVersion": 6
         }
@@ -161693,78 +161215,6 @@
           "sort-imports"
         ],
         "renamedFrom": "sort-imports/026.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/033.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/033.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/035.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/035.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/039.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/039.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/040.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/040.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/041.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/041.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/042.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/042.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/043.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/043.js",
-        "languageOptions": {
-          "ecmaVersion": 6
-        }
-      },
-      "renamed/sort-imports/044.js": {
-        "rules": [
-          "sort-imports"
-        ],
-        "renamedFrom": "sort-imports/044.js",
         "languageOptions": {
           "ecmaVersion": 6
         }
@@ -490737,54 +490187,6 @@
       "column": 1
     },
     {
-      "rule": "no-var",
-      "path": "renamed/id-length/016.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/id-length/016.js",
-      "line": 1,
-      "column": 5
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/id-length/016.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-var",
-      "path": "renamed/id-length/017.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/id-length/017.js",
-      "line": 1,
-      "column": 5
-    },
-    {
-      "rule": "no-ternary",
-      "path": "renamed/id-length/017.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/id-length/017.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/id-length/017.js",
-      "line": 1,
-      "column": 32
-    },
-    {
       "rule": "no-unused-vars",
       "path": "renamed/id-length/018.js",
       "line": 1,
@@ -491200,33 +490602,9 @@
     },
     {
       "rule": "no-unused-vars",
-      "path": "renamed/id-length/041.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-useless-rename",
-      "path": "renamed/id-length/042.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/id-length/042.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
       "path": "renamed/id-length/044.js",
       "line": 1,
       "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/id-length/045.js",
-      "line": 1,
-      "column": 10
     },
     {
       "rule": "no-unused-vars",
@@ -518590,30 +517968,6 @@
     },
     {
       "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/002.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/no-duplicate-imports/003.js",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/003.js",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/003.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-unused-vars",
       "path": "renamed/no-duplicate-imports/004.js",
       "line": 1,
       "column": 13
@@ -518686,69 +518040,9 @@
     },
     {
       "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/016.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-unused-vars",
       "path": "renamed/no-duplicate-imports/017.js",
       "line": 1,
       "column": 13
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/021.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/021.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/021.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/021.js",
-      "line": 2,
-      "column": 10
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/022.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/022.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/022.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/no-duplicate-imports/022.js",
-      "line": 2,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/022.js",
-      "line": 2,
-      "column": 8
     },
     {
       "rule": "no-unused-vars",
@@ -518830,30 +518124,6 @@
     },
     {
       "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/034.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/no-duplicate-imports/035.ts",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/035.ts",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/035.ts",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
       "path": "renamed/no-duplicate-imports/036.ts",
       "line": 1,
       "column": 18
@@ -518926,105 +518196,15 @@
     },
     {
       "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/042.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/no-duplicate-imports/042.ts",
-      "line": 2,
-      "column": 13
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/042.ts",
-      "line": 2,
-      "column": 13
-    },
-    {
-      "rule": "no-unused-vars",
       "path": "renamed/no-duplicate-imports/045.ts",
       "line": 1,
       "column": 13
     },
     {
       "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/049.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
       "path": "renamed/no-duplicate-imports/050.ts",
       "line": 1,
       "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/053.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/053.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/053.ts",
-      "line": 1,
-      "column": 20
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/054.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/054.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/054.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/054.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/055.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/055.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/055.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/055.ts",
-      "line": 2,
-      "column": 15
     },
     {
       "rule": "no-unused-vars",
@@ -519066,78 +518246,6 @@
       "rule": "no-unused-vars",
       "path": "renamed/no-duplicate-imports/060.ts",
       "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/062.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/062.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/062.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/062.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/063.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/063.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/063.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/063.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/064.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/064.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/064.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/064.ts",
-      "line": 2,
       "column": 15
     },
     {
@@ -519217,102 +518325,6 @@
       "path": "renamed/no-duplicate-imports/072.ts",
       "line": 1,
       "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/075.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/075.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/075.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/075.ts",
-      "line": 2,
-      "column": 10
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 1,
-      "column": 21
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 1,
-      "column": 26
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 3,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/076.ts",
-      "line": 3,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/077.ts",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-duplicate-imports",
-      "path": "renamed/no-duplicate-imports/077.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-duplicate-imports/077.ts",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-duplicate-imports/077.ts",
-      "line": 2,
-      "column": 15
     },
     {
       "rule": "no-unused-vars",
@@ -603045,18 +602057,6 @@
       "column": 6
     },
     {
-      "rule": "no-undef",
-      "path": "renamed/no-eval/008.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "strict",
-      "path": "renamed/no-eval/011.js",
-      "line": 1,
-      "column": 1
-    },
-    {
       "rule": "no-var",
       "path": "renamed/no-eval/023.js",
       "line": 1,
@@ -606358,18 +605358,6 @@
     },
     {
       "rule": "no-undef",
-      "path": "renamed/no-implied-eval/106.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "strict",
-      "path": "renamed/no-implied-eval/114.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-undef",
       "path": "renamed/no-implied-eval/125.js",
       "line": 1,
       "column": 1
@@ -606717,28 +605705,10 @@
       "column": 15
     },
     {
-      "rule": "no-undef",
-      "path": "renamed/no-implied-eval/149.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/no-implied-eval/150.js",
-      "line": 1,
-      "column": 2
-    },
-    {
-      "rule": "no-unsafe-optional-chaining",
-      "path": "renamed/no-implied-eval/150.js",
-      "line": 1,
-      "column": 2
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/no-implied-eval/153.js",
-      "line": 1,
-      "column": 1
+      "rule": "no-implied-eval",
+      "path": "renamed/no-implied-eval/146.js",
+      "line": 3,
+      "column": 4
     },
     {
       "rule": "no-undef",
@@ -606817,24 +605787,6 @@
       "path": "renamed/no-implied-eval/165.js",
       "line": 1,
       "column": 25
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/no-implied-eval/170.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/no-implied-eval/171.js",
-      "line": 1,
-      "column": 2
-    },
-    {
-      "rule": "no-unsafe-optional-chaining",
-      "path": "renamed/no-implied-eval/171.js",
-      "line": 1,
-      "column": 2
     },
     {
       "rule": "no-var",
@@ -618375,18 +617327,6 @@
       "column": 3
     },
     {
-      "rule": "no-undef",
-      "path": "renamed/no-obj-calls/021.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-expressions",
-      "path": "renamed/no-obj-calls/021.js",
-      "line": 1,
-      "column": 1
-    },
-    {
       "rule": "no-var",
       "path": "renamed/no-obj-calls/022.js",
       "line": 1,
@@ -619251,6 +618191,12 @@
       "column": 7
     },
     {
+      "rule": "no-obj-calls",
+      "path": "renamed/no-obj-calls/094.js",
+      "line": 1,
+      "column": 11
+    },
+    {
       "rule": "id-length",
       "path": "renamed/no-obj-calls/095.js",
       "line": 1,
@@ -619261,6 +618207,12 @@
       "path": "renamed/no-obj-calls/095.js",
       "line": 1,
       "column": 7
+    },
+    {
+      "rule": "no-obj-calls",
+      "path": "renamed/no-obj-calls/095.js",
+      "line": 1,
+      "column": 11
     },
     {
       "rule": "no-var",
@@ -619321,18 +618273,6 @@
       "path": "renamed/no-obj-calls/098.js",
       "line": 1,
       "column": 3
-    },
-    {
-      "rule": "no-obj-calls",
-      "path": "renamed/no-obj-calls/099.js",
-      "line": 1,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-expressions",
-      "path": "renamed/no-obj-calls/099.js",
-      "line": 1,
-      "column": 1
     },
     {
       "rule": "no-obj-calls",
@@ -619677,6 +618617,12 @@
       "column": 19
     },
     {
+      "rule": "no-obj-calls",
+      "path": "renamed/no-obj-calls/117.js",
+      "line": 1,
+      "column": 45
+    },
+    {
       "rule": "no-ternary",
       "path": "renamed/no-obj-calls/118.js",
       "line": 1,
@@ -619696,6 +618642,12 @@
     },
     {
       "rule": "no-new",
+      "path": "renamed/no-obj-calls/118.js",
+      "line": 1,
+      "column": 45
+    },
+    {
+      "rule": "no-obj-calls",
       "path": "renamed/no-obj-calls/118.js",
       "line": 1,
       "column": 45
@@ -652624,24 +651576,6 @@
     },
     {
       "rule": "no-empty",
-      "path": "renamed/no-unused-vars/110.js",
-      "line": 1,
-      "column": 4
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-unused-vars/110.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-empty",
-      "path": "renamed/no-unused-vars/110.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "no-empty",
       "path": "renamed/no-unused-vars/112.js",
       "line": 1,
       "column": 4
@@ -655819,24 +654753,6 @@
       "path": "renamed/no-unused-vars/232.js",
       "line": 1,
       "column": 23
-    },
-    {
-      "rule": "no-empty",
-      "path": "renamed/no-unused-vars/234.js",
-      "line": 1,
-      "column": 4
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-unused-vars/234.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-empty",
-      "path": "renamed/no-unused-vars/234.js",
-      "line": 1,
-      "column": 16
     },
     {
       "rule": "no-empty",
@@ -660505,48 +659421,6 @@
       "path": "renamed/no-unused-vars/386.js",
       "line": 1,
       "column": 35
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-unused-vars/387.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-unused-vars/388.js",
-      "line": 1,
-      "column": 10
-    },
-    {
-      "rule": "no-alert",
-      "path": "renamed/no-unused-vars/388.js",
-      "line": 1,
-      "column": 32
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/no-unused-vars/388.js",
-      "line": 1,
-      "column": 32
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-unused-vars/389.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-alert",
-      "path": "renamed/no-unused-vars/389.js",
-      "line": 1,
-      "column": 32
-    },
-    {
-      "rule": "no-undef",
-      "path": "renamed/no-unused-vars/389.js",
-      "line": 1,
-      "column": 32
     },
     {
       "rule": "no-unused-vars",
@@ -667611,36 +666485,6 @@
       "column": 28
     },
     {
-      "rule": "no-useless-rename",
-      "path": "renamed/no-useless-rename/049.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-useless-rename/049.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "no-useless-rename",
-      "path": "renamed/no-useless-rename/049.js",
-      "line": 1,
-      "column": 21
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-useless-rename/049.js",
-      "line": 1,
-      "column": 21
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-useless-rename/049.js",
-      "line": 1,
-      "column": 28
-    },
-    {
       "rule": "no-var",
       "path": "renamed/no-useless-rename/050.js",
       "line": 1,
@@ -669805,78 +668649,6 @@
       "path": "renamed/no-useless-rename/136.js",
       "line": 1,
       "column": 16
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-useless-rename/138.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "capitalized-comments",
-      "path": "renamed/no-useless-rename/138.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-inline-comments",
-      "path": "renamed/no-useless-rename/138.js",
-      "line": 1,
-      "column": 13
-    },
-    {
-      "rule": "no-useless-rename",
-      "path": "renamed/no-useless-rename/138.js",
-      "line": 1,
-      "column": 26
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-useless-rename/138.js",
-      "line": 1,
-      "column": 26
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-useless-rename/138.js",
-      "line": 1,
-      "column": 33
-    },
-    {
-      "rule": "no-useless-rename",
-      "path": "renamed/no-useless-rename/144.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-useless-rename/144.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "capitalized-comments",
-      "path": "renamed/no-useless-rename/144.js",
-      "line": 1,
-      "column": 19
-    },
-    {
-      "rule": "no-inline-comments",
-      "path": "renamed/no-useless-rename/144.js",
-      "line": 1,
-      "column": 19
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/no-useless-rename/144.js",
-      "line": 1,
-      "column": 33
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/no-useless-rename/144.js",
-      "line": 1,
-      "column": 33
     },
     {
       "rule": "capitalized-comments",
@@ -706755,84 +705527,6 @@
       "column": 8
     },
     {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/004.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/004.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/sort-imports/004.js",
-      "line": 2,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/004.js",
-      "line": 2,
-      "column": 8
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/sort-imports/005.js",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/005.js",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/005.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/005.js",
-      "line": 2,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/005.js",
-      "line": 2,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/006.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/006.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/006.js",
-      "line": 2,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/006.js",
-      "line": 2,
-      "column": 12
-    },
-    {
       "rule": "id-length",
       "path": "renamed/sort-imports/009.js",
       "line": 1,
@@ -706867,90 +705561,6 @@
       "path": "renamed/sort-imports/009.js",
       "line": 2,
       "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/013.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/013.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/013.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/013.js",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/014.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/014.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/014.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/014.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/014.js",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/015.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/015.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/015.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/015.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/015.js",
-      "line": 1,
-      "column": 18
     },
     {
       "rule": "id-length",
@@ -707011,270 +705621,6 @@
       "path": "renamed/sort-imports/026.js",
       "line": 3,
       "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/033.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/033.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/033.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/033.js",
-      "line": 2,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/033.js",
-      "line": 2,
-      "column": 12
-    },
-    {
-      "rule": "id-length",
-      "path": "renamed/sort-imports/035.js",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/035.js",
-      "line": 1,
-      "column": 8
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/035.js",
-      "line": 2,
-      "column": 1
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/035.js",
-      "line": 2,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/035.js",
-      "line": 2,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/039.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/039.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/039.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/039.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/039.js",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/040.js",
-      "line": 1,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 1,
-      "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 2,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 2,
-      "column": 12
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 2,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/040.js",
-      "line": 2,
-      "column": 18
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/041.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "capitalized-comments",
-      "path": "renamed/sort-imports/041.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "no-inline-comments",
-      "path": "renamed/sort-imports/041.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/041.js",
-      "line": 1,
-      "column": 30
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/041.js",
-      "line": 1,
-      "column": 30
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/042.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "capitalized-comments",
-      "path": "renamed/sort-imports/042.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-inline-comments",
-      "path": "renamed/sort-imports/042.js",
-      "line": 1,
-      "column": 15
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/042.js",
-      "line": 1,
-      "column": 30
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/042.js",
-      "line": 1,
-      "column": 30
-    },
-    {
-      "rule": "capitalized-comments",
-      "path": "renamed/sort-imports/043.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-inline-comments",
-      "path": "renamed/sort-imports/043.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/043.js",
-      "line": 1,
-      "column": 23
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/043.js",
-      "line": 1,
-      "column": 30
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/043.js",
-      "line": 1,
-      "column": 30
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/044.js",
-      "line": 1,
-      "column": 9
-    },
-    {
-      "rule": "no-unused-vars",
-      "path": "renamed/sort-imports/044.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "sort-imports",
-      "path": "renamed/sort-imports/044.js",
-      "line": 1,
-      "column": 16
-    },
-    {
-      "rule": "capitalized-comments",
-      "path": "renamed/sort-imports/044.js",
-      "line": 1,
-      "column": 22
-    },
-    {
-      "rule": "no-inline-comments",
-      "path": "renamed/sort-imports/044.js",
-      "line": 1,
-      "column": 22
     },
     {
       "rule": "no-unused-vars",

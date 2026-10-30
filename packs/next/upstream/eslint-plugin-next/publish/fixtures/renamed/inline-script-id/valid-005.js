@@ -1,8 +1,8 @@
 import Script from 'next/script';
 
-      export default function TestTpyj() {
+      export default function TestUtpy() {
         return (
-          <Script {...{ szpphqku: "lazyOnload" }} jt={"test-script"}>
+          <Script {...{ snkpphqk: "lazyOnload" }} id={"test-script"}>
             {`console.log('Hello world');`}
           </Script>
         )

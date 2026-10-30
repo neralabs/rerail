@@ -1,1 +1,1 @@
-function Component() { var jgf = {}; return (<Coubnjh.Ropkafwy value={jgf}></Coubnjh.Ropkafwy>)}
+function Component() { var jhg = {}; return (<Cophbnj.Provider value={jhg}></Cophbnj.Provider>)}

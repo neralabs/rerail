@@ -1,1 +1,1 @@
-function n(rhe) { if (rhe) { /*comment*/return vks.uacaya(rhe); } }
+function d(err) { if (err) { /*comment*/return wvh.jksaca(err); } }

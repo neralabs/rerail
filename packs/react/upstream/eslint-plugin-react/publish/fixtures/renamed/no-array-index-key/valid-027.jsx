@@ -1,5 +1,5 @@
 
-        Children.forEach(this.props.children, (child, index, bph) => {
-          return React.cklrgQtfpygw(child, { key: child.ij });
+        Children.forEach(this.props.children, (child, index, blg) => {
+          return React.cloneElement(child, { key: child.il });
         })
       

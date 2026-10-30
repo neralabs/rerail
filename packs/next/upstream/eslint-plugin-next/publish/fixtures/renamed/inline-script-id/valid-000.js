@@ -1,8 +1,8 @@
 import Script from 'next/script';
 
-      export default function TestWdfq() {
+      export default function TestUwdf() {
         return (
-          <Script jq="test-script">
+          <Script id="test-script">
             {`console.log('Hello world');`}
           </Script>
         )

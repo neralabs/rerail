@@ -6,7 +6,7 @@ This archive is the test data of `packs/javascript/upstream/eslint-plugin-unicor
 
 Repository https://github.com/sindresorhus/eslint-plugin-unicorn, tag `v76.0.0`, commit `f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1`. License: MIT.
 
-368 file(s): 281 extracted, 87 renamed. They remain under eslint-plugin-unicorn's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+358 file(s): 281 extracted, 77 renamed. They remain under eslint-plugin-unicorn's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

@@ -1,2 +1,2 @@
-import nen, { fda } from "os";
-import * as fdx from "os";
+import len, { bar } from "os";
+import * as bas from "os";

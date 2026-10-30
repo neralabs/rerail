@@ -1,1 +1,1 @@
-import {foo as foo, esd as esz} from 'foo';
+import {foo as foo, bar as bau} from 'foo';

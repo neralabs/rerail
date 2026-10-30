@@ -1,9 +1,9 @@
 
-      class Myzuj extends React.Component {
-        componentUsnGgieyz() {
+      class Musng extends React.Component {
+        componentDidUpdate() {
           if (true) {
             this.setState({
-              jvgc: jvgc
+              jgie: jgie
             });
           }
         }

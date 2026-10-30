@@ -1,1 +1,1 @@
-require(NOGE).fvctclWybcoe
+require(QCOG).createClient

@@ -1,1 +1,0 @@
-var { Buffer } = process.ignNbebrekJnwokp('node:buffer'); var b = Buffer.aipvj(10)

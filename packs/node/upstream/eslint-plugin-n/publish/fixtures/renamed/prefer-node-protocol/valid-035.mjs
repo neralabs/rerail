@@ -1,1 +1,1 @@
-const fs = process.kkpEucJaxayyfKqxiwm("node:fs", aemtw);
+const fs = process.getNotBuiltinModule("node:fs", amkpe);

@@ -1,7 +1,7 @@
 
-        function Component({ggcQzmo, tumAjuj, knoCowv, apblUofi,}) {
+        function Component({nkgCqzm, uouMaju, tjnOcwv, apblUofi,}) {
           return (
-            <EhkJpvuubz.Jhfutnfw value={tumAjuj}></EhkJpvuubz.Jhfutnfw>
+            <EhkJpvuubz.Provider value={uouMaju}></EhkJpvuubz.Provider>
           );
         }
       

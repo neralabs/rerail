@@ -1,1 +1,1 @@
-function hezkJhpgetes() {ei.eacUimi();}
+function pezkJhpgetes() {fr.fooSync();}

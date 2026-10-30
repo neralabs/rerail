@@ -1,2 +1,2 @@
-function d(sps) { if (sps) { //comment
-return ywy.vzkbnn(sps); } }
+function c(err) { if (err) { //comment
+return uxp.jswyzk(err); } }

@@ -1,1 +1,1 @@
-rkmvldvr(a || p, xulc)
+callback(a || b, gvru)

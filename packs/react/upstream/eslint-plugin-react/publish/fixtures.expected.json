@@ -1547,14 +1547,6 @@
    "renamed/no-array-index-key/invalid-026.jsx",
    "renamed/no-array-index-key/invalid-027.jsx",
    "renamed/no-array-index-key/invalid-028.jsx",
-   "renamed/no-array-index-key/invalid-029.jsx",
-   "renamed/no-array-index-key/invalid-030.jsx",
-   "renamed/no-array-index-key/invalid-031.jsx",
-   "renamed/no-array-index-key/invalid-032.jsx",
-   "renamed/no-array-index-key/invalid-033.jsx",
-   "renamed/no-array-index-key/invalid-034.jsx",
-   "renamed/no-array-index-key/invalid-035.jsx",
-   "renamed/no-array-index-key/invalid-036.jsx",
    "renamed/no-array-index-key/invalid-037.jsx",
    "renamed/no-array-index-key/invalid-038.jsx",
    "renamed/no-array-index-key/invalid-039.jsx",
@@ -1642,8 +1634,6 @@
    "renamed/no-deprecated/valid-008.jsx",
    "renamed/no-deprecated/valid-009.jsx",
    "renamed/no-deprecated/valid-010.jsx",
-   "renamed/no-deprecated/valid-011.jsx",
-   "renamed/no-deprecated/valid-012.jsx",
    "renamed/no-deprecated/valid-013.jsx",
    "renamed/no-deprecated/valid-014.jsx",
    "renamed/no-deprecated/valid-015.jsx",
@@ -1651,30 +1641,17 @@
    "renamed/no-deprecated/valid-017.jsx",
    "renamed/no-deprecated/valid-018.jsx",
    "renamed/no-deprecated/valid-019.jsx",
-   "renamed/no-deprecated/valid-020.jsx",
-   "renamed/no-deprecated/valid-021.jsx",
-   "renamed/no-deprecated/invalid-000.jsx",
    "renamed/no-deprecated/invalid-001.jsx",
    "renamed/no-deprecated/invalid-002.jsx",
    "renamed/no-deprecated/invalid-003.jsx",
-   "renamed/no-deprecated/invalid-004.jsx",
-   "renamed/no-deprecated/invalid-005.jsx",
    "renamed/no-deprecated/invalid-006.jsx",
    "renamed/no-deprecated/invalid-007.jsx",
    "renamed/no-deprecated/invalid-008.jsx",
    "renamed/no-deprecated/invalid-009.jsx",
    "renamed/no-deprecated/invalid-010.jsx",
-   "renamed/no-deprecated/invalid-011.jsx",
    "renamed/no-deprecated/invalid-012.jsx",
-   "renamed/no-deprecated/invalid-013.jsx",
-   "renamed/no-deprecated/invalid-014.jsx",
-   "renamed/no-deprecated/invalid-015.jsx",
-   "renamed/no-deprecated/invalid-016.jsx",
-   "renamed/no-deprecated/invalid-017.jsx",
    "renamed/no-deprecated/invalid-018.jsx",
-   "renamed/no-deprecated/invalid-019.jsx",
    "renamed/no-deprecated/invalid-020.jsx",
-   "renamed/no-deprecated/invalid-021.jsx",
    "renamed/no-deprecated/invalid-022.jsx",
    "renamed/no-deprecated/invalid-023.jsx",
    "renamed/no-deprecated/invalid-024.jsx",
@@ -1788,7 +1765,6 @@
    "renamed/no-object-type-as-default-prop/invalid-000.jsx",
    "renamed/no-object-type-as-default-prop/invalid-001.jsx",
    "renamed/no-object-type-as-default-prop/invalid-002.jsx",
-   "renamed/no-render-return-value/valid-000.jsx",
    "renamed/no-render-return-value/valid-001.jsx",
    "renamed/no-render-return-value/valid-002.jsx",
    "renamed/no-render-return-value/valid-003.jsx",
@@ -1798,7 +1774,6 @@
    "renamed/no-render-return-value/valid-007.jsx",
    "renamed/no-render-return-value/invalid-000.jsx",
    "renamed/no-render-return-value/invalid-001.jsx",
-   "renamed/no-render-return-value/invalid-002.jsx",
    "renamed/no-render-return-value/invalid-003.jsx",
    "renamed/no-render-return-value/invalid-004.jsx",
    "renamed/no-render-return-value/invalid-005.jsx",
@@ -1806,12 +1781,8 @@
    "renamed/no-render-return-value/invalid-007.jsx",
    "renamed/no-render-return-value/invalid-008.jsx",
    "renamed/no-string-refs/valid-000.jsx",
-   "renamed/no-string-refs/valid-001.jsx",
-   "renamed/no-string-refs/valid-002.jsx",
    "renamed/no-string-refs/valid-003.jsx",
    "renamed/no-string-refs/invalid-000.jsx",
-   "renamed/no-string-refs/invalid-001.jsx",
-   "renamed/no-string-refs/invalid-002.jsx",
    "renamed/no-string-refs/invalid-003.jsx",
    "renamed/no-string-refs/invalid-004.jsx",
    "renamed/no-string-refs/invalid-005.jsx",
@@ -9384,54 +9355,6 @@
     ],
     "renamedFrom": "no-array-index-key/invalid-028.jsx"
    },
-   "renamed/no-array-index-key/invalid-029.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-029.jsx"
-   },
-   "renamed/no-array-index-key/invalid-030.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-030.jsx"
-   },
-   "renamed/no-array-index-key/invalid-031.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-031.jsx"
-   },
-   "renamed/no-array-index-key/invalid-032.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-032.jsx"
-   },
-   "renamed/no-array-index-key/invalid-033.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-033.jsx"
-   },
-   "renamed/no-array-index-key/invalid-034.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-034.jsx"
-   },
-   "renamed/no-array-index-key/invalid-035.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-035.jsx"
-   },
-   "renamed/no-array-index-key/invalid-036.jsx": {
-    "rules": [
-     "react/no-array-index-key"
-    ],
-    "renamedFrom": "no-array-index-key/invalid-036.jsx"
-   },
    "renamed/no-array-index-key/invalid-037.jsx": {
     "rules": [
      "react/no-array-index-key"
@@ -10062,12 +9985,6 @@
     ],
     "renamedFrom": "no-danger/valid-005.jsx"
    },
-   "renamed/no-deprecated/invalid-000.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-000.jsx"
-   },
    "renamed/no-deprecated/invalid-001.jsx": {
     "rules": [
      "react/no-deprecated"
@@ -10085,18 +10002,6 @@
      "react/no-deprecated"
     ],
     "renamedFrom": "no-deprecated/invalid-003.jsx"
-   },
-   "renamed/no-deprecated/invalid-004.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-004.jsx"
-   },
-   "renamed/no-deprecated/invalid-005.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-005.jsx"
    },
    "renamed/no-deprecated/invalid-006.jsx": {
     "rules": [
@@ -10128,47 +10033,11 @@
     ],
     "renamedFrom": "no-deprecated/invalid-010.jsx"
    },
-   "renamed/no-deprecated/invalid-011.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-011.jsx"
-   },
    "renamed/no-deprecated/invalid-012.jsx": {
     "rules": [
      "react/no-deprecated"
     ],
     "renamedFrom": "no-deprecated/invalid-012.jsx"
-   },
-   "renamed/no-deprecated/invalid-013.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-013.jsx"
-   },
-   "renamed/no-deprecated/invalid-014.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-014.jsx"
-   },
-   "renamed/no-deprecated/invalid-015.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-015.jsx"
-   },
-   "renamed/no-deprecated/invalid-016.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-016.jsx"
-   },
-   "renamed/no-deprecated/invalid-017.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-017.jsx"
    },
    "renamed/no-deprecated/invalid-018.jsx": {
     "rules": [
@@ -10176,23 +10045,11 @@
     ],
     "renamedFrom": "no-deprecated/invalid-018.jsx"
    },
-   "renamed/no-deprecated/invalid-019.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-019.jsx"
-   },
    "renamed/no-deprecated/invalid-020.jsx": {
     "rules": [
      "react/no-deprecated"
     ],
     "renamedFrom": "no-deprecated/invalid-020.jsx"
-   },
-   "renamed/no-deprecated/invalid-021.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/invalid-021.jsx"
    },
    "renamed/no-deprecated/invalid-022.jsx": {
     "rules": [
@@ -10326,18 +10183,6 @@
     ],
     "renamedFrom": "no-deprecated/valid-010.jsx"
    },
-   "renamed/no-deprecated/valid-011.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/valid-011.jsx"
-   },
-   "renamed/no-deprecated/valid-012.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/valid-012.jsx"
-   },
    "renamed/no-deprecated/valid-013.jsx": {
     "rules": [
      "react/no-deprecated"
@@ -10379,18 +10224,6 @@
      "react/no-deprecated"
     ],
     "renamedFrom": "no-deprecated/valid-019.jsx"
-   },
-   "renamed/no-deprecated/valid-020.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/valid-020.jsx"
-   },
-   "renamed/no-deprecated/valid-021.jsx": {
-    "rules": [
-     "react/no-deprecated"
-    ],
-    "renamedFrom": "no-deprecated/valid-021.jsx"
    },
    "renamed/no-did-mount-set-state/invalid-000.jsx": {
     "rules": [
@@ -11016,12 +10849,6 @@
     ],
     "renamedFrom": "no-render-return-value/invalid-001.jsx"
    },
-   "renamed/no-render-return-value/invalid-002.jsx": {
-    "rules": [
-     "react/no-render-return-value"
-    ],
-    "renamedFrom": "no-render-return-value/invalid-002.jsx"
-   },
    "renamed/no-render-return-value/invalid-003.jsx": {
     "rules": [
      "react/no-render-return-value"
@@ -11057,12 +10884,6 @@
      "react/no-render-return-value"
     ],
     "renamedFrom": "no-render-return-value/invalid-008.jsx"
-   },
-   "renamed/no-render-return-value/valid-000.jsx": {
-    "rules": [
-     "react/no-render-return-value"
-    ],
-    "renamedFrom": "no-render-return-value/valid-000.jsx"
    },
    "renamed/no-render-return-value/valid-001.jsx": {
     "rules": [
@@ -11112,18 +10933,6 @@
     ],
     "renamedFrom": "no-string-refs/invalid-000.jsx"
    },
-   "renamed/no-string-refs/invalid-001.jsx": {
-    "rules": [
-     "react/no-string-refs"
-    ],
-    "renamedFrom": "no-string-refs/invalid-001.jsx"
-   },
-   "renamed/no-string-refs/invalid-002.jsx": {
-    "rules": [
-     "react/no-string-refs"
-    ],
-    "renamedFrom": "no-string-refs/invalid-002.jsx"
-   },
    "renamed/no-string-refs/invalid-003.jsx": {
     "rules": [
      "react/no-string-refs"
@@ -11153,18 +10962,6 @@
      "react/no-string-refs"
     ],
     "renamedFrom": "no-string-refs/valid-000.jsx"
-   },
-   "renamed/no-string-refs/valid-001.jsx": {
-    "rules": [
-     "react/no-string-refs"
-    ],
-    "renamedFrom": "no-string-refs/valid-001.jsx"
-   },
-   "renamed/no-string-refs/valid-002.jsx": {
-    "rules": [
-     "react/no-string-refs"
-    ],
-    "renamedFrom": "no-string-refs/valid-002.jsx"
    },
    "renamed/no-string-refs/valid-003.jsx": {
     "rules": [
@@ -13410,18 +13207,6 @@
   },
   {
    "rule": "react/jsx-key",
-   "path": "renamed/jsx-key/valid-030.jsx",
-   "line": 1,
-   "column": 43
-  },
-  {
-   "rule": "react/jsx-key",
-   "path": "renamed/jsx-key/valid-031.jsx",
-   "line": 3,
-   "column": 45
-  },
-  {
-   "rule": "react/jsx-key",
    "path": "renamed/jsx-key/valid-032.jsx",
    "line": 8,
    "column": 49
@@ -13431,18 +13216,6 @@
    "path": "renamed/jsx-key/valid-032.jsx",
    "line": 9,
    "column": 57
-  },
-  {
-   "rule": "react/jsx-key",
-   "path": "renamed/jsx-key/valid-032.jsx",
-   "line": 10,
-   "column": 45
-  },
-  {
-   "rule": "react/jsx-key",
-   "path": "renamed/jsx-key/valid-032.jsx",
-   "line": 11,
-   "column": 53
   },
   {
    "rule": "react/jsx-key",
@@ -13645,6 +13418,144 @@
   {
    "rule": "react/jsx-no-constructed-context-values",
    "path": "jsx-no-constructed-context-values/invalid-022.jsx",
+   "line": 3,
+   "column": 58
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-000.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-001.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-002.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-003.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-004.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-005.jsx",
+   "line": 1,
+   "column": 36
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-006.jsx",
+   "line": 1,
+   "column": 24
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-007.jsx",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-008.jsx",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-009.jsx",
+   "line": 1,
+   "column": 43
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-010.jsx",
+   "line": 1,
+   "column": 48
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-011.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-012.jsx",
+   "line": 1,
+   "column": 34
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-013.jsx",
+   "line": 3,
+   "column": 19
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-014.jsx",
+   "line": 3,
+   "column": 23
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-015.jsx",
+   "line": 3,
+   "column": 34
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-016.jsx",
+   "line": 1,
+   "column": 57
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-017.jsx",
+   "line": 1,
+   "column": 41
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-018.jsx",
+   "line": 1,
+   "column": 42
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-019.jsx",
+   "line": 4,
+   "column": 25
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-020.jsx",
+   "line": 6,
+   "column": 11
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-021.jsx",
+   "line": 3,
+   "column": 44
+  },
+  {
+   "rule": "react/jsx-no-constructed-context-values",
+   "path": "renamed/jsx-no-constructed-context-values/invalid-022.jsx",
    "line": 3,
    "column": 58
   },
@@ -18588,9 +18499,21 @@
   },
   {
    "rule": "react/no-array-index-key",
+   "path": "renamed/no-array-index-key/invalid-006.jsx",
+   "line": 1,
+   "column": 78
+  },
+  {
+   "rule": "react/no-array-index-key",
    "path": "renamed/no-array-index-key/invalid-007.jsx",
    "line": 4,
    "column": 80
+  },
+  {
+   "rule": "react/no-array-index-key",
+   "path": "renamed/no-array-index-key/invalid-008.jsx",
+   "line": 4,
+   "column": 18
   },
   {
    "rule": "react/no-array-index-key",
@@ -18711,30 +18634,6 @@
    "path": "renamed/no-array-index-key/invalid-028.jsx",
    "line": 1,
    "column": 72
-  },
-  {
-   "rule": "react/no-array-index-key",
-   "path": "renamed/no-array-index-key/invalid-030.jsx",
-   "line": 5,
-   "column": 45
-  },
-  {
-   "rule": "react/no-array-index-key",
-   "path": "renamed/no-array-index-key/invalid-032.jsx",
-   "line": 5,
-   "column": 45
-  },
-  {
-   "rule": "react/no-array-index-key",
-   "path": "renamed/no-array-index-key/invalid-034.jsx",
-   "line": 5,
-   "column": 45
-  },
-  {
-   "rule": "react/no-array-index-key",
-   "path": "renamed/no-array-index-key/invalid-036.jsx",
-   "line": 5,
-   "column": 45
   },
   {
    "rule": "react/no-array-index-key",
@@ -20046,9 +19945,243 @@
   },
   {
    "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-000.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-001.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-002.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-003.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-004.jsx",
+   "line": 5,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-005.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-006.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/invalid-007.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/valid-000.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/valid-001.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/valid-003.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/valid-004.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-access-state-in-setstate/valid-005.jsx",
+   "line": 2,
+   "column": 21
+  },
+  {
+   "rule": "react/no-deprecated",
    "path": "renamed/no-deprecated/invalid-006.jsx",
    "line": 1,
    "column": 1
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-007.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-008.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-009.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-010.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-018.jsx",
+   "line": 3,
+   "column": 14
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-022.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-022.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-022.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-023.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-023.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-023.jsx",
+   "line": 6,
+   "column": 13
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-024.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-024.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-024.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-025.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-025.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-025.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-026.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-026.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-026.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-027.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-027.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-027.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-028.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-028.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-028.jsx",
+   "line": 6,
+   "column": 11
   },
   {
    "rule": "react/no-deprecated",
@@ -20064,6 +20197,54 @@
   },
   {
    "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-030.jsx",
+   "line": 2,
+   "column": 18
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-030.jsx",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-031.jsx",
+   "line": 2,
+   "column": 18
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-031.jsx",
+   "line": 3,
+   "column": 9
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/invalid-032.jsx",
+   "line": 2,
+   "column": 18
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/valid-014.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/valid-014.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/valid-014.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
    "path": "renamed/no-deprecated/valid-016.jsx",
    "line": 2,
    "column": 18
@@ -20071,8 +20252,56 @@
   {
    "rule": "react/no-deprecated",
    "path": "renamed/no-deprecated/valid-016.jsx",
+   "line": 2,
+   "column": 26
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/valid-016.jsx",
+   "line": 3,
+   "column": 18
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/valid-016.jsx",
    "line": 4,
    "column": 9
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-deprecated/valid-016.jsx",
+   "line": 5,
+   "column": 9
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-direct-mutation-state/invalid-007.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-direct-mutation-state/invalid-009.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-direct-mutation-state/invalid-011.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-find-dom-node/invalid-000.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-find-dom-node/valid-002.jsx",
+   "line": 5,
+   "column": 29
   },
   {
    "rule": "react/no-deprecated",
@@ -20085,12 +20314,6 @@
    "path": "renamed/no-render-return-value/invalid-001.jsx",
    "line": 3,
    "column": 17
-  },
-  {
-   "rule": "react/no-deprecated",
-   "path": "renamed/no-render-return-value/invalid-002.jsx",
-   "line": 3,
-   "column": 18
   },
   {
    "rule": "react/no-deprecated",
@@ -20130,12 +20353,6 @@
   },
   {
    "rule": "react/no-deprecated",
-   "path": "renamed/no-render-return-value/valid-000.jsx",
-   "line": 1,
-   "column": 1
-  },
-  {
-   "rule": "react/no-deprecated",
    "path": "renamed/no-render-return-value/valid-001.jsx",
    "line": 3,
    "column": 9
@@ -20162,6 +20379,78 @@
    "rule": "react/no-deprecated",
    "path": "renamed/no-render-return-value/valid-005.jsx",
    "line": 1,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/invalid-000.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/invalid-000.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/invalid-000.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/invalid-002.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/invalid-002.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/invalid-002.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/valid-006.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/valid-006.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/valid-006.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/valid-008.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/valid-008.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-deprecated",
+   "path": "renamed/no-unsafe/valid-008.jsx",
+   "line": 5,
    "column": 11
   },
   {
@@ -20249,6 +20538,90 @@
    "column": 13
   },
   {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-000.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-001.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-002.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-003.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-004.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-007.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/invalid-008.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-005.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-006.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-007.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-008.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-009.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-012.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-mount-set-state",
+   "path": "renamed/no-did-mount-set-state/valid-013.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
    "rule": "react/no-did-update-set-state",
    "path": "no-did-update-set-state/invalid-000.jsx",
    "line": 4,
@@ -20329,6 +20702,90 @@
   {
    "rule": "react/no-did-update-set-state",
    "path": "no-did-update-set-state/valid-013.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-000.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-001.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-002.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-003.jsx",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-004.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-007.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/invalid-008.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-005.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-006.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-007.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-008.jsx",
+   "line": 4,
+   "column": 9
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-009.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-012.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-did-update-set-state",
+   "path": "renamed/no-did-update-set-state/valid-013.jsx",
    "line": 5,
    "column": 13
   },
@@ -20424,6 +20881,42 @@
   },
   {
    "rule": "react/no-direct-mutation-state",
+   "path": "renamed/no-direct-mutation-state/invalid-000.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-direct-mutation-state",
+   "path": "renamed/no-direct-mutation-state/invalid-001.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-direct-mutation-state",
+   "path": "renamed/no-direct-mutation-state/invalid-002.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-direct-mutation-state",
+   "path": "renamed/no-direct-mutation-state/invalid-003.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-direct-mutation-state",
+   "path": "renamed/no-direct-mutation-state/invalid-004.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-direct-mutation-state",
+   "path": "renamed/no-direct-mutation-state/invalid-004.jsx",
+   "line": 5,
+   "column": 13
+  },
+  {
+   "rule": "react/no-direct-mutation-state",
    "path": "renamed/no-direct-mutation-state/invalid-005.jsx",
    "line": 7,
    "column": 13
@@ -20513,6 +21006,42 @@
    "column": 25
   },
   {
+   "rule": "react/no-find-dom-node",
+   "path": "renamed/no-deprecated/invalid-008.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/no-find-dom-node",
+   "path": "renamed/no-deprecated/valid-003.jsx",
+   "line": 1,
+   "column": 1
+  },
+  {
+   "rule": "react/no-find-dom-node",
+   "path": "renamed/no-find-dom-node/invalid-000.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-find-dom-node",
+   "path": "renamed/no-find-dom-node/invalid-001.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-find-dom-node",
+   "path": "renamed/no-find-dom-node/invalid-002.jsx",
+   "line": 4,
+   "column": 13
+  },
+  {
+   "rule": "react/no-find-dom-node",
+   "path": "renamed/no-find-dom-node/invalid-003.jsx",
+   "line": 4,
+   "column": 25
+  },
+  {
    "rule": "react/no-is-mounted",
    "path": "no-is-mounted/invalid-000.jsx",
    "line": 4,
@@ -20527,6 +21056,24 @@
   {
    "rule": "react/no-is-mounted",
    "path": "no-is-mounted/invalid-002.jsx",
+   "line": 4,
+   "column": 18
+  },
+  {
+   "rule": "react/no-is-mounted",
+   "path": "renamed/no-is-mounted/invalid-000.jsx",
+   "line": 4,
+   "column": 18
+  },
+  {
+   "rule": "react/no-is-mounted",
+   "path": "renamed/no-is-mounted/invalid-001.jsx",
+   "line": 4,
+   "column": 18
+  },
+  {
+   "rule": "react/no-is-mounted",
+   "path": "renamed/no-is-mounted/invalid-002.jsx",
    "line": 4,
    "column": 18
   },
@@ -20922,12 +21469,6 @@
   },
   {
    "rule": "react/no-render-return-value",
-   "path": "renamed/no-render-return-value/invalid-002.jsx",
-   "line": 3,
-   "column": 18
-  },
-  {
-   "rule": "react/no-render-return-value",
    "path": "renamed/no-render-return-value/invalid-003.jsx",
    "line": 1,
    "column": 24
@@ -20966,18 +21507,6 @@
    "rule": "react/no-string-refs",
    "path": "no-string-refs/invalid-003.jsx",
    "line": 7,
-   "column": 25
-  },
-  {
-   "rule": "react/no-string-refs",
-   "path": "renamed/no-string-refs/invalid-001.jsx",
-   "line": 4,
-   "column": 25
-  },
-  {
-   "rule": "react/no-string-refs",
-   "path": "renamed/no-string-refs/invalid-002.jsx",
-   "line": 4,
    "column": 25
   },
   {
@@ -21533,6 +22062,78 @@
    "column": 11
   },
   {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/invalid-001.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/invalid-001.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/invalid-001.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/invalid-003.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/invalid-003.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/invalid-003.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/valid-007.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/valid-007.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/valid-007.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/valid-009.jsx",
+   "line": 3,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/valid-009.jsx",
+   "line": 4,
+   "column": 11
+  },
+  {
+   "rule": "react/no-unsafe",
+   "path": "renamed/no-unsafe/valid-009.jsx",
+   "line": 5,
+   "column": 11
+  },
+  {
    "rule": "react/no-unstable-nested-components",
    "path": "no-direct-mutation-state/valid-006.jsx",
    "line": 5,
@@ -22077,6 +22678,30 @@
    "path": "renamed/no-unstable-nested-components/invalid-032.jsx",
    "line": 6,
    "column": 36
+  },
+  {
+   "rule": "react/no-unstable-nested-components",
+   "path": "renamed/no-unstable-nested-components/invalid-033.jsx",
+   "line": 3,
+   "column": 43
+  },
+  {
+   "rule": "react/no-unstable-nested-components",
+   "path": "renamed/no-unstable-nested-components/invalid-034.jsx",
+   "line": 3,
+   "column": 43
+  },
+  {
+   "rule": "react/no-unstable-nested-components",
+   "path": "renamed/no-unstable-nested-components/invalid-035.jsx",
+   "line": 3,
+   "column": 43
+  },
+  {
+   "rule": "react/no-unstable-nested-components",
+   "path": "renamed/no-unstable-nested-components/invalid-036.jsx",
+   "line": 3,
+   "column": 43
   },
   {
    "rule": "react/no-unstable-nested-components",

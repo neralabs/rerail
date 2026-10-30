@@ -1,1 +1,1 @@
-ReactDOM.render(<div ref={ref => this.ogrt = ref}/>, document.arlu);
+ReactDOM.render(<div ref={ref => this.oxgr = ref}/>, document.body);

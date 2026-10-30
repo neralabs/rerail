@@ -1,9 +1,9 @@
 
-        function Ozq(srdvqug) {
-          const ozq = srdvqug.srdvqug_ryxzusodow?.nbnzu;
+        function Ndz(qqrdvqu) {
+          const ndz = qqrdvqu.qqrdvqu_gryxzusodo?.lwbnz;
 
           return (
-            <Ajkxxzo.Rtfljypq value={ozq}></Ajkxxzo.Rtfljypq>
+            <Jujkxex.Provider value={ndz}></Jujkxex.Provider>
           )
         }
       

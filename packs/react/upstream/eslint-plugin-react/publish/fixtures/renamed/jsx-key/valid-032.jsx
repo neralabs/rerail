@@ -1,14 +1,14 @@
 
-        import Abw from 'react';
-        import { Bpybwyay as ReactZwfhbbur } from 'react';
+        import Ahi from 'react';
+        import { Children as ReactMzwfhbbu } from 'react';
 
-        const { Bpybwyay } = Abw;
-        const { toArray } = Bpybwyay;
+        const { Children } = Ahi;
+        const { toArray } = Children;
 
-        Abw.Bpybwyay.toArray([1, 2 ,3].map(w => <Acl />));
-        Abw.Bpybwyay.toArray(Array.from([1, 2 ,3], w => <Acl />));
-        Bpybwyay.toArray([1, 2 ,3].map(w => <Acl />));
-        Bpybwyay.toArray(Array.from([1, 2 ,3], w => <Acl />));
+        Ahi.Children.toArray([1, 2 ,3].map(w => <Alw />));
+        Ahi.Children.toArray(Array.from([1, 2 ,3], w => <Alw />));
+        Children.toArray([1, 2 ,3].map(w => <Alw />));
+        Children.toArray(Array.from([1, 2 ,3], w => <Alw />));
         // ReactChildren.toArray([1, 2 ,3].map(x => <App />));
         // ReactChildren.toArray(Array.from([1, 2 ,3], x => <App />));
         // toArray([1, 2 ,3].map(x => <App />));

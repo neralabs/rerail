@@ -1,5 +1,5 @@
 
-        var Uuahu = rjuvziWdfziHnihd({
-          rgkbxlcasPezLxkvat: function() {}
+        var Ovuah = createReactClass({
+          componentDidUpdate: function() {}
         });
       

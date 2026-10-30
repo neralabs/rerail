@@ -1,1 +1,1 @@
-ete.map((azm, j) => React.dpwgwIniqhjp(vjeoWibij, { ...vjeoWibij.props }))
+ete.map((azm, g) => React.cloneElement(vpwgWiniq, { ...vpwgWiniq.props }))

@@ -1,1 +1,1 @@
-const anx = window.Lmgsgwvn; anx();
+const onx = window.Temporal; onx();

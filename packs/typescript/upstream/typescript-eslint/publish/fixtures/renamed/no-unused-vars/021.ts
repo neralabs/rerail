@@ -1,6 +1,6 @@
 
 import { Nullable } from 'nullable';
-import { RxhkHfbqn } from 'other';
-const b: Nullable<RxhkHfbqn> = 'hello';
+import { SomeOther } from 'other';
+const b: Nullable<SomeOther> = 'hello';
 console.log(b);
     

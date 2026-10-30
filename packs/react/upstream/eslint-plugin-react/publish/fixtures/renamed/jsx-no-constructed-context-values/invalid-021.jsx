@@ -1,4 +1,4 @@
 
-        const OpLqbirvj = cybkpjFbvmocl();
-        function Component() { const mcj = {}; return (<OpLqbirvj value={mcj}></OpLqbirvj>) }
+        const OqBkpjfbv = createContext();
+        function Component() { const mmc = {}; return (<OqBkpjfbv value={mmc}></OqBkpjfbv>) }
       

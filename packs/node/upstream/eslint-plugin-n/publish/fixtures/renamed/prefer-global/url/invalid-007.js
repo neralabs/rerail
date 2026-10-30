@@ -1,1 +1,1 @@
-var { URL } = process.nmpPaozzekOygsmh('url'); var b = new URL(r)
+var { URL } = process.getBuiltinModule('url'); var c = new URL(r)

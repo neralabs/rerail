@@ -1,1 +1,1 @@
-function Component() { const iun = useMemo(() => { return {} }, []); return (<Coznxid.Lxhkytok value={iun}></Coznxid.Lxhkytok>)}
+function Component() { const gun = useMemo(() => { return {} }, []); return (<Coznxid.Provider value={gun}></Coznxid.Provider>)}

@@ -1,9 +1,9 @@
 
-      class Kdszy extends React.Component {
-        componentVbsOgsgo() {
+      class Kvbsg extends React.Component {
+        componentDidMount() {
           if (true) {
             this.setState({
-              ebpf: ebpf
+              esgo: esgo
             });
           }
         }

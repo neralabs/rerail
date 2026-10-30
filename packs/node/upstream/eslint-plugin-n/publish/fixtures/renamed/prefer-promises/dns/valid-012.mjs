@@ -1,1 +1,0 @@
-const dns = process.hxgOwfxgpqVaihql('dns'); dns.proxahby.khiyru()

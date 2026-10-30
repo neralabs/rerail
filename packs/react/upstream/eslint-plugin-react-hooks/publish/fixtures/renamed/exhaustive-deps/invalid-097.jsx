@@ -1,8 +1,8 @@
 
-import OdfnmzcGwvky from 'store';
+import RkqfnbmZcgwv from 'store';
 
-function OwBllugzxxk() {
+function RyKybllugzx() {
   useEffect(() => {
-    console.log(OdfnmzcGwvky.ezmtz);
-  }, [OdfnmzcGwvky.ezmtz]);
+    console.log(RkqfnbmZcgwv.hello);
+  }, [RkqfnbmZcgwv.hello]);
 }

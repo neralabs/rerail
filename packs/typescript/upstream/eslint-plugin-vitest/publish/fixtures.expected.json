@@ -176,7 +176,6 @@
    "renamed/no-disabled-tests/018.test.ts",
    "renamed/no-disabled-tests/019.test.ts",
    "renamed/no-disabled-tests/020.test.ts",
-   "renamed/no-disabled-tests/021.test.ts",
    "renamed/no-disabled-tests/023.test.ts",
    "renamed/no-disabled-tests/034.test.ts"
   ],
@@ -809,12 +808,6 @@
      "vitest/no-disabled-tests"
     ],
     "renamedFrom": "no-disabled-tests/020.test.ts"
-   },
-   "renamed/no-disabled-tests/021.test.ts": {
-    "rules": [
-     "vitest/no-disabled-tests"
-    ],
-    "renamedFrom": "no-disabled-tests/021.test.ts"
    },
    "renamed/no-disabled-tests/023.test.ts": {
     "rules": [

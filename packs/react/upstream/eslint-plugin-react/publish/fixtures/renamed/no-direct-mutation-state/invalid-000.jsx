@@ -1,7 +1,7 @@
 
-        var Mnfan = cjalhuUkmjfAkcpm({
+        var Mufqz = createReactClass({
           render: function() {
-            this.state.evn = "bar"
+            this.state.hnf = "bar"
             return <div>Hello {this.props.name}</div>;
           }
         });

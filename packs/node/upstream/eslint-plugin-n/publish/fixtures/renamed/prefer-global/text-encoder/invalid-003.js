@@ -1,1 +1,1 @@
-var { TmgxXkvxrsq } = require('util'); var k = new TmgxXkvxrsq(s)
+var { TextEncoder } = require('util'); var k = new TextEncoder(s)

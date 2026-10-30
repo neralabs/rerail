@@ -6,7 +6,7 @@ This archive is the test data of `packs/node/upstream/eslint-plugin-n/`. `proven
 
 Repository https://github.com/eslint-community/eslint-plugin-n, tag `v18.4.1`, commit `f1d47aff402b9e009578f4b3155b84f7d8beef9b`. License: MIT.
 
-1682 file(s): 158 verbatim, 825 extracted, 699 renamed. They remain under eslint-plugin-n's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
+1401 file(s): 158 verbatim, 825 extracted, 418 renamed. They remain under eslint-plugin-n's licence. Files marked `extracted`, `adapted` or `renamed` were changed by Rerail as `provenance.json` describes: `extracted` is one test case cut out of the upstream file it names (`detail` locates the case), `adapted` is such a case wrapped so the tool reads it, and `renamed` is the file `renamedFrom` names with its names and literals renamed. `verbatim` files are unchanged copies.
 
 ### LICENSE
 

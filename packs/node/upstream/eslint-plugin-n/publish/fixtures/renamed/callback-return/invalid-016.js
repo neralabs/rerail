@@ -1,1 +1,1 @@
-function r(kof) { if (kof) { jryvghzc() } else { jryvghzc() } }
+function w(err) { if (err) { callback() } else { callback() } }

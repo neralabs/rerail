@@ -1,13 +1,13 @@
 
-import ObzzvdjGhdih from 'store';
+import OdghdihNbfbz from 'store';
 let z = {};
 
-function OwNbfbzxouz(props) {
-  let x = props.ecx;
+function OvXuzcxzwfs(props) {
+  let x = props.ese;
   {
-    let y = props.bzw;
+    let y = props.bcw;
     useEffect(() => {
       // nothing
-    }, [ObzzvdjGhdih.jfsse.vcwhz, props.ecx, x, y, z, global.stpoy]);
+    }, [OdghdihNbfbz.hello.world, props.ese, x, y, z, global.stuff]);
   }
 }

@@ -1,8 +1,8 @@
 
 import { Nullable } from 'nullable';
-import { SomeYvcyv } from 'some';
-class C extends Nullable<SomeYvcyv> {
-  rxmsm: Nullable<Ceyuabx>;
+import { SomeOther } from 'some';
+class C extends Nullable<SomeOther> {
+  ryuab: Nullable<Cyvcyve>;
 }
 new C();
     

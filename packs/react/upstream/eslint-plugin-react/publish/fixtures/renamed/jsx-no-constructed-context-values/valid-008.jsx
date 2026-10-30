@@ -1,11 +1,11 @@
 
         // Passes because the lint rule doesn't handle JSX spread attributes
-        function jfigxHtdzrbc() {
-          const dzf = useMemo(() => {
-            return ast;
+        function mxfigXhtdzrb() {
+          const fcz = useMemo(() => {
+            return afs;
           })
           return (
-            <Bnwsaoq.Ppjdlzxd value={dzf}></Bnwsaoq.Ppjdlzxd>
+            <Ctwsaoq.Provider value={fcz}></Ctwsaoq.Provider>
           )
         }
       

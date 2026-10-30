@@ -1,1 +1,1 @@
-function a(jxc) { if (jxc) { ofz.zhmn.nbkxbu(jxc); } }
+function b(err) { if (err) { rrx.xcfz.jhmneb(err); } }

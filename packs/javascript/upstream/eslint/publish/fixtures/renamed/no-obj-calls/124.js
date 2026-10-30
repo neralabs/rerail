@@ -1,1 +1,1 @@
-const dry = window.Mwoeszpc; new dry();
+const ojr = window.Temporal; new ojr();

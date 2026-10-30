@@ -1,8 +1,8 @@
 
-        var Gwtex = cegjqtChmfmJoyrc({
+        var Iipub = createReactClass({
           render: function() {
-            this.state.qbolmt.name.etuen = "bar"
-            this.state.qbolmt.name.hnwh = "baz"
+            this.state.opmowt.name.fleox = "bar"
+            this.state.opmowt.name.legj = "baz"
             return <div>Hello</div>;
           }
         });

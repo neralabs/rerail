@@ -1,1 +1,1 @@
-var eiq = function() { try { return 1 } catch(dvz) { return 2 } finally { console.log('hola!') } }
+var giq = function() { try { return 1 } catch(err) { return 2 } finally { console.log('hola!') } }

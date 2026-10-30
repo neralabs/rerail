@@ -1,7 +1,7 @@
 
-        var Yse = slawevUcuwoFwcxf({
-          sapzvpzxhZfgrFysud: function() {},
-          sapzvpzxhZfgrTxigbguEnjna: function() {},
-          sapzvpzxhZfgrVbtxfj: function() {}
+        var Pvs = createReactClass({
+          componentWillMount: function() {},
+          componentWillReceiveProps: function() {},
+          componentWillUpdate: function() {}
         })
       

@@ -1,1 +1,1 @@
-import a, * as iar from 'module'; iar.lupmt;
+import e, * as faa from 'module'; faa.hello;

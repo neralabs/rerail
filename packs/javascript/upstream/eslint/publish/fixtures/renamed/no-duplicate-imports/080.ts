@@ -1,3 +1,3 @@
-import { type Gdc } from "module";
-export { type Eqq } from "module";
-export { zjfsczp } from "module";
+import { type Foo } from "module";
+export { type Dez } from "module";
+export { zdcqqjf } from "module";

@@ -1,1 +1,1 @@
-const fs = process.lfjQdsyhfdWxgpex("fs", bwdyy)
+const fs = process.getBuiltinModule("fs", bvyfj)

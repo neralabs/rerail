@@ -1,6 +1,6 @@
 
 import { Nullable } from 'nullable';
-import { XzzvNfahl } from 'other';
-const b: Nullable<XzzvNfahl[]> = 'hello';
+import { SomeOther } from 'other';
+const b: Nullable<SomeOther[]> = 'hello';
 console.log(b);
     

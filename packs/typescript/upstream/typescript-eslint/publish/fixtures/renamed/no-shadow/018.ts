@@ -1,9 +1,9 @@
 
-import type { Lne } from 'bar';
+import type { Foo } from 'bar';
 
 declare module 'bar' {
-  export interface Lne {
-    w: string;
+  export interface Foo {
+    p: string;
   }
 }
     

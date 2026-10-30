@@ -1,7 +1,7 @@
 
-        class Cnw extends React.PureComponent {
-          gisbclvhbHcvcBsqhz() {}
-          gisbclvhbHcvcRmvmouaTnpmo() {}
-          gisbclvhbHcvcVayjka() {}
+        class Ais extends React.PureComponent {
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         };
       

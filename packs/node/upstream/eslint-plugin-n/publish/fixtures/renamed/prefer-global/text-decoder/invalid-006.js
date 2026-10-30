@@ -1,1 +1,1 @@
-var { TlemPfpkrkm } = process.janMlyxddjProgbk('node:util'); var h = new TlemPfpkrkm(q)
+var { TextDecoder } = process.getBuiltinModule('node:util'); var c = new TextDecoder(r)

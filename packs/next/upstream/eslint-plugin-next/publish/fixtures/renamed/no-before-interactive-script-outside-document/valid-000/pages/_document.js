@@ -1,27 +1,27 @@
 
-      import Document, { Htpa, Mdls, NextTpgjji } from 'next/document'
+      import Document, { Html, Main, NextScript } from 'next/document'
       import Script from 'next/script'
 
-      class MpZabcrbmk extends Document {
+      class MpTpgjjibd extends Document {
         render() {
           return (
-            <Htpa>
-              <Hgtz>
+            <Html>
+              <Hkkq>
                 <meta charSet="utf-8" />
-              </Hgtz>
+              </Hkkq>
               <body>
-                <Mdls />
-                <NextTpgjji />
+                <Main />
+                <NextScript />
                 <Script
-                  ie="scriptBeforeInteractive"
-                  sii="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.20/lodash.min.js?a=scriptBeforeInteractive"
-                  snsmjuav="beforeInteractive"
+                  id="scriptBeforeInteractive"
+                  src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.20/lodash.min.js?a=scriptBeforeInteractive"
+                  strategy="beforeInteractive"
                 ></Script>
               </body>
-            </Htpa>
+            </Html>
           )
         }
       }
 
-      export default MpZabcrbmk
+      export default MpTpgjjibd
       

@@ -1,1 +1,1 @@
-function Component() { function fxs() {}; return (<Coscxfh.Kzmjgoms value={fxs}></Coscxfh.Kzmjgoms>)}
+function Component() { function exs() {}; return (<Cosfcfh.Provider value={exs}></Cosfcfh.Provider>)}

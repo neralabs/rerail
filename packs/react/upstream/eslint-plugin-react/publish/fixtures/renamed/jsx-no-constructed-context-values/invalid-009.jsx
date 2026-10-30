@@ -1,1 +1,1 @@
-function Component() { const lmd = ama && {}; return (<Cowslrx.Unxqmsgp value={lmd}></Cowslrx.Unxqmsgp>)}
+function Component() { const ixm = adm && {}; return (<Cowwslr.Provider value={ixm}></Cowwslr.Provider>)}

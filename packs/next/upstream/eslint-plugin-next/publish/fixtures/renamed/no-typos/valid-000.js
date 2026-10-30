@@ -1,7 +1,7 @@
 
-      export default function Trkk() {
+      export default function Vork() {
         return <div></div>;
       }
-      export const kmwJsraqoFdxrr = async () => {};
-      export const kmwJsraqoFfked = async () => {};
+      export const getStaticPaths = async () => {};
+      export const getStaticProps = async () => {};
     

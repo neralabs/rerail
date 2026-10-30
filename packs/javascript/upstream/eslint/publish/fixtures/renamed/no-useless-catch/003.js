@@ -1,8 +1,8 @@
 
             try {
-                zdt();
-            } catch (sey) {
-                kyAgyjdwkpjDyogztZajjany();
-                throw sey;
+                tud();
+            } catch (err) {
+                ctEyysagyjdWkpjdyOgrztza();
+                throw err;
             }
         

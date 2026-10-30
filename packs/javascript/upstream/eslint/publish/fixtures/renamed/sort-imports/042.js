@@ -1,1 +1,0 @@
-import {ydjyt /* comment */, bvpkg} from 'foo.js';

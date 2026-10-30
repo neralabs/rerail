@@ -1,5 +1,5 @@
 
-        import ReactMEFPbuoct, { reivooLgBkiwjyyhMhkwle } from 'react-dom/server';
-        ReactMEFPbuoct.reivooLgBkiwjyyhMhkwle(<Bys />, {});
-        reivooLgBkiwjyyhMhkwle(<Bys />, {});
+        import ReactCMEFpbuoc, { renderToPipeableStream } from 'react-dom/server';
+        ReactCMEFpbuoc.renderToPipeableStream(<Btd />, {});
+        renderToPipeableStream(<Btd />, {});
       

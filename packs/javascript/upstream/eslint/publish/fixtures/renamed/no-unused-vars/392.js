@@ -1,1 +1,1 @@
-import { a, e as iub } from 'module'; alert(a);
+import { a, b as icu } from 'module'; alert(a);

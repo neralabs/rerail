@@ -1,1 +1,1 @@
-function test(iqx, htsyzleo) { qct(function(iqx, htsyzleo) {}); }
+function test(err, callback) { lzu(function(err, callback) {}); }

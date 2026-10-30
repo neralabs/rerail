@@ -1,9 +1,9 @@
 
-      var Oafup = koyleiFmincGmqkg({
-        khlkeexlsIdhDmrgr: function() {
+      var Qwafu = createReactClass({
+        componentDidMount: function() {
           if (true) {
             this.setState({
-              mdix: mdix
+              npoo: npoo
             });
           }
         }

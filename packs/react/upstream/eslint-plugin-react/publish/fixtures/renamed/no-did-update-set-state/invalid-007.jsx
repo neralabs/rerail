@@ -1,9 +1,9 @@
 
-      var Lbffv = ajyrvfOpsmyTmcov({
-        abnyedfrpTujJahgnd: function() {
+      var Qffvb = createReactClass({
+        componentDidUpdate: function() {
           if (true) {
             this.setState({
-              glfd: glfd
+              jmyr: jmyr
             });
           }
         }

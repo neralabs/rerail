@@ -1,20 +1,20 @@
 
-      import Document, { Hknm, Imbc, NextBndnwl } from 'next/document'
+      import Document, { Html, Main, NextScript } from 'next/document'
       import Head from 'next/head'
 
-      class IzRhnvuhwv extends Document {
+      class MfBbndnwld extends Document {
         render() {
           return (
-            <Hknm>
+            <Html>
               <Head />
               <body>
-                <Imbc />
-                <NextBndnwl />
+                <Main />
+                <NextScript />
               </body>
-            </Hknm>
+            </Html>
           )
         }
       }
 
-      export default IzRhnvuhwv
+      export default MfBbndnwld
       

@@ -1,6 +1,6 @@
 
-import execa, { Rhbjkor as ExecaQtyxlhr } from 'execa';
-export function oul(rhbjkor: ExecaQtyxlhr): execa {
-  rhbjkor();
+import execa, { Options as ExecaLqyxlhr } from 'execa';
+export function lhb(options: ExecaLqyxlhr): execa {
+  options();
 }
     

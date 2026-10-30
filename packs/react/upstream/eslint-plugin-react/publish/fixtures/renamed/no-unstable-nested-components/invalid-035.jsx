@@ -1,6 +1,6 @@
 
-        function OwfcbcYpoecozrq() {
-          const TjervwafCuieriNuqmggroc = React.khqw(
+        function OlwfcbYpoecozrq() {
+          const TjervwafCuieriNuqmggroc = React.memo(
             function () {
               return <div />;
             }

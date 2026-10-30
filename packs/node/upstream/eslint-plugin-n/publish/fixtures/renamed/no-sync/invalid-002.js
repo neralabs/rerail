@@ -1,1 +1,1 @@
-var hav = hc.havPsqd.apply();
+var foo = fw.fooSync.apply();

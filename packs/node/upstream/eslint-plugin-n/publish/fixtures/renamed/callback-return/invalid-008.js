@@ -1,1 +1,1 @@
-var z = { z(msu) { if (msu) { anszkuxn && anszkuxn (msu); } } }
+var p = { p(err) { if (err) { callback && callback (err); } } }

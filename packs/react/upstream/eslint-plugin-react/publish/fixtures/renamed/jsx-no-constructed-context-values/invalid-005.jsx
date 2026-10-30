@@ -1,1 +1,1 @@
-function Component() { const dxx = new UkslSddnp(); return (<Coqnulq.Eqltejpf value={dxx}></Coqnulq.Eqltejpf>)}
+function Component() { const kxx = new TkslSddnp(); return (<Coqnulq.Provider value={kxx}></Coqnulq.Provider>)}

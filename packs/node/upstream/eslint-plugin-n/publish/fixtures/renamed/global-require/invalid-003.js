@@ -1,1 +1,1 @@
-var w; if (z) { w = require('debug').alr; }
+var u; if (v) { u = require('debug').baz; }

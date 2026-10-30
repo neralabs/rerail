@@ -1,3 +1,3 @@
 import type Os from "os";
-import type { Vhqxouayr } from "os";
-import type * as Lbgahc from "os";
+import type { Something } from "os";
+import type * as Lnhqxo from "os";

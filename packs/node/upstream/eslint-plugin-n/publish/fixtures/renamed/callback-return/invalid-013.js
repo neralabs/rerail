@@ -1,1 +1,1 @@
-function c(qms) { if (qms) { hncnrkoi (qms); } else if (t) { hncnrkoi(qms); return; } }
+function b(err) { if (err) { callback (err); } else if (g) { callback(err); return; } }

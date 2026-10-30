@@ -1,12 +1,12 @@
 
-      import { Frbf } from "next/document";
+      import { Head } from "next/document";
 
       class Tfcu {
         render() {
           return (
-            <Frbf>
+            <Head>
               <title>My page title</title>
-            </Frbf>
+            </Head>
           );
         }
       }

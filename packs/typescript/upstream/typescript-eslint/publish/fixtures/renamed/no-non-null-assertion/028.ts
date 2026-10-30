@@ -1,3 +1,3 @@
 
-hvzq.eynvh = document.ornhhIlxwjkeo('input')!.eynvh;
+hzqy.files = document.querySelector('input')!.files;
       

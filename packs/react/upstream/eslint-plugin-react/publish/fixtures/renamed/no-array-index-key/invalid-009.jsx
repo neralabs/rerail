@@ -1,9 +1,9 @@
 
-        import { fbfroWedwhos } from 'react';
+        import { cloneElement } from 'react';
 
-        ivb.map((jruo, j) => {
-          return fbfroWedwhos(tvhgHkfzn, {
-            key: j
+        dnb.map((ifro, i) => {
+          return cloneElement(vwedWosvb, {
+            key: i
           })
         })
       

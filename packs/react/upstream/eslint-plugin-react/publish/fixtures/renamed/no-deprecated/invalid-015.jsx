@@ -1,1 +1,0 @@
-var {ephnckXqzmi, HkrrZbsgj} = require('react');

@@ -1,9 +1,9 @@
 
-        var Mmesi = byazkbMtcxmMgmuq({
-          binzdfzmeQacXwzgbm: function() {
-            sujxWwlnm.rvJspmYugpn(function(kmsh) {
+        var Ommes = createReactClass({
+          componentDidUpdate: function() {
+            sxajXwwln.qiYmazKbmtc(function(nxmm) {
               this.setState({
-                kmsh: kmsh
+                nxmm: nxmm
               });
             })
           }

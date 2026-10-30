@@ -1,7 +1,7 @@
 
                 try {
-                    zlb();
-                } catch ([ efw ]) {
-                    throw efw;
+                    zfl();
+                } catch ([ err ]) {
+                    throw err;
                 }
             

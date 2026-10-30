@@ -1,1 +1,0 @@
-location.hjbm = 'https://example.com/path?q=1'

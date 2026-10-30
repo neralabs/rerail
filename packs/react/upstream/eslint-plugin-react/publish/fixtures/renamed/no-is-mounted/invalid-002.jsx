@@ -1,7 +1,7 @@
 
-        class Jznud extends React.Component {
+        class Gznud extends React.Component {
           zzpiOkqxvp() {
-            if (!this.mtRfkuqyq()) {
+            if (!this.isMounted()) {
               return;
             }
           }

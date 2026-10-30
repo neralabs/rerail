@@ -8660,6 +8660,18 @@
   },
   {
    "rule": "react-hooks/rules-of-hooks",
+   "path": "renamed/rules-of-hooks/invalid-011.jsx",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "react-hooks/rules-of-hooks",
+   "path": "renamed/rules-of-hooks/invalid-012.jsx",
+   "line": 6,
+   "column": 5
+  },
+  {
+   "rule": "react-hooks/rules-of-hooks",
    "path": "renamed/rules-of-hooks/invalid-013.jsx",
    "line": 6,
    "column": 5
@@ -8891,6 +8903,12 @@
    "path": "renamed/rules-of-hooks/invalid-033.jsx",
    "line": 7,
    "column": 21
+  },
+  {
+   "rule": "react-hooks/rules-of-hooks",
+   "path": "renamed/rules-of-hooks/invalid-034.jsx",
+   "line": 6,
+   "column": 5
   },
   {
    "rule": "react-hooks/rules-of-hooks",

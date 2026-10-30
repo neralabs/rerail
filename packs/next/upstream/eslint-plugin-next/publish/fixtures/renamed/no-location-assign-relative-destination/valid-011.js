@@ -1,1 +1,1 @@
-location.hfxs = `https://example.com/${myiz}`
+location.href = `https://example.com/${mxxs}`

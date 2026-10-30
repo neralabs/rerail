@@ -1,1 +1,1 @@
-function d(ivmmzsgc) { if (typeof ivmmzsgc !== 'undefined') ivmmzsgc();  }
+function b(callback) { if (typeof callback !== 'undefined') callback();  }

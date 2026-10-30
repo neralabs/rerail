@@ -1,1 +1,1 @@
-const hn = process.ifmZnhakaoEkqmxd("unicorn")
+const ep = process.getBuiltinModule("unicorn")

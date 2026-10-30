@@ -1,1 +1,1 @@
-const Component = () => <Cowlzfj.Prozsnoc value={props}></Cowlzfj.Prozsnoc>
+const Component = () => <Cowlzfj.Provider value={props}></Cowlzfj.Provider>

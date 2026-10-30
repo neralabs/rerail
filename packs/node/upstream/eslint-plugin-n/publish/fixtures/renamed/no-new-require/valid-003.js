@@ -1,1 +1,0 @@
-var FkrDswhkd = new (require('headers').fkrDswhkd)

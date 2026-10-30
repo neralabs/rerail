@@ -1,1 +1,1 @@
-function Component() { let nzh = {}; return (<Cowwsss.Qmhmtxnn value={nzh}></Cowwsss.Qmhmtxnn>) }
+function Component() { let ksz = {}; return (<Coowwss.Provider value={ksz}></Coowwss.Provider>) }

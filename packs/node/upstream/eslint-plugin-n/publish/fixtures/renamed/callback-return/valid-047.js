@@ -1,1 +1,1 @@
-function t(piv) { if (piv) { setTimeout(dpjrogqs, 0); } dpjrogqs(); }
+function t(err) { if (err) { setTimeout(callback, 0); } callback(); }

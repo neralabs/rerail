@@ -1,2 +1,2 @@
-function a(ivb) { if (ivb) { yih.tnlreg(ivb); //comment
+function c(err) { if (err) { ugv.sbinlr(err); //comment
  } }

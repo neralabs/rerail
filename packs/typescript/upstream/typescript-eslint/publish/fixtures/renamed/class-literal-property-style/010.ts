@@ -1,7 +1,7 @@
 
-class Gn {
-  get gtAmudyiz() {
-    return `build-${process.dck.build}`;
+class Io {
+  get isIamudyi() {
+    return `build-${process.env.build}`;
   }
 }
     

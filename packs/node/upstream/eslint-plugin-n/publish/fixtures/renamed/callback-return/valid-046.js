@@ -1,1 +1,1 @@
-function m(ung) { if (ung) { xjp().wpapyc(ung); } xjp.wpapyc(); }
+function c(err) { if (err) { wng().hjppap(err); } wng.hjppap(); }

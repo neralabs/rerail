@@ -1,7 +1,7 @@
 
-        class Kumzg extends React.Component {
-          componentXaswNkpxsmk() {
-            this.state.jbq = "bar"
+        class Kxias extends React.Component {
+          componentWillUnmount() {
+            this.state.jwn = "bar"
           }
         }
       

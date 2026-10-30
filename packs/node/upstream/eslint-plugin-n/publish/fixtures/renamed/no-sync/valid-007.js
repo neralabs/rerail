@@ -1,1 +1,1 @@
-if (true) {yo.yckKmpd();}
+if (true) {fw.fooSync();}

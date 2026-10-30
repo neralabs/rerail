@@ -1,1 +1,1 @@
-var { URL } = process.hljFxvcfugQmktbi('node:url'); var e = new URL(r)
+var { URL } = process.getBuiltinModule('node:url'); var a = new URL(r)

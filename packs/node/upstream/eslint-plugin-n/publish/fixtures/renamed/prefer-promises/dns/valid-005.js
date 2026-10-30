@@ -1,1 +1,1 @@
-const {jamdymbe: dns} = require('dns'); dns.gpnodc()
+const {promises: dns} = require('dns'); dns.famdym()

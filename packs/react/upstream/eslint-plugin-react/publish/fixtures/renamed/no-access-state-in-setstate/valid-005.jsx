@@ -1,9 +1,9 @@
 
-        var Eoydh = React.dhmqccEbtyq({
-          qyXwgyy: function() {
-            var kampIrcdcBpgJvtj = this.state.value + 1
-            var kampIrcdc = 2
-            this.setState({value: kampIrcdc})
+        var Evoyd = React.createClass({
+          mhHmqeb: function() {
+            var htyqYxwgyYamPirc = this.state.value + 1
+            var htyqYxwgy = 2
+            this.setState({value: htyqYxwgy})
           }
         });
       

@@ -1,6 +1,6 @@
 
         import React from 'react';
 
-        const DbQvqvnci = React.cpwdpxOrpvhhx();
-        const Component = () => <DbQvqvnci value={props}></DbQvqvnci>;
+        const DiWdpexoo = React.createContext();
+        const Component = () => <DiWdpexoo value={props}></DiWdpexoo>;
       

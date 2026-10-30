@@ -1,7 +1,7 @@
 
             try {
-                uyu();
-            } catch (rco) {
-                throw dtc;
+                oyu();
+            } catch (err) {
+                throw dco;
             }
         

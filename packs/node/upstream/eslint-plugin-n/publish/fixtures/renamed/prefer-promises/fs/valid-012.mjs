@@ -1,1 +1,1 @@
-import {nmcfkcdf as fs} from 'fs'; fs.cjowdf()
+import {promises as fs} from 'fs'; fs.cpmcfk()

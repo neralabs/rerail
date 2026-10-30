@@ -1,1 +1,1 @@
-var r = { r(qsi) { if (qsi) { bcqxznyw (qsi); } } }
+var z = { z(err) { if (err) { callback (err); } } }

@@ -1,18 +1,18 @@
-import Document, { Jwig, Juuw, Lbjt, NextNxfvip } from 'next/document'
+import Document, { Html, Head, Main, NextScript } from 'next/document'
 
-      class LrPxtpykuy extends Document {
-        static async eopKxkqgeaKjbae(alm) {
+      class MtCxnxfvip extends Document {
+        static async getInitialProps(awn) {
           //...
         }
 
         render() {
           return (
-            <Jwig>
-              <Juuw/>
-            </Jwig>
+            <Html>
+              <Head/>
+            </Html>
           )
         }
       }
 
-      export default LrPxtpykuy
+      export default MtCxnxfvip
     

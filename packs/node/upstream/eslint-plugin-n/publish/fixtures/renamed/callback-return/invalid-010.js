@@ -1,1 +1,1 @@
-function a(wgl) { ujcgcqdq (wgl); znowv(); }
+function b(err) { callback (err); tvglj(); }

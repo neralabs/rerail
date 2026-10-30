@@ -1,7 +1,7 @@
 
-        fyy.map((gqsh, g) => {
-          return React.egccnDudqlqo(tvdlRynpe, {
-            key: gqsh.gm
+        dby.map((iyps, i) => {
+          return React.cloneElement(uhgcNdudq, {
+            key: iyps.ig
           })
         })
       

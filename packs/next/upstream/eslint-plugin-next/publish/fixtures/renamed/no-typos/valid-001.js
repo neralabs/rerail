@@ -1,6 +1,6 @@
 
-      export default function Mxkb() {
+      export default function Uuxk() {
         return <div></div>;
       }
-      export const fuuXynxjiBbxbQvgda = async () => {};
+      export const getServerSideProps = async () => {};
     

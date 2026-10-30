@@ -1,1 +1,1 @@
-global.ciwiQoezll(fqi, 100);
+global.execScript(fcc, 100);

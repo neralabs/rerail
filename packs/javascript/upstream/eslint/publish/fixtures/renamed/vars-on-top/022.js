@@ -1,1 +1,1 @@
-import { sjrzmy, efmy } from 'lib'; 'use strict'; var z; function f() { 'use strict'; var w; var z; f(); }
+import { square, diag } from 'lib'; 'use strict'; var z; function k() { 'use strict'; var v; var z; k(); }

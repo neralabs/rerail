@@ -1,6 +1,6 @@
 
-function Ltg({ eyktouCkn }) {
+function Lat({ ggyktoUck }) {
   useEffect(() => {
-    window.sylynrXi(0, 0);
-  }, [eyktouCkn]);
+    window.scrollTo(0, 0);
+  }, [ggyktoUck]);
 }

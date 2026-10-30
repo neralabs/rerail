@@ -2219,14 +2219,6 @@
   {
    "rule": "no-location-assign-relative-destination",
    "kind": "renamed",
-   "index": 0,
-   "path": "renamed/no-location-assign-relative-destination/invalid-000.js",
-   "of": "no-location-assign-relative-destination/invalid-000.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
    "index": 2,
    "path": "renamed/no-location-assign-relative-destination/invalid-002.js",
    "of": "no-location-assign-relative-destination/invalid-002.js",
@@ -2235,57 +2227,9 @@
   {
    "rule": "no-location-assign-relative-destination",
    "kind": "renamed",
-   "index": 3,
-   "path": "renamed/no-location-assign-relative-destination/invalid-003.js",
-   "of": "no-location-assign-relative-destination/invalid-003.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 4,
-   "path": "renamed/no-location-assign-relative-destination/invalid-004.js",
-   "of": "no-location-assign-relative-destination/invalid-004.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 7,
-   "path": "renamed/no-location-assign-relative-destination/invalid-007.js",
-   "of": "no-location-assign-relative-destination/invalid-007.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 8,
-   "path": "renamed/no-location-assign-relative-destination/invalid-008.js",
-   "of": "no-location-assign-relative-destination/invalid-008.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
    "index": 13,
    "path": "renamed/no-location-assign-relative-destination/invalid-013.js",
    "of": "no-location-assign-relative-destination/invalid-013.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 19,
-   "path": "renamed/no-location-assign-relative-destination/invalid-019.js",
-   "of": "no-location-assign-relative-destination/invalid-019.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 20,
-   "path": "renamed/no-location-assign-relative-destination/invalid-020.js",
-   "of": "no-location-assign-relative-destination/invalid-020.js",
    "renamedKind": "invalid"
   },
   {
@@ -2335,62 +2279,6 @@
    "path": "renamed/no-location-assign-relative-destination/invalid-028.js",
    "of": "no-location-assign-relative-destination/invalid-028.js",
    "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 0,
-   "path": "renamed/no-location-assign-relative-destination/valid-000.js",
-   "of": "no-location-assign-relative-destination/valid-000.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 1,
-   "path": "renamed/no-location-assign-relative-destination/valid-001.js",
-   "of": "no-location-assign-relative-destination/valid-001.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 2,
-   "path": "renamed/no-location-assign-relative-destination/valid-002.js",
-   "of": "no-location-assign-relative-destination/valid-002.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 3,
-   "path": "renamed/no-location-assign-relative-destination/valid-003.js",
-   "of": "no-location-assign-relative-destination/valid-003.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 7,
-   "path": "renamed/no-location-assign-relative-destination/valid-007.js",
-   "of": "no-location-assign-relative-destination/valid-007.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 9,
-   "path": "renamed/no-location-assign-relative-destination/valid-009.js",
-   "of": "no-location-assign-relative-destination/valid-009.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 10,
-   "path": "renamed/no-location-assign-relative-destination/valid-010.js",
-   "of": "no-location-assign-relative-destination/valid-010.js",
-   "renamedKind": "valid"
   },
   {
    "rule": "no-location-assign-relative-destination",
@@ -2483,14 +2371,6 @@
   {
    "rule": "no-location-assign-relative-destination",
    "kind": "renamed",
-   "index": 22,
-   "path": "renamed/no-location-assign-relative-destination/valid-022.js",
-   "of": "no-location-assign-relative-destination/valid-022.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
    "index": 23,
    "path": "renamed/no-location-assign-relative-destination/valid-023.js",
    "of": "no-location-assign-relative-destination/valid-023.js",
@@ -2499,25 +2379,9 @@
   {
    "rule": "no-location-assign-relative-destination",
    "kind": "renamed",
-   "index": 24,
-   "path": "renamed/no-location-assign-relative-destination/valid-024.js",
-   "of": "no-location-assign-relative-destination/valid-024.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
    "index": 25,
    "path": "renamed/no-location-assign-relative-destination/valid-025.js",
    "of": "no-location-assign-relative-destination/valid-025.js",
-   "renamedKind": "valid"
-  },
-  {
-   "rule": "no-location-assign-relative-destination",
-   "kind": "renamed",
-   "index": 26,
-   "path": "renamed/no-location-assign-relative-destination/valid-026.js",
-   "of": "no-location-assign-relative-destination/valid-026.js",
    "renamedKind": "valid"
   },
   {
@@ -2635,26 +2499,10 @@
   {
    "rule": "no-sync-scripts",
    "kind": "renamed",
-   "index": 0,
-   "path": "renamed/no-sync-scripts/invalid-000.js",
-   "of": "no-sync-scripts/invalid-000.js",
-   "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-sync-scripts",
-   "kind": "renamed",
    "index": 1,
    "path": "renamed/no-sync-scripts/invalid-001.js",
    "of": "no-sync-scripts/invalid-001.js",
    "renamedKind": "invalid"
-  },
-  {
-   "rule": "no-sync-scripts",
-   "kind": "renamed",
-   "index": 0,
-   "path": "renamed/no-sync-scripts/valid-000.js",
-   "of": "no-sync-scripts/valid-000.js",
-   "renamedKind": "valid"
   },
   {
    "rule": "no-sync-scripts",
@@ -2839,6 +2687,22 @@
    "problem": "nothing to rename"
   },
   {
+   "of": "no-location-assign-relative-destination/valid-000.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-001.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-002.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-003.js",
+   "problem": "nothing to rename"
+  },
+  {
    "of": "no-location-assign-relative-destination/valid-004.js",
    "problem": "nothing to rename"
   },
@@ -2851,11 +2715,47 @@
    "problem": "nothing to rename"
   },
   {
+   "of": "no-location-assign-relative-destination/valid-007.js",
+   "problem": "nothing to rename"
+  },
+  {
    "of": "no-location-assign-relative-destination/valid-008.js",
    "problem": "nothing to rename"
   },
   {
+   "of": "no-location-assign-relative-destination/valid-009.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-010.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-022.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-024.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-026.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-000.js",
+   "problem": "nothing to rename"
+  },
+  {
    "of": "no-location-assign-relative-destination/invalid-001.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-003.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-004.js",
    "problem": "nothing to rename"
   },
   {
@@ -2864,6 +2764,14 @@
   },
   {
    "of": "no-location-assign-relative-destination/invalid-006.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-007.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-008.js",
    "problem": "nothing to rename"
   },
   {
@@ -2903,11 +2811,27 @@
    "problem": "nothing to rename"
   },
   {
+   "of": "no-location-assign-relative-destination/invalid-019.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-020.js",
+   "problem": "nothing to rename"
+  },
+  {
    "of": "no-location-assign-relative-destination/invalid-021.js",
    "problem": "nothing to rename"
   },
   {
    "of": "no-location-assign-relative-destination/invalid-022.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-sync-scripts/valid-000.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-sync-scripts/invalid-000.js",
    "problem": "nothing to rename"
   }
  ],

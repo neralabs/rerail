@@ -1,12 +1,12 @@
 
-        function LpjayjQgzkxkplp() {
-          const YwcwtznmTfoirpJspkwpjfk = React.kqfc(() => {
+        function QgpjanYjqgzkxkp() {
+          const YlpwcwtbZnmfoiRpjspkwpj = React.memo(() => {
             return <div />;
           });
 
           return (
             <div>
-              <YwcwtznmTfoirpJspkwpjfk />
+              <YlpwcwtbZnmfoiRpjspkwpj />
             </div>
           );
         }

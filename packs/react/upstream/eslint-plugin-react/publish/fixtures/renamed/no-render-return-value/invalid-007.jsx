@@ -1,1 +1,1 @@
-var nxaw = ReactDOM.render(<div />, document.cbug);
+var mjxa = ReactDOM.render(<div />, document.body);

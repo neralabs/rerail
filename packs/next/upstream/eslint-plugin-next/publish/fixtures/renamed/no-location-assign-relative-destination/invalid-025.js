@@ -1,4 +1,4 @@
 
-          const pdk = `/dashboard/${mhsyIqbzfzqw}`;
-          location.ghdb = pdk;
+          const soi = `/dashboard/${ntigGzupxged}`;
+          location.href = soi;
         

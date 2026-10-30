@@ -1,2 +1,2 @@
-import lfk, { type klo } from "os";
-import type * as Klv from "os";
+import klh, { type bar } from "os";
+import type * as Bay from "os";

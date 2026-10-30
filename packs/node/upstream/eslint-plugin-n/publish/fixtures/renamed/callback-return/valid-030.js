@@ -1,1 +1,0 @@
-function k(zgt) { if (zgt) { wgapzwiy(zgt) } }

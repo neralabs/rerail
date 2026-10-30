@@ -1789,23 +1789,11 @@
       "how": "renamed",
       "renamedFrom": "fixtures/prefer-node-protocol/024.js"
     },
-    "fixtures/renamed/prefer-node-protocol/025.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/025.js"
-    },
     "fixtures/renamed/prefer-node-protocol/026.js": {
       "source": "eslint-plugin-unicorn",
       "from": "test/prefer-node-protocol.js",
       "how": "renamed",
       "renamedFrom": "fixtures/prefer-node-protocol/026.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/027.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/027.js"
     },
     "fixtures/renamed/prefer-node-protocol/028.js": {
       "source": "eslint-plugin-unicorn",
@@ -1855,36 +1843,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/prefer-node-protocol/044.js"
     },
-    "fixtures/renamed/prefer-node-protocol/045.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/045.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/047.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/047.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/048.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/048.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/049.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/049.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/050.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/050.js"
-    },
     "fixtures/renamed/prefer-node-protocol/051.js": {
       "source": "eslint-plugin-unicorn",
       "from": "test/prefer-node-protocol.js",
@@ -1897,12 +1855,6 @@
       "how": "renamed",
       "renamedFrom": "fixtures/prefer-node-protocol/052.js"
     },
-    "fixtures/renamed/prefer-node-protocol/053.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/053.js"
-    },
     "fixtures/renamed/prefer-node-protocol/054.js": {
       "source": "eslint-plugin-unicorn",
       "from": "test/prefer-node-protocol.js",
@@ -1914,18 +1866,6 @@
       "from": "test/prefer-node-protocol.js",
       "how": "renamed",
       "renamedFrom": "fixtures/prefer-node-protocol/055.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/056.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/056.js"
-    },
-    "fixtures/renamed/prefer-node-protocol/057.js": {
-      "source": "eslint-plugin-unicorn",
-      "from": "test/prefer-node-protocol.js",
-      "how": "renamed",
-      "renamedFrom": "fixtures/prefer-node-protocol/057.js"
     },
     "fixtures/renamed/prefer-node-protocol/060.ts": {
       "source": "eslint-plugin-unicorn",

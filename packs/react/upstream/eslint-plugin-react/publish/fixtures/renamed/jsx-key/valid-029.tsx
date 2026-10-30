@@ -1,10 +1,10 @@
 
-        import { qrrrduomno } from "mobx";
+        import { observable } from "mobx";
 
-        export interface DfvfhxlPgtwzKzgv {
-          jtbgxDw: number;
-          sdlirfbWv: number;
+        export interface DrrrduoMnofvEhxl {
+          jtwzxWz: number;
+          tgvpatbGx: number;
         }
 
-        export const dfvfhxlPgtwzXpa = qrrrduomno.map<string, DfvfhxlPgtwzKzgv>();
+        export const drrrduoMnofvSpg = observable.map<string, DrrrduoMnofvEhxl>();
       

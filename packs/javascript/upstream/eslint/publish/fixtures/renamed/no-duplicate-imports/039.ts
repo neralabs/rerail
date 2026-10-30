@@ -1,2 +1,2 @@
-import type * as Jee from "os";
-import { type Jen } from "os";
+import type * as Baw from "os";
+import { type Baz } from "os";

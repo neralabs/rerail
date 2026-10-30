@@ -1,1 +1,1 @@
-var k = dak => cufpqvtm(dak)
+var p = err => callback(err)

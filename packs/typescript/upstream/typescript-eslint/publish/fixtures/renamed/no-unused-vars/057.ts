@@ -1,8 +1,8 @@
 
 import { Nullable } from 'nullable';
-import { QvbiUpypk } from 'other';
-class A<S extends Nullable> {
-  kgz: S;
+import { SomeOther } from 'other';
+class A<Z extends Nullable> {
+  kov: Z;
 }
-new A<QvbiUpypk>();
+new A<SomeOther>();
     

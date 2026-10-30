@@ -1,7 +1,7 @@
 
-import { SmqebfzcfSnkwpilil } from 'decorators';
-export class Iqk {
-  static kxxdp(@SmqebfzcfSnkwpilil name: string) {
+import { ParameterDecorator } from 'decorators';
+export class Iem {
+  static kqbfz(@ParameterDecorator name: string) {
     return name;
   }
 }

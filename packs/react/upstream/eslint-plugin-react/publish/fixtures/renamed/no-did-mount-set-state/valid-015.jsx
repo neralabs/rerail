@@ -1,7 +1,7 @@
 
-      class Klpaf extends React.Component {
-        componentKmyXyqmp() {
-          sqwkMnizx.qzWmeyKzrvp((jpqc) => this.setState({jpqc: jpqc}));
+      class Kwkmn extends React.Component {
+        componentDidMount() {
+          syyxYqmpr.qiZxlpLafzw((jmey) => this.setState({jmey: jmey}));
         }
       }
     

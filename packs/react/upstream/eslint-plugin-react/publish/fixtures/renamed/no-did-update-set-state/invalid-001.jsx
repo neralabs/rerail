@@ -1,8 +1,8 @@
 
-      class Qujue extends React.Component {
-        componentMsxBnjwsi() {
+      class Qmiis extends React.Component {
+        componentDidUpdate() {
           this.setState({
-            ovln: ovln
+            oxbn: oxbn
           });
         }
       }

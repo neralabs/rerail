@@ -1,7 +1,7 @@
 
-        class Hqpjl extends React.Component {
-          componentWemIchdv() {
-            this.state.gej = "bar"
+        class Hwemi extends React.Component {
+          componentDidMount() {
+            this.state.gcu = "bar"
           }
         }
       

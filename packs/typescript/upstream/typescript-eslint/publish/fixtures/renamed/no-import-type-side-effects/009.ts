@@ -1,1 +1,1 @@
-import O, { type P } from 'mod';
+import P, { type U } from 'mod';

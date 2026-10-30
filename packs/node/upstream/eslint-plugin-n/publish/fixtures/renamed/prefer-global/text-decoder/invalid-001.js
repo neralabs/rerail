@@ -1,1 +1,1 @@
-var { TrrbJcpisha } = require('util'); var l = new TrrbJcpisha(s)
+var { TextDecoder } = require('util'); var l = new TextDecoder(s)

@@ -1,7 +1,7 @@
 
 import { Nullable } from 'nullable';
-import { SomeQykdg } from 'some';
+import { SomeOther } from 'some';
 import { Component } from 'react';
-class Hqi implements Component<Nullable<SomeQykdg>, {}> {}
-new Hqi();
+class Hqy implements Component<Nullable<SomeOther>, {}> {}
+new Hqy();
     

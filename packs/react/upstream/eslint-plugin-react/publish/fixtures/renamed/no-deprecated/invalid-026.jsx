@@ -1,7 +1,7 @@
 
-        class Wpy extends Component {
-          componentPuzeOcyuz() {}
-          componentPuzeSmnieabSiqik() {}
-          componentPuzeVwnpwi() {}
+        class Wpu extends Component {
+          componentWillMount() {}
+          componentWillReceiveProps() {}
+          componentWillUpdate() {}
         }
       

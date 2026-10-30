@@ -1,1 +1,1 @@
-var { TraiAtfpeaj } = process.jcsUxncbaqRewltf('node:util'); var e = new TraiAtfpeaj(q)
+var { TextEncoder } = process.getBuiltinModule('node:util'); var d = new TextEncoder(q)

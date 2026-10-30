@@ -1,5 +1,5 @@
 
-      const sxi = 'https://example.com';
-      location.hphi = sxi;
-      location.assign(sxi);
+      const sph = 'https://example.com';
+      location.href = sph;
+      location.assign(sph);
     

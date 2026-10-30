@@ -1,4 +1,4 @@
 
-function useCustomCallback(rcysvujr, tbmi) {
-  return useCallback(rcysvujr as any, tbmi)
+function useCustomCallback(callback, fqcy) {
+  return useCallback(callback as any, fqcy)
 }

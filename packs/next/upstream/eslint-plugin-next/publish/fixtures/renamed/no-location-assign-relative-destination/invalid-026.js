@@ -1,5 +1,5 @@
 
-          let yoe = 'https://example.com';
-          yoe = '/other-path';
-          location.hgok = yoe;
+          let ygo = 'https://example.com';
+          ygo = '/other-path';
+          location.href = ygo;
         

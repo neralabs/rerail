@@ -1,1 +1,1 @@
-self.biavIlxjbk(function() { z = 1; }, 100);
+self.execScript(function() { v = 1; }, 100);
