@@ -400,20 +400,26 @@ in two ways:
 **Mitigated:**
 
 - **Redaction before disk** (`src/engine/secret-scrub.ts`). Every write to disk goes through the scrubber: stored
-  events (prompts, replies, tool inputs and outputs, errors), ledger entries, stored findings and audit errors, and the
-  lines Rerail writes to `daemon.log`. Rule matching and steers read the original text in memory. The scrubber redacts:
+  events (prompts, replies, tool inputs and outputs, errors), ledger entries, held steers
+  (`<host>-pending/*.json`), stored findings and audit errors, and the lines Rerail writes to `daemon.log`. Rule
+  matching and steers read the original text in memory. The scrubber redacts:
   - **Known formats.** Cloud, Git host, chat, payment and AI provider keys and tokens, private keys, JWTs, URL
-    passwords and `Authorization` credentials, as `[redacted:<kind>:<6 hex of sha256>]`.
+    passwords and `Authorization` credentials, as `[redacted:<kind>:<6 hex of sha256>]`. Every pattern starts at a
+    token boundary and is linear-time: adversarial input such as `"eyJ-"` repeated over 1 MB scrubs in milliseconds.
   - **Assigned values.** A value assigned to a secret-like key (`password`, `api_key`, `token`, ...) of at least 12
     characters and 3.0 bits per character, as `[redacted:<kind>]` with no hash, because such a value may be a
-    guessable password.
-  - **Never touched.** Hashes, UUIDs, integrity strings, `data:` URIs and code.
+    guessable password. A `$` inside a value does not make it code; only a value that starts with `$` does.
+  - **Never touched.** Hashes, UUIDs, integrity strings, `data:` URIs, code, filesystem paths (so `PWD=/…` stays),
+    and identifiers made of words (`getAuthTokenFromHeader`, `kubernetes-secret-name`).
 - **Secret-like files.** A tool result for a call that names a secret-like path is stored without its output.
   Preimages of a secret-like file, or of one whose text holds a secret, keep only a hash and size.
 - **Erasure.** Database writers run with `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM` and
   checkpoints again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
-  checkout's ledgers and `daemon.log` the same way, then rewrites the file. `rerail update` suggests it once.
+  checkout's ledgers and held steers, and `daemon.log` the same way, then rewrites the database file. The daemon and
+  sessions keep running: ledgers and `daemon.log` are rewritten in place without losing a line appended meanwhile,
+  and held steers are rewritten under the lock their hook takes. A step that fails, a `VACUUM` included, is reported,
+  the others still run, and the command exits 1. `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
   backup, the content cache, and every recorded checkout's `.rerail/sessions` instead of backing them up.
 
@@ -422,6 +428,11 @@ in two ways:
 - **Unknown formats.** A secret in a format the scrubber does not know, or a short or low-entropy value outside a
   secret-like key, is stored.
 - **Unredacted log lines.** Lines that native code or Node's uncaught-error report write straight to `daemon.log`.
+- **Cursor's transcript state.** `<root>/cursor-pending/<sha>.json.transcript` keeps the last assistant reply
+  unredacted, because the runtime replays it as turn-end text for conversation rules. Cursor keeps the same reply in
+  its own transcript file on disk.
+- **Identifier-shaped values.** An assigned value that reads as words joined by `_`, `-`, `.` or camel case is kept,
+  so a passphrase such as `correct-horse-battery-staple` assigned to `password` is stored.
 - **The default removal.** Plain `rerail install --remove` still moves the database to `~/.rerail-clean-YYYYMMDD`.
   `rerail scrub` does not touch those backups.
 - **No encryption.** Nothing is encrypted at rest ([privacy.md](privacy.md)).

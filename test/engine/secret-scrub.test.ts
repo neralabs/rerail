@@ -117,6 +117,32 @@ describe("scrubSecrets", () => {
     ]) expect(scrubSecrets(text), text).toBe(text);
   });
 
+  it("leaves identifiers, interpolations and filesystem paths under a secret-like key", () => {
+    for (const text of [
+      "PWD=/Users/jeff/orca/workspaces/rerail/review-pr-368",
+      "OLDPWD=/Users/jeff/orca/workspaces/rerail",
+      "const token = getAuthTokenFromHeader;",
+      "auth: authMiddlewareFactory",
+      "secret: kubernetes-secret-name",
+      "auth_token: oauth2ClientFactory",
+      "client_secret: MY_CLIENT_SECRET_NAME",
+      "token = $(cat ~/.config/rerail/token)",
+      "token_path: ~/.config/rerail/token",
+    ]) expect(scrubSecrets(text), text).toBe(text);
+  });
+
+  it("still redacts a generated value: one with a `$` inside, one shaped like no identifier, one beside a word", () => {
+    for (const [text, expected] of [
+      ["DB_PASSWORD=Zk9$xQ2mP7vLw8s", "DB_PASSWORD=[redacted:password]"],
+      ["API_TOKEN=Zk9xQ2mP7vLw8s", "API_TOKEN=[redacted:token]"],
+      ["API_TOKEN=ZkxQmPvLwsTrBn", "API_TOKEN=[redacted:token]"],
+      ["API_TOKEN=AB12CD34EF56GH", "API_TOKEN=[redacted:token]"],
+      ["SECRET_KEY=hjkqwertpoiuzxmnbv", "SECRET_KEY=[redacted:secret]"],
+      ["Server=db;Uid=sa;Pwd=Zk9xQ2mP7vLw8s;", "Server=db;Uid=sa;Pwd=[redacted:password];"],
+      ["auth: Bearer-Zk9xQ2mP7vLw8s", "auth: [redacted:auth]"],
+    ] as const) expect(scrubSecrets(text), text).toBe(expected);
+  });
+
   it("never redacts hashes, UUIDs, integrity strings or data URIs, even under a secret-like key", () => {
     for (const text of [
       'token = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"',
@@ -186,6 +212,25 @@ describe("scrubSecrets", () => {
     expect(performance.now() - started).toBeLessThan(5_000);
   });
 
+  // Each run starts a candidate match every few characters; none may make a pass cost more than linear time.
+  it.each([
+    "eyJ-", ".eyJ", `eyJ${"a".repeat(10)}.`, ` eyJ${"a".repeat(5000)}`, "sk-", ` sk-${"a".repeat(300)}`, "AIza-",
+    `-sk_live_${"a".repeat(300)}_`, "glpat-", "xoxb-", "pypi-", "a.a.a.a.a.a.a.a.a.a://u:", `a://${"a".repeat(255)}:${"a".repeat(255)} `,
+    "Bearer ", "token=", "aws_secret_access_key=", "-----END PRIVATE KEY-----",
+  ].map(unit => ({ unit, shown: JSON.stringify(unit.length > 24 ? `${unit.slice(0, 24)}...` : unit) })))("scrubs a megabyte of $shown repeated in linear time", ({ unit }) => {
+    const time = (size: number): number => {
+      const text = unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+      const started = performance.now();
+      scrubSecrets(text);
+      return performance.now() - started;
+    };
+    time(64 * 1024);
+    const quarter = time(256 * 1024);
+    const whole = time(1024 * 1024);
+    expect(whole).toBeLessThan(500);
+    expect(whole).toBeLessThan(8 * quarter + 50);
+  });
+
   it("tells whether text holds a secret", () => {
     expect(containsSecret(`API_KEY = "${OPENAI_PROJECT}"`)).toBe(true);
     expect(containsSecret("const answer = 42;")).toBe(false);
@@ -213,7 +258,7 @@ describe("scrubValue", () => {
   });
 
   it("returns a payload without secrets as it is, cycles included, and keeps a scrubbed copy's cycles", () => {
-    const clean: Record<string, unknown> = { text: "hello", count: 7n };
+    const clean: Record<string, unknown> = { text: "hello", count: 7n, env: { PWD: "/Users/jeff/orca/workspaces/rerail/review-pr-368" } };
     clean.self = clean;
     expect(scrubValue(clean)).toBe(clean);
     const leaky: Record<string, unknown> = { text: GITHUB_PAT_CLASSIC };

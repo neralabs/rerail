@@ -9,6 +9,7 @@ import {
   CodeRuleBridge,
   generatedEditPaths,
   isCommandTool,
+  ledgerPreimage,
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
@@ -768,5 +769,16 @@ describe("CodeRuleBridge", () => {
     await bridge.finish("call-1");
 
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
+  });
+});
+
+describe("ledgerPreimage", () => {
+  it("keeps the text of a source that only names a token, and withholds one that assigns one", () => {
+    const source = "import { getAuthTokenFromHeader } from './auth';\n\nconst token = getAuthTokenFromHeader;\nexport default token;\n";
+    expect(ledgerPreimage({ text: source })).toEqual({ text: source });
+    const leaky = "const token = 'Zk9xQ2mP7vLw8s';\n";
+    expect(ledgerPreimage({ text: leaky })).toEqual({
+      withheld: { sha256: createHash("sha256").update(leaky).digest("hex"), bytes: Buffer.byteLength(leaky) },
+    });
   });
 });

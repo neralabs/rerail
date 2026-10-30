@@ -1,16 +1,32 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { appendFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { deserialize, serialize } from "node:v8";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
+import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
+import { withPendingFileLock } from "../../src/harness/index.js";
+
+/** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
+const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
+vi.mock("../../src/engine/storage/database.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
+  return {
+    ...actual,
+    eraseFreedPages: (database: Parameters<typeof actual.eraseFreedPages>[0]) => {
+      if (erase.failure !== undefined) throw erase.failure;
+      return actual.eraseFreedPages(database);
+    },
+  };
+});
 
 const directories: string[] = [];
 afterEach(async () => {
+  erase.failure = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -143,6 +159,165 @@ describe("rerail scrub", () => {
 
     expect(await runScrubCommand([], () => "usage")).toBe(0);
     expect(readFileSync(outside, "utf8")).toBe(line);
+  });
+});
+
+/** A Rerail home recording one checkout, with an event that holds a token earlier builds stored. */
+async function scrubFixture() {
+  const root = await temporaryRoot();
+  const home = join(root, "home");
+  vi.stubEnv("RERAIL_HOME", home);
+  const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  const checkout = join(root, "repo");
+  mkdirSync(checkout);
+  const token = `ghp_${randomUUID().replaceAll("-", "")}abcd`;
+  const live = openRerailDatabase(join(home, "rerail.sqlite"));
+  const { repositoryKey } = recordCheckout(live, checkout);
+  const recordedCheckout = live.$client.prepare("SELECT checkout_path FROM checkouts").pluck().get() as string;
+  live.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES ('s1', 'omp', ?, ?, 1, 2)")
+    .run(checkout, repositoryKey);
+  live.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES ('s1', 'e1', 'user-prompt', 1, ?)")
+    .run(JSON.stringify({ text: `use ${token}` }));
+  const sessions = join(recordedCheckout, ".rerail", "sessions");
+  const ledger = join(sessions, createHash("sha256").update("s1").digest("hex"), "events.jsonl");
+  mkdirSync(join(ledger, ".."), { recursive: true });
+  const printed = () => output.mock.calls.map(([chunk]) => String(chunk)).join("");
+  return { root, home, sessions, ledger, token, live, printed };
+}
+
+function sampleLine(text: string): string {
+  return `${JSON.stringify({ type: "sample", item: { ref: { source: "host:event", id: `e:${randomUUID()}` }, text, metadata: {} } })}\n`;
+}
+
+describe("rerail scrub alongside running sessions", () => {
+  it("reports a database rewrite that fails, still scrubs the rows, ledgers and daemon.log, and exits 1", async () => {
+    const { home, ledger, token, live, printed } = await scrubFixture();
+    try {
+      writeFileSync(ledger, sampleLine(`GITHUB_TOKEN=${token}`));
+      writeFileSync(join(home, "daemon.log"), `token ${token} rejected\n`);
+      erase.failure = new Error("database is locked");
+
+      expect(await runScrubCommand([], () => "usage")).toBe(1);
+
+      expect(printed()).toContain("database is locked");
+      expect(live.$client.prepare("SELECT payload_json FROM events").pluck().get()).not.toContain(token);
+      expect(readFileSync(ledger, "utf8")).not.toContain(token);
+      expect(readFileSync(join(home, "daemon.log"), "utf8")).not.toContain(token);
+      erase.failure = undefined;
+      expect(await runScrubCommand([], () => "usage")).toBe(0);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("loses no line a process appends to daemon.log or a ledger while it scrubs them", async () => {
+    const { root, home, ledger, token, live } = await scrubFixture();
+    const log = join(home, "daemon.log");
+    try {
+      // Redacted, the token is shorter and each password longer, so the ledger is rewritten in place and the log
+      // after making room.
+      writeFileSync(ledger, sampleLine(`GITHUB_TOKEN=${token}`).repeat(20));
+      writeFileSync(log, "password=k7Qm2xVp9Lw4\n".repeat(20));
+      const stop = join(root, "stop");
+      const appender = "const fs = require('node:fs'); const [log, ledger, stop] = process.argv.slice(1); "
+        + "const pause = new Int32Array(new SharedArrayBuffer(4)); "
+        + "for (let i = 0; !fs.existsSync(stop); i += 1) { fs.appendFileSync(log, `appended ${i}\\n`); "
+        + "fs.appendFileSync(ledger, JSON.stringify({ type: 'event', eventId: `appended-${i}` }) + '\\n'); Atomics.wait(pause, 0, 0, 1); }";
+      const child = spawn(process.execPath, ["-e", appender, log, ledger, stop], { stdio: "ignore" });
+      const exited = new Promise(resolve => child.once("exit", resolve));
+      try {
+        while (!readFileSync(log, "utf8").includes("appended 0")) await delay(5);
+        const appendedBefore = readFileSync(ledger, "utf8").split("appended-").length;
+        expect(await runScrubCommand([], () => "usage")).toBe(0);
+        // The appender kept writing for the whole run.
+        expect(readFileSync(ledger, "utf8").split("appended-").length).toBeGreaterThan(appendedBefore);
+      } finally {
+        writeFileSync(stop, "");
+        await exited;
+      }
+
+      const logLines = readFileSync(log, "utf8").split("\n").slice(0, -1).map(line => line.trimEnd());
+      expect(logLines.slice(0, 20)).toEqual(Array(20).fill("password=[redacted:password]"));
+      const appended = logLines.slice(20);
+      expect(appended).toEqual(appended.map((_, index) => `appended ${index}`));
+      const entries = readFileSync(ledger, "utf8").split("\n").slice(0, -1).map(line => JSON.parse(line) as { type: string; eventId?: string });
+      expect(JSON.stringify(entries.slice(0, 20))).not.toContain(token);
+      expect(entries.slice(20).map(entry => entry.eventId)).toEqual(appended.map((_, index) => `appended-${index}`));
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("scrubs held steers under the lock their hook takes, keeping a steer a hook holds meanwhile", async () => {
+    const { sessions, token, live } = await scrubFixture();
+    try {
+      const file = join(sessions, "claude-code-pending", `${createHash("sha256").update("s1").digest("hex")}.json`);
+      mkdirSync(join(file, ".."), { recursive: true });
+      const steer = (content: string) => ({ sessionId: "s1", requested: "steer", mechanism: "deferred-context", content, ruleIds: [], rules: [] });
+      writeFileSync(file, JSON.stringify([steer(`use ${token}`)]));
+      const locked = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const hook = withPendingFileLock(file, async () => {
+        locked.resolve();
+        await release.promise;
+        writeFileSync(file, JSON.stringify([steer(`use ${token}`), steer("a later steer")]));
+      });
+      await locked.promise;
+      const scrub = runScrubCommand([], () => "usage");
+      await delay(100);
+      release.resolve();
+      await hook;
+      expect(await scrub).toBe(0);
+
+      const held = JSON.parse(readFileSync(file, "utf8")) as Array<{ content: string }>;
+      expect(held.map(delivery => delivery.content)).toEqual([expect.stringMatching(/^use \[redacted:github-token:[0-9a-f]{6}\]$/u), "a later steer"]);
+    } finally {
+      live.$client.close();
+    }
+  });
+});
+
+describe("rewriting a file other processes append to", () => {
+  async function appendedFile(text: string): Promise<string> {
+    const path = join(await temporaryRoot(), "appended.log");
+    writeFileSync(path, text);
+    return path;
+  }
+  const opener = (path: string) => async (flags: number) => await open(path, flags);
+  const lines = (path: string) => readFileSync(path, "utf8").split("\n").map(line => line.trimEnd());
+
+  it("writes shorter lines over the old ones and keeps a line appended between its read and its write", async () => {
+    const path = await appendedFile("keep 1\nsecret-0123456789abcdef\nkeep 2\n");
+    let appended = false;
+    const changed = await rewriteAppendedFile(opener(path), line => {
+      if (!appended) {
+        appended = true;
+        appendFileSync(path, "appended\n");
+      }
+      return line.startsWith("secret-") ? "[redacted]" : undefined;
+    });
+    expect(changed).toBe(1);
+    expect(lines(path)).toEqual(["keep 1", "[redacted]", "keep 2", "appended", ""]);
+  });
+
+  it("makes room for longer lines without writing over a line appended before or after the room", async () => {
+    const path = await appendedFile("keep 1\nsecret\nkeep 2\n");
+    let reads = 0;
+    const changed = await rewriteAppendedFile(opener(path), line => {
+      if (line === "keep 1") {
+        reads += 1;
+        appendFileSync(path, `appended ${reads}\n`);
+      }
+      return line === "secret" ? "[redacted:a-longer-replacement]" : undefined;
+    });
+    expect(changed).toBe(1);
+    expect(lines(path)).toEqual(["keep 1", "[redacted:a-longer-replacement]", "keep 2", "appended 1", "appended 2", ""]);
+  });
+
+  it("leaves a file whose unfinished last line would change", async () => {
+    const path = await appendedFile("keep\npassword=k7Qm2");
+    expect(await rewriteAppendedFile(opener(path), line => (line.startsWith("password=") ? "x" : undefined))).toBeUndefined();
+    expect(readFileSync(path, "utf8")).toBe("keep\npassword=k7Qm2");
   });
 });
 

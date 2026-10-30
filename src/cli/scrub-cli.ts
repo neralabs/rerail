@@ -1,6 +1,7 @@
 import { constants, existsSync, lstatSync, writeFileSync } from "node:fs";
 import { type FileHandle, open, opendir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { deserialize, serialize } from "node:v8";
 import { parseArguments } from "../daemon/daemon.js";
 import { storedFailures, storedViolations } from "../engine/audit/audit-store.js";
@@ -11,15 +12,27 @@ import { stableJsonText } from "../engine/stable-json.js";
 import {
   eraseFreedPages, openRerailDatabase, openSqliteDatabase, RERAIL_DATABASE_FILE, type RerailDatabase,
 } from "../engine/storage/database.js";
-import { readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { type HookHost, scrubbedPendingText, withPendingFileLock } from "../harness/hook-adapter.js";
 import { preUpdateSnapshotPath } from "./project-cli.js";
+import { DAEMON_LOG_FILE } from "../runtime/daemon-control.js";
 import { scrubbedLedgerLine } from "../runtime/runtime.js";
 
 /** Rows read and rewritten per transaction: a running daemon waits on at most one batch. */
 const BATCH_ROWS = 500;
-/** How often a ledger that changed while it was scrubbed is read again before it is left for the next run. */
-const LEDGER_ATTEMPTS = 3;
+/** Passes `rewriteAppendedFile` makes over a file before it is left for the next run. */
+const REWRITE_ATTEMPTS = 5;
+/** How long `rewriteAppendedFile` waits for a line being appended to end before it reads the file again. */
+const MID_LINE_WAIT_MS = 50;
+/**
+ * Opens the line `rewriteAppendedFile` appends to reserve room, padded with spaces to the size it needs. A session
+ * ledger reader skips it (it is JSON, and no ledger entry); `rewriteAppendedFile` drops it, and one a crashed run left.
+ */
+const RESERVE_LINE_START = '{"rerail-scrub-reserve":"';
+const RESERVE_LINE_END = '"}\n';
+/** The hosts whose hooks hold steers between hooks (`<storageRoot>/<host>-pending`). */
+const PENDING_HOSTS = Object.keys({ "claude-code": true, codex: true, cursor: true } satisfies Record<HookHost, true>);
 /** Written once the hint to run `rerail scrub` was shown (or had nothing to scrub), so it is shown once. */
 const SCRUB_HINT_FILE = "scrub-hint.json";
 
@@ -31,14 +44,21 @@ interface DatabaseReport {
   errors: number;
   /** False when another connection's read kept the WAL from being emptied (`eraseFreedPages`). */
   erased: boolean;
+  /** Why `eraseFreedPages` failed (busy, or no disk space for `VACUUM`'s copy); the rows are rewritten all the same. */
+  eraseFailure?: string;
 }
 
-/** What `rerail scrub` rewrote in the session ledgers, and the ledgers it left. */
-interface LedgerReport {
+/** What `rerail scrub` rewrote below the checkouts' session folders, and the files it left. */
+interface SessionFilesReport {
   lines: number;
   files: number;
+  pendingFiles: number;
   checkouts: number;
   skipped: string[];
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** A stored event payload as `persistEvent` would now write it; undefined when it holds no secret. */
@@ -100,7 +120,7 @@ function rewriteRows<Row extends Record<string, unknown>>(
 /**
  * Rewrites the Rerail database's stored text through the scrubber the writers now use: event payloads, audit findings
  * and pages, and audit error text. Then `eraseFreedPages` on the same connection rewrites the file, so the replaced
- * text cannot be read back from free pages or the WAL.
+ * text cannot be read back from free pages or the WAL; its failure is reported, not thrown, since the rows are done.
  */
 function scrubDatabase(database: RerailDatabase): DatabaseReport {
   type EventRow = { sequence: number; payloadJson: string; payloadV8: Buffer | null };
@@ -145,7 +165,14 @@ function scrubDatabase(database: RerailDatabase): DatabaseReport {
       return error === row.error ? undefined : [error];
     }).scrubbed;
   }
-  return { events, audits, auditPages, errors, erased: eraseFreedPages(database) };
+  let eraseFailure: string | undefined;
+  let erased = false;
+  try {
+    erased = eraseFreedPages(database);
+  } catch (error) {
+    eraseFailure = message(error);
+  }
+  return { events, audits, auditPages, errors, erased, ...(eraseFailure === undefined ? {} : { eraseFailure }) };
 }
 
 /** A real folder at `path`, never a link to one. */
@@ -157,88 +184,197 @@ function realDirectory(path: string): boolean {
   }
 }
 
-/**
- * Rewrites one session ledger's lines through `scrubbedLedgerLine`, replacing the file whole (`writeLedgerFile`, which
- * never follows a link). A ledger a session appended to while it was scrubbed is read again; the number of lines
- * changed, or undefined when it kept changing.
- */
-async function scrubLedger(path: string, directory: string): Promise<number | undefined> {
-  for (let attempt = 0; attempt < LEDGER_ATTEMPTS; attempt += 1) {
-    const text = await readLedgerFile(path, directory);
-    if (text === undefined) return 0;
-    let changed = 0;
-    const lines = text.split("\n").map(line => {
-      const scrubbed = line === "" ? undefined : scrubbedLedgerLine(line);
-      if (scrubbed === undefined) return line;
-      changed += 1;
-      return scrubbed;
-    });
-    if (changed === 0) return 0;
-    if (await readLedgerFile(path, directory) !== text) continue;
-    await writeLedgerFile(path, directory, lines.join("\n"));
-    return changed;
+/** The whole file, read by position from its start, so passes over one descriptor never depend on its offset. */
+async function readWhole(handle: FileHandle): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let position = 0;
+  for (;;) {
+    const chunk = Buffer.allocUnsafe(Math.max(64 * 1024, (await handle.stat()).size - position));
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+    if (bytesRead === 0) return Buffer.concat(chunks);
+    chunks.push(chunk.subarray(0, bytesRead));
+    position += bytesRead;
   }
-  return undefined;
+}
+
+async function writeAt(handle: FileHandle, bytes: Buffer, position: number): Promise<void> {
+  for (let written = 0; written < bytes.length;) {
+    written += (await handle.write(bytes, written, bytes.length - written, position + written)).bytesWritten;
+  }
+}
+
+function reserveLine(bytes: number): string {
+  return `${RESERVE_LINE_START}${" ".repeat(Math.max(0, bytes - RESERVE_LINE_START.length - RESERVE_LINE_END.length))}${RESERVE_LINE_END}`;
 }
 
 /**
- * Scrubs the session ledgers (`<checkout>/.rerail/sessions/<session>/events.jsonl`) of every checkout the database
- * records. A checkout, `.rerail`, `sessions` or session folder that is a link, or not a folder, is skipped, never
- * followed.
+ * Rewrites the complete lines of a file other processes append to through `rewriteLine` (the new line, or undefined
+ * to keep it), and never loses or overwrites a line they append meanwhile. Every process that writes the files
+ * `rerail scrub` rewrites this way opens them with `O_APPEND` and writes a line per write: the session runtime its
+ * ledger lines (in the daemon or in a coding agent's own process), the daemon and the launcher that starts it their
+ * output to `daemon.log`. What they append lands past the end of the file as last read here; only bytes before that
+ * end are written, and the file never shrinks, so no append is cut off or written over.
+ *
+ * Lines that come out no longer than they were are written over in place, the last changed one padded at its end with
+ * spaces (JSON and log readers ignore them). Longer ones need room first: a reserve line is appended, which lands after
+ * whatever was appended since, and the next pass rewrites everything up to and including it, moving the lines between
+ * along and dropping it. A reserve line is only appended after a complete line, so it never joins one cut short.
+ * `openFile` opens the file with the given flags without following a link. The number of lines changed, or undefined
+ * when the file was left: it kept ending mid-line where that line would change, or it was replaced while scrubbed.
  */
-async function scrubLedgers(checkoutPaths: readonly string[]): Promise<LedgerReport> {
-  const report: LedgerReport = { lines: 0, files: 0, checkouts: 0, skipped: [] };
+export async function rewriteAppendedFile(
+  openFile: (flags: number) => Promise<FileHandle>,
+  rewriteLine: (line: string) => string | undefined,
+): Promise<number | undefined> {
+  let handle: FileHandle;
+  try {
+    handle = await openFile(constants.O_RDWR);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return 0;
+    throw error;
+  }
+  let appender: FileHandle | undefined;
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) return 0;
+    for (let attempt = 0; attempt < REWRITE_ATTEMPTS; attempt += 1) {
+      const bytes = await readWhole(handle);
+      const end = bytes.lastIndexOf(0x0a) + 1;
+      const tail = bytes.subarray(end).toString("utf8");
+      const midLine = tail !== "" && rewriteLine(tail) !== undefined;
+      // Lines as bytes: one kept is written back exactly as it was, even where it is not valid UTF-8.
+      const lines: Buffer[] = [];
+      let changed = 0;
+      let lastChanged = -1;
+      let reserves = 0;
+      for (let start = 0; start < end;) {
+        const stop = bytes.indexOf(0x0a, start);
+        const line = bytes.subarray(start, stop);
+        start = stop + 1;
+        const text = line.toString("utf8");
+        if (text.startsWith(RESERVE_LINE_START)) {
+          reserves += 1;
+          continue;
+        }
+        const rewritten = rewriteLine(text);
+        if (rewritten !== undefined) {
+          changed += 1;
+          lastChanged = lines.length;
+        }
+        lines.push(rewritten === undefined ? line : Buffer.from(rewritten, "utf8"));
+      }
+      if (midLine && attempt < REWRITE_ATTEMPTS - 1) {
+        await delay(MID_LINE_WAIT_MS);
+        continue;
+      }
+      // A file of nothing but reserve lines keeps them: dropping them would leave only padding, which is no JSON.
+      if (changed === 0 && (reserves === 0 || lines.length === 0)) return midLine ? undefined : 0;
+      const size = lines.reduce((total, line) => total + line.length + 1, 0);
+      if (size <= end) {
+        const padded = lastChanged === -1 ? lines.length - 1 : lastChanged;
+        const newline = Buffer.from("\n");
+        await writeAt(handle, Buffer.concat(lines.flatMap((line, index) => (
+          index === padded ? [line, Buffer.from(`${" ".repeat(end - size)}\n`)] : [line, newline]
+        ))), 0);
+        return midLine ? undefined : changed;
+      }
+      if (tail !== "") {
+        await delay(MID_LINE_WAIT_MS);
+        continue;
+      }
+      if (appender === undefined) {
+        appender = await openFile(constants.O_WRONLY | constants.O_APPEND);
+        const appended = await appender.stat();
+        if (appended.ino !== stats.ino || appended.dev !== stats.dev) return undefined;
+      }
+      await appender.write(reserveLine(size - end), null, "utf8");
+    }
+    return undefined;
+  } finally {
+    await appender?.close();
+    await handle.close();
+  }
+}
+
+/** One session ledger line as it is now written (`scrubbedLedgerLine`); undefined when it stays. */
+function ledgerLine(line: string): string | undefined {
+  return line === "" ? undefined : scrubbedLedgerLine(line);
+}
+
+/** One `daemon.log` line as the daemon now writes it (`scrubWrites`); undefined when it stays. */
+function logLine(line: string): string | undefined {
+  const scrubbed = scrubSecrets(line);
+  return scrubbed === line ? undefined : scrubbed;
+}
+
+/**
+ * Scrubs the steers hooks hold between hooks (`<sessions>/<host>-pending/<session>.json`). A hook reads and replaces
+ * one only while it holds that session's lock, and so does this (`withPendingFileLock`), so neither replaces a steer
+ * the other wrote. A folder or file that is a link is skipped, never followed.
+ */
+async function scrubPending(sessions: string, report: SessionFilesReport): Promise<void> {
+  for (const host of PENDING_HOSTS) {
+    const folder = join(sessions, `${host}-pending`);
+    if (!realDirectory(folder)) continue;
+    for await (const entry of await opendir(folder)) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      const path = join(folder, entry.name);
+      try {
+        const scrubbed = await withPendingFileLock(path, async () => {
+          const text = await readLedgerFile(path, folder);
+          const next = text === undefined ? undefined : scrubbedPendingText(text);
+          if (next !== undefined) await writeLedgerFile(path, folder, next);
+          return next !== undefined;
+        });
+        if (scrubbed) report.pendingFiles += 1;
+      } catch (error) {
+        report.skipped.push(`${path} (${message(error)})`);
+      }
+    }
+  }
+}
+
+/**
+ * Scrubs the session ledgers (`<checkout>/.rerail/sessions/<session>/events.jsonl`, `rewriteAppendedFile`) and held
+ * steers (`scrubPending`) of every checkout the database records. A checkout, `.rerail`, `sessions` or session folder
+ * that is a link, or not a folder, is skipped, never followed; so is a ledger that is a link.
+ */
+async function scrubSessionFiles(checkoutPaths: readonly string[]): Promise<SessionFilesReport> {
+  const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [] };
   for (const checkout of checkoutPaths) {
     const sessions = join(checkout, ".rerail", "sessions");
     if (!isAbsolute(checkout) || !realDirectory(checkout) || !realDirectory(join(checkout, ".rerail")) || !realDirectory(sessions)) continue;
     report.checkouts += 1;
     for await (const entry of await opendir(sessions)) {
       if (!entry.isDirectory()) continue;
-      const directory = join(sessions, entry.name);
-      const path = join(directory, "events.jsonl");
+      const path = join(sessions, entry.name, "events.jsonl");
       try {
-        const lines = await scrubLedger(path, directory);
+        const lines = await rewriteAppendedFile(flags => openLedgerFile(path, flags), ledgerLine);
         if (lines === undefined) report.skipped.push(`${path} (a session kept writing to it)`);
         else if (lines > 0) {
           report.lines += lines;
           report.files += 1;
         }
       } catch (error) {
-        report.skipped.push(`${path} (${error instanceof Error ? error.message : String(error)})`);
+        report.skipped.push(`${path} (${message(error)})`);
       }
     }
+    await scrubPending(sessions, report);
   }
   return report;
 }
 
-/**
- * Scrubs `daemon.log` in the Rerail home in place, line by line: the daemon keeps it open to append to, so it is
- * rewritten through a descriptor that follows no link, not replaced. The number of lines changed.
- */
-async function scrubDaemonLog(home: string): Promise<number> {
-  let handle: FileHandle;
+/** Scrubs `daemon.log` in the Rerail home in place (`rewriteAppendedFile`), never through a link. */
+async function scrubDaemonLog(home: string, report: SessionFilesReport): Promise<number> {
+  const path = join(home, DAEMON_LOG_FILE);
   try {
-    handle = await open(join(home, "daemon.log"), constants.O_RDWR | constants.O_NOFOLLOW);
-  } catch {
-    return 0;
+    const lines = await rewriteAppendedFile(flags => open(path, flags | constants.O_NOFOLLOW), logLine);
+    if (lines !== undefined) return lines;
+    report.skipped.push(`${path} (Rerail kept writing to it)`);
+  } catch (error) {
+    report.skipped.push(`${path} (${message(error)})`);
   }
-  try {
-    if (!(await handle.stat()).isFile()) return 0;
-    const text = await handle.readFile("utf8");
-    let changed = 0;
-    const scrubbed = text.split("\n").map(line => {
-      const clean = scrubSecrets(line);
-      if (clean !== line) changed += 1;
-      return clean;
-    }).join("\n");
-    if (changed === 0) return 0;
-    const bytes = Buffer.from(scrubbed, "utf8");
-    await handle.write(bytes, 0, bytes.length, 0);
-    await handle.truncate(bytes.length);
-    return changed;
-  } finally {
-    await handle.close();
-  }
+  return 0;
 }
 
 /** Marks the post-update hint shown; a hint file already there is kept. */
@@ -266,62 +402,79 @@ function plural(count: number, noun: string): string {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
 }
 
-function printDatabaseReport(path: string, report: DatabaseReport): void {
+/** Prints what `scrubDatabase` did to the file at `path`; false when some of it is left for another run. */
+function printDatabaseReport(path: string, report: DatabaseReport): boolean {
   process.stdout.write(
     `Scrubbed ${path}: ${report.events.scrubbed} of ${plural(report.events.read, "event")}, `
     + `${report.audits.scrubbed} of ${plural(report.audits.read, "audit")}, `
     + `${report.auditPages.scrubbed} of ${plural(report.auditPages.read, "audit result page")}, `
     + `${plural(report.errors, "error message")}.\n`,
   );
+  if (report.eraseFailure !== undefined) {
+    process.stdout.write(
+      `Could not rewrite ${path} to erase the replaced text (${report.eraseFailure}). The rows are redacted, but their `
+      + `old text may remain in ${path}-wal or the file's free pages. Run rerail scrub again when Rerail is idle, with `
+      + "free disk space for a second copy of the database.\n",
+    );
+    return false;
+  }
   if (!report.erased) {
     process.stdout.write(`Another Rerail process was reading ${path}, so the replaced text may remain in ${path}-wal until it stops; run rerail scrub again then.\n`);
+    return false;
+  }
+  return true;
+}
+
+/** Scrubs the database at `path` as `scrubDatabase` does, then prints the report; false when something is left. */
+function scrubDatabaseFile(path: string, openDatabase: () => RerailDatabase, opened?: (database: RerailDatabase) => void): boolean {
+  try {
+    const db = openDatabase();
+    try {
+      db.$client.pragma("busy_timeout = 10000");
+      opened?.(db);
+      return printDatabaseReport(path, scrubDatabase(db));
+    } finally {
+      db.$client.close();
+    }
+  } catch (error) {
+    process.stdout.write(`Could not scrub ${path} (${message(error)}); it may still hold secrets. Run rerail scrub again when Rerail is idle.\n`);
+    return false;
   }
 }
 
 /**
  * `rerail scrub`: redacts secrets from what earlier builds stored, with the scrubber writes now use (`secret-scrub`):
  * the Rerail database's events and audit text (then rewritten so the old text is gone from its bytes and WAL), the
- * copy `rerail update` keeps of it for a rollback, the session ledgers of every checkout it records, and `daemon.log`.
- * Running it again changes nothing.
+ * copy `rerail update` keeps of it for a rollback, the session ledgers and held steers of every checkout it records,
+ * and `daemon.log`. A running daemon and running sessions carry on: no line a session or the daemon appends to a
+ * ledger or `daemon.log` while it runs is lost or written over (`rewriteAppendedFile`), and a hook never loses a steer
+ * it holds (`scrubPending`). A step that fails is reported and the others still run; the exit code is 1 when anything
+ * was left for another run. Running it again changes nothing.
  */
 export async function runScrubCommand(args: readonly string[], usage: () => string): Promise<number> {
   parseArguments(args, { flags: [], options: [] }, argument => `Unknown scrub option: ${argument}\n\n${usage()}`);
   const home = defaultRerailHome();
   const path = join(home, RERAIL_DATABASE_FILE);
   markHintShown(home);
+  let complete = true;
   let checkouts: string[] = [];
   if (existsSync(path)) {
-    const db = openRerailDatabase(path);
-    try {
-      db.$client.pragma("busy_timeout = 10000");
-      printDatabaseReport(path, scrubDatabase(db));
+    // The checkouts are read first, so the ledgers are scrubbed even when the database cannot be.
+    complete = scrubDatabaseFile(path, () => openRerailDatabase(path), db => {
       checkouts = (db.$client.prepare("SELECT checkout_path AS path FROM checkouts ORDER BY checkout_path").all() as Array<{ path: string }>)
         .map(row => row.path);
-    } finally {
-      db.$client.close();
-    }
+    });
   } else process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
   // The copy `rerail update` took before switching versions: opened without this build's schema, so it stays the
   // earlier version's file.
   const copy = preUpdateSnapshotPath(path);
-  if (existsSync(copy)) {
-    try {
-      const db = openSqliteDatabase(copy);
-      try {
-        printDatabaseReport(copy, scrubDatabase(db));
-      } finally {
-        db.$client.close();
-      }
-    } catch (error) {
-      process.stdout.write(`Could not scrub ${copy} (${error instanceof Error ? error.message : String(error)}); it may still hold secrets.\n`);
-    }
-  }
-  const ledgers = await scrubLedgers(checkouts);
-  const daemonLogLines = await scrubDaemonLog(home);
+  if (existsSync(copy)) complete = scrubDatabaseFile(copy, () => openSqliteDatabase(copy)) && complete;
+  const files = await scrubSessionFiles(checkouts);
+  const daemonLogLines = await scrubDaemonLog(home, files);
   process.stdout.write(
-    `Scrubbed ${plural(ledgers.lines, "line")} in ${plural(ledgers.files, "session ledger")} across ${plural(ledgers.checkouts, "checkout")}; `
-    + `${plural(daemonLogLines, "line")} of daemon.log.\n`,
+    `Scrubbed ${plural(files.lines, "line")} in ${plural(files.files, "session ledger")} and ${plural(files.pendingFiles, "held steer file")} `
+    + `across ${plural(files.checkouts, "checkout")}; ${plural(daemonLogLines, "line")} of daemon.log.\n`,
   );
-  for (const skipped of ledgers.skipped) process.stdout.write(`Left ${skipped}; run rerail scrub again.\n`);
-  return 0;
+  for (const skipped of files.skipped) process.stdout.write(`Left ${skipped}; run rerail scrub again.\n`);
+  return complete && files.skipped.length === 0 ? 0 : 1;
 }

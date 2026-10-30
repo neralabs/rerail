@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 
 /**
- * Redacts secrets from text Rerail writes to disk: stored session events, session ledgers, audit findings and the
- * daemon log. It is applied where text is written, never where it is matched: rules and steers keep reading the
- * original in memory.
+ * Redacts secrets from text Rerail writes to disk: stored session events, session ledgers, steers held for a later
+ * hook, audit findings and the daemon log. It is applied where text is written, never where it is matched: rules and
+ * steers keep reading the original in memory.
  *
  * Two kinds of rule, run in this order over a string:
  * - Pattern rules for formats a secret is recognizable by on its own (provider token prefixes, PEM private keys,
@@ -12,16 +12,20 @@ import { createHash } from "node:crypto";
  * - The keyed rule: a value assigned to a secret-like key (`password`, `token`, `api_key`, `client_secret`, ... in
  *   `key = value`, `key: value`, `"key": "value"`, env and YAML forms) of at least {@link KEYED_MIN_LENGTH} characters
  *   and {@link KEYED_MIN_ENTROPY} bits of Shannon entropy per character, unless it is a placeholder (`changeme`,
- *   `xxx`, `${VAR}`, `<...>`, `***`) or code (a call, a member path such as `process.env.TOKEN`). It may be a
- *   low-entropy password, so it becomes `[redacted:<kind>]` with no hash a guess could be checked against.
+ *   `xxx`, `${VAR}`, `<...>`, `***`) or a filesystem path (`PWD=/Users/...`). A bare value is also kept when it is
+ *   code: a call, a member path such as `process.env.TOKEN`, an interpolation such as `$TOKEN` or `$(cat file)`, or an
+ *   identifier made of words (`getAuthTokenFromHeader`, `kubernetes-secret-name`). It may be a low-entropy password,
+ *   so it becomes `[redacted:<kind>]` with no hash a guess could be checked against.
  *
  * Never redacted: 40 and 64 hex digit hashes, UUIDs, `sha1-`/`sha256-`/`sha384-`/`sha512-` integrity strings and
  * `data:` URIs. Nothing is redacted for its entropy alone, outside a secret-like key.
  *
  * Cost: every expression is linear in the string: no nested quantifiers, every repetition bounded, each anchored on a
- * literal or a character class, so a string costs a fixed number of passes. A string with none of the rules' anchor
- * words skips them all after one pass. A string longer than {@link MAX_SCRUB_CHARS} is not scanned: it is replaced
- * whole by `[redacted:unscanned]`, failing closed. A marker matches no rule, so scrubbing is idempotent.
+ * literal or a character class. A rule whose match can fail after a long scan (a JWT without its dots, an OpenAI key
+ * without a digit) starts only where its token starts, not after a character of its own class, so no stretch of text
+ * is scanned again from every prefix inside it; a string costs a fixed number of passes. A string with none of the
+ * rules' anchor words skips them all after one pass. A string longer than {@link MAX_SCRUB_CHARS} is not scanned: it
+ * is replaced whole by `[redacted:unscanned]`, failing closed. A marker matches no rule, so scrubbing is idempotent.
  */
 
 /** The longest string scanned; a longer one is replaced whole (fail closed). */
@@ -127,17 +131,25 @@ const PATTERN_RULES: readonly PatternRule[] = [
   { kind: "gitlab-token", pattern: /\bglpat-[A-Za-z0-9_-]{20,255}/g },
   { kind: "slack-token", pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,255}/g },
   { kind: "stripe-key", pattern: /\b(?:sk|rk)_live_[A-Za-z0-9]{16,255}\b/g },
-  { kind: "google-api-key", pattern: /\bAIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
+  // A token starts where no character of its class precedes it: after `-`, as `\b` allowed, every `AIza` in a run of
+  // `AIza-AIza-...` would scan the next 35 characters.
+  { kind: "google-api-key", pattern: /(?<![0-9A-Za-z_-])AIza[0-9A-Za-z_-]{35}(?![0-9A-Za-z_-])/g },
   { kind: "anthropic-key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,255}/g },
-  // `sk-proj-`, `sk-svcacct-`, `sk-admin-` and the original `sk-` keys; a digit tells a key from a kebab-case name.
-  { kind: "openai-key", pattern: /\bsk-(?!ant-)(?=[A-Za-z0-9_-]{0,255}\d)[A-Za-z0-9_-]{20,255}/g },
+  // `sk-proj-`, `sk-svcacct-`, `sk-admin-` and the original `sk-` keys; a digit tells a key from a kebab-case name. The
+  // digit look-ahead scans up to 255 characters, so a key starts only where no character of its class precedes it.
+  { kind: "openai-key", pattern: /(?<![A-Za-z0-9_-])sk-(?!ant-)(?=[A-Za-z0-9_-]{0,255}\d)[A-Za-z0-9_-]{20,255}/g },
   { kind: "npm-token", pattern: /\bnpm_[A-Za-z0-9]{36}\b/g },
   { kind: "pypi-token", pattern: /\bpypi-[A-Za-z0-9_-]{50,1000}/g },
-  { kind: "jwt", pattern: /\beyJ[A-Za-z0-9_-]{8,4096}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{10,4096}/g },
-  // `scheme://user:password@host`: only the password.
+  // A JWT starts where no base64url character precedes it: with `\b`, every `eyJ` after a `-` in `eyJ-eyJ-...` began
+  // a scan of up to 4096 characters for a dot that never came. Each segment stops at the first character outside its
+  // class, and a match can start only past the end of the previous start's first segment, so each run of base64url is
+  // scanned at most three times (as a header, a payload and a signature).
+  { kind: "jwt", pattern: /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,4096}\.eyJ[A-Za-z0-9_-]{8,8192}\.[A-Za-z0-9_-]{10,4096}/g },
+  // `scheme://user:password@host`: only the password. The scheme starts where no scheme character precedes it, so a
+  // run such as `a.a.a.a://` is one start, not one per letter.
   {
     kind: "url-password",
-    pattern: /(\b[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:/?#@"'<>]{1,256}:)([^\s/?#@"'<>]{1,256})@/gi,
+    pattern: /((?<![A-Za-z0-9+.-])[a-z][a-z0-9+.-]{1,20}:\/\/[^\s:/?#@"'<>]{1,256}:)([^\s/?#@"'<>]{1,256})@/gi,
     replace: kind => (match, prefix = "", secret = "") => (placeholder(secret) ? match : `${prefix}${marker(kind, secret)}@`),
   },
   {
@@ -177,6 +189,64 @@ function exempt(value: string): boolean {
     || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
     || /^sha(?:1|256|384|512)-[A-Za-z0-9+/=]+$/.test(value)
     || /^data:/i.test(value);
+}
+
+/**
+ * True for a filesystem path: absolute with two or more segments (`/Users/jeff/project`, as `PWD` and `OLDPWD` hold),
+ * home- or dot-relative (`~/.config`, `./certs/dev`), or under a Windows drive. Its segments hold no `+`, `=`, `$` or
+ * other symbol a generated secret is made of.
+ */
+function filesystemPath(value: string): boolean {
+  return /^(?:\/[\w.@-]+){2,}\/?$/.test(value)
+    || /^(?:~|\.{1,2})(?:\/[\w.@-]*)+$/.test(value)
+    || /^[A-Za-z]:(?:[\\/][\w .@-]*)+$/.test(value);
+}
+
+/** A vowel or `y`: every word of an identifier holds one, unless it is a short acronym. */
+const VOWEL = /[aeiouy]/i;
+
+/**
+ * True for an identifier made of words, as code names things: `getAuthTokenFromHeader`, `authMiddlewareFactory`,
+ * `kubernetes-secret-name`, `MY_SECRET_NAME`, `oauth2Client`. Split at `_`, `-`, `.` and camelCase humps, it has two or
+ * more words of letters, three letters long on average, one of them three or more letters with a vowel. Every word has
+ * two or more letters, holds a vowel and no run of five other letters, or is an acronym of up to five capitals (`XML`,
+ * `HTTP`), one at most beside lower-case words; a longer run of capitals is a word only in a part with no lower-case
+ * letter (`SECRET` in `MY_SECRET_NAME`). A digit run ends a word, so no lower-case letter follows a digit. A generated
+ * secret splits into one-letter humps, vowel-less fragments, runs of capitals and digits inside a lower-case run
+ * (`Zk9xQ2mP7vLw8s` gives `Zk`, `9`, `x`, ...), so it is not one: about 1 in 1,000 random 16-character alphanumeric
+ * strings passes. One word on its own (`mysecretpassword`) is judged as any other value.
+ */
+function wordIdentifier(value: string): boolean {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*(?:[.-][A-Za-z0-9_]+)*$/.test(value) || /\d[a-z]/.test(value)) return false;
+  let words = 0;
+  let letters = 0;
+  let camelCaseAcronyms = 0;
+  let voweledWord = false;
+  for (const part of value.split(/[._-]+/)) {
+    const camelCase = /[a-z]/.test(part);
+    for (const word of part.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+/g) ?? []) {
+      const acronym = /^[A-Z]+$/.test(word);
+      const vowel = VOWEL.test(word);
+      if (word.length < 2) return false;
+      if (acronym ? word.length > 5 && (camelCase || !vowel) : !vowel || /[^aeiouy]{5}/i.test(word)) return false;
+      if (acronym && camelCase && ++camelCaseAcronyms > 1) return false;
+      words += 1;
+      letters += word.length;
+      voweledWord ||= vowel && word.length >= 3;
+    }
+  }
+  return words >= 2 && letters >= 3 * words && voweledWord;
+}
+
+/**
+ * True for a bare value that is code, not a literal: a call, an index, a logical operator, a member path, an
+ * interpolation (`$TOKEN`, `${TOKEN}`, `$(cat file)`: a `$` that starts the value; one inside a generated password
+ * such as `Zk9$xQ2mP7vLw8s` is part of it) or an identifier made of words.
+ */
+function code(value: string): boolean {
+  return /^\$|[([{<]|\|\||&&|\?\?|\?\./.test(value)
+    || /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(value)
+    || wordIdentifier(value);
 }
 
 /** True for a `Bearer` token or `Basic` credential, not prose such as "Bearer authentication". */
@@ -219,9 +289,8 @@ function keyKind(key: string): string {
 
 /** True for a value assigned to a secret-like key that the keyed rule redacts. */
 function keyedSecret(value: string, quoted: boolean): boolean {
-  if (value.length < KEYED_MIN_LENGTH || placeholder(value) || exempt(value)) return false;
-  // A bare value that is code, not a literal: a call, an index, an interpolation, a logical operator, or a member path.
-  if (!quoted && (/[([{<$]|\|\||&&|\?\?|\?\./.test(value) || /^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$/.test(value))) return false;
+  if (value.length < KEYED_MIN_LENGTH || placeholder(value) || exempt(value) || filesystemPath(value)) return false;
+  if (!quoted && code(value)) return false;
   return shannonEntropy(value) >= KEYED_MIN_ENTROPY;
 }
 

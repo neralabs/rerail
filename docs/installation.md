@@ -499,7 +499,7 @@ rerail settings --session ID --mode log             # save this workspace's defa
 rerail update check      # is a newer version on the channel?
 rerail update            # install it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
-rerail scrub             # redact secrets from history earlier versions stored (database, ledgers, daemon.log)
+rerail scrub             # redact secrets from history earlier versions stored (database, ledgers, held steers, daemon.log)
 rerail rules list        # your rules, and those waiting for approval
 rerail rules approve ID  # print a waiting rule's content and approve it so it runs
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
@@ -664,9 +664,12 @@ second checkpoint that empties `rerail.sqlite-wal`), so the deleted history
 cannot be read back from the file's bytes; every writer also runs with
 `secure_delete` on, which zeroes what any delete frees. When another Rerail
 process is reading the database at that moment, `rerail reset` says the
-`-wal` file may still hold deleted history; run it again once that process
-has stopped. The `.rerail/sessions` ledgers in your checkouts are not
-touched by `rerail reset`.
+`-wal` file may still hold deleted history. When the rewrite itself fails (the
+database stays busy, or the disk has no room for `VACUUM`'s second copy of
+the file), the history is still deleted and `rerail reset` says what may
+remain. Either way it exits 1; run it again once Rerail is idle. The
+`.rerail/sessions` ledgers in your checkouts are not touched by
+`rerail reset`.
 
 ### Redacting secrets from stored history
 
@@ -681,8 +684,13 @@ of its SHA-256, or `[redacted:<kind>]` for a value under a secret-like key.
 History stored before that is redacted by `rerail scrub` (safe to repeat;
 `rerail update` suggests it once). It rewrites the database's events, audit
 findings and audit errors in batches, then the file in place as `rerail reset`
-does; the session ledgers of every checkout the database records, never
-through a link; and `daemon.log`. It prints how many of each it changed.
+does; the session ledgers and held steers of every checkout the database
+records, never through a link; and `daemon.log`. It prints how many of each it
+changed. The daemon and running sessions carry on meanwhile: a line they
+append to a ledger or `daemon.log` during the scrub is kept, and a held steer
+is rewritten under the same lock its hook takes. A step that fails is reported
+and the others still run; the command then exits 1, and running it again
+finishes the job.
 
 ### Removing Rerail
 
