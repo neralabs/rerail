@@ -483,19 +483,37 @@ impl LoweredMatcher {
                 captured: false,
             }]],
         ));
-        let siblings = steps.iter().filter(|(recursive, _)| *recursive).flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
-            Pass::Program { program, .. } | Pass::Count { program, .. } => {
-                program.words.iter().any(|&word| matches!(split(word).0, NEXT | FOLLOWING))
-            }
-            _ => false,
-        });
+        // Per step: a recursive group's recursive labels' kinds, and whether it steps to siblings.
+        let chains = segments
+            .iter()
+            .map(|(recursive, members)| {
+                if !recursive {
+                    return (None, false);
+                }
+                let mut kinds = Some(BTreeSet::new());
+                for id in members.iter().filter(|id| self.labels.recursive.values().any(|label| label == *id)) {
+                    match (self.labels.def(*id), kinds.as_mut()) {
+                        (Label::Roots(_, Domain::Kinds(own)), Some(kinds)) => kinds.extend(own.iter().copied()),
+                        _ => kinds = None,
+                    }
+                }
+                let siblings = members.iter().any(|id| match self.labels.def(*id) {
+                    Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. } => {
+                        program.words.iter().any(|&word| matches!(split(word).0, NEXT | FOLLOWING))
+                    }
+                    _ => false,
+                });
+                (kinds.map(|kinds| kinds.into_iter().collect()), siblings)
+            })
+            .chain([(None, false)])
+            .collect();
         let outcome = run(
             &Plan {
                 labels,
                 counts: slots as usize,
                 patterns,
                 steps,
-                siblings,
+                chains,
             },
             tapes,
         )?;

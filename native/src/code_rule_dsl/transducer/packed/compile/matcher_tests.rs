@@ -285,6 +285,9 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
             let started = std::time::Instant::now();
             let metal = program.roots_metal(&tapes).map(|(roots, outcome)| {
                 most = most.max(outcome.dispatches);
+                if outcome.dispatches > 100 && std::env::var_os("RERAIL_S2_TRACE").is_some() {
+                    eprintln!("  over 100 launches: {policy}/{clause}: {} launches, {} rounds at most, {} passes", outcome.dispatches, outcome.rounds, program.passes());
+                }
                 commands += outcome.command_buffers;
                 dispatches += outcome.dispatches;
                 waits.iter_mut().zip(outcome.waits).for_each(|(sum, wait)| *sum += wait);

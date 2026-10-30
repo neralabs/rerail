@@ -63,9 +63,10 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     /// Groups in order, each as its dependency levels: a level's passes read only earlier
     /// levels' labels. A recursive group repeats until no label of it changes.
     pub(in crate::code_rule_dsl) steps: Vec<(bool, Vec<Vec<Pass<'a>>>)>,
-    /// Whether a recursive group's programs step to siblings (`NEXT`, `FOLLOWING`), so that
-    /// its rounds follow sibling runs as well as depth.
-    pub(in crate::code_rule_dsl) siblings: bool,
+    /// Per step, for a recursive group: the kinds its recursive labels' nodes have (`None`:
+    /// any), and whether its programs step to siblings (`NEXT`, `FOLLOWING`). Its rounds follow
+    /// chains of such nodes, nested or (stepping to siblings) side by side.
+    pub(in crate::code_rule_dsl) chains: Vec<(Option<Vec<u16>>, bool)>,
 }
 
 #[derive(Debug, Default)]
@@ -249,73 +250,90 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
         .flat_map(|(_, levels)| levels)
         .map(launches)
         .sum::<usize>();
-    // Each round: its levels; each group one finishing boundary.
-    let per_round = plan
+    let groups = plan.steps.iter().filter(|(recursive, _)| *recursive).count();
+    // A recursive group's label grows (or settles) one node of a chain per round: a node joins
+    // in the round after the node its walk reaches. Its nodes have the label's kinds, so the
+    // longest chain of such nodes, nested along a path or (where the group steps to siblings)
+    // side by side, plus a round to see nothing change, is the expected count. It is not a
+    // proof: a group still changing in its last round reruns the clause with more.
+    let expected = plan
+        .chains
+        .iter()
+        .map(|(kinds, siblings)| {
+            let has = |tape: &TapeDoc, node: u32| {
+                kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&tape.transducer_kind(node)).is_ok())
+            };
+            files
+                .iter()
+                .map(|tape| {
+                    let mut nested = vec![0_usize; tape.transducer_len()];
+                    let mut longest = 0;
+                    for node in 0..tape.transducer_len() as u32 {
+                        let above = tape.transducer_parent(node).map_or(0, |parent| nested[parent as usize]);
+                        nested[node as usize] = above + usize::from(has(tape, node));
+                        longest = longest.max(nested[node as usize]);
+                        if *siblings {
+                            let mut run = 0;
+                            for child in tape.transducer_children(node) {
+                                run = if has(tape, child) { run + 1 } else { 0 };
+                                longest = longest.max(run);
+                            }
+                        }
+                    }
+                    longest
+                })
+                .max()
+                .unwrap_or(0)
+                + 2
+        })
+        .collect::<Vec<_>>();
+    // Each group's rounds: as expected, all capped alike where the budget cannot afford that.
+    let per_group = plan
         .steps
         .iter()
-        .filter(|(recursive, _)| *recursive)
-        .map(|(_, levels)| levels.iter().map(launches).sum::<usize>())
-        .sum::<usize>();
-    let groups = plan.steps.iter().filter(|(recursive, _)| *recursive).count();
-    // A recursive group walks one tree edge per round (`matcher::lower` admits recursion only
-    // through walks), so the tapes' deepest node or longest run of siblings, plus a round to
-    // see nothing change, is the expected count. It is not a proof: a group still changing in
-    // its last round is run again with more.
-    let expected = files
-        .iter()
-        .map(|tape| {
-            let mut depth = vec![0_usize; tape.transducer_len()];
-            let mut longest = 0;
-            for node in 0..tape.transducer_len() as u32 {
-                if let Some(parent) = tape.transducer_parent(node) {
-                    depth[node as usize] = depth[parent as usize] + 1;
-                }
-                longest = longest.max(depth[node as usize]);
-                if plan.siblings {
-                    longest = longest.max(tape.transducer_children(node).count());
-                }
-            }
-            longest
-        })
-        .max()
-        .unwrap_or(0)
-        + 2;
-    // What the budget leaves for rounds, after `used` launches.
-    let affordable = |used: usize| {
-        if per_round == 0 {
-            0
-        } else {
-            (LAUNCHES.saturating_sub(used + fixed + groups) / per_round).clamp(2, MOST_ROUNDS)
+        .map(|(recursive, levels)| if *recursive { levels.iter().map(launches).sum::<usize>() } else { 0 })
+        .collect::<Vec<_>>();
+    let plan_rounds = |used: usize, wanted: &[usize]| {
+        let budget = LAUNCHES.saturating_sub(used + fixed + groups);
+        let rounds = |cap: usize| {
+            plan.steps
+                .iter()
+                .zip(wanted)
+                .map(|((recursive, _), wanted)| if *recursive { (*wanted).clamp(2, cap.max(2)) } else { 0 })
+                .collect::<Vec<_>>()
+        };
+        let cost = |rounds: &[usize]| rounds.iter().zip(&per_group).map(|(rounds, launches)| rounds * launches).sum::<usize>();
+        let mut cap = MOST_ROUNDS;
+        while cap > 2 && cost(&rounds(cap)) > budget {
+            cap -= 1;
         }
+        rounds(cap)
     };
-    // Every round the tapes' shape expects, so that a clause is one command buffer; fewer first
-    // would save the launches of skipped rounds but cost a rerun where a group needs more.
-    let mut rounds = affordable(0).min(expected);
+    let mut wanted = expected.clone();
+    let mut rounds = plan_rounds(0, &wanted);
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     loop {
-        let mut outcome = encode(device, plan, files, rounds)?;
+        let mut outcome = encode(device, plan, files, &rounds)?;
         used += outcome.dispatches;
         buffers += outcome.command_buffers;
-        // A group still changing in its last encoded round: everything after it read unsettled
-        // labels, so the clause runs again with the rounds the tapes' shape expects and the
-        // budget affords, then more, up to the CPU's bound.
         if outcome.waits[1] == 0 {
             outcome.waits[1] = retries;
             outcome.dispatches = used;
             outcome.command_buffers = buffers;
             return Ok(outcome);
         }
-        if rounds > nodes + 1 {
+        if rounds.iter().all(|rounds| *rounds > nodes + 1 || *rounds == 0) {
             return Err(Error::WorkLimit);
         }
         retries += 1;
-        rounds = (rounds * 2).max(affordable(used).min(expected));
+        wanted = rounds.iter().map(|rounds| rounds * 2).collect();
+        rounds = plan_rounds(used, &wanted);
     }
 }
 
 /// The clause's passes in one command buffer, each recursive group as `rounds` rounds.
-fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: usize) -> Result<Outcome, Error> {
+fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: &[usize]) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
     let queue = device.new_command_queue();
@@ -344,12 +362,12 @@ fn encode(device: &Device, plan: &Plan<'_>, files: &[TapeDoc], rounds: usize) ->
         encoded: false,
         outcome: Outcome {
             words,
-            rounds,
+            rounds: rounds.iter().copied().max().unwrap_or(0),
             ..Outcome::default()
         },
     };
     runner.size(plan)?;
-    for (recursive, levels) in &plan.steps {
+    for ((recursive, levels), &rounds) in plan.steps.iter().zip(rounds) {
         if !recursive {
             for level in levels {
                 runner.level(level, None)?;

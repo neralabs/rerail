@@ -150,9 +150,11 @@ interpreter.
     3. the pattern kernel;
     4. `label_settle`: each target takes its scratch bits, or a complement or count bound
        computed per word, and a change sets a flag.
-  - **Recursive groups.** A group's rounds are encoded in the same command buffer. The count is
-    the deepest node (or longest sibling run, where the group walks siblings) plus two, within
-    the launch budget. A one-thread `label_round` kernel marks every round after one that changed
+  - **Recursive groups.** A group's rounds are encoded in the same command buffer. A node
+    joins a recursive label in the round after the node its walk reaches, and both have the
+    label's kinds. So the count is the longest chain of nodes of those kinds, nested along a
+    path (or side by side where the group walks siblings), plus two, within the launch budget.
+    Where the label's kinds are unknown, every node counts. A one-thread `label_round` kernel marks every round after one that changed
     nothing as skipped, and every label kernel and `run_batch` return at once on that mark. The
     decision is taken by thread 0 of each round's last `label_settle`, for the round before
     (one changed flag per round parity), so it costs no launch. Deciding a round late only
@@ -172,8 +174,8 @@ interpreter.
     ran as four batches of 15 (`RERAIL_S1_FROM`) to keep each run under two minutes, and the CPU
     gate against W is 87 of 87 exact on the same batches.
   - Each batch is one command buffer per clause, with 0 host waits for growth, reruns or
-    uploads. Launches average 98, 66, 74 and 49 per clause across the four batches, under the
-    target of 100, and are at most 552 for one clause, under the budget of 600.
+    uploads. Launches average 69, 45, 51 and 36 per clause across the four batches, and are at
+    most 559 for one clause, under the evaluation budget of 600.
   - On 8 fixtures (164 matched nodes), likewise one command buffer per clause and no host
     waits.
   - Metal took 15–23 s and the CPU 18–21 s over repeated 8-fixture runs (test wall time, debug
@@ -185,10 +187,11 @@ interpreter.
   - All gates take `RERAIL_S1_CLAUSE` (a clause-name filter), and `RERAIL_S1_FILES` and
     `RERAIL_S1_FROM` (n fixtures from the m-th). The default sample is every eighth fixture.
 - **Left for later (O23):**
-  - A clause with a recursive group still takes up to 552 launches on the deeper fixtures. The
-    rounds are bounded by the tapes' depth, and a skipped round still counts. The under-100
-    target holds on average, not for each such clause; batching a wave's clauses (S4) shares
-    the rounds.
+  - A clause with a recursive group whose labels can have any kind still takes up to 559
+    launches. Its rounds are bounded by the tree's depth or sibling runs, and a skipped round
+    still counts. The launch budget's target of under 100 per evaluation
+    (`metal_launch_budget.rs`) is S4's check, where a wave's clauses share one evaluation and
+    its levels and rounds.
   - A label-domain program starts at every node, because its label is not known when the
     command buffer is encoded. Its first `SUPERTYPE` drops the others.
 
@@ -211,6 +214,7 @@ interpreter.
 - **Chunks:** 125 MB chunks, prepared ahead (decision 0010).
 - This exercises the scheduler and the vtab on real fact families. That is part of O14, with a hand-written step rather than one emitted by the planner.
 - Check: the batch's candidates must be a superset of S1's oracle roots (the prefilter never under-produces, §16.3), and the match facts must equal S1's matches.
+- Check: on Metal, the wave is one evaluation within the launch budget's target of under 100 launches (`metal_launch_budget.rs`). Its clauses share levels and recursive rounds; S2 meets the target on average per clause (36–69) but not for every clause (up to 559).
 
 ### S5. Findings layer (first version of §8)
 
