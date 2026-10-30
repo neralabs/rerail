@@ -296,6 +296,15 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(text).toContain("  △ @neralabs/rerail-pack-acme-api@1.2.0 replaces 1.1.0, which every repo on this computer uses.");
   });
 
+  it("names a third party's pack with its publisher, and says before a yes that Rerail has not reviewed it", () => {
+    const acme = { ...PACKS.packs[0]!, id: "@acme/rerail-pack-sql", name: "Acme SQL", packageName: "@acme/rerail-pack-sql", thirdParty: "@acme" };
+    const text = stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [acme, PACKS.packs[1]!] }, "terminal"));
+
+    expect(text).toMatch(/^ {2}Acme SQL \(by @acme\)\s+\d+/mu);
+    expect(text).toContain("  △ @acme/rerail-pack-sql is by @acme, not Rerail. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve @acme/rerail-pack-sql), then their steer text reaches the coding agent.");
+    expect(text.match(/not Rerail/gu)).toHaveLength(1);
+  });
+
   it("aligns the table columns for long rule pack names", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [{ ...PACKS.packs[0]!, name: "A very long rule pack name", ruleCount: 12, reason: "the reason" }] }, "agent");
     const header = text.split("\n").find(line => line.includes("Rule pack")) ?? "";

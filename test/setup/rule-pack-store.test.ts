@@ -341,18 +341,19 @@ describe("addPackSpecs", () => {
     const first = thirdPartyPack(join(home, "copies"), "rerail-pack-acme-valid", "acme-valid");
     const store = linkingPackStore(home, { "rerail-pack-acme-valid": first });
     await addPackSpecs(["rerail-pack-acme-valid@1.0.0"], store);
+    // npm recorded the registry install as its version; anything else installs the newer one in its place.
     const newer: PackStore = {
       ...store,
       async install(specs) {
-        if (specs.some(spec => spec.includes("@file:"))) return await store.install(specs);
-        installPackDirectory(thirdPartyPack(join(home, "copies"), "rerail-pack-acme-valid", "acme-valid", "2.0.0", ">=9.0.0"), "rerail-pack-acme-valid", home);
+        if (specs.every(spec => spec.endsWith("@1.0.0"))) return await store.install(specs);
+        installPackDirectory(thirdPartyPack(join(home, "copies"), "rerail-pack-acme-valid", "acme-valid", "2.0.0", ">=9.0.0"), "rerail-pack-acme-valid", home, "2.0.0");
       },
     };
 
     const added = await addPackSpecs(["rerail-pack-acme-valid@2.0.0"], newer);
 
     expect(added).toEqual({ problem: expect.stringMatching(/^rerail-pack-acme-valid@2\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u) });
-    expect(store.installs.at(-1)).toEqual([`rerail-pack-acme-valid@file:${first}`]);
+    expect(store.installs.at(-1)).toEqual(["rerail-pack-acme-valid@1.0.0"]);
     expect(loadRuleCatalog(home).packs.get("acme-valid")).toMatchObject({ packageName: "rerail-pack-acme-valid", version: "1.0.0", publisher: "rerail-pack-acme-valid" });
   });
 });

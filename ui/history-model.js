@@ -3,7 +3,7 @@
  * when there is nothing to list. `poll.js` reads `historyRuleId` to fetch that rule's violations in range.
  */
 import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "./state.js";
-import { isFromPack } from "./derive.js";
+import { isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN } from "./derive.js";
 
 /** History by rule's chips: the `ui.histOutcome` value and its label. */
 export const OUTCOME_CHIPS = [["all", "All"], ["steered", "Steered"], ["logged", "Logged"]];
@@ -26,12 +26,13 @@ export const historyTitle = id => {
   return stored ? titleOf(stored) : id;
 };
 
-/** Where a rule comes from, as its list row and heading read: its rule pack, else who made it. */
+/** Where a rule comes from, as its list row and heading read: its rule pack (with a third party's publisher), else who made it. */
 export function historyOrigin(id) {
   const stored = data.rules.get(id);
   if (!stored) return "No longer in this repo";
   if (!isFromPack(stored)) return "Created by you";
-  return (attachedPackOf(stored) ?? packOfRule(stored))?.name ?? "By Rerail";
+  const pack = attachedPackOf(stored) ?? packOfRule(stored);
+  return pack === undefined ? UNKNOWN_PACK_ORIGIN : packOriginName(pack);
 }
 
 /** The listed rules the search box lets through: `query` (trimmed, any case) in the title, the id or the pack. */

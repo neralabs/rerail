@@ -23,6 +23,7 @@ import { DAEMON_ACCESS_HEADER } from "../runtime/daemon-control.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
+import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
 import { sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 // Named components give the generated client stable type names, and break the recursive
@@ -309,8 +310,11 @@ export function createRerailApi(
       try {
         if (DATABASE_ETAG_OPERATIONS.has(operation.id)) {
           // `dataVersion()` is a `PRAGMA data_version` read plus a local write counter, so it
-          // catches commits from other processes as well as this daemon's own, at constant cost.
-          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion(), stores.ruleCatalog().digest));
+          // catches commits from other processes as well as this daemon's own, at constant cost. A read for one
+          // checkout also depends on that checkout's own rules (`.rerail/rules`).
+          const checkout = typeof input.checkout === "string" ? checkoutAt(stores, input.checkout, false).checkout : undefined;
+          const digest = checkoutRuleCatalog(stores, checkout).digest;
+          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion(), digest));
           if (unchanged !== undefined) return unchanged;
         }
         if (RESULT_ETAG_OPERATIONS.has(operation.id)) {

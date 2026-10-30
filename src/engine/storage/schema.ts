@@ -276,6 +276,29 @@ export const libraryRules = sqliteTable(
   ],
 );
 
+/** What a person approves before it steers: one rule's content, or one pack's content at one version. */
+export const RULE_APPROVAL_SUBJECTS = ["rule", "pack"] as const;
+
+/**
+ * Content a person approved (`rule-approval.ts`), once per machine: a rule created by you or in a worktree's
+ * `.rerail/rules` by its id, or a pack Rerail does not publish by its package name, each at the digest of the content
+ * approved. Content with no row here runs in Log only. Rows are only added, so going back to approved content needs
+ * no approval again.
+ */
+export const ruleApprovals = sqliteTable(
+  "rule_approvals",
+  {
+    subjectKind: text("subject_kind", { enum: RULE_APPROVAL_SUBJECTS }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    digest: text("digest").notNull(),
+    approvedAt: integer("approved_at").notNull(),
+  },
+  table => [
+    primaryKey({ columns: [table.subjectKind, table.subjectId, table.digest] }),
+    check("rule_approvals_subject_kind", sql`${table.subjectKind} IN (${sql.raw(inList(RULE_APPROVAL_SUBJECTS))})`),
+  ],
+);
+
 /**
  * `repository_id` is the stable identity of the checkout the session ran in; per-repository
  * views filter on it. Null when the recorder had no repository identity to attribute it to.

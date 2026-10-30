@@ -1,8 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { packAddSpec, runPacksCommand } from "../../src/cli/packs-cli.js";
+import { openRerailDatabase, recordCheckout, setUpRepository } from "../../src/engine/index.js";
+import { setRepositoryStarted } from "../../src/runtime/index.js";
 import { installedPackagesOf, type PackStore } from "../../src/setup/index.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack } from "../support/installed-packs.js";
 import { fixturesPath } from "../support/oracles.js";
@@ -109,7 +112,7 @@ describe("a third party's pack", () => {
     for (const name of ["@acme/rerail-pack-acme-valid@1.0.0", "rerail-pack-lint@1.0.0"]) {
       expect(text.split(`${name} is not one of Rerail's packs, and Rerail has not reviewed it.`)).toHaveLength(2);
     }
-    expect(text).toContain("In every repository that adds it, its rules run and their steer text reaches the coding agent.");
+    expect(text).toContain("Its rules run in Log until a person reads them and approves this version (rerail rules approve rerail-pack-lint);");
     expect(text).not.toContain("valid@0.1.0 is not one of Rerail's packs");
   });
 
@@ -118,6 +121,16 @@ describe("a third party's pack", () => {
     const store = linkingPackStore(home, { "@neralabs/rerail-pack-valid": fixturesPath("packs", "valid") });
 
     expect(await packsOutput(["add", "valid@0.1.0"], store)).not.toContain("Rerail has not reviewed");
+  });
+
+  it("is said to come from a folder when added from one, and warned about even when its package.json names Rerail's scope", async () => {
+    const home = temporaryHome();
+    const folder = thirdPartyPack(join(home, "copies"), "@neralabs/rerail-pack-local", "local");
+
+    const text = await packsOutput(["add", folder], linkingPackStore(home, {}));
+
+    expect(text).toMatch(new RegExp(`^ {2}local@1\\.0\\.0 {2}.*rules start on {2}\\(from the folder ${folder.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\)$`, "mu"));
+    expect(text).toContain(`@neralabs/rerail-pack-local@1.0.0 was installed from the folder ${folder}, not from npm, and Rerail has not reviewed it.`);
   });
 
   it("is removed by its package name alone, or with every other package holding its pack id by that id", async () => {
@@ -138,6 +151,23 @@ describe("a third party's pack", () => {
     expect(text).toContain("No rule packs are installed.");
   });
 
+  it("is not left to take a pack id by name: removing the package that holds it, while another holding it stays, is refused", async () => {
+    const home = temporaryHome();
+    const copies = join(home, "copies");
+    installPackDirectory(fixturesPath("packs", "valid"), "valid", home);
+    installPackDirectory(thirdPartyPack(copies, "@acme/rerail-pack-valid", "valid"), "@acme/rerail-pack-valid", home);
+    const store = linkingPackStore(home, {});
+
+    await expect(packsOutput(["remove", "@neralabs/rerail-pack-valid"], store)).rejects.toThrow(
+      "Removing @neralabs/rerail-pack-valid would let @acme/rerail-pack-valid run as pack valid in every repository that adds valid. "
+      + "Remove them all with `rerail packs remove valid`, or remove @acme/rerail-pack-valid first.",
+    );
+    expect(store.removes).toEqual([]);
+    // The package left out can go on its own.
+    await packsOutput(["remove", "@acme/rerail-pack-valid"], store);
+    expect(store.removes).toEqual([["@acme/rerail-pack-valid"]]);
+  });
+
   it("is refused for removal under a name that is neither a pack id nor a pack's package", async () => {
     const store = linkingPackStore(temporaryHome(), {});
     await expect(runPacksCommand(["remove", "@acme/sql"], () => "usage", store)).rejects.toThrow("Name the rule packs to remove by id or package");
@@ -156,5 +186,35 @@ describe("rerail packs list", () => {
 
     expect(text).toMatch(/^ {2}valid@0\.1\.0 {2}Valid: /mu);
     expect(text).toContain("  left out: @aaa/rerail-pack-valid@1.0.0: pack id valid is taken by @neralabs/rerail-pack-valid");
+  });
+
+  it("lists the worktree's own rules there, saying when they do not run until Rerail is on and the repo set up", async () => {
+    const home = temporaryHome();
+    const worktree = realpathSync(mkdtempSync(join(tmpdir(), "rerail-packs-cli-worktree-")));
+    homes.push(worktree);
+    execFileSync("git", ["init", "-q"], { cwd: worktree });
+    mkdirSync(join(worktree, ".rerail", "rules"), { recursive: true });
+    writeFileSync(join(worktree, ".rerail", "rules", "no-todo.json"), JSON.stringify({
+      format: "rerail.policy/v1", id: "local:no-todo", revision: 1, mode: "steer",
+      clauses: [{ id: "todo", violation: { code: "TODO", anchor: "witness.span", message: "Resolve it." }, forbid: { regex: { pattern: "TODO", source: "file.content" } } }],
+    }));
+    // `rerail packs list` reads the checkout it is run in; `packsOutput` restores every mock after it runs.
+    const list = async (): Promise<string> => {
+      vi.spyOn(process, "cwd").mockReturnValue(worktree);
+      return await packsOutput(["list"], linkingPackStore(home, {}));
+    };
+
+    expect(await list()).toContain("  Not running: Rerail is not on in this checkout. `rerail start` turns it on.");
+
+    const database = openRerailDatabase(join(home, "rerail.sqlite"));
+    const { repositoryKey } = recordCheckout(database, worktree);
+    setRepositoryStarted(database, repositoryKey, true);
+    const started = await list();
+    expect(started).toContain("  Not running: this repo is not set up yet, so no rule runs here. `rerail start` sets it up.");
+    expect(started).toMatch(/^ {2}local:no-todo \(code, steer\)$/mu);
+
+    setUpRepository(database, repositoryKey, { packs: [] });
+    database.$client.close();
+    expect(await list()).not.toContain("Not running");
   });
 });

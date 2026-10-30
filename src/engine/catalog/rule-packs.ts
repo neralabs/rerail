@@ -181,6 +181,12 @@ export interface RulePackRule {
   readonly examples?: { readonly caught: RuleExample; readonly passes: RuleExample };
 }
 
+/** Where a pack installed from disk came from: a folder, or a tarball, by its absolute path. */
+export interface RulePackLocalSource {
+  readonly kind: "folder" | "tarball";
+  readonly path: string;
+}
+
 export interface RulePack {
   readonly id: string;
   readonly name: string;
@@ -190,6 +196,12 @@ export interface RulePack {
   readonly packageName: string | null;
   /** Who publishes the pack (`rulePackPublisher`): `rerail` for Rerail's own, else e.g. `@acme` or `rerail-pack-foo`. */
   readonly publisher: string;
+  /**
+   * The folder or tarball the pack was installed from (`rerail packs add <folder>`), its absolute path, rather than
+   * from the npm registry; absent for a pack from the registry or one read where it is. Its `package.json` name is
+   * whatever the folder says, published by no one.
+   */
+  readonly localSource?: RulePackLocalSource;
   readonly category: RulePackCategory;
   /** What the pack covers, in one sentence. */
   readonly covers: string;

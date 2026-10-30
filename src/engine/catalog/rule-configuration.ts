@@ -33,6 +33,8 @@ import { libraryRules, repositories, ruleAttachments, ruleSettings, type RuleKin
 import { clearSetupReview } from "./setup-review.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { configureBundledCodeRule } from "./rule-config.js";
+import { isWorktreePack, WORKTREE_PACK_ID } from "./worktree-pack.js";
+import { approvalKey, packSubject, readApprovals, ruleSubject, type RuleApprovalSubject } from "./rule-approval.js";
 
 type Queries = Pick<RerailDatabase, "insert" | "delete" | "select" | "update">;
 type AttachmentRow = typeof ruleAttachments.$inferSelect;
@@ -131,11 +133,17 @@ interface ConfigurationRows {
   readonly attachments: readonly AttachmentRow[];
   readonly settings: readonly SettingRow[];
   readonly library: readonly LibraryRow[];
+  /** Every approval recorded (`rule-approval.ts`), by key. */
+  readonly approvals: ReadonlySet<string>;
 }
 
 function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, ownerCheckoutPaths: readonly string[]): ConfigurationRows {
   const repository = db.select({ configuredAt: repositories.configuredAt }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-  const attachments = db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
+  // A checkout's own rules (`worktree-pack.ts`) are in its catalog alone, and present in it for the whole checkout.
+  const worktree: AttachmentRow[] = isWorktreePack(ruleCatalog.packs.get(WORKTREE_PACK_ID))
+    ? [{ repositoryKey, folder: "", sourceKind: "pack", sourceId: WORKTREE_PACK_ID, createdAt: 0 }]
+    : [];
+  const attachments = [...db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all(), ...worktree];
   const repositoryOwned = and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, repositoryKey));
   const settings = db.select().from(ruleSettings).where(ownerCheckoutPaths.length === 0
     ? repositoryOwned
@@ -145,7 +153,7 @@ function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: R
     ? (ruleCatalog.packs.get(row.sourceId)?.rules ?? []).map(rule => rule.id)
     : [row.sourceId]))];
   const library = ids.length === 0 ? [] : db.select().from(libraryRules).where(inArray(libraryRules.ruleId, ids)).all();
-  return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library };
+  return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library, approvals: readApprovals(db) };
 }
 
 function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[], rows: ConfigurationRows): string {
@@ -163,14 +171,15 @@ function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[
     ...rows.library
       .map(row => `library\0${row.ruleId}\0${row.revision}\0${row.payloadHash}`)
       .sort(compareDeterministicStrings),
+    ...[...rows.approvals].map(key => `approval\0${key}`).sort(compareDeterministicStrings),
   ];
   return `sha256:${createHash("sha256").update(lines.join("\n")).digest("hex")}`;
 }
 
 /**
  * Changes whenever the rule catalog, the repository's set-up, attachments or settings, the settings of the given checkouts
- * (the checkout and its parents), or a library rule that is attached or shadows a present By Rerail rule changes.
- * Not the start state.
+ * (the checkout and its parents), a library rule that is attached or shadows a present By Rerail rule, or an approval
+ * changes. Not the start state.
  */
 export function ruleConfigurationSignature(
   db: RerailDatabase,
@@ -215,10 +224,12 @@ class ConfigurationResolver {
   /** Library ids that exist at all (readable or not); a By Rerail rule with one of these ids is shadowed. */
   readonly #libraryIds: ReadonlySet<string>;
   readonly #bundledFields = new Map<string, Pick<Presence, "revision" | "payloadHash">>();
+  readonly #approvals: ReadonlySet<string>;
 
   constructor(ruleCatalog: RuleCatalog, rows: ConfigurationRows, owners: readonly Owner[]) {
     this.#ruleCatalog = ruleCatalog;
     this.#owners = owners;
+    this.#approvals = rows.approvals;
     // Deepest attachment first, so a rule present through two folders reports the deepest one.
     this.#attachments = [...rows.attachments].sort((left, right) => right.folder.length - left.folder.length);
     for (const setting of rows.settings) {
@@ -344,6 +355,19 @@ class ConfigurationResolver {
     return { config: Object.keys(config).length === 0 ? null : config, deciders };
   }
 
+  /**
+   * What the rule's content waits for a person to approve before it steers (`rule-approval.ts`): the rule itself when
+   * it is created by you or a worktree's own, its pack when that is not Rerail's own from npm; undefined otherwise.
+   */
+  #approvalSubject(presence: Presence): RuleApprovalSubject | undefined {
+    const id = presence.document.rule.id;
+    if (presence.source.kind === "library_rule") return ruleSubject(id, presence.payloadHash);
+    const packId = presence.source.packId ?? this.#ruleCatalog.packOf.get(id);
+    const pack = packId === undefined ? undefined : this.#ruleCatalog.packs.get(packId);
+    if (pack === undefined) return undefined;
+    return isWorktreePack(pack) ? ruleSubject(id, presence.payloadHash) : packSubject(this.#ruleCatalog, pack);
+  }
+
   #effective(presence: Presence, path: string): EffectiveRule {
     const { packRule } = presence;
     const packId = presence.source.packId;
@@ -351,8 +375,14 @@ class ConfigurationResolver {
     const ruleDefault: Decider = { by: "rule-default" };
     const on = this.#decide<boolean>(presence, path, setting => setting.on)
       ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
-    const mode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
+    const configuredMode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
       ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
+    const subject = this.#approvalSubject(presence);
+    const approval = subject === undefined ? undefined : { subject, approved: this.#approvals.has(approvalKey(subject)) };
+    // Content no one approved is recorded, and never steers.
+    const mode = approval?.approved === false && configuredMode.value !== "log"
+      ? { value: "log" as RuleMode, decider: { by: "awaiting-approval" } as Decider }
+      : configuredMode;
     const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
     const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
       ?? (start === undefined || pack === undefined
@@ -374,6 +404,7 @@ class ConfigurationResolver {
       decidedBy: { on: on.decider, mode: mode.decider, suppressions: suppressions.decider, config: deciders },
       revision: presence.revision,
       payloadHash: presence.payloadHash,
+      ...(approval === undefined ? {} : { approval }),
     };
   }
 }

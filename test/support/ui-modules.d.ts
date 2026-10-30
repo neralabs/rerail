@@ -114,6 +114,8 @@ declare module "*/ui/derive.js" {
   /** Whether a stored rule came in a rule pack (`origin` "pack"), rather than from the library ("user"). */
   export function isFromPack(stored: { origin: string }): boolean;
   export function publisherLabel(pack: { publisher: string }): string;
+  /** The skipped entries that are files of the worktree at `checkoutPath`'s `.rerail/rules`, by file name, with why. */
+  export function worktreeLeftOut(skipped: ReadonlyArray<{ path: string; reason: string }>, checkoutPath: string | null | undefined): Array<{ file: string; reason: string }>;
 }
 
 declare module "*/ui/render/pack-panel.js" {
@@ -170,12 +172,17 @@ declare module "*/ui/settings-writes.js" {
   export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null; suppressions?: "honour" | "ignore" } }
   /** The writes the whole-pack switch sends for pack `packId`: per folder, the pack's on, then its rules' own on cleared. */
   export function packSwitchWrites(packId: string, enabled: boolean): SettingPut[];
-  /** The page's rule setting writes; `toast`, `invalidate` and `owner` are the page's. */
-  export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: () => "repository" | "checkout" }): {
+  /** The page's rule setting writes; `toast`, `invalidate` and `owner` (given the one pack a change is to) are the page's. */
+  export function settingWrites(page: { toast: (message: string) => void; invalidate: () => void; owner: (packId?: string) => "repository" | "checkout" }): {
     setEnabled(ids: readonly string[], enabled: boolean, label: string): Promise<void>;
     setPackEnabled(packId: string, enabled: boolean, label: string): Promise<void>;
     setPackSuppressions(packId: string, suppressions: "honour" | "ignore", label: string): Promise<void>;
   };
+}
+
+declare module "*/ui/shell.js" {
+  /** Who a change to pack `packId`'s rules belongs to: this worktree for its own rules, else the repository. */
+  export function changeOwner(packId?: string): "repository" | "checkout";
 }
 
 declare module "*/ui/pack-model.js" {

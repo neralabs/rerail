@@ -20,7 +20,7 @@ import {
   type RepositorySetupIo,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, packIdOfPackage, recommendRulePacks, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/repository-lint-config.js";
@@ -762,6 +762,8 @@ function packsInput(run: Run, repository: Repository, offering: Offering): Recom
       packageName,
       version,
       installed,
+      ...(pack.publisher === RERAIL_PUBLISHER ? {} : { thirdParty: pack.publisher }),
+      ...(pack.localSource === undefined ? {} : { installedFrom: pack.localSource.kind }),
     })),
     available: offering.available,
     unavailable: offering.unavailable,

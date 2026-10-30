@@ -6,7 +6,7 @@
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isFromPack, isRerailPack, publisherLabel, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { ASK, ASK_OPEN, askPrompt, agentSeesPrompt, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
@@ -60,7 +60,8 @@ function buildRule() {
   el.sees = h("section.psec.sees");
   el.recent = h("div");
   el.foot = h("div.pfoot");
-  el.body = h("div.pbody", null, el.pask,
+  el.approval = h("div");
+  el.body = h("div.pbody", null, el.pask, el.approval,
     h("div.enf", null, h("div.lbl", null, "On a violation"), el.modes, el.modeText),
     el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
@@ -122,12 +123,29 @@ function renderStats(id) {
   setText(s3.firstChild, measured ? fmt(all) : "–");
 }
 
+/**
+ * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
+ * approves exactly the content this page read; nothing once approved, or for a rule that needs none.
+ */
+function renderApproval(stored) {
+  const waiting = awaitingApproval(stored), subject = stored.approval?.subject;
+  const pack = subject?.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
+  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name]), () => (!waiting ? null
+    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+      h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
+      h("p", null, subject.kind === "pack"
+        ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
+        : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
+      h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
+      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"))))));
+}
+
 /** Where the rule comes from (its pack, or created by you) and when it was added here and last edited. */
 function renderSource(stored, id) {
   const pack = attachedPackOf(stored) ?? packOfRule(stored);
   // A third party's pack names its publisher beside it: Rerail has not reviewed it.
-  const from = pack ? ["Rule pack", isRerailPack(pack) ? pack.name : `${pack.name} · ${publisherLabel(pack)}`]
-    : ["Origin", isFromPack(stored) ? "By Rerail, added on its own" : "Created by you"];
+  const from = pack ? ["Rule pack", packOriginName(pack)]
+    : ["Origin", isFromPack(stored) ? `${UNKNOWN_PACK_ORIGIN}, added on its own` : "Created by you"];
   const updated = stored.updatedAt ?? null;
   setContent(p.source, JSON.stringify([id, from, stored.addedAt, updated]), () => kv([
     from,
@@ -224,6 +242,7 @@ function renderRule(root, stored) {
   setText(p.swText, stored.enabled ? "On" : "Off");
   renderAsk(stored);
   renderModes(stored);
+  renderApproval(stored);
   renderStats(id);
   setText(p.description, twoSentences(conditionText(stored) || `${titleOf(stored)}.`));
   renderSource(stored, id);

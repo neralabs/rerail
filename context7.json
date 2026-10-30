@@ -22,6 +22,7 @@
     "Rules belong to one repository. Create one with `/rerail-create`: test the draft with `rerail rules test <draft.json>` and run `rerail rules add <draft.json>` only after the person confirms it.",
     "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
     "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't.",
-    "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`."
+    "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove` and `recommend`.",
+    "A rule for one worktree only is a rule document in that worktree's `.rerail/rules/<name>.json`: it runs there and in no other checkout, needs no install or add, and `rerail packs list` run there shows whether it loaded."
   ]
 }

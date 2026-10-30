@@ -3,8 +3,9 @@ import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
 import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
-import { isFromPack, publisherLabel } from "../../ui/derive.js";
+import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
 import { packKind } from "../../ui/render/pack-panel.js";
+import { changeOwner } from "../../ui/shell.js";
 
 type Request = { method: string; body: unknown; answer: (status: number, body?: unknown) => void };
 
@@ -182,6 +183,46 @@ describe("the writes the whole-pack switch sends", () => {
     expect(puts()).toHaveLength(1);
     expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Could not save/u));
   });
+
+  it("owns a change to the worktree's own rules by this worktree, and any other pack's by the repository", async () => {
+    data.packs = [{ ...pack("worktree", "This worktree", "repository", ["wt:a"]), publisher: "worktree" }, { ...pack("typescript", "TypeScript", "language"), publisher: "rerail" }];
+    data.checkout = { checkoutPath: "/work/a", folder: "", state: "started" };
+    data.rules = toStoredRules([entry("wt:a", "", { source: { kind: "pack", id: "worktree" } }), entry("ts:a", "")]);
+    data.attachedPacks = new Map([["worktree", [""]], ["typescript", [""]]]);
+    const writes = settingWrites({ toast, invalidate: () => {}, owner: changeOwner });
+
+    const switched = [writes.setEnabled(["wt:a"], false, "Off."), writes.setPackEnabled("worktree", false, "Off."), writes.setEnabled(["ts:a"], false, "Off.")];
+    for (let i = 0; i < 4; i += 1) {
+      await vi.waitFor(() => expect(puts()).toHaveLength(i + 1));
+      puts()[i]!.answer(200, { settings: [] });
+    }
+    await Promise.all(switched);
+
+    const bodies = puts().map(r => r.body as { owner: string; targets: Array<{ kind: string; id: string }> });
+    expect(bodies.map(b => [b.owner, b.targets[0]!.id])).toEqual([
+      ["checkout", "wt:a"], ["checkout", "worktree"], ["checkout", "wt:a"], ["repository", "ts:a"],
+    ]);
+    data.checkout = null;
+  });
+});
+
+describe("the worktree's left-out rule files", () => {
+  it("are the skipped entries in the checkout's own .rerail/rules, by file, whichever separator the daemon's system uses", () => {
+    const skipped = [
+      { path: "/home/me/.rerail/packs/node_modules/@acme/rerail-pack-sql", reason: "an installed pack" },
+      { path: "/work/a/.rerail/rules/b.json", reason: "rule x is already in a.json" },
+      { path: "/work/a/.rerail/rules", reason: "pack id worktree is taken by rerail-pack-worktree" },
+      { path: "/work/ab/.rerail/rules/c.json", reason: "another checkout's" },
+      { path: "C:\\work\\a\\.rerail\\rules\\d.json", reason: "on Windows" },
+    ];
+
+    expect(worktreeLeftOut(skipped, "/work/a")).toEqual([
+      { file: "b.json", reason: "rule x is already in a.json" },
+      { file: ".rerail/rules", reason: "pack id worktree is taken by rerail-pack-worktree" },
+    ]);
+    expect(worktreeLeftOut(skipped, "C:\\work\\a")).toEqual([{ file: "d.json", reason: "on Windows" }]);
+    expect(worktreeLeftOut(skipped, undefined)).toEqual([]);
+  });
 });
 
 describe("a pack page's rules", () => {
@@ -250,13 +291,24 @@ describe("the catalog", () => {
     expect(sheetRules(p, "x:3").map(r => r.id)).toEqual(["x:3"]);
   });
 
-  it("names a third party's pack by its publisher, and Rerail's own as before", () => {
+  it("names a third party's pack by its publisher, always marked as not reviewed, and Rerail's own as before", () => {
     const sql = { ...pack("sql", "SQL", "language"), publisher: "rerail" };
     const scoped = { ...pack("acme-sql", "Acme SQL", "language"), publisher: "@acme" };
     const unscoped = { ...pack("lint", "Lint", "repository"), publisher: "rerail-pack-lint" };
+    // A scope that reads like Rerail's is still a third party's.
+    const lookalike = { ...pack("official", "Official", "language"), publisher: "@rerail" };
 
-    expect([sql, scoped, unscoped].map(publisherLabel)).toEqual(["By Rerail", "By @acme", "By rerail-pack-lint"]);
-    expect([sql, scoped, unscoped].map(packKind)).toEqual(["Language", "Language · By @acme", "Repository · By rerail-pack-lint"]);
+    expect([sql, scoped, unscoped, lookalike].map(publisherLabel))
+      .toEqual(["By Rerail", "By @acme · not reviewed", "By rerail-pack-lint · not reviewed", "By @rerail · not reviewed"]);
+    expect([sql, scoped, unscoped].map(packKind)).toEqual(["Language", "Language · By @acme · not reviewed", "Repository · By rerail-pack-lint · not reviewed"]);
+  });
+
+  it("says a pack came from a folder or tarball, never By Rerail, whatever its package.json names", () => {
+    const local = { ...pack("sql", "SQL", "language"), publisher: "rerail", installedFrom: "folder" };
+    const acme = { ...pack("acme-sql", "Acme SQL", "language"), publisher: "@acme", installedFrom: "tarball" };
+
+    expect([local, acme].map(publisherLabel)).toEqual(["From a folder · not reviewed", "By @acme · From a tarball · not reviewed"]);
+    expect(packKind(local)).toBe("Language · From a folder · not reviewed");
   });
 
   it("takes every rule a pack brings as from a pack, and only the library's as created by you", () => {

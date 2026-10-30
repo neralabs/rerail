@@ -6,7 +6,7 @@
  */
 import { h, setContent, icon, searchIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { categoryLabel, inPack, isRerailPack, packSuppressions, publisherLabel } from "../derive.js";
+import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, packSuppressions, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
 import { SHEET_FILTER_AT, sheetRules } from "../pack-model.js";
 import { changeOwner } from "../shell.js";
@@ -26,15 +26,17 @@ function removeQuestion(pack) {
 /**
  * Remove pack, which asks once in place before it acts; `quiet` draws it as a muted link that turns red on hover (the
  * catalog), else as the sheet's red button. The pack page draws its own outline button and shows only the question.
+ * The worktree's own rules are no attachment to remove: the files in its `.rerail/rules` decide them.
  */
 export function removePackControl(pack, quiet = false) {
+  if (isWorktreePack(pack)) return null;
   if (ui.removeAsk === pack.id) return removeQuestion(pack);
   return h(`button.btn.sm.danger${quiet ? ".quiet" : ""}`, { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack");
 }
 
 /** Add pack while the pack is not on here; else Remove pack (`removePackControl`). */
 export function packAction(pack, { solid = false, quiet = false } = {}) {
-  if (!packOn(pack)) return h(`button.btn.sm${solid ? ".solid" : ""}`, { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack");
+  if (!packOn(pack) && !isWorktreePack(pack)) return h(`button.btn.sm${solid ? ".solid" : ""}`, { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack");
   return removePackControl(pack, quiet);
 }
 
@@ -90,8 +92,19 @@ function renderHead(pack, on) {
       h("span.grow"), on ? null : packAction(pack, { solid: true }))]);
 }
 
+/** While the pack waits for a person's approval: what that means, and Approve for what this version ships. */
+function approvalLine(pack) {
+  if (!awaitingApproval(pack)) return null;
+  const { kind, id, digest } = pack.approval.subject;
+  return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+    h("b", null, "Waits for approval."),
+    h("p", null, "Rerail did not publish this version, so its rules run in Log, steering no one, until a person approves what it ships. Read what its rules tell the coding agent first."),
+    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": id, "data-kind": kind, "data-digest": digest }, "Approve"))));
+}
+
 function renderIntro(pack, on, suppressions) {
-  setContent(sheet.intro, JSON.stringify(["intro", pack.id, on, suppressions]), () => [
+  setContent(sheet.intro, JSON.stringify(["intro", pack.id, on, suppressions, pack.approval ?? null]), () => [
+    approvalLine(pack),
     h("p.pintro", null, pack.covers, " ", on
       ? "Turn its rules on or off on its page in the menu."
       : "Adding it gives its rules a page in the menu. Each rule starts as listed below."),
@@ -116,7 +129,7 @@ export function renderPackPanel(root, pack) {
   const on = packOn(pack), added = isAttached(pack);
   // Every rule the pack added in some folder: a rule may also be added on its own elsewhere, and that folder comes first.
   const present = [...data.rules.values()].filter(r => inPack(r, pack.id));
-  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, changeOwner(), data.checkout?.checkoutPath) : null;
+  const suppressions = added && !reviewing() && present.length > 0 ? packSuppressions(present, pack.id, changeOwner(pack.id), data.checkout?.checkoutPath) : null;
   renderHead(pack, on);
   renderIntro(pack, on, suppressions);
   sheet.filter.hidden = pack.rules.length <= SHEET_FILTER_AT;

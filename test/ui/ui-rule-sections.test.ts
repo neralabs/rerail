@@ -23,9 +23,10 @@ const fileRule = (id: string, kind: SourceKind, sourceId: string = id): StoredRu
   rule: { id, mode: "steer", clauses: [{ id: "c", violation: { message: id } }] },
 });
 
-const pack = (id: string, name: string, rules: Array<[string, string]>) => ({
+const pack = (id: string, name: string, rules: Array<[string, string]>, publisher = "rerail") => ({
   id,
   name,
+  publisher,
   category: "repository",
   covers: "",
   reason: "",
@@ -93,6 +94,13 @@ describe("Rules sections", () => {
 
     expect(sections.map(s => s.key)).toEqual(["mine", "pack:tslint", "legacy"]);
     expect(sections[2]!.groups.map(g => [g.name, ids(g.all)])).toEqual([["acme", ["acme-sql:hand-rolled-sql"]]]);
+  });
+
+  it("names a third party's pack with its publisher when its rule is filed on its own", () => {
+    data.packs = [pack("acme-sql", "Acme SQL", [["acme-sql-raw", "acme-sql"]], "@acme")];
+    load([fileRule("acme-sql-raw", "rerail_rule")]);
+
+    expect(ruleSections()[1]!.groups.map(g => g.name)).toEqual(["Acme SQL · By @acme · not reviewed"]);
   });
 });
 

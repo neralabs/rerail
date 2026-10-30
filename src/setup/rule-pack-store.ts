@@ -11,7 +11,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import semver from "semver";
 import { RULE_PACK_LIST } from "../engine/catalog/pack-list.generated.js";
-import { activeCoreVersion, installedPackageName, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import {
+  activeCoreVersion,
+  installedPackageName,
+  installedPackDirectories,
+  installedPacksPrefix,
+  loadRuleCatalog,
+  localSources,
+  packDirectoriesOnDisk,
+  readRuleCatalog,
+} from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog, SkippedRulePack } from "../engine/catalog/repository-model.js";
 import {
   packIdOfPackage,
@@ -291,7 +300,9 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
     // one pack id loads, Rerail's own first.
     const fetchedPackages = new Set(fromNpm.map(pack => rulePackPackageName(pack.id)));
     const standIns = installedPackDirectories(home).filter(directory => !fetchedPackages.has(installedPackageName(directory)));
-    const catalog = readRuleCatalog([...fromNpm.map(pack => pack.directory), ...standIns], { coreVersion: activeCoreVersion(home), compile: true });
+    const catalog = readRuleCatalog([...fromNpm.map(pack => pack.directory), ...standIns], {
+      coreVersion: activeCoreVersion(home), compile: true, localSources: localSources(home, standIns),
+    });
     const packs = [...catalog.packs.values()];
     const matched = new Map((repositoryRoot === undefined ? [] : rulePacksThatFit(repositoryRoot, packs)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
@@ -346,10 +357,13 @@ function recordedSpecs(home: string): Map<string, string> {
   }
 }
 
-/** Every pack package in `home`'s prefix, recorded or on disk, with its spec and version. */
+/**
+ * Every pack package in `home`'s prefix, recorded or only on disk (a dependency npm hoisted there, which never loads),
+ * with its spec and version, so putting the prefix back also takes out what an install brought along.
+ */
 function prefixState(home: string): Map<string, PrefixEntry> {
   const recorded = recordedSpecs(home);
-  const names = new Set([...recorded.keys(), ...installedPackDirectories(home).map(installedPackageName)]);
+  const names = new Set([...recorded.keys(), ...packDirectoriesOnDisk(home).map(installedPackageName)]);
   return new Map([...names].map(name => [name, { spec: recorded.get(name), version: installedPackVersion(name, home) }]));
 }
 

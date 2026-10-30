@@ -19,12 +19,13 @@ import {
   auditRequestSchema,
 } from "../engine/audit/audit-control-schema.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { approvalKey, packSubject, readApprovals } from "../engine/catalog/rule-approval.js";
 import { rulePackListSchema } from "./rule-pack-contracts.js";
 import { SESSION_EVENT_PAGE_LIMIT, type StoredSessionSummary } from "../runtime/session-store.js";
 import type { ApiCaller } from "../engine/catalog/repository-model.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
-import { activityRules, callerRepositoryKey, historyScope, repositoryOperations, within } from "./repository-operations.js";
-import { inactiveField, inactiveOf } from "./repository-contracts.js";
+import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, historyScope, repositoryOperations, within } from "./repository-operations.js";
+import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 /** Query strings arrive as text; MCP arguments arrive typed. Accept both. */
@@ -402,12 +403,27 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
+    query: z.object({ checkout: targetShape.checkout }).strict(),
     output: rulePackListSchema,
-    handler: stores => {
-      const catalog = stores.ruleCatalog();
+    handler: (stores, input, caller) => {
+      // A checkout named is one Rerail has seen; the calling agent's adds its own rules only when it is one.
+      const checkout = input.checkout !== undefined ? checkoutAt(stores, input.checkout, false).checkout
+        : caller.kind === "agent" && caller.checkout !== undefined ? stores.checkouts()(caller.checkout) : undefined;
+      const catalog = checkoutRuleCatalog(stores, checkout);
+      const approvals = readApprovals(stores.database());
       return {
-        packs: [...catalog.packs.values()].map(({ match: _match, rules, ...pack }) => ({ ...pack, rules: [...rules] })),
+        // Where a pack installed from disk came from is named by its kind; the path stays on this computer's CLI.
+        packs: [...catalog.packs.values()].map(pack => {
+          const { match: _match, localSource, rules, ...rest } = pack;
+          const subject = packSubject(catalog, pack);
+          return {
+            ...rest,
+            ...(localSource === undefined ? {} : { installedFrom: localSource.kind }),
+            ...(subject === undefined ? {} : { approval: { subject: { ...subject }, approved: approvals.has(approvalKey(subject)) } }),
+            rules: [...rules],
+          };
+        }),
         skipped: [...catalog.skipped],
       };
     },

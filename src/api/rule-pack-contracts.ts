@@ -2,6 +2,7 @@ import { z } from "zod";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { RULE_PACK_CATEGORIES } from "../engine/catalog/rule-packs.js";
 import { RULE_KINDS } from "../engine/storage/schema.js";
+import { approvalSubjectSchema } from "./repository-contracts.js";
 
 const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string() }).strict();
 
@@ -13,6 +14,10 @@ export const rulePackSchema = z.object({
     .describe("The pack's npm package: @neralabs/rerail-pack-<id> for Rerail's own, else a third party's rerail-pack-<id> or @<scope>/rerail-pack-<id>; null for a pack directory without one."),
   publisher: z.string()
     .describe("Who publishes the pack: rerail for Rerail's own; else the npm scope (@acme), or the package name when it has no scope. Rerail has not reviewed a third party's pack."),
+  installedFrom: z.enum(["folder", "tarball"]).optional()
+    .describe("Set when the pack was installed from a folder or a tarball on this computer (rerail packs add <folder>), not from the npm registry: its package.json names it, and no one published it."),
+  approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
+    .describe("Present for a pack Rerail does not publish from npm: until a person approves what this version ships, its rules run in Log. Approve it with rule_approvals_set (people only)."),
   category: z.enum(RULE_PACK_CATEGORIES),
   covers: z.string(),
   reason: z.string().describe("The pack's own summary of what makes it fit; the reason for a repository comes from the recommendations."),

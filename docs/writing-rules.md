@@ -88,6 +88,7 @@ A draft is the rule plus the cases it must catch and let through:
 ```sh
 rerail rules test draft.json            # validate, run the cases, count matches across the repo; writes nothing
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
+rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
 ```
 
@@ -110,4 +111,56 @@ the fix ladder for a rule that misfires.
 - **Log (`log`)** keeps a record and tells no one. Use it for a rule you are trying out, or one the existing code breaks too
   often to steer on.
 
-A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in.
+A rule from `/rerail-create` is never `block`, and belongs to the repository it was made in, unless you keep it to one worktree.
+
+## Approving a rule
+
+A rule you add with `rerail rules add`, or a coding agent writes, runs in Log until you approve what it says: a steer is text
+every coding agent in the repository acts on, so a person reads it first. `/rerail-create` asks after its read-back and runs
+`rerail rules approve <id>` on your yes; you can also approve on the rule's page in the dashboard. An edit waits again. The
+same holds for a worktree's own rules and for packs Rerail does not publish ([approval](rule-scoping.md#approval)).
+
+## A rule for one worktree only
+
+A rule can belong to one worktree instead of the whole repository: an experiment on a branch, a migration in progress, a
+convention you are trying out before the rest of the team. Put its rule document (the draft's `rule`, without the cases) in a
+JSON file in the worktree's `.rerail/rules/` folder:
+
+```text
+feature/                  a linked worktree of the repository
+└── .rerail/
+    └── rules/
+        ├── no-legacy-client.json
+        └── use-new-logger.json
+```
+
+Each file is one rule, on, in its own mode. Rerail runs them in that worktree only, for every folder in it; the repository's
+main checkout and its other worktrees never see them. An edit to a file applies at the agent's next edit, with nothing else
+to do. There is nothing to install or add, but the worktree must be started and its repository set up, as for any rule, and
+each rule runs in Log until you approve it (`rerail rules approve <id>` in the worktree), again after each edit.
+
+`/rerail-create` writes a rule there when you ask for this worktree only, or pick it under **Change something** in the
+read-back. To check a file you wrote yourself, `rerail rules test .rerail/rules/<name>.json` validates it and counts its
+matches across the repo, as it does a draft; it has no cases to run, so a draft with cases is still the way to prove a rule.
+
+To see what Rerail loaded, whether it runs, and why a file was left out (invalid, an id another rule already has, a rule the
+engine cannot run), run `rerail packs list` in the worktree:
+
+```text
+This worktree's own rules, in /src/acme-web-feature/.rerail/rules (pack worktree, here only): 2
+  Not running: this repo is not set up yet, so no rule runs here. `rerail start` sets it up.
+  local:no-legacy-client (code, steer)
+    waiting for approval, runs in Log until then: rerail rules approve local:no-legacy-client
+  local:use-new-logger (code, log)
+  left out: draft.json: clauses Too small: expected array to have >=1 items
+```
+
+The `Not running` line shows only while Rerail is off in the worktree or the repo is not set up.
+
+The dashboard, opened for the worktree (`rerail manage`), shows them as the pack **This worktree**. Turning the pack or one of
+its rules on or off there changes this worktree only. Its Overview names every file that was left out, with why, until the
+file is fixed or removed.
+
+**Keep the folder out of Git** unless you mean to share it: a committed `.rerail/rules/` runs in every checkout of that branch
+that has Rerail started, and its messages reach the coding agent there. Add `.rerail/rules/` to `.git/info/exclude` to keep it
+local. [A worktree's own rules](rule-packs.md#a-worktrees-own-rules) has every check Rerail makes.

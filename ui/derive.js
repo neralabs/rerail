@@ -7,10 +7,49 @@ import { collapse } from "./format.js";
 /** `origin`: "pack" for rules that come in an installed rule pack, "user" for rules created by you (the library). */
 export const isFromPack = stored => stored.origin === "pack";
 
-/** Whether a pack (`GET /api/rule-packs`) is one of Rerail's own; any other publisher is a third party Rerail has not reviewed. */
-export const isRerailPack = pack => pack.publisher === "rerail";
-/** Who publishes a pack, as the page names it: "By Rerail", else "By @acme" or "By rerail-pack-foo". */
-export const publisherLabel = pack => (isRerailPack(pack) ? "By Rerail" : `By ${pack.publisher}`);
+/**
+ * Whether a pack (`GET /api/rule-packs`) is one of Rerail's own, as published: any other publisher is a third party
+ * Rerail has not reviewed, and a pack installed from a folder or tarball (`installedFrom`) is whatever that folder
+ * says it is.
+ */
+export const isRerailPack = pack => pack.publisher === "rerail" && pack.installedFrom === undefined;
+/** Whether a pack is the checkout's own rules (`.rerail/rules`): never installed or added, it runs in that worktree alone. */
+export const isWorktreePack = pack => pack.publisher === "worktree";
+/**
+ * Who publishes a pack, as the page names it: "By Rerail", "In this worktree", "By @acme · not reviewed", and for one
+ * installed from a folder or tarball "From a folder · not reviewed" (a third party's: "By @acme · From a folder · not
+ * reviewed"). A third party is always marked as one, so a scope that reads like Rerail's (`@rerail`) is never mistaken
+ * for it, and a folder never passes for Rerail's published pack whatever its package.json says.
+ */
+export const publisherLabel = pack => {
+  if (isWorktreePack(pack)) return "In this worktree";
+  if (isRerailPack(pack)) return "By Rerail";
+  const by = pack.publisher === "rerail" ? "" : `By ${pack.publisher} · `;
+  return pack.installedFrom === undefined ? `${by}not reviewed` : `${by}From a ${pack.installedFrom} · not reviewed`;
+};
+/** A pack as a rule's origin names it: its name, with its publisher when that is a third party ("Acme SQL · By @acme · not reviewed"). */
+export const packOriginName = pack => (isRerailPack(pack) || isWorktreePack(pack) ? pack.name : `${pack.name} · ${publisherLabel(pack)}`);
+
+/** Whether a rule (or a pack, from `GET /api/rule-packs`) waits for a person's approval, and runs in Log until then. */
+export const awaitingApproval = item => item.approval?.approved === false;
+
+/** The origin of a rule that came in a rule pack this page does not know (its pack was removed): no publisher is claimed. */
+export const UNKNOWN_PACK_ORIGIN = "From a rule pack";
+
+/**
+ * The files of the worktree at `checkoutPath` in its `.rerail/rules` that were left out (`GET /api/rule-packs?checkout=`
+ * `skipped`), each by its name in the folder (the folder's own name when the whole folder was), with why.
+ */
+export function worktreeLeftOut(skipped, checkoutPath) {
+  if (checkoutPath === undefined || checkoutPath === null) return [];
+  const slashed = path => path.replaceAll("\\", "/");
+  const folder = `${slashed(checkoutPath).replace(/\/$/u, "")}/.rerail/rules`;
+  return skipped.flatMap(({ path, reason }) => {
+    const at = slashed(path);
+    if (at === folder) return [{ file: ".rerail/rules", reason }];
+    return at.startsWith(`${folder}/`) ? [{ file: at.slice(folder.length + 1), reason }] : [];
+  });
+}
 
 /** Pack category as the origin chip names it: "By Rerail · Language", "By Rerail · Repository". */
 const CATEGORY_LABEL = { language: "Language", framework: "Framework", repository: "Repository" };

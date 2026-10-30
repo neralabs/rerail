@@ -3,7 +3,7 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isFromPack, isRunning, ruleTitle, rulePrefix, scopeText } from "./derive.js";
+import { isFromPack, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -66,8 +66,10 @@ export const data = {
   sessionDetail: new Map(),
   /** sessionId → first useful user prompt (null while unknown). */
   titles: new Map(),
-  /** Every rule pack installed on this machine (`GET /api/rule-packs`), languages first, then frameworks. */
+  /** Every rule pack installed on this machine (`GET /api/rule-packs`), languages first, then frameworks, and the scoped checkout's own rules. */
   packs: [],
+  /** The installed packs left out, and the scoped checkout's `.rerail/rules` files left out, with why (`GET /api/rule-packs` `skipped`). */
+  packsSkipped: [],
   /** `/healthz`: version, database path; `null` until the daemon answers once. */
   health: null,
   /** Coding agents found and connected (`GET /api/coding-agents`); loaded for Settings. */
@@ -246,7 +248,8 @@ export function ruleSections() {
     if (!isFromPack(r)) { mine.push(r); continue; }
     const pack = attachedPackOf(r);
     if (pack === undefined) {
-      const key = packOfRule(r)?.name ?? rulePrefix(r.rule.id);
+      const known = packOfRule(r);
+      const key = known === undefined ? rulePrefix(r.rule.id) : packOriginName(known);
       if (!other.has(key)) other.set(key, []);
       other.get(key).push(r);
       continue;
