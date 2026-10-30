@@ -647,6 +647,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fancy-regex"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20ed7f62ce0ae0da1a8b93c3c7104ab7e0760a74491e097c701fff966e945390"
+dependencies = [
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "faster-hex"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2446,7 +2457,7 @@ dependencies = [
  "ast-grep-core",
  "ast-grep-language",
  "cc",
- "fancy-regex 0.17.0",
+ "fancy-regex 0.20.0",
  "flate2",
  "foldhash",
  "gix",
