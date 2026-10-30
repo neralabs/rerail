@@ -114,7 +114,13 @@ impl Wave {
             .collect::<StoreResult<Vec<Arc<Tape>>>>()?;
         let candidates = self.candidates(graph, &tapes)?;
         let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
-        let views = self.lowered.labelled(&docs).map_err(invalid)?;
+        let views = match self.backend {
+            #[cfg(target_os = "macos")]
+            ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground => {
+                self.lowered.labelled_metal(&docs).map_err(invalid)?.0
+            }
+            _ => self.lowered.labelled(&docs).map_err(invalid)?,
+        };
         let programs = self.lowered.programs();
         let anchors = (0..views.len())
             .map(|file| candidates.iter().map(|clause| clause[file].clone()).collect::<Vec<_>>())

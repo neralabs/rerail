@@ -115,6 +115,15 @@ fn the_wave_finds_ws_matches_from_the_prefilters_candidates() {
     gate(8, Limits::default(), ExecutionBackend::CpuJit);
 }
 
+/// On Metal: the labels in one command buffer, the roots through `demand(batch)` on Metal's
+/// compiled kernel, or in the background mode its interpreter until the kernel is built.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn the_wave_finds_ws_matches_on_metal() {
+    gate(8, Limits::default(), ExecutionBackend::MetalJit);
+    gate(4, Limits { chunk_bytes: 1, ..Limits::default() }, ExecutionBackend::MetalBackground);
+}
+
 /// In the background mode the first chunks run on the interpreter, with the same matches.
 #[test]
 fn the_wave_runs_while_its_programs_compile() {

@@ -597,6 +597,38 @@ impl LoweredMatcher {
 
 #[cfg(target_os = "macos")]
 impl LoweredWave {
+    /// Every clause's labels over the batch on Metal, in one command buffer (as `roots_metal`'s,
+    /// without the roots), as views of its tapes the root programs read: `demand(batch)` then runs
+    /// the roots with their results (captures, spans), which a label keeps only as bits.
+    pub(in crate::code_rule_dsl) fn labelled_metal(
+        &self,
+        tapes: &[TapeDoc],
+    ) -> Result<(Vec<TapeDoc>, metal_program_backend::label_passes::Outcome), Error> {
+        let (_, outcome) = metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, &[])?;
+        let mut base = 0_usize;
+        let views = tapes
+            .iter()
+            .map(|tape| {
+                let len = tape.transducer_len();
+                let sets = (0..self.labels)
+                    .map(|label| {
+                        let mut bits = vec![0_u64; len.div_ceil(64)];
+                        for node in 0..len {
+                            let global = base + node;
+                            if outcome.labels[label * outcome.words + global / 32] >> (global % 32) & 1 != 0 {
+                                bits[node / 64] |= 1 << (node % 64);
+                            }
+                        }
+                        bits
+                    })
+                    .collect();
+                base += len;
+                tape.with_labels(Arc::new(sets))
+            })
+            .collect();
+        Ok((views, outcome))
+    }
+
     /// Each clause's matches of the batch from `roots` (per clause, per tape: the candidates its
     /// root program starts from), every clause's passes and roots in one command buffer.
     pub(in crate::code_rule_dsl) fn roots_metal(
@@ -701,7 +733,10 @@ fn metal<'a>(
         })
     };
     let (mut steps, mut chains) = levels(clauses, &mut pass)?;
-    // A clause's roots: one label past every pass's.
+    // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`).
+    let roots = !clause_roots.is_empty();
+    let clauses = if roots { clauses } else { &[] };
+    if roots {
     steps.push((
         false,
         vec![
@@ -719,6 +754,7 @@ fn metal<'a>(
         ],
     ));
     chains.push((None, false));
+    }
     let outcome = run(
         &Plan {
             labels: labels + clauses.len(),
