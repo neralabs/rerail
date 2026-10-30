@@ -6,5 +6,77 @@
     "line": 3,
     "kind": "not-comparable",
     "evidence": "The fixture is ESLint's RuleTester case `/* eslint-disable rule-to-test/max-classes-per-file */`: RuleTester registers the rule under the alias rule-to-test/max-classes-per-file, and the generator, which runs the rule under its own id max-classes-per-file, reports 3:1 because ESLint matches directive names exactly. The port also honours Oxlint 1.88.0's comments (suppress.oxlint `max-classes-per-file`), and Oxlint matches a directive name with a `/` by its part after the last `/` (crates/oxc_linter/src/disable_directives.rs at oxlint_v1.88.0), so the alias silences the port here. The disagreement is the harness's alias, not the rule: without the alias neither tool's directive would apply, and with ESLint's real id both would."
+  },
+  {
+    "rule": "eslint-max-classes-per-file",
+    "source": "fixtures",
+    "path": "renamed/max-classes-per-file/004.js",
+    "line": 3,
+    "kind": "not-comparable",
+    "evidence": "This file is the rename variant of max-classes-per-file/004.js, whose divergence is declared above, and it disagrees for the same reason: only the class names change (A, B to P, K), and the comment `/* eslint-disable rule-to-test/max-classes-per-file */` is kept. RuleTester registers the rule under the alias rule-to-test/max-classes-per-file, so ESLint, matching directive names exactly, reports 3:1 under the generator's id max-classes-per-file. The port honours Oxlint 1.88.0's comments (suppress.oxlint `max-classes-per-file`), and Oxlint matches a directive name with a `/` by its part after the last `/` (crates/oxc_linter/src/disable_directives.rs at oxlint_v1.88.0), so the alias silences the port here. The disagreement is the harness's alias, not the rule."
+  },
+  {
+    "rule": "eslint-no-labels",
+    "source": "samples",
+    "path": "babel-packages-babel-traverse-src-path-family.js-37a5260b4bad/packages/babel-traverse/src/path/family.js",
+    "line": 29,
+    "kind": "not-comparable",
+    "evidence": "family.js is Flow-annotated (`// @flow`, line 4 `import type TraversalContext from \"../index\";`); line 29 is the labelled `findBreak` label use. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token TraversalContext` at 4:13, and `new Linter().verify` with only no-labels on returns that fatal parsing error and no no-labels finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-labels",
+    "source": "samples",
+    "path": "babel-packages-babel-traverse-src-path-family.js-37a5260b4bad/packages/babel-traverse/src/path/family.js",
+    "line": 34,
+    "kind": "not-comparable",
+    "evidence": "family.js is Flow-annotated (`// @flow`, line 4 `import type TraversalContext from \"../index\";`); line 34 is the labelled `findBreak` label use. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token TraversalContext` at 4:13, and `new Linter().verify` with only no-labels on returns that fatal parsing error and no no-labels finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-prototype-builtins",
+    "source": "samples",
+    "path": "katex-src-macroexpander.js-7c4f88173925/src/MacroExpander.js",
+    "line": 431,
+    "kind": "not-comparable",
+    "evidence": "MacroExpander.js is Flow-annotated (`// @flow`, line 11 `import type {Mode} from \"./types\";`); line 431 is a labelled `.hasOwnProperty(name)` call. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token {` at 11:13, and `new Linter().verify` with only no-prototype-builtins on returns that fatal parsing error and no no-prototype-builtins finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-prototype-builtins",
+    "source": "samples",
+    "path": "katex-src-macroexpander.js-7c4f88173925/src/MacroExpander.js",
+    "line": 432,
+    "kind": "not-comparable",
+    "evidence": "MacroExpander.js is Flow-annotated (`// @flow`, line 11 `import type {Mode} from \"./types\";`); line 432 is a labelled `.hasOwnProperty(name)` call. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token {` at 11:13, and `new Linter().verify` with only no-prototype-builtins on returns that fatal parsing error and no no-prototype-builtins finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-prototype-builtins",
+    "source": "samples",
+    "path": "katex-src-macroexpander.js-7c4f88173925/src/MacroExpander.js",
+    "line": 433,
+    "kind": "not-comparable",
+    "evidence": "MacroExpander.js is Flow-annotated (`// @flow`, line 11 `import type {Mode} from \"./types\";`); line 433 is a labelled `.hasOwnProperty(name)` call. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token {` at 11:13, and `new Linter().verify` with only no-prototype-builtins on returns that fatal parsing error and no no-prototype-builtins finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-prototype-builtins",
+    "source": "samples",
+    "path": "katex-src-macroexpander.js-7c4f88173925/src/MacroExpander.js",
+    "line": 434,
+    "kind": "not-comparable",
+    "evidence": "MacroExpander.js is Flow-annotated (`// @flow`, line 11 `import type {Mode} from \"./types\";`); line 434 is a labelled `.hasOwnProperty(name)` call. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token {` at 11:13, and `new Linter().verify` with only no-prototype-builtins on returns that fatal parsing error and no no-prototype-builtins finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-prototype-builtins",
+    "source": "samples",
+    "path": "katex-src-macroexpander.js-7c4f88173925/src/MacroExpander.js",
+    "line": 444,
+    "kind": "not-comparable",
+    "evidence": "MacroExpander.js is Flow-annotated (`// @flow`, line 11 `import type {Mode} from \"./types\";`); line 444 is a labelled `.hasOwnProperty(name)` call. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token {` at 11:13, and `new Linter().verify` with only no-prototype-builtins on returns that fatal parsing error and no no-prototype-builtins finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
+  },
+  {
+    "rule": "eslint-no-self-assign",
+    "source": "samples",
+    "path": "jest-packages-jest-jasmine2-src-jasmine-spec.js-d60cd8025a9b/packages/jest-jasmine2/src/jasmine/Spec.js",
+    "line": 73,
+    "kind": "not-comparable",
+    "evidence": "Spec.js is Flow-annotated (`/* @flow */`, line 42 `export default function Spec(attrs: Object) {`); line 73 is the labelled `this.initError.stack = this.initError.stack;`. The label is the ESLint test set's recorded finding (scripts/samples/convert-eslint-test-set.ts uses its findings as they are), which the pinned tool cannot reproduce: ESLint 10.11.0 at its defaults (espree 11.2.0, ecmaVersion latest, sourceType module) cannot parse the file: `espree.parse` throws `Unexpected token :` at 42:35, and `new Linter().verify` with only no-self-assign on returns that fatal parsing error and no no-self-assign finding. Rerail's tree-sitter JavaScript grammar does not read Flow either (the run reports the file as a syntax error, T1), so neither the pinned tool nor the port has an answer on this line to compare. Remove when the sample converter drops files the pinned parser rejects (NER-1764)."
   }
 ]
