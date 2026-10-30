@@ -51,6 +51,23 @@ describe("renameSource", () => {
     expect(renames.get("helper")).not.toMatch(/^use[A-Z]/);
   });
 
+  it("keeps what a package or a host object exports: imported names, members, component props, Sync names", () => {
+    const source = [
+      'import { Head } from "next/document";',
+      'import Script from "next/script";',
+      'import local from "./local";',
+      "const { TextDecoder } = require('util');",
+      "const fs = require('fs');",
+      "fs.access(); fs.fooSync(); process.exit(0); ReactDOM.findDOMNode(inst); local.thing();",
+      'const el = <Script strategy="lazy" data={local} />;',
+      "class Widget extends React.Component { componentDidMount() { callback(err); } }",
+      "",
+    ].join("\n");
+    const { renames } = renameSource(source, "a.jsx");
+    for (const kept of ["Head", "TextDecoder", "access", "fooSync", "exit", "findDOMNode", "strategy", "data", "componentDidMount", "callback", "err"]) expect(renames.has(kept), kept).toBe(false);
+    for (const renamed of ["thing", "inst", "Widget", "el"]) expect(renames.has(renamed), renamed).toBe(true);
+  });
+
   it("renames the names a global comment lists with their uses", () => {
     const source = "/* global fooBar, bazQux: writable -- set by the page */\nfooBar(); bazQux = 1;\n// fooBar stays here\n";
     const { source: renamed, renames } = renameSource(source, "a.js");

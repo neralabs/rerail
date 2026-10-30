@@ -273,15 +273,36 @@ export function queryLanguageOptions(language: UnitLanguage): JsonObject {
 }
 
 /**
+ * Marks every `resolves` under `value` that lists `global` names, without `declared` or `directives`, as
+ * `declared: false`: what such a read means in a query without `languageOptions` (the name is unbound, whether or not
+ * the configuration declares it), which giving the query `languageOptions` would otherwise turn into "a declared global".
+ */
+function keepUndeclaredGlobals(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) keepUndeclaredGlobals(item);
+    return;
+  }
+  if (!isJsonObject(value)) return;
+  const resolves = value.resolves;
+  if (isJsonObject(resolves) && Array.isArray(resolves.global) && resolves.declared === undefined && resolves.directives === undefined) resolves.declared = false;
+  for (const inner of Object.values(value)) keepUndeclaredGlobals(inner);
+}
+
+/**
  * A code rule document with `language` (a unit's) merged into the `languageOptions` of each ECMA AST clause, every
  * case of a clause chosen by a document option included: the unit's language replaces the rule's `ecmaVersion`,
- * `sourceType` and typescript-eslint options and adds to its `ecmaFeatures`; the rule's `globals` stay.
+ * `sourceType` and typescript-eslint options and adds to its `ecmaFeatures`; the rule's `globals` stay. A query that
+ * had no `languageOptions` keeps reading its listed globals as unbound names (`keepUndeclaredGlobals`), and so do the
+ * document's shared definitions when no ECMA query of it had `languageOptions`.
  */
 export function inUnitLanguage(documentText: string, language: UnitLanguage): string {
   const document = JSON.parse(documentText) as JsonObject;
   const options = queryLanguageOptions(language);
+  let anyOwn = false;
   const merge = (query: JsonObject): void => {
     if (!isEcmaQuery(query.language)) return;
+    if (isJsonObject(query.languageOptions)) anyOwn = true;
+    else keepUndeclaredGlobals(query);
     const own = isJsonObject(query.languageOptions) ? query.languageOptions : {};
     const merged: JsonObject = { ...own, ...options };
     if (isJsonObject(options.parserOptions) && isJsonObject(own.parserOptions)) {
@@ -297,6 +318,7 @@ export function inUnitLanguage(documentText: string, language: UnitLanguage): st
     if (ast.$option !== undefined && isJsonObject(ast.cases)) for (const variant of [...Object.values(ast.cases), ast.default].filter(isJsonObject)) merge(variant);
     else merge(ast);
   }
+  if (!anyOwn) for (const clause of Array.isArray(document.clauses) ? document.clauses.filter(isJsonObject) : []) if (isJsonObject(clause.define)) keepUndeclaredGlobals(clause.define);
   return JSON.stringify(document);
 }
 

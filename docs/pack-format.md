@@ -145,7 +145,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   conformance runner evaluates the unit under them: it merges them into the `languageOptions` of each AST clause of
   the port (its `ecmaVersion` and `sourceType`, `parserOptions.ecmaFeatures`' `globalReturn` and `impliedStrict`, and
   typescript-eslint's `jsxPragma`, `jsxFragmentName` and `lib`, which a code rule spells at the top of
-  `languageOptions`), so the port judges the file as the linter did; a unit without them gets the port's own
+  `languageOptions`; a query that had none keeps reading its listed `global` names as unbound, `declared: false`), so
+  the port judges the file as the linter did; a unit without them gets the port's own
   `languageOptions` (ESLint's defaults unless the port sets others). Today the javascript pack's two tools and
   eslint-plugin-vitest record them; the other ECMA generators lint every case under one configuration of ESLint's
   defaults (vue's, next's, react's, typescript-eslint's) or convey the source type through the unit's `package.json`
@@ -153,7 +154,8 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
 - Rename variants (the ECMA tool-packs): the generator writes a renamed copy of every upstream unit under
   `fixtures/renamed/<the original's path>`, its identifiers renamed by `scripts/pack-data/rename/ecmascript.ts` (same
   length and shape, one order-preserving bijective map per file; literals, comments other than `/* global */`-style
-  name lists, keywords, the standard library, common host and test-runner names and hook-shaped names kept), and
+  name lists, keywords, the standard library, common host, framework and test-runner API names, hook-shaped and
+  `…Sync` names, and what a package exports kept), and
   lints it with upstream like any unit. Its `source.units` entry adds
   `renamedFrom`, the key of the original unit, which must be an original with an origin. The conformance check scores
   variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names rather than the

@@ -128,4 +128,24 @@ describe("rename variants and unit origins", () => {
     const compilable = { ...merged, clauses: [merged.clauses[0]] };
     expect(() => loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(compilable), "json", capabilitiesJson())).not.toThrow();
   });
+
+  it("keeps a query without languageOptions reading its listed globals as unbound names", () => {
+    const violation = { anchor: "witness.span", code: "c", message: "m" };
+    const read = { kind: "identifier", resolves: { global: ["console"] } };
+    const document = {
+      format: "rerail.policy/v1",
+      id: "undeclared-probe",
+      revision: 1,
+      mode: "log",
+      description: "d",
+      scope: { include: ["**/*"], exclude: [] },
+      clauses: [{ id: "one", forbid: { ast: { language: "javascript", rule: { all: [{ kind: "member_expression" }, { has: read }] } } }, violation }],
+    };
+    const merged = JSON.parse(inUnitLanguage(JSON.stringify(document), { ecmaVersion: 5, sourceType: "script" }));
+    expect(merged.clauses[0].forbid.ast.rule.all[1].has.resolves).toEqual({ global: ["console"], declared: false });
+    const own = structuredClone(document);
+    (own.clauses[0]!.forbid.ast as Record<string, unknown>).languageOptions = {};
+    const kept = JSON.parse(inUnitLanguage(JSON.stringify(own), { ecmaVersion: 5, sourceType: "script" }));
+    expect(kept.clauses[0].forbid.ast.rule.all[1].has.resolves).toEqual({ global: ["console"] });
+  });
 });

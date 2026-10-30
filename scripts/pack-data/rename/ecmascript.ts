@@ -23,16 +23,20 @@
  *   binding, shadowing and name-equality relation in the file holds without modelling scopes), and any two names of
  *   the file (renamed or staying, literal words included) compare the same way after renaming as before: by code units
  *   (sort-keys, sort-vars and sort-imports at their defaults), ignoring case, by locale and naturally (digit runs stay).
- * - Protected: keywords and contextual keywords, the ES standard library (globals and every member declared in
- *   TypeScript's lib.es*.d.ts), the names `HOST_NAMES` lists and any hook-shaped name (`use` and an uppercase letter),
- *   no more: a few browser and Node globals, console methods, React's class API, the test runners' globals and their
- *   modifiers (`vi`, `jest`, `only`, `skip`, `todo`) and every member name chained on one (`vi.fn`,
- *   `expect(x).toBe`). Every other DOM, Node or React name (`findDOMNode`,
- *   `readFileSync`, `exit`) is renamed like the tests' own names, so a variant can lose every finding of a rule keyed on
- *   it (the conformance report counts those as renamed away). Also kept: intrinsic JSX tags and the attributes on
- *   intrinsic elements, both parts of a namespaced JSX name (`xlink:href`), meta-property names (`import.meta`,
+ * - Protected, the APIs a rule is about rather than the tests' own names: keywords and contextual keywords, the ES
+ *   standard library (globals and every member declared in TypeScript's lib.es*.d.ts), the names `HOST_NAMES` lists (a
+ *   few browser and Node globals, console methods, React's component API and lifecycle, Next's data-fetching exports,
+ *   Node's callback conventions, the test runners' globals and modifiers: `vi`, `jest`, `only`, `skip`, `todo`), any
+ *   hook-shaped name (`use` and an uppercase letter) and any `…Sync` name; every member name chained on one of
+ *   `MEMBER_ROOTS` (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `expect(x).toBe`); and what a package exports:
+ *   the names an `import` or a destructuring `require` takes from a package (`import { Head } from "next/document"`,
+ *   `const { TextDecoder } = require("util")`), the members read on a package's binding (`fs.access`) and the props
+ *   of a package's component (`<Script strategy=…>`). The rule a variant then loses every finding of is one that
+ *   matches the tests' own names, and its `holds-under-rename` fails. Other names of a host API (`setTimeout`'s
+ *   callback's parameters, a DOM method on a local) are renamed like the tests' own. Also kept: intrinsic JSX tags
+ *   and the attributes on intrinsic elements, both parts of a namespaced JSX name (`xlink:href`), meta-property names (`import.meta`,
  *   `new.target`) and any name with an occurrence that cannot be rewritten in place (unicode escapes). No name is
- *   renamed to a protected name, to a hook-shaped one or (when longer than two letters) to a word in the file's
+ *   renamed to a protected name, to one of a kept shape or (when longer than two letters) to a word in the file's
  *   comments; a name that cannot avoid them under any of the tried relabellings stays.
  */
 import { createRequire } from "node:module";
@@ -40,19 +44,82 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import ts from "typescript";
 
-/**
- * The test runners' globals. The member names of a chain on one are kept too (`vi.fn`, `jest.mock`, `it.only.each`,
- * `expect(x).not.toBe`): the test-runner rules read them.
- */
+/** The test runners' globals. */
 const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe"];
 
-/** Whether `node` is a member name in a chain of member accesses and calls on a test runner's global. */
-function isTestRunnerMember(node: ts.Identifier | ts.PrivateIdentifier): boolean {
+/**
+ * Host objects whose members are their API: the member names of a chain of accesses and calls on one are kept
+ * (`process.exit`, `ReactDOM.findDOMNode`, `vi.fn`, `jest.mock`, `it.only.each`, `expect(x).not.toBe`).
+ */
+const MEMBER_ROOTS = new Set([...TEST_GLOBALS, "process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require"]);
+
+/** The root identifier of a chain of member accesses and calls (`a` of `a.b(c).d`), if it has one. */
+function chainRoot(expression: ts.Expression): ts.Identifier | undefined {
+  let root = expression;
+  while (ts.isPropertyAccessExpression(root) || ts.isCallExpression(root) || ts.isElementAccessExpression(root) || ts.isNonNullExpression(root)) root = root.expression;
+  return ts.isIdentifier(root) ? root : undefined;
+}
+
+/** Whether `specifier` names a package (or a Node builtin), not a file of the test's own. */
+const isPackage = (specifier: string): boolean => !specifier.startsWith(".") && !specifier.startsWith("/");
+
+/** The package a `require("…")` (or `process.getBuiltinModule("…")`, `await import("…")`) call loads, if `node` is one. */
+function requiredPackage(node: ts.Node | undefined): string | undefined {
+  while (node !== undefined && (ts.isAwaitExpression(node) || ts.isParenthesizedExpression(node))) node = node.expression;
+  if (node === undefined || !ts.isCallExpression(node)) return undefined;
+  const callee = node.expression;
+  const loads =
+    callee.kind === ts.SyntaxKind.ImportKeyword ||
+    (ts.isIdentifier(callee) && callee.text === "require") ||
+    (ts.isPropertyAccessExpression(callee) && callee.name.text === "getBuiltinModule");
+  const argument = node.arguments[0];
+  return loads && argument !== undefined && ts.isStringLiteralLike(argument) && isPackage(argument.text) ? argument.text : undefined;
+}
+
+/**
+ * The names a package defines in `file`: what its imports and destructuring requires take from a package (kept), and
+ * the local bindings of a package's module or default export (`import fs from "fs"`, `const fs = require("fs")`,
+ * `import * as React from "react"`), whose members and component props are the package's.
+ */
+function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: Set<string> } {
+  const exported = new Set<string>();
+  const bindings = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier) && isPackage(node.moduleSpecifier.text) && node.importClause !== undefined) {
+      const clause = node.importClause;
+      if (clause.name !== undefined) bindings.add(clause.name.text);
+      const named = clause.namedBindings;
+      if (named !== undefined && ts.isNamespaceImport(named)) bindings.add(named.name.text);
+      if (named !== undefined && ts.isNamedImports(named)) for (const element of named.elements) exported.add((element.propertyName ?? element.name).text);
+    }
+    if (ts.isVariableDeclaration(node) && requiredPackage(node.initializer) !== undefined) {
+      if (ts.isIdentifier(node.name)) bindings.add(node.name.text);
+      else if (ts.isObjectBindingPattern(node.name)) {
+        for (const element of node.name.elements) {
+          const name = element.propertyName ?? element.name;
+          if (ts.isIdentifier(name)) exported.add(name.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return { exported, bindings };
+}
+
+/** Whether `node` is a member name chained on a host object or on a package's binding, or a prop of a package's component. */
+function isApiName(node: ts.Identifier | ts.PrivateIdentifier, bindings: ReadonlySet<string>): boolean {
   const parent = node.parent;
-  if (!ts.isPropertyAccessExpression(parent) || parent.name !== node) return false;
-  let root: ts.Expression = parent.expression;
-  while (ts.isPropertyAccessExpression(root) || ts.isCallExpression(root) || ts.isElementAccessExpression(root)) root = root.expression;
-  return ts.isIdentifier(root) && TEST_GLOBALS.includes(root.text);
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+    const root = chainRoot(parent.expression);
+    return root !== undefined && (MEMBER_ROOTS.has(root.text) || bindings.has(root.text));
+  }
+  if (ts.isJsxAttribute(parent) && parent.name === node) {
+    const tag = parent.parent.parent.tagName;
+    const root = ts.isIdentifier(tag) ? tag : ts.isPropertyAccessExpression(tag) ? chainRoot(tag) : undefined;
+    return root !== undefined && bindings.has(root.text);
+  }
+  return false;
 }
 
 /** The host, module-system, React and test-runner names kept (not exhaustive: any name missing here is renamed). */
@@ -62,15 +129,24 @@ const HOST_NAMES = [
   "requestAnimationFrame", "fetch", "alert", "confirm", "prompt", "localStorage", "sessionStorage", "addEventListener", "removeEventListener",
   "log", "warn", "error", "info", "debug", "trace", "time", "timeEnd", "dir", "table", "assert",
   "React", "ReactDOM", "Component", "PureComponent", "Fragment", "createElement", "props", "state", "setState", "render", "children", "key",
-  "ref", "className",
+  "ref", "className", "createReactClass", "createClass", "findDOMNode", "isMounted", "replaceState", "forceUpdate", "getInitialState",
+  "getDefaultProps", "getChildContext", "displayName", "propTypes", "defaultProps", "contextTypes", "childContextTypes", "contextType",
+  "componentDidMount", "componentDidUpdate", "componentWillUnmount", "componentWillMount", "componentWillReceiveProps", "componentWillUpdate",
+  "shouldComponentUpdate", "getSnapshotBeforeUpdate", "getDerivedStateFromProps", "getDerivedStateFromError", "componentDidCatch",
+  "UNSAFE_componentWillMount", "UNSAFE_componentWillReceiveProps", "UNSAFE_componentWillUpdate", "createContext", "Provider", "Consumer", "value",
+  "getStaticProps", "getStaticPaths", "getServerSideProps", "getInitialProps",
+  "callback", "cb", "next", "done", "err",
   "jQuery", "$", "_", "angular",
   ...TEST_GLOBALS, "beforeEach", "afterEach", "beforeAll", "afterAll", "vitest", "only", "skip", "todo", "each", "concurrent", "sequential",
   "fails", "skipIf", "runIf",
   "arguments", "eval", "undefined", "NaN", "Infinity", "constructor", "prototype", "__proto__", "this", "super",
 ];
 
-/** A React hook's name shape (`useState`, a custom `useThing`): rules of hooks read it, so it is kept and never made. */
-const HOOK_SHAPE = /^use[A-Z]/;
+/**
+ * Name shapes a rule reads, so a name of one is kept and none is made: a React hook's (`useState`, a custom `useThing`)
+ * and a synchronous Node API's (`readFileSync`, `fooSync`).
+ */
+const API_SHAPE = /^use[A-Z]|[a-z0-9]Sync$/;
 
 /** Identifiers that TypeScript parses as `Identifier` but that carry grammar meaning in some position. */
 const CONTEXTUAL_KEYWORDS = [
@@ -117,9 +193,9 @@ export function protectedNames(): ReadonlySet<string> {
   return names;
 }
 
-/** Whether `name` (without a private name's `#`) is never renamed: a protected name or a hook-shaped one. */
+/** Whether `name` (without a private name's `#`) is never renamed: a protected name or one of a kept shape (`API_SHAPE`). */
 function isProtected(name: string): boolean {
-  return protectedNames().has(name) || HOOK_SHAPE.test(name);
+  return protectedNames().has(name) || API_SHAPE.test(name);
 }
 
 export interface RenameResult {
@@ -278,6 +354,8 @@ export function renameSource(source: string, fileName: string): RenameResult {
   const collectComments = (node: ts.Node): void => {
     for (const range of [...(ts.getLeadingCommentRanges(source, node.pos) ?? []), ...(ts.getTrailingCommentRanges(source, node.end) ?? [])]) comments.set(range.pos, range);
   };
+  const packages = packageNames(file);
+  for (const name of packages.exported) pinned.add(name);
   const visit = (node: ts.Node): void => {
     collectComments(node);
     if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
@@ -290,7 +368,7 @@ export function renameSource(source: string, fileName: string): RenameResult {
       const namespaced = ts.isJsxNamespacedName(parent);
       const keywordLike = ts.isIdentifier(node) && ts.identifierToKeywordKind(node) !== undefined;
       const metaProperty = ts.isMetaProperty(parent) && parent.name === node;
-      const fixed = intrinsicTag || intrinsicAttribute || namespaced || keywordLike || metaProperty || isTestRunnerMember(node);
+      const fixed = intrinsicTag || intrinsicAttribute || namespaced || keywordLike || metaProperty || isApiName(node, packages.bindings);
       if (source.slice(start, node.end) !== text || fixed) pinned.add(text);
       occur(text, { start, offset: ts.isPrivateIdentifier(node) ? 1 : 0 });
       return;

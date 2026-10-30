@@ -101,8 +101,9 @@ scored but is nobody's own evidence. The ESLint-based generators share `scripts/
 For the ECMA tool-packs the generators also write a rename variant of every upstream unit under `fixtures/renamed/`
 (`fixtures/renamed/<the original's path>`): a copy whose identifiers are renamed by
 `scripts/pack-data/rename/ecmascript.ts` (same length and character shape, one bijective map per file that keeps every
-two names' order, so sorting rules judge the same order; the language's keywords, standard library, common host and
-test-runner names and hook-shaped names protected). Literals are kept: a rule reads them (the digits of a number, a
+two names' order, so sorting rules judge the same order; the language's keywords, standard library, common host,
+framework and test-runner API names, hook-shaped and `…Sync` names, and what a package exports (imported names,
+members of a package's binding, props of its components) protected). Literals are kept: a rule reads them (the digits of a number, a
 URL, a font name), so renaming them would change upstream's answer rather than test the port. Upstream lints the copy
 like any unit, so its expected findings are upstream's own answer on it, and its `source.units` entry carries
 `renamedFrom`, the key of the original. The conformance runner scores variants apart from the originals, as

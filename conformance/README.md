@@ -134,7 +134,9 @@ carry `languageOptions`, the language upstream linted it under beyond ESLint's d
 (`ecmaVersion`, `sourceType`, `parserOptions`; a variant carries its original's). The runner evaluates such a unit with
 a copy of each port whose AST clauses' `languageOptions` take them (`ecmaVersion`, `sourceType`,
 `parserOptions.ecmaFeatures.globalReturn` and `impliedStrict`, and typescript-eslint's `jsxPragma`, `jsxFragmentName` and
-`lib`), compiled once per distinct language; a unit without them is evaluated with the port as it is, under ESLint's
+`lib`), compiled once per distinct language. A query of the port that had no `languageOptions` of its own keeps
+reading the `global` names its `resolves` lists as unbound names (`declared: false`), as it does without them; a unit
+without them is evaluated with the port as it is, under ESLint's
 flat-config defaults (`module`, or `commonjs` for `.cjs`, at the latest `ecmaVersion`) unless the port sets others
 ([pack-format.md](../docs/pack-format.md#conformancejson-divergencesjson-upstream)).
 
