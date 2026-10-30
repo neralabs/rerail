@@ -38,7 +38,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   they write (`licences.ts`; docs/upstream.md, "Samples").
 - `s3/`: the packs' pack data archives in S3 (`pack-fixtures.mjs`: `npm run fixtures:pull` and `fixtures:stage`, the
   `pack`, `upload` and `confirm` steps of `.github/workflows/pack-data-publish.yml`, and `fixtures:push`, a
-  maintainer's upload outside that workflow; `pack-data-publish.mjs`: that workflow's locks and comment; the canonical
+  maintainer's upload outside that workflow; `pack-data-publish.mjs`: that workflow's locks and sticky comment, the
+  request workflow's waiting state with its `replace` recommendation included; the canonical
   tar and lock format in `test-data-archive.mjs`; docs/upstream.md, "Publishing pack data"), with the messages its
   consumers give in Python (`pack_fixtures.py`).
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,

@@ -1350,7 +1350,7 @@ function resolveCommit(root, from) {
 }
 
 /** A pack or tool id a publish request may name: one lowercase path segment. */
-const TOOL_ID = /^[a-z0-9][a-z0-9._-]*$/u;
+export const TOOL_ID = /^[a-z0-9][a-z0-9._-]*$/u;
 /** Git's modes for a regular file. */
 const REGULAR_FILE_MODES = new Set(["100644", "100755"]);
 
@@ -1510,9 +1510,11 @@ const someOf = (paths) => `${paths.slice(0, PROVENANCE_PATHS_SHOWN).join(", ")}$
  * Throws unless the test data archive `entries` (of `toolPack`, from the commit `at` describes) holds provenance.json
  * and LICENSES.md, and provenance.json is a PROVENANCE_FORMAT record whose `files` keys are exactly the archive's other
  * paths: an overlay that adds or drops files without its provenance restaged, or a replace without one, is refused.
- * Only the key set is read; licences are decided by the tracked records alone (sourcesAt).
+ * So is the wrong mode: a `replace` of a publish/ that holds only what changed records the locked files it drops, and
+ * an overlay of a regenerated set leaves the files the regeneration deleted unrecorded; each refusal names the other
+ * mode. Only the key set is read; licences are decided by the tracked records alone (sourcesAt).
  */
-function checkProvenance(toolPack, entries, at) {
+function checkProvenance(toolPack, entries, at, replace) {
   const label = `${toolPack.directory}/${PROVENANCE_FILE} at ${at}`;
   const remedy = `derive the tool-pack again so its ${PROVENANCE_FILE} and ${PROVENANCE_LICENSES} describe its files, then ${publishInstruction(toolPack)}`;
   const byPath = new Map(entries.map(({ path, bytes }) => [path, bytes]));
@@ -1538,7 +1540,12 @@ function checkProvenance(toolPack, entries, at) {
     ...(extra.length > 0 ? [`it records ${extra.length} path(s) the archive would not hold (${someOf(extra)})`] : []),
     ...(absent.length > 0 ? [`it does not record ${absent.length} path(s) the archive would hold (${someOf(absent)})`] : []),
   ];
-  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${remedy}`);
+  const mode = replace && extra.length > 0
+    ? `if ${PUBLISH_DIRECTORY}/ holds only what is new or changed, publish with replace off, which lays it over the locked archive; otherwise `
+    : !replace && absent.length > 0
+      ? `if ${PUBLISH_DIRECTORY}/ holds the whole set, publish with replace, which archives it alone; otherwise `
+      : "";
+  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${mode}${remedy}`);
 }
 
 /** The format of `pack --from`'s manifest. */
@@ -1656,7 +1663,7 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       }
       for (const { path, bytes } of published) next.set(path, bytes);
       const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
-      if (kind === "test-data") checkProvenance(toolPack, entries, at);
+      if (kind === "test-data") checkProvenance(toolPack, entries, at, replace);
       const archive = buildArchive(entries);
       const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
       const compressed = compressArchive(archive.tar);
@@ -1670,14 +1677,17 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
         licences[licence] = (licences[licence] ?? 0) + 1;
         if (!licenceAllowed(licence, allowed)) refused.push(`${toolPack.directory}/${kind === "samples" ? `${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/` : ""}${path}: ${licence}`);
       }
-      builds.push({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes: archiveChanges(base, next) });
+      // What publish/ restages of the locked archive, the signal modeWarning reads; null when no archive was read.
+      const locked = base.size > 0 ? base.size : null;
+      const restaged = published.filter(({ path }) => base.has(path)).length;
+      builds.push({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, locked, restaged, changes: archiveChanges(base, next) });
     }
   }
   if (refused.length > 0) {
     throw new Error(`${refused.length} file(s) going to S3 are under a licence ${LICENCE_ALLOWLIST} does not take (an \`A OR B\` passes when either side is on it), so nothing was packed and no approval is asked:\n${refused.map((line) => `  ${line}`).join("\n")}`);
   }
 
-  const objects = builds.map(({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes }) => {
+  const objects = builds.map(({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, locked, restaged, changes }) => {
     const file = join(out, key.slice(ARCHIVE_PREFIX.length));
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, compressed);
@@ -1693,6 +1703,8 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       compressedBytes: compressed.length,
       lockText: lockText(archive),
       base: lock?.sha256 ?? null,
+      locked,
+      restaged,
       licences: Object.fromEntries(Object.entries(licences).sort(([a], [b]) => byBytes(a, b))),
       ...(sources === undefined ? {} : { sources }),
       ...changes,
@@ -1725,9 +1737,35 @@ const SUMMARY_PATHS = 50;
 /** Text from a pull request (a licence, a repository name) as inert markdown: every character that could format, link or break a table cell is an HTML entity. */
 const markdownText = (text) => text.replace(/[&<>|`\\*_[\]()!#~]/gu, (character) => `&#${character.codePointAt(0)};`);
 
+/** A replace whose publish/ restages fewer than one locked file in this many looks like additions, which an overlay keeps. */
+const REPLACE_RESTAGES_UNDER = 2;
+/** An overlay whose publish/ restages all but at most one locked file in this many looks like a whole set, whose dropped files the overlay keeps. */
+const OVERLAY_LACKS_AT_MOST = 10;
+
 /**
- * The approver's view of a manifest (packFrom's), as markdown: one row per archive, with its licences and, for a samples
- * archive, each repository its labels name with the licence they record; then what each archive changes.
+ * The summary's warning when the publish mode (`replace`) contradicts what the manifest object's publish/ restages of
+ * the locked archive (`locked` files, `restaged` of them staged again): a replace that restages few of them drops the
+ * rest, and an overlay that restages all but a few keeps those few. Undefined when the mode and the signal agree, or
+ * when no locked archive was read. For test data checkProvenance refuses the wrong mode outright, so this is what
+ * stands between a samples archive, which carries no provenance, and the wrong mode.
+ */
+export function modeWarning({ kind, pack: packId, tool, locked, restaged }, replace) {
+  if (locked === null || locked === undefined || locked === 0) return undefined;
+  const lacks = locked - restaged;
+  const what = `\`${packId}/${tool}\` ${kind}`;
+  if (replace && restaged * REPLACE_RESTAGES_UNDER < locked) {
+    return `**Warning:** ${what}: replace drops ${lacks} of the ${locked} locked files, which \`${PUBLISH_DIRECTORY}/\` does not restage (it restages ${restaged}); an overlay keeps them. Approve only if the pull request means to drop them; otherwise dispatch again with replace off.`;
+  }
+  if (!replace && lacks > 0 && lacks * OVERLAY_LACKS_AT_MOST <= locked) {
+    return `**Warning:** ${what}: \`${PUBLISH_DIRECTORY}/\` restages all but ${lacks} of the ${locked} locked files, which this overlay keeps; a set rebuilt without them needs replace. Approve only if the pull request means to keep them; otherwise dispatch again with replace on.`;
+  }
+  return undefined;
+}
+
+/**
+ * The approver's view of a manifest (packFrom's), as markdown: the mode's warnings (modeWarning), then one row per
+ * archive, with its licences and, for a samples archive, each repository its labels name with the licence they record;
+ * then what each archive changes.
  */
 export function publishSummary(manifest) {
   const shown = (paths) => (paths.length === 0 ? "" : `: ${paths.slice(0, SUMMARY_PATHS).map((path) => `\`${path}\``).join(", ")}${paths.length > SUMMARY_PATHS ? ", …" : ""}`);
@@ -1736,6 +1774,10 @@ export function publishSummary(manifest) {
   return [
     `### Pack data to publish from ${manifest.commit} (${manifest.replace ? "replace" : "overlay"})`,
     "",
+    ...manifest.objects.flatMap((object) => {
+      const warning = modeWarning(object, manifest.replace);
+      return warning === undefined ? [] : [warning, ""];
+    }),
     "| Kind | Tool-pack | sha256 | Files | Bytes | Licences | Sources |",
     "|---|---|---|---|---|---|---|",
     ...manifest.objects.map(

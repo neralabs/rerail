@@ -24,8 +24,11 @@ on:
         required: true
       replace:
         description: >-
-          Make each tool-pack's archive exactly what its publish/ holds (for deletions or a full regeneration), rather
-          than lay publish/ over the locked archive.
+          On when publish/ holds each tool-pack's whole data set (a regeneration or re-derive staged with
+          `fixtures:stage --all`, or a publish that deletes files from the archive): the archive becomes exactly
+          publish/. Off when publish/ holds only what is new or changed: it is laid over the locked archive. On over
+          additions drops every locked file publish/ lacks; off over a regeneration keeps the files it deleted. The
+          pull request's "Pack data waiting to publish" comment recommends a value.
         type: boolean
         default: false
 

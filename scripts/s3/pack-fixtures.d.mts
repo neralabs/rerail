@@ -52,6 +52,10 @@ export interface PublishedObject {
   lockText: string;
   /** The sha256 of the archive the commit's lock named, or null when it had none. */
   base: string | null;
+  /** How many files the locked archive holds, or null when none was read (no lock, or S3 lacks the archive). */
+  locked: number | null;
+  /** How many of the locked archive's files publish/ stages again: with `locked`, the signal modeWarning reads. */
+  restaged: number;
   /** SPDX expression → how many of the archive's files are under it. */
   licences: Record<string, number>;
   /** A samples archive's: each repository its labels name as `source.repo`, with the `source.license` they record. */
@@ -70,6 +74,8 @@ export interface PublishManifest {
 }
 
 export const ROOT: string;
+/** A pack or tool directory name. */
+export const TOOL_ID: RegExp;
 export const BUCKET: string;
 export const REGION: string;
 export const ARCHIVE_PREFIX: string;
@@ -163,6 +169,7 @@ export function packFrom(options: {
   log?: (line: string) => void;
 }): Promise<PublishManifest>;
 export function publishSummary(manifest: PublishManifest): string;
+export function modeWarning(object: Pick<PublishedObject, "kind" | "pack" | "tool" | "locked" | "restaged">, replace: boolean): string | undefined;
 export function stage(options?: CommandOptions & { all?: boolean }): {
   toolPacks: (ToolPack & { staged: string[]; removed: string[]; missing: string[] })[];
 };
