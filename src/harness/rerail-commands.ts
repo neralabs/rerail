@@ -96,9 +96,12 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
     `${cli} rules export --output <tmp>/rules.json`,
     `${cli} rules test <draft.json> --json`,
     `${cli} rules add <draft.json>`,
+    `${cli} rules list --json`,
+    `${cli} rules approve <id>`,
     "```",
     "",
     "Test every draft before showing it, read it back with \"Add this rule?\", and run `rules add` only after the person says yes.",
+    "An added rule runs only once the person approves it. Audit what waits (`rules list --json`) and show them the audit first; run `rules approve` only after they say yes to it.",
     "Never add a rule the person has not confirmed. The rule belongs to this repo only: never offer \"every repo\". Never write instruction files.",
   ].join("\n");
 }

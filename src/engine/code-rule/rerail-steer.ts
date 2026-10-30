@@ -42,13 +42,54 @@ const RESTEER_LEAD = "Rerail re-checked; still open:";
 
 const problems = (count: number): string => (count === 1 ? "1 problem" : `${count} problems`);
 
+/** A line break other than `\n`: in steer text, a space, so text a repository holds cannot start a line of its own. */
+const LINE_BREAK = /[\v\f\r\u0085\u2028\u2029]/gu;
+/** A control or format character other than a line feed or tab: a bidi override, a zero-width space, a BOM, an escape. */
+const INVISIBLE = /(?![\n\t])[\p{Cc}\p{Cf}]/gu;
+
+/**
+ * `text` as a steer may carry it: `\r\n` is a line feed, any other line break (`\r`, U+2028) a space, and no other
+ * control or format character is left (bidi overrides, zero-width and invisible characters, the byte-order mark,
+ * terminal escapes), so what the agent reads is what the person sees. Rule text keeps its wording.
+ */
+export function steerText(text: string): string {
+  return text.replace(/\r\n/gu, "\n").replace(LINE_BREAK, " ").replace(INVISIBLE, "");
+}
+
+/** {@link steerText} on one line: a line feed is a space too. */
+const oneLine = (text: string): string => steerText(text).replace(/\n/gu, " ");
+
+/** `text` cut to at most `max` characters (code points), `…` marking the cut. */
+function capped(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const chars = [...text];
+  return chars.length <= max ? text : `${chars.slice(0, max - 1).join("").trimEnd()}…`;
+}
+
+/** Longest line of a finding's message in a steer; the message's captures are each cut shorter by the engine. */
+export const STEER_LINE_CHARS = 600;
+/** Longest message a finding carries in a steer, all its lines together. */
+export const STEER_MESSAGE_CHARS = 2000;
+/** Longest place (`path:line:col`), rule id or tool name a steer names. */
+export const STEER_NAME_CHARS = 300;
+
+/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
+export function inlineCode(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
+  const fence = "`".repeat(longest + 1);
+  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
+  return `${fence}${padding}${text}${padding}${fence}`;
+}
+
 function steerLead(trigger: SteerTrigger, count: number): string {
   switch (trigger.kind) {
     case "edit": return `Rerail found ${problems(count)} in your last edit:`;
     case "resteer": return RESTEER_LEAD;
     case "late": return LATE_LEAD;
     case "audit": return `Rerail checked the repository and found ${problems(count)}:`;
-    case "tool": return trigger.tool === undefined ? "Rerail has guidance for this step:" : `Rerail has guidance for this ${trigger.tool} call:`;
+    case "tool": return trigger.tool === undefined
+      ? "Rerail has guidance for this step:"
+      : `Rerail has guidance for this ${capped(oneLine(trigger.tool), STEER_NAME_CHARS)} call:`;
   }
 }
 
@@ -61,14 +102,21 @@ function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[])
   return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't.`;
 }
 
-/** `- <location> — <message> [<rule>]`, a multi-line message's later lines indented under the bullet, then any fix. */
+/**
+ * `- <location> — <message> [<rule>]`, a multi-line message's later lines indented under the bullet, then any fix.
+ * Every part is {@link steerText}; the place and rule are one line each, and every part is capped, so neither a
+ * repository's file names nor the code a message quotes can add a line of its own or run on.
+ */
 function findingLines({ ruleId, message, location, fix }: SteerFinding): string {
-  const [first = "", ...rest] = message.trim().split("\n");
+  const [first = "", ...rest] = capped(steerText(message).trim(), STEER_MESSAGE_CHARS)
+    .split("\n")
+    .map(line => capped(line.trimEnd(), STEER_LINE_CHARS));
+  const place = location === undefined ? "" : `${capped(oneLine(location), STEER_NAME_CHARS)} — `;
   const lines = [
-    `- ${location === undefined ? "" : `${location} — `}${first} [${ruleId}]`,
+    `- ${place}${first} [${capped(oneLine(ruleId), STEER_NAME_CHARS)}]`,
     ...rest.map(line => (line.trim() === "" ? "" : `  ${line}`)),
   ];
-  if (fix !== undefined) lines.push(fix);
+  if (fix !== undefined) lines.push(steerText(fix));
   return lines.join("\n");
 }
 
@@ -147,7 +195,8 @@ export interface RewoundPaths {
   readonly deleted: readonly string[];
 }
 
-const quoted = (paths: readonly string[]): string => paths.map(path => `\`${path}\``).join(", ");
+const quoted = (paths: readonly string[]): string =>
+  paths.map(path => inlineCode(capped(oneLine(path), STEER_NAME_CHARS))).join(", ");
 
 /**
  * A `rewind` steer, which the coding agent reads in the result of the edit it rolled back: which files Rerail put back

@@ -7,7 +7,7 @@ import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bri
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
-import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
+import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
@@ -91,6 +91,8 @@ const sessionCursorSchema = z.tuple([z.number().int(), z.string()]);
 export interface SessionHud {
   activeRuleCount: number | null;
   steeringCount: number | null;
+  /** How many rules of the session's repository have content waiting for a person's approval; null when unknown. */
+  awaitingApproval: number | null;
 }
 
 /** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
@@ -371,7 +373,7 @@ export class SqliteSessionReader {
 
   hud(sessionId: string): SessionHud {
     const database = this.#database.open();
-    if (database === undefined) return { activeRuleCount: null, steeringCount: null };
+    if (database === undefined) return { activeRuleCount: null, steeringCount: null, awaitingApproval: null };
     // Read coverage, lifetime totals, and the catalog signature from one snapshot.
     return database.transaction(() => {
       const baseline = database.select({
@@ -387,10 +389,13 @@ export class SqliteSessionReader {
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
       // Coverage written before repository configuration has no rule signature and is never current.
-      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && coverage.ownerCheckoutPaths !== null
-        && coverage.ruleSignature === ruleConfigurationSignature(
-          database, loadRuleCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
-        );
+      const owners = coverage?.ownerCheckoutPaths == null ? null : JSON.parse(coverage.ownerCheckoutPaths) as string[];
+      const ruleCatalog = loadRuleCatalog();
+      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && owners !== null
+        && coverage.ruleSignature === ruleConfigurationSignature(database, ruleCatalog, coverage.repositoryId, owners);
+      const awaitingApproval = coverage?.repositoryId == null || owners === null ? null
+        : listRepositoryRules(database, ruleCatalog, coverage.repositoryId, owners.length === 0 ? {} : { checkoutPath: owners[0]!, parentCheckoutPaths: owners.slice(1) })
+          .awaitingApproval;
       // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
       // rules. A receipt naming no rules still delivered one steer.
       const steeringCount = baseline?.complete === 1
@@ -399,7 +404,7 @@ export class SqliteSessionReader {
         }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
-      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount };
+      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount, awaitingApproval };
     });
   }
 

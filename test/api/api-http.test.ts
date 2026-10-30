@@ -99,10 +99,11 @@ describe("Rerail API over HTTP", () => {
     return auditId;
   }
 
+  /** The person's own library rules, approved. */
   function addLibraryRules(): void {
     const ruleCatalog = loadRuleCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code");
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { revision: 1 });
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code", { approve: true });
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { revision: 1, approve: true });
   }
 
   function addRepository(key: string, options: { name?: string; configuredAt?: number | null; started?: boolean | null } = {}): void {

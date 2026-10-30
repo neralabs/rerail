@@ -84,7 +84,7 @@ describe("/rerail", () => {
   it("says what Rerail is doing in this session, then lists every command", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
     });
     mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();
@@ -106,7 +106,7 @@ describe("/rerail", () => {
   it("answers /rerail-help exactly as /rerail", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
     });
     mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();

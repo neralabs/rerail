@@ -51,6 +51,7 @@ export {
   setUpRepository,
 } from "./catalog/rule-configuration.js";
 export { getLibraryRule, listLibraryRules, upsertLibraryRule, writeLibraryRule } from "./catalog/rule-library.js";
+export { approveRule, pendingRules, RuleApprovalError, type PendingRule } from "./catalog/rule-approval.js";
 export { RULE_MODES, type RuleMode } from "./catalog/rule-mode.js";
 export {
   loadRulePacks,
@@ -132,6 +133,7 @@ export {
   repositories,
   repositoryAudits,
   setupReviews,
+  ruleApprovals,
   ruleAttachments,
   ruleViolationRollup,
   ruleCatalogIdentities,

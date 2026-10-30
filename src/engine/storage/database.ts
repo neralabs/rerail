@@ -1,6 +1,6 @@
-import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import Database from "better-sqlite3";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
@@ -9,6 +9,7 @@ import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
 import { defaultRerailHome } from "./rerail-home.js";
+import { keepFilesPrivate } from "./private-files.js";
 
 export type RerailDatabase = BetterSQLite3Database<typeof schema> & { readonly $client: Database.Database };
 
@@ -97,11 +98,13 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
 }
 
 /**
- * What a writer owns: the file mode, WAL, and the connection's integrity settings. The rollback check runs again in
- * WAL mode: a file a rollback left in rollback-journal mode holds no lock for a connection between its reads.
+ * What a writer owns: the file mode, WAL, and the connection's integrity settings. The file and every file named after
+ * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
+ * creates the database file's mode. The rollback check runs again in WAL mode: a file a rollback left in
+ * rollback-journal mode holds no lock for a connection between its reads.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
-  chmodSync(path, 0o600);
+  keepFilesPrivate(dirname(path), [basename(path)]);
   enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
   refuseWhileRestoring(database.$client, path);
   database.run(sql`PRAGMA foreign_keys = ON`);

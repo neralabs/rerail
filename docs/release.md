@@ -13,3 +13,31 @@ How core is built, versioned and published. Rule packs release separately; see [
 - `.github/workflows/env-matrix.yml` builds the same package after every push to `main` that can change what ships and installs it on throwaway Azure VMs (Ubuntu and Debian on x64 and arm64, RHEL on x64, Windows 11 on x64 and arm64) and GitHub-hosted macOS runners (macOS 26 and 15 on Apple silicon, macOS 15 on Intel), each the way a user meets it: `npx @neralabs/rerail setup`, then the managed runtime, PATH in a new shell, the coding-agent hooks, daemon restart and removal. [docs/environment-matrix.md](environment-matrix.md) covers the environments, what each checks, and running it by hand.
 
 Release notes: a pull request that changes what core ships adds its entry under `## Unreleased` at the top of `CHANGELOG.md`, adding that heading if the last release took it. The Release pull request turns the heading into `## <version> (<date>)`, dated the day it was last updated from `main`; with no unreleased section, the release gets a section saying no entries were written. To release a minor or major version instead of a patch, name it in the heading: `## 0.2.0 (unreleased)`. The Claude, Codex, and Cursor plugin manifests carry no version in the checkout: `npm pack` stamps `package.json`'s version into them (`prepack`) and restores the source form afterwards (`postpack`). If a pack fails partway, `node scripts/build/stamp-plugin-versions.mjs restore` puts them back.
+
+## Shrinkwrap
+
+The tarball ships an `npm-shrinkwrap.json`, so every install of `@neralabs/rerail` gets the dependency versions and
+integrity hashes this repository's `package-lock.json` pinned instead of resolving them fresh. npm honors a published
+package's shrinkwrap; the registry marks a version that has one (`_hasShrinkwrap`). The checkout keeps
+`package-lock.json` as its only lockfile and never commits a shrinkwrap.
+
+- `npm pack` writes it first (`prepack`: `node scripts/release/shrinkwrap-pack.mjs write`) and deletes it afterwards
+  (`postpack`), and `package.json`'s `files` lists it. It holds the root and every package the root's dependencies
+  reach in `package-lock.json`: no development dependency, no workspace pack, and no optional peer nothing else needs.
+  A package only optional dependencies reach is marked `optional`.
+- Writing it fails when `package-lock.json`'s root dependencies are not `package.json`'s, or the lockfile lacks a
+  package a dependency needs. Run `npm install` and commit the lockfile.
+- `release.yml` checks the packed file before publishing (`node scripts/release/shrinkwrap-pack.mjs check
+  <tarball>`). It fails the release when the tarball has none, or one that differs from what the tag's
+  `package-lock.json` gives, and names the packages that differ.
+- If a pack fails partway, the file stays in the checkout, and npm would then use it instead of `package-lock.json`.
+  `node scripts/release/shrinkwrap-pack.mjs remove` deletes it.
+- npm installs a shrinkwrapped package's dependencies inside it, below `node_modules/@neralabs/rerail/node_modules`,
+  not beside it.
+
+The managed install (`src/setup/updater.ts`) runs no install scripts (`--ignore-scripts`): no production dependency
+needs one, since `better-sqlite3` ships prebuilt binaries. Before it runs any staged code, it checks the registry
+signatures and provenance attestations of everything it installed with `npm audit signatures`, and stops when one
+does not verify. A registry that publishes no signing keys, such as some private mirrors, gets a warning and the
+install goes on. A new dependency that needs an install script would not work after `rerail update`, so check that
+before adding one.

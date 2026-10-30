@@ -139,14 +139,29 @@ export interface EffectiveRule {
   };
   readonly revision: number;
   readonly payloadHash: string;
+  /** Whose content runs: Nera's, or the content a person approved (`rule-approval.ts`). */
+  readonly approval: RuleApprovalStatus;
 }
 
-/** An attachment whose target can't be resolved; reported, never thrown. */
+/**
+ * How a rule's content stands with approval. `shipped`: Nera shipped it, so it needs none (`approvedAt` null).
+ * `approved`: a person approved this content. `pending`: newer content waits for approval; the content approved at
+ * `approvedAt` runs meanwhile, or, with `approvedAt` null, the rule runs nowhere yet.
+ */
+export interface RuleApprovalStatus {
+  readonly state: "shipped" | "approved" | "pending";
+  readonly approvedAt: number | null;
+}
+
+/**
+ * An attachment whose target can't be resolved, or whose rule has no approved content yet
+ * (`awaiting-approval`); reported, never thrown.
+ */
 export interface UnavailableReference {
   readonly sourceKind: RuleSourceKind;
   readonly sourceId: string;
   readonly folder: string;
-  readonly reason: "missing" | "conflicts-with-library";
+  readonly reason: "missing" | "conflicts-with-library" | "awaiting-approval";
 }
 
 /** The effective configuration for one checkout. Empty unless the checkout is started and its repository set up. */
@@ -166,6 +181,8 @@ export interface LibraryRule {
   readonly document: RuleDocument;
   readonly revision: number;
   readonly payloadHash: string;
+  /** The content digest of the stored body (`ruleContentDigest`), which an approval binds to. */
+  readonly contentHash: string;
   /** Set when the rule is an edited copy of a By Rerail rule. */
   readonly copiedFromRuleId: string | null;
   readonly createdAt: number;
@@ -193,7 +210,12 @@ export interface RuleCatalog {
    * resolved). A rule setting's `config` is applied to this one.
    */
   readonly sources: ReadonlyMap<string, unknown>;
-  /** Changes whenever a pack is added, removed or updated. */
+  /**
+   * Ids of the rules Nera shipped: those of packs installed from the npm registry. They run as shipped; any other
+   * rule runs only with content a person approved (`rule-approval.ts`).
+   */
+  readonly shipped: ReadonlySet<string>;
+  /** Changes whenever a pack is added, removed or updated, or comes from another kind of install. */
   readonly digest: string;
   /** Installed packs left out because they failed a check; the others load. */
   readonly skipped: readonly SkippedRulePack[];

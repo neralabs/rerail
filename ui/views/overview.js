@@ -1,7 +1,8 @@
 /**
  * Overview (`#overview`, the default; `#rules` before v8): the banner the repository's first-open state calls for
- * (`first-open.js`), the range's four tiles, then the rules with the most violations logged and the newest sessions,
- * or the empty block that says what to do next.
+ * (`first-open.js`), how many rules wait for a person's approval while any do (with the way to them), the range's four
+ * tiles, then the rules with the most violations logged and the newest sessions, or the empty block that says what to
+ * do next.
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
@@ -11,6 +12,7 @@ import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
+import { APPROVALS_HASH, awaitingCount, awaitingText } from "../approval-model.js";
 
 export const needs = ["rules", "packs", "activity", "recentSessions"];
 
@@ -78,6 +80,16 @@ function renderBanner(root, state) {
   const on = rulesArray().filter(isRunning).length;
   setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey]), () =>
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
+}
+
+/** Rules waiting for approval run nowhere, or run their approved content, until a person reads and approves them. */
+function renderApprovals(root) {
+  const n = awaitingCount(data.approvals);
+  setContent(root, String(n), () => (n === 0 ? null
+    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+      h("b", null, `${awaitingText(n)}.`),
+      h("p", null, "A rule a coding agent writes or edits runs only with content you approved. Until you approve, a new rule runs nowhere and an edited one keeps its approved content."),
+      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": APPROVALS_HASH }, "Read and approve"))))));
 }
 
 /* ---------- tiles ---------- */
@@ -226,6 +238,7 @@ let page = null;
 
 function build() {
   const banner = h("div.banners");
+  const approvals = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
   const empty = h("div.ovempty");
@@ -243,10 +256,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner,
+  const root = h("div.ov", null, banner, approvals,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -270,6 +283,7 @@ export function render(root) {
   const sources = ruleSources();
   const repo = repoName();
   renderBanner(page.banner, state);
+  renderApprovals(page.approvals);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
 

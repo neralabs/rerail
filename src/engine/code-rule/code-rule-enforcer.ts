@@ -56,6 +56,7 @@ import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
+import { checkoutPathBoundary, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
 
@@ -1869,7 +1870,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
     };
-    const steer = buildSteer(steerable, trigger, sourceOf);
+    // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
+    const boundary = checkoutPathBoundary(this.#workspaceRoot);
+    const secret = new Set(violations.flatMap(({ path, mode }) =>
+      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
+    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

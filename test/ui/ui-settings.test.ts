@@ -47,12 +47,17 @@ describe("a repo's rule tag", () => {
 
   it("counts a rule added at two folders once, on only where it is on in both", () => {
     const counts = ruleCountsOf([entry("a"), entry("a", { folder: "web" }), entry("b"), entry("b", { folder: "web", on: false })]);
-    expect(counts).toEqual({ total: 2, on: 1 });
+    expect(counts).toEqual({ total: 2, on: 1, awaiting: 0 });
     expect(repoTag(counts)).toBe("1 rule on");
   });
 
   it("does not count a rule whose options do not apply as on", () => {
-    expect(ruleCountsOf([entry("a"), entry("b", { configError: "bad option" })])).toEqual({ total: 2, on: 1 });
+    expect(ruleCountsOf([entry("a"), entry("b", { configError: "bad option" })])).toEqual({ total: 2, on: 1, awaiting: 0 });
+  });
+
+  it("says how many rules wait for approval, also when none runs yet", () => {
+    expect(repoTag(ruleCountsOf([entry("a")], 2))).toBe("1 rule on · 2 waiting for approval");
+    expect(repoTag(ruleCountsOf([], 1))).toBe("0 rules on · 1 waiting for approval");
   });
 
   it("is unknown until the counts are read", () => {
@@ -65,18 +70,20 @@ describe("a repo's line in the repo choices", () => {
     ({ setUp: true, started: true, checkoutCount: 1, ...over });
 
   it("says set up, then the rules on, then the checkouts when there are several", () => {
-    expect(repoLine(repo(), { total: 12, on: 12 })).toBe("Set up · 12 rules on");
-    expect(repoLine(repo({ checkoutCount: 2 }), { total: 50, on: 50 })).toBe("Set up · 50 rules on · 2 checkouts");
-    expect(repoLine(repo(), { total: 0, on: 0 })).toBe("Set up · No rules added");
+    expect(repoLine(repo(), { total: 12, on: 12, awaiting: 0 })).toBe("Set up · 12 rules on");
+    expect(repoLine(repo({ checkoutCount: 2 }), { total: 50, on: 50, awaiting: 0 })).toBe("Set up · 50 rules on · 2 checkouts");
+    expect(repoLine(repo(), { total: 0, on: 0, awaiting: 0 })).toBe("Set up · No rules added");
+    expect(repoLine(repo(), { total: 3, on: 3, awaiting: 1 })).toBe("Set up · 3 rules on · 1 waiting for approval");
   });
 
   it("says a repo that is not set up runs nothing, whatever it holds", () => {
     expect(repoLine(repo({ setUp: false, started: true }), null)).toBe("Not set up · nothing runs");
-    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2 })).toBe("Not set up · nothing runs · 3 checkouts");
+    expect(repoLine(repo({ setUp: false, checkoutCount: 3 }), { total: 2, on: 2, awaiting: 0 })).toBe("Not set up · nothing runs · 3 checkouts");
   });
 
   it("says Off with the rules it holds while a repo is off, and only On or Off until the counts are read", () => {
-    expect(repoLine(repo({ started: false }), { total: 12, on: 0 })).toBe("Set up · Off · 12 rules");
+    expect(repoLine(repo({ started: false }), { total: 12, on: 0, awaiting: 0 })).toBe("Set up · Off · 12 rules");
+    expect(repoLine(repo({ started: false }), { total: 12, on: 0, awaiting: 2 })).toBe("Set up · Off · 12 rules · 2 waiting for approval");
     expect(repoLine(repo({ started: false, checkoutCount: 2 }), null)).toBe("Set up · Off · 2 checkouts");
     expect(repoLine(repo(), null)).toBe("Set up · On");
   });
@@ -115,7 +122,7 @@ describe("reading every repo's rule counts", () => {
     vi.unstubAllGlobals();
   });
 
-  const rules = (...entries: object[]) => ({ repositoryKey: "k", checkoutPath: null, setUp: true, rules: entries, unavailable: [] });
+  const rules = (...entries: object[]) => ({ repositoryKey: "k", checkoutPath: null, setUp: true, rules: entries, unavailable: [], awaitingApproval: 0 });
 
   it("reads each repo's own count, a set-up repo with no rules included", async () => {
     answers.set("store", { status: 200, etag: "\"s1\"", body: rules(entry("a"), entry("b", { on: false })) });
@@ -123,9 +130,17 @@ describe("reading every repo's rule counts", () => {
 
     expect(await loadRepoRuleCounts(["store", "billing", "docs"])).toBe(true);
 
-    expect(repoRuleCounts("store")).toEqual({ total: 2, on: 1 });
-    expect(repoRuleCounts("billing")).toEqual({ total: 0, on: 0 });
+    expect(repoRuleCounts("store")).toEqual({ total: 2, on: 1, awaiting: 0 });
+    expect(repoRuleCounts("billing")).toEqual({ total: 0, on: 0, awaiting: 0 });
     expect(repoRuleCounts("docs")).toBeNull();
+  });
+
+  it("keeps how many of a repo's rules wait for approval", async () => {
+    answers.set("store", { status: 200, etag: "\"s1\"", body: { ...rules(entry("a")), awaitingApproval: 2 } });
+
+    await loadRepoRuleCounts(["store"]);
+
+    expect(repoRuleCounts("store")).toEqual({ total: 1, on: 1, awaiting: 2 });
   });
 
   it("asks again with the tag it holds and keeps the counts on 304", async () => {
@@ -136,7 +151,7 @@ describe("reading every repo's rule counts", () => {
     expect(await loadRepoRuleCounts(["store"])).toBe(false);
 
     expect(requests.at(-1)).toEqual({ key: "store", ifNoneMatch: "\"s1\"" });
-    expect(repoRuleCounts("store")).toEqual({ total: 1, on: 1 });
+    expect(repoRuleCounts("store")).toEqual({ total: 1, on: 1, awaiting: 0 });
   });
 
   it("drops the count of a repo that is no longer listed or no longer answers", async () => {

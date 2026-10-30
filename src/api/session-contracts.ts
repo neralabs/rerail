@@ -10,6 +10,9 @@ export const sessionResponseSchema = z.object({
   hud: z.object({
     activeRuleCount: z.number().int().nonnegative().nullable(),
     steeringCount: z.number().int().nonnegative().nullable(),
+    // Optional: a footer reads a daemon of another installed version, which may not report it.
+    awaitingApproval: z.number().int().nonnegative().nullable().optional()
+      .describe("How many of the session repository's rules have content waiting for a person's approval; null when unknown."),
   }),
   audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })

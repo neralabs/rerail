@@ -1,4 +1,4 @@
-import { deniedByPathBoundary } from "./path-boundary.js";
+import { checkoutPathBoundary, deniedByPathBoundary, sensitiveByName, type CheckoutPathBoundary } from "./path-boundary.js";
 
 /**
  * What a coding agent gets in place of transcript content Rerail keeps out of a model conversation: a tool's output,
@@ -30,6 +30,8 @@ export const WITHHELD_PAYLOAD: Readonly<Withheld> = {
 /** How deep, and how many strings, a tool input is read: a tool input is small, and a pathological one is not read whole. */
 const INPUT_DEPTH = 8;
 const INPUT_STRINGS = 512;
+/** How many of a tool input's tokens are resolved on disk, in the order the input holds them; the rest by name alone. */
+const INPUT_RESOLUTIONS = 64;
 
 /** Shell, prose and brace-glob delimiters around a token that may be a path. */
 const TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
@@ -37,27 +39,43 @@ const TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
 /** A segment that is no name: `.`, `..` and runs of dots, or a JavaScript spread or prose ellipsis (`...props`). */
 const NOT_A_NAME = /^(?:\.+|\.{3}.*)$/u;
 
-function textNamesDeniedPath(text: string): boolean {
+/** How a token is judged: by `judge` on its own name and, within a checkout when one is known, by where it leads. */
+interface TokenJudge {
+  readonly judge: (path: string) => boolean;
+  readonly boundary: CheckoutPathBoundary | undefined;
+}
+
+function textNamesPath(text: string, { judge, boundary }: TokenJudge): boolean {
   for (const token of text.split(TOKEN_BREAK)) {
     // A bracket class is read as its letters, so `[.]env` is judged as `.env`.
     const path = token.replace(/[[\]]/gu, "");
     if (!/[A-Za-z]/u.test(path)) continue;
     const segments = path.split(/[\\/]+/u).filter(segment => segment !== "" && !NOT_A_NAME.test(segment));
-    if (segments.length > 0 && deniedByPathBoundary(segments.join("/"))) return true;
+    if (segments.length === 0) continue;
+    if (judge(segments.join("/"))) return true;
+    // Where a link leads is judged secret-like or not, never hidden: `node_modules/pkg` leads into `.pnpm/`.
+    const led = boundary?.leadsTo(path);
+    if (led !== undefined && sensitiveByName(led)) return true;
   }
   return false;
 }
 
-function namesDeniedPath(value: unknown, depth: number, budget: { strings: number }): boolean {
+function namesPath(value: unknown, depth: number, budget: { strings: number }, judge: TokenJudge): boolean {
   if (typeof value !== "string" && (typeof value !== "object" || value === null)) return false;
   // What is past the budget was not read, so it is not known to be clean.
   if (depth > INPUT_DEPTH) return true;
   if (typeof value === "string") {
     budget.strings -= 1;
-    return budget.strings < 0 || textNamesDeniedPath(value);
+    return budget.strings < 0 || textNamesPath(value, judge);
   }
-  return (Array.isArray(value) ? value : Object.values(value)).some(item => namesDeniedPath(item, depth + 1, budget));
+  return (Array.isArray(value) ? value : Object.values(value)).some(item => namesPath(item, depth + 1, budget, judge));
 }
+
+const callNames = (input: unknown, judge: (path: string) => boolean, root: string | undefined): boolean =>
+  namesPath(input, 0, { strings: INPUT_STRINGS }, {
+    judge,
+    boundary: root === undefined ? undefined : checkoutPathBoundary(root, INPUT_RESOLUTIONS),
+  });
 
 /**
  * Whether a tool call's input names a path outside the data boundary, wherever the path sits: a shell command, a
@@ -65,11 +83,23 @@ function namesDeniedPath(value: unknown, depth: number, budget: { strings: numbe
  * at braces, so `{.env,.npmrc}` is two; a token is a path when it has a letter in it. A path is judged by its own
  * segments, less those that are no name (`.`, `..`, `...props`), so `~/.ssh/id_rsa`, `./.env`, `[.]env`,
  * `/mnt/secrets/..data/password` and `C:\Users\me\.aws\credentials` are all outside, and `src/.hidden/a.ts` is too.
+ * With the checkout the call ran in (`root`), a path is also outside when it links to a secret-like one
+ * ({@link sensitiveByName}), so `cat docs/a.md` is outside when `docs/a.md` links to `.env`, while a link into a hidden
+ * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; the first `INPUT_RESOLUTIONS` distinct tokens are
+ * resolved, the rest judged by name.
  * It reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger
  * than it reads counts as naming one.
  */
-export function callNamesDeniedPath(input: unknown): boolean {
-  return namesDeniedPath(input, 0, { strings: INPUT_STRINGS });
+export function callNamesDeniedPath(input: unknown, root?: string): boolean {
+  return callNames(input, deniedByPathBoundary, root);
+}
+
+/**
+ * Whether a tool call's input names a secret-like path ({@link sensitiveByName}), read as {@link callNamesDeniedPath}
+ * reads it: a hidden path that is not secret-like by name (`.github/workflows/ci.yml`) does not count.
+ */
+export function callNamesSecretPath(input: unknown, root?: string): boolean {
+  return callNames(input, sensitiveByName, root);
 }
 
 /**
@@ -99,11 +129,14 @@ const AGENT_EVENT_VIEW: ReadonlyMap<string, "whole" | "without output" | "withou
   ["rule-coverage", "whole"],
 ]);
 
-/** A stored transcript event's payload as a coding agent may see it ({@link AGENT_EVENT_VIEW}). */
-export function agentTranscriptPayload(kind: string, payload: unknown): unknown {
+/**
+ * A stored transcript event's payload as a coding agent may see it ({@link AGENT_EVENT_VIEW}); with the checkout the
+ * session ran in (`root`), a call's input is judged by where its paths lead too ({@link callNamesDeniedPath}).
+ */
+export function agentTranscriptPayload(kind: string, payload: unknown, root?: string): unknown {
   const view = AGENT_EVENT_VIEW.get(kind);
   if (view === undefined) return WITHHELD_PAYLOAD;
   if (view === "whole" || typeof payload !== "object" || payload === null || Array.isArray(payload)) return payload;
   if (view === "without output") return "output" in payload ? { ...payload, output: WITHHELD_OUTPUT } : payload;
-  return "input" in payload && callNamesDeniedPath(payload.input) ? { ...payload, input: WITHHELD_INPUT } : payload;
+  return "input" in payload && callNamesDeniedPath(payload.input, root) ? { ...payload, input: WITHHELD_INPUT } : payload;
 }

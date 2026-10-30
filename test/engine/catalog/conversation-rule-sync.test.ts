@@ -79,7 +79,7 @@ describe("LiveConversationRules", () => {
       expect(matched(registry, "Guest checkout remains available.")).toEqual(["shared"]);
 
       // A configuration change that leaves the conversation rules alone changes nothing the session sees.
-      upsertLibraryRule(database, loadRuleCatalog(), MOCK_CODE_RULES[0]!, "code");
+      upsertLibraryRule(database, loadRuleCatalog(), MOCK_CODE_RULES[0]!, "code", { approve: true });
       addAttachment(database, { repositoryKey: key, folder: "", sourceKind: "library_rule", sourceId: MOCK_CODE_RULES[0]!.id });
       expect(sync.refresh()).toBe(false);
       expect(matched(registry, "Sessions add their own rules.")).toEqual(["session:only"]);
@@ -112,7 +112,7 @@ describe("LiveConversationRules", () => {
       expect(sync.refresh()).toBe(true);
       expect(matched(registry, "Guest checkout remains available.", 9)).toEqual([]);
 
-      upsertLibraryRule(database, loadRuleCatalog(), { ...once, action: { content: "edited" } }, "conversation");
+      upsertLibraryRule(database, loadRuleCatalog(), { ...once, action: { content: "edited" } }, "conversation", { approve: true });
       expect(sync.refresh()).toBe(true);
       expect(matched(registry, "Guest checkout remains available.", 10)).toEqual([]);
       // ...but the edit itself did land.
@@ -126,7 +126,7 @@ describe("LiveConversationRules", () => {
     const { root, databasePath, database, key } = await repository([]);
     await mkdir(join(root, "web", "app"), { recursive: true });
     await mkdir(join(root, "web2"), { recursive: true });
-    upsertLibraryRule(database, loadRuleCatalog(), rule("web-only", "Web components stay small."), "conversation");
+    upsertLibraryRule(database, loadRuleCatalog(), rule("web-only", "Web components stay small."), "conversation", { approve: true });
     addAttachment(database, { repositoryKey: key, folder: "web", sourceKind: "library_rule", sourceId: "web-only" });
     const inside = new ConversationRuleRegistry({ modelPath: resolve("model") });
     const sibling = new ConversationRuleRegistry({ modelPath: resolve("model") });

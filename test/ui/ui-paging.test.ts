@@ -45,6 +45,7 @@ afterEach(() => {
 function emptyDaemon(url: URL): unknown {
   if (url.pathname === "/healthz") return { version: "1", pid: 1 };
   if (url.pathname === "/api/repositories") return { repositories: [] };
+  if (url.pathname === "/api/rule-approvals") return { rules: [] };
   if (url.pathname === "/api/repository") return { repository: data.repository, checkout: null };
   if (url.pathname === "/api/repository/rules") return { rules: [], unavailable: [] };
   if (url.pathname === "/api/rule-packs") return { packs: [] };
@@ -67,7 +68,7 @@ describe("a poll", () => {
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-approvals", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
     expect(requested.filter(url => url.pathname === "/api/violations").map(url => url.searchParams.get("ruleId"))).toEqual(["r"]);
   });
 
@@ -85,7 +86,7 @@ describe("a poll", () => {
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/sessions", "/api/sessions/s1", "/api/sessions/s1/events", "/api/violations", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-approvals", "/api/rule-packs", "/api/sessions", "/api/sessions/s1", "/api/sessions/s1/events", "/api/violations", "/healthz"]);
     const violations = requested.find(url => url.pathname === "/api/violations")!;
     expect(violations.searchParams.get("sessionId")).toBe("s1");
     expect(violations.searchParams.get("since")).toBe("0");
@@ -96,7 +97,7 @@ describe("a poll", () => {
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-approvals", "/api/rule-packs", "/healthz"]);
   });
 
   it("reads only the shared reads without a repository, whatever the view", async () => {
@@ -105,7 +106,7 @@ describe("a poll", () => {
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/repositories", "/healthz"]);
+    expect(paths()).toEqual(["/api/repositories", "/api/rule-approvals", "/healthz"]);
   });
 
   it("loads an open rule sheet's violations in range, once, on a view that needs none of its own", async () => {

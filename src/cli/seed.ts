@@ -129,8 +129,9 @@ export function seedRerailDatabase(path: string, options: SeedOptions = {}): See
   const database = openRerailDatabase(path);
   try {
     const ruleCatalog = loadRuleCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code", { now });
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { now, revision: 1 });
+    // Mock rows for development, shipped in this package: approved as written, so they run.
+    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code", { now, approve: true });
+    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { now, revision: 1, approve: true });
   } finally {
     database.$client.close();
   }

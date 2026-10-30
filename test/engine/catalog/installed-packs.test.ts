@@ -9,11 +9,13 @@ import {
 } from "../../../src/engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { approveRule } from "../../../src/engine/catalog/rule-approval.js";
 import { activeCoreVersion, installedPackDirectories, loadRuleCatalog, readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { copyRerailRuleToLibrary, getLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import type { RerailDatabase } from "../../../src/engine/storage/database.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
+import { defaultRerailHome } from "../../../src/engine/storage/rerail-home.js";
 import { installPackDirectory, removeInstalledPacks, uninstallPack } from "../../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../../support/oracles.js";
 import {
@@ -235,7 +237,10 @@ interface TinyRule {
   readonly mode?: RuleMode;
 }
 
-/** Pack `tiny` at `version` with `rules`, each a regex code rule, written to a new temporary directory. */
+/**
+ * Pack `tiny` at `version` with `rules`, each a regex code rule, written to a new temporary directory. Install it with
+ * {@link installTiny}.
+ */
 async function tinyPack(version: string, rules: readonly TinyRule[]): Promise<string> {
   const directory = join(await temporaryDirectory(), `tiny-${version}`);
   mkdirSync(join(directory, "rules"), { recursive: true });
@@ -267,6 +272,12 @@ async function tinyPack(version: string, rules: readonly TinyRule[]): Promise<st
   return directory;
 }
 
+/** Installs pack `tiny` from `directory` as npm installs it from the registry, so its rules run as Nera shipped them. */
+function installTiny(directory: string): void {
+  const manifest: { version: string } = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
+  installPackDirectory(directory, "tiny", defaultRerailHome(), manifest.version);
+}
+
 const TINY_V1: readonly TinyRule[] = [
   { id: "tiny-a", message: "A v1" },
   { id: "tiny-b", message: "B v1" },
@@ -295,7 +306,7 @@ function effectiveRules(db: RerailDatabase, catalog: RuleCatalog) {
   };
 }
 
-/** A repository with pack `tiny` attached, A turned off and B copied into the library, under the installed `tiny`. */
+/** A repository with pack `tiny` attached, A turned off and B copied into the library (approved), under the installed `tiny`. */
 async function configuredRepository(): Promise<{ db: RerailDatabase; copyId: string }> {
   const db = await temporaryDatabase();
   addRepository(db, REPOSITORY);
@@ -303,7 +314,7 @@ async function configuredRepository(): Promise<{ db: RerailDatabase; copyId: str
   setRuleSetting(db, { owner: { kind: "repository", repositoryKey: REPOSITORY }, folder: "", targetKind: "rule", targetId: "tiny-a", on: false, mode: null });
   const catalog = loadRuleCatalog();
   const edited = codeRule("tiny-b", { message: "B, my way" });
-  const copy = copyRerailRuleToLibrary(db, catalog, REPOSITORY, "tiny-b", edited);
+  const copy = copyRerailRuleToLibrary(db, catalog, REPOSITORY, "tiny-b", edited, { approve: true });
   return { db, copyId: copy.rule.document.rule.id };
 }
 
@@ -311,7 +322,7 @@ describe("a repository's rule configuration across installs", () => {
   it("keeps applying across an upgrade and a downgrade of an attached pack", async () => {
     const v1 = await tinyPack("0.1.0", TINY_V1);
     const v2 = await tinyPack("0.2.0", TINY_V2);
-    installPackDirectory(v1, "tiny");
+    installTiny(v1);
     const { db, copyId } = await configuredRepository();
     const copy = getLibraryRule(db, copyId);
     const atV1 = loadRuleCatalog();
@@ -327,7 +338,7 @@ describe("a repository's rule configuration across installs", () => {
       unavailable: [],
     });
 
-    installPackDirectory(v2, "tiny");
+    installTiny(v2);
     const atV2 = loadRuleCatalog();
 
     expect(atV2.packs.get("tiny")?.version).toBe("0.2.0");
@@ -343,7 +354,7 @@ describe("a repository's rule configuration across installs", () => {
     expect(getLibraryRule(db, copyId)).toEqual(copy);
     expect(ruleConfigurationSignature(db, atV2, REPOSITORY, [])).not.toBe(signatureV1);
 
-    installPackDirectory(v1, "tiny");
+    installTiny(v1);
     const backAtV1 = loadRuleCatalog();
 
     expect(backAtV1.packs.get("tiny")?.version).toBe("0.1.0");
@@ -354,7 +365,7 @@ describe("a repository's rule configuration across installs", () => {
 
   it("reports an uninstalled pack's attachment as missing, keeps its settings, and restores them on reinstall", async () => {
     const v1 = await tinyPack("0.1.0", TINY_V1);
-    installPackDirectory(v1, "tiny");
+    installTiny(v1);
     const { db } = await configuredRepository();
     const installed = effectiveRules(db, loadRuleCatalog());
     const settings = db.select().from(ruleSettings).all();
@@ -367,25 +378,27 @@ describe("a repository's rule configuration across installs", () => {
     expect(Object.values(without.rules).map(rule => rule.source)).toEqual(["library_rule"]);
     expect(db.select().from(ruleSettings).all()).toEqual(settings);
 
-    installPackDirectory(v1, "tiny");
+    installTiny(v1);
     expect(effectiveRules(db, loadRuleCatalog())).toEqual(installed);
   });
 
   it("imports a rules dump on a home without the pack, keeping its attachment missing until the pack is installed", async () => {
     const v1 = await tinyPack("0.1.0", TINY_V1);
-    installPackDirectory(v1, "tiny");
-    const { db } = await configuredRepository();
+    installTiny(v1);
+    const { db, copyId } = await configuredRepository();
     const exported = effectiveRules(db, loadRuleCatalog());
     const dump = exportRulesDump(db);
 
     uninstallPack("tiny");
     const imported = await temporaryDatabase();
     importRulesDump(imported, loadRuleCatalog(), dump);
+    // An imported library rule waits for a person's approval, as any rule written outside the dashboard does.
+    approveRule(imported, loadRuleCatalog(), "library", copyId, getLibraryRule(imported, copyId)!.contentHash);
 
     expect(exportRulesDump(imported).repositories).toEqual(dump.repositories);
     expect(effectiveRules(imported, loadRuleCatalog()).unavailable).toEqual([{ sourceKind: "pack", sourceId: "tiny", folder: "", reason: "missing" }]);
 
-    installPackDirectory(v1, "tiny");
+    installTiny(v1);
     expect(effectiveRules(imported, loadRuleCatalog())).toEqual(exported);
   });
 });

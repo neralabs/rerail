@@ -130,7 +130,7 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
     home,
     async fetch(ids, tag) {
       const staging = join(prefix, "staging");
-      mkdirSync(staging, { recursive: true });
+      mkdirSync(staging, { recursive: true, mode: 0o700 });
       await removeStaleStaging(staging, Date.now());
       const run = await mkdtemp(join(staging, "run-"));
       const fetchOne = async (id: string): Promise<FetchedPack> => {

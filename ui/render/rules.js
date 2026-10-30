@@ -1,11 +1,13 @@
 /**
  * A pack page's rule table (`#pack/<id>`, `#created`): the column labels Rule · Violations · On/off, then one row per
- * rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off.
+ * rule, reconciled in place on every poll. A row opens the rule's sheet; its switch turns the rule on or off. A rule
+ * whose edit waits for approval says so, with the way to Waiting for approval.
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
 import { INTERNAL_TESTING, isInternalTesting, isRunning } from "../derive.js";
 import { isMeasured, isAudited, fires, allFires, activityAllOf, rangeLabel, titleOf, panelRuleId } from "../state.js";
+import { APPROVALS_HASH, pendingNote } from "../approval-model.js";
 
 export const CREATE_COMMAND = "/rerail-create";
 
@@ -18,12 +20,13 @@ function createRow(stored) {
   const sw = h("button.sw", { role: "switch", "aria-checked": "false", "data-act": "toggle", "data-i": id });
   const stopped = h("span.badge", { hidden: true }, "Not running");
   const internal = h("span.badge", { hidden: true, title: "Not part of Rerail 0.1.0: conversation rules are in internal testing." }, INTERNAL_TESTING);
+  const pending = h("button.badge.wait", { hidden: true, "data-act": "nav", "data-i": APPROVALS_HASH });
   const folder = h("span.mono", { title: "Added at" });
   const last = h("span");
   const row = h("div.row", { "data-act": "detail", "data-i": id },
     h("div.rmain", null, h("div.rtitle", null, title), h("div.rside", null, count, sw),
-      h("div.rmeta", null, internal, stopped, h("span.mono", null, id), folder, last)));
-  row._r = { title, count, sw, internal, stopped, folder, last };
+      h("div.rmeta", null, internal, stopped, pending, h("span.mono", null, id), folder, last)));
+  row._r = { title, count, sw, internal, stopped, pending, folder, last };
   return row;
 }
 
@@ -53,6 +56,10 @@ function updateRow(row, stored) {
   setAttr(r.sw, "aria-checked", String(stored.enabled));
   setAttr(r.sw, "aria-label", `Turn ${title} ${stored.enabled ? "off" : "on"}`);
   setAttr(r.internal, "hidden", !isInternalTesting(stored));
+  const note = pendingNote(stored.approval);
+  setAttr(r.pending, "hidden", note === null);
+  setText(r.pending, note?.label ?? "");
+  setAttr(r.pending, "title", note === null ? null : `${note.tip} Open Waiting for approval to read it and approve it.`);
   // The folders the rule is added at, when it is not the whole repository.
   setText(r.folder, stored.folders.filter(f => f !== "").join(", "));
   setAttr(r.folder, "hidden", stored.folders.every(f => f === ""));

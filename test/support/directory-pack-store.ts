@@ -1,7 +1,8 @@
 /**
  * A `PackStore` over this repository's `packs/`, for set-up tests that must not reach npm: fetching gives each pack's
- * directory as it is, and installing links it into the test's Rerail home, as `rerail packs add <path>` would. The
- * npm store itself is exercised against the registry by `integration/installed-packs.test.ts`.
+ * directory as it is, and installing `<package>@<version>` links it into the test's Rerail home and records the
+ * version, as an install from the registry would. The npm store itself is exercised against the registry by
+ * `integration/installed-packs.test.ts`.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -54,7 +55,7 @@ export function directoryPackStore(packsRoot: string = repositoryPath("packs"), 
           continue;
         }
         if (versionOf(id!) !== version) throw new Error(`npm error code ETARGET\nnpm error notarget No matching version found for ${spec}.`);
-        installPackDirectory(join(packsRoot, id!), id!, home);
+        installPackDirectory(join(packsRoot, id!), id!, home, version);
       }
     },
     async remove(ids) {

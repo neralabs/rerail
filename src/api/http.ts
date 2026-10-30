@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import {
   codeRuleAstRelationSchema,
@@ -209,6 +210,17 @@ export function accessCapability(token: string): MiddlewareHandler {
     }
     return context.json({ error: "access-required", message: ACCESS_REQUIRED }, 401);
   };
+}
+
+/**
+ * 413 for a request whose body is longer than `maxBytes`, before any route reads it: a declared `Content-Length` is
+ * refused unread, and a chunked body is counted as it arrives and refused once it passes the limit.
+ */
+export function requestBodyLimit(maxBytes: number): MiddlewareHandler {
+  return bodyLimit({
+    maxSize: maxBytes,
+    onError: context => context.json({ error: "request-too-large", message: `The request body is larger than the ${maxBytes} bytes this route takes.` }, 413),
+  });
 }
 
 /**

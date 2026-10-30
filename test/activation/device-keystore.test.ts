@@ -46,3 +46,42 @@ describe("device secret store selection", () => {
     expect((await readdir(join(home, "device-secrets"))).sort()).toEqual(["profile-a", "profile-b"]);
   });
 });
+
+describe("macOS Keychain writes", () => {
+  interface Call { command: string; args: readonly string[]; input: string | undefined }
+
+  function recordingStore(): { store: SystemDeviceSecretStore; calls: Call[] } {
+    const calls: Call[] = [];
+    const store = new SystemDeviceSecretStore("darwin", async (command, args, input) => {
+      calls.push({ command, args, input });
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    return { store, calls };
+  }
+
+  /** The `-w` value `security -i` reads from a command line: inside double quotes, `\x` stands for `x`. */
+  function passwordSecurityReads(line: string): string | undefined {
+    const quoted = /-w "((?:[^"\\]|\\.)*)"\n$/u.exec(line)?.[1];
+    return quoted?.replace(/\\(.)/gu, "$1");
+  }
+
+  it("hands security the secret on stdin, never in an argv another user can list", async () => {
+    const { store, calls } = recordingStore();
+    const secret = JSON.stringify({ schemaVersion: 1, privateKeyPem: "-----BEGIN PRIVATE KEY-----\nMC4C\"\\x\n-----END PRIVATE KEY-----\n" });
+    await store.write("profile-a", secret);
+    expect(calls).toHaveLength(1);
+    const [call] = calls;
+    expect(call!.command).toBe("security");
+    expect(call!.args.some(arg => arg.includes("MC4C"))).toBe(false);
+    expect(passwordSecurityReads(call!.input!)).toBe(secret);
+  });
+
+  it("refuses, without running security, a secret security -i would cut short", async () => {
+    const { store, calls } = recordingStore();
+    await expect(store.write("profile-a", "first line\nsecond line")).rejects.toThrow("macOS Keychain write failed");
+    await expect(store.write("profile-a", "x".repeat(4_000))).rejects.toThrow("macOS Keychain write failed");
+    expect(calls).toEqual([]);
+    await store.write("profile-a", "x".repeat(3_800));
+    expect(passwordSecurityReads(calls[0]!.input!)).toBe("x".repeat(3_800));
+  });
+});

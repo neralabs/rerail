@@ -186,7 +186,7 @@ export function parseArgs(argv: readonly string[]): Options {
 function seedRepository(databasePath: string, project: string, strategy: SteerStrategy): void {
   const database = openRerailDatabase(databasePath);
   try {
-    upsertLibraryRule(database, loadRuleCatalog(), RULE, "code");
+    upsertLibraryRule(database, loadRuleCatalog(), RULE, "code", { approve: true });
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: RULE.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);

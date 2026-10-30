@@ -240,6 +240,7 @@ const configurableBundle: RuleCatalog = {
   ...ruleCatalog,
   documents: new Map([...ruleCatalog.documents, ["configurable", { kind: "code", rule: codeRuleSchema.parse(configurableSource) }]]),
   sources: new Map([...ruleCatalog.sources, ["configurable", configurableSource]]),
+  shipped: new Set([...ruleCatalog.shipped, "configurable"]),
 };
 
 describe("config", () => {
@@ -294,7 +295,7 @@ describe("config", () => {
     expect(configurableAt(db, OTHER_CHECKOUT, "web/a.ts")?.config).toBeNull();
 
     setRuleSetting(db, repositorySetting("", "rule", "mine", { on: null, mode: null, config: { word: "alert" } }));
-    writeLibraryRule(db, configurableBundle, { kind: "code", rule: codeRule("mine") });
+    writeLibraryRule(db, configurableBundle, { kind: "code", rule: codeRule("mine") }, { approve: true });
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "library_rule", sourceId: "mine" });
     const library = loadCheckoutRuleSet(db, configurableBundle, checkout(OTHER_CHECKOUT), RUNNING, []).rulesFor("a.ts").find(rule => rule.document.rule.id === "mine");
     expect(library).toMatchObject({ source: { kind: "library_rule" }, config: null, configError: null });
@@ -361,12 +362,13 @@ describe("ruleConfigurationSignature", () => {
 
   it("reports a pack rule a library rule shadows, and changes when that library rule goes", async () => {
     const db = await workedExample();
-    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared") });
+    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared") }, { approve: true });
     const pack = ruleCatalog.packs.get("lint")!;
     const withShared: RuleCatalog = {
       ...ruleCatalog,
       documents: new Map([...ruleCatalog.documents, ["shared", { kind: "code", rule: codeRule("shared") }]]),
       packs: new Map([["lint", { ...pack, rules: [...pack.rules, { ...pack.rules[0]!, id: "shared" }] }]]),
+      shipped: new Set([...ruleCatalog.shipped, "shared"]),
     };
 
     const rules = loadCheckoutRuleSet(db, withShared, checkout(OTHER_CHECKOUT), RUNNING, []);

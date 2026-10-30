@@ -6,13 +6,13 @@
  * `#overview` (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog),
  * `#packs?review=1` (the review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule,
  * `?outcome=steered|logged` sets its chip), `#sessions` (`?filter=violations|in-progress` sets its chip), `#settings`,
- * and `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers,
- * the CLI and the status line written before v8 keep working: `#rules` is Overview, `#activity` History,
- * `#rule-packs` the catalog and `#rule-packs?review=1` the review.
+ * `#approvals` (the rules waiting for a person's approval), and `#rule/<id>`: a rule's sheet over the current view
+ * (the coding agent's steer links here). Links from steers, the CLI and the status line written before v8 keep
+ * working: `#rules` is Overview, `#activity` History, `#rule-packs` the catalog and `#rule-packs?review=1` the review.
  */
 
 /**
- * @typedef {"overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings"} ViewName
+ * @typedef {"overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "approvals"} ViewName
  * @typedef {"all" | "steered" | "logged"} Outcome   History by rule's chips.
  * @typedef {"all" | "corr" | "open"} SessionFilter History by session's chips: All, With violations, In progress.
  * @typedef {object} Route
@@ -29,7 +29,7 @@
 /** Hashes that name a view by themselves, the legacy ones included. */
 const PLAIN = {
   overview: "overview", rules: "overview",
-  created: "created", create: "create", sessions: "sessions", settings: "settings",
+  created: "created", create: "create", sessions: "sessions", settings: "settings", approvals: "approvals",
   packs: "packs", "rule-packs": "packs",
   history: "history", activity: "history",
 };

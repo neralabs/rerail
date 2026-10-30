@@ -15,7 +15,7 @@ runs:
   using: composite
   steps:
     - name: Set up Node.js v24
-      uses: actions/setup-node@v6
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
       with:
         node-version: "24"
         cache: ${{ inputs.npm-cache == 'true' && 'npm' || '' }}
@@ -28,6 +28,6 @@ runs:
 
     - name: Download the built package
       if: inputs.built == 'true'
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
         name: built

@@ -378,7 +378,7 @@ describe("Rerail daemon", () => {
     const daemon = await start();
     const codeRule = MOCK_CODE_RULES[0]!;
     const conversationRule = MOCK_CONVERSATION_RULES[0]!;
-    expect(await getJson(daemon, "/api/library-rules")).toEqual({ status: 200, body: { rules: [], quarantined: [] } });
+    expect(await getJson(daemon, "/api/library-rules")).toEqual({ status: 200, body: { rules: [], quarantined: [], awaitingApproval: 0 } });
     for (const removed of ["/api/rule-context", "/api/rules"]) expect((await getJson(daemon, removed)).status).toBe(404);
 
     const created = await sendJson(daemon, `/api/library-rules/${codeRule.id}`, "PUT", { kind: "code", rule: codeRule });
@@ -826,6 +826,77 @@ describe("Rerail daemon", () => {
     await response.body?.cancel();
     expect(response.status).toBe(405);
     expect(response.headers.get("Allow")).toBe("POST");
+  });
+
+  /**
+   * A POST to `path` with a `bytes`-byte body: declared in `Content-Length` and never sent, or sent chunked in pieces
+   * with no declared length. Resolves with the answer, which a limit gives before the body is read.
+   */
+  function sizedPost(daemon: RerailDaemon, path: string, bytes: number, sent: "declared" | "chunked"): Promise<{ status: number; body: unknown }> {
+    const { promise, resolve, reject } = Promise.withResolvers<{ status: number; body: unknown }>();
+    let answered = false;
+    const outgoing = httpRequest(new URL(path, daemon.url), {
+      method: "POST",
+      headers: {
+        [ACCESS_HEADER]: ACCESS,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(sent === "declared" ? { "content-length": bytes } : {}),
+      },
+    }, (incoming) => {
+      answered = true;
+      const chunks: Buffer[] = [];
+      incoming.on("data", chunk => chunks.push(chunk));
+      incoming.on("end", () => {
+        const text = Buffer.concat(chunks).toString();
+        const json = incoming.headers["content-type"]?.startsWith("application/json") === true;
+        resolve({ status: incoming.statusCode!, body: json ? JSON.parse(text) : text });
+        outgoing.destroy();
+      });
+      incoming.on("error", reject);
+    });
+    // Writing a body the daemon stopped reading may fail once it has answered; the answer is what is asserted.
+    outgoing.on("error", (error) => {
+      if (!answered) reject(error);
+    });
+    if (sent === "declared") {
+      outgoing.flushHeaders();
+    } else {
+      const piece = Buffer.alloc(1024 * 1024, " ");
+      for (let left = bytes; left > 0; left -= piece.length) outgoing.write(left >= piece.length ? piece : piece.subarray(0, left));
+      outgoing.end();
+    }
+    return promise;
+  }
+
+  it("answers 413 to a body past each route's limit before the route reads it", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const daemon = await start();
+    const apiLimit = 4 * 1024 * 1024;
+    const tooLarge = { status: 413, body: { error: "request-too-large", message: expect.any(String) } };
+    expect(await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit + 1, "declared")).toEqual(tooLarge);
+    expect(await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit + 1, "chunked")).toEqual(tooLarge);
+    expect((await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit, "chunked")).status).not.toBe(413);
+    expect(await sizedPost(daemon, "/mcp", apiLimit + 1, "declared")).toEqual(tooLarge);
+    // The native bridge would refuse this request for its missing bearer token (403) had it read it.
+    expect(await sizedPost(daemon, "/native/session", 256 * 1024 * 1024 + 1, "declared")).toEqual(tooLarge);
+    expect((await getJson(daemon, "/healthz")).status).toBe(200);
+  });
+
+  it("answers an internal error without its text, which the daemon log keeps", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const detail = "cannot read /Users/someone/private/rules.sqlite";
+    const daemon = await start({ codingAgents: async () => { throw new Error(detail); } });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const { status, body } = await getJson<{ error: string; message: string }>(daemon, "/api/coding-agents");
+      expect(status).toBe(500);
+      expect(body.error).toBe("internal");
+      expect(JSON.stringify(body)).not.toContain("/Users/someone");
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining(detail));
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("exposes the same operations as MCP tools over Streamable HTTP", async () => {

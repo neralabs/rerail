@@ -12,9 +12,10 @@ The short version is to type `/rerail-create` in your coding agent (`$rerail-cre
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-Every path ends the same way. The agent tests the draft, reads it back to you, and adds it only after you say yes. The agent
-follows the skill in [`skills/rerail-create/`](../skills/rerail-create/SKILL.md), which ships in the package. Its references are
-the detailed guide to everything on this page.
+Every path ends the same way. The agent tests the draft, reads it back to you, and adds it only after you say yes. The rule
+then waits for your approval: the agent audits what it added, tells you what it found, and you decide. The agent follows the
+skill in [`skills/rerail-create/`](../skills/rerail-create/SKILL.md), which ships in the package. Its references are the
+detailed guide to everything on this page.
 
 ## Which rules are worth having
 
@@ -87,7 +88,9 @@ A draft is the rule plus the cases it must catch and let through:
 
 ```sh
 rerail rules test draft.json            # validate, run the cases, count matches across the repo; writes nothing
-rerail rules add draft.json             # store it in your library and add it, on, to this repo
+rerail rules add draft.json             # store it in your library and add it to this repo; it runs once you approve it
+rerail rules list                       # the rules that wait for your approval
+rerail rules approve <id>               # print the content that waits, then approve it
 rerail rules export --output rules.json # your rules, to read or edit one
 ```
 
@@ -103,6 +106,42 @@ out, without names. See [Reference](reference.md#scan-and-settings-controls) for
 
 [Rule quality](../skills/rerail-create/references/rule-quality.md) has the gates, the five kinds of harmful steering, and
 the fix ladder for a rule that misfires.
+
+## Approving a rule
+
+A rule runs only with content a person approved. Content is the whole rule except its `mode` and `revision`, so changing
+only those needs no approval.
+
+- **Nera's rules need none.** The rules of packs installed from the npm registry (by set-up, or `rerail packs add <id>`) run
+  as shipped.
+- **What you save in the dashboard is approved as you save it.**
+- **Everything else waits for your approval:**
+  - a new rule created by you that `/rerail-create`, `rerail rules add`, `rerail rules import` or a coding agent stores, and
+    every change to such a rule's content;
+  - the rules of a pack added from a folder or a tarball (`rerail packs add <folder>`), and every rule an update of such a
+    pack adds or changes.
+
+While a rule waits:
+
+- **A new rule runs nowhere.** Where it is added, the repository lists it as unavailable, awaiting approval.
+- **A changed rule keeps running the content you approved last.** The change runs once you approve it.
+- **A coding agent's edited copy of a By Rerail rule** is added where the original is, but the original stays on there. The
+  original is switched off only when you approve the copy.
+
+To approve a rule:
+
+- **In the dashboard**, which shows the rules that wait.
+- **With `rerail rules approve <id>`.** It prints the content that waits, and the approved content it replaces, then approves
+  it. It asks nothing itself. Rerail does not pre-approve it in Claude Code, Cursor or Codex, so they ask you before a coding
+  agent runs it. `rerail rules list` shows what waits.
+
+A coding agent cannot approve a rule through Rerail's tools: the MCP tool `rule_approvals_approve` refuses it. Before it asks
+you, `/rerail-create` audits the rule and gives a verdict. It flags text that tells the agent more than the rule, commands or
+URLs, hidden or encoded text, mentions of secrets, anything that weakens other rules or Rerail, and anything unrelated to
+the rule's purpose.
+
+An approval holds for the content you read: when the rule changed after you read it, the approval is refused and you read it
+again. Upgrading to a Rerail with approval approved every rule created by you as it stood, so nothing that ran before stops.
 
 ## Steer or Log
 

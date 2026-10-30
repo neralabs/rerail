@@ -65,8 +65,8 @@ export function conversation(id: string): ConversationRule {
 
 /**
  * A small rule catalog: pack `lint` (`no-console` starts on in Steer, `no-var` starts off in Log), a By Rerail rule
- * `loose`, and a By Rerail conversation rule `talk`. Documents are Block unless the pack says otherwise. The pack
- * honours suppression comments unless `honourSuppressionComments` is false.
+ * `loose`, and a By Rerail conversation rule `talk`, all shipped by Nera, so they need no approval. Documents are Block
+ * unless the pack says otherwise. The pack honours suppression comments unless `honourSuppressionComments` is false.
  */
 export function testBundle(overrides: { noConsoleRevision?: number; honourSuppressionComments?: boolean } = {}): RuleCatalog {
   const documents: RuleDocument[] = [
@@ -94,6 +94,7 @@ export function testBundle(overrides: { noConsoleRevision?: number; honourSuppre
     packs: new Map([[pack.id, pack]]),
     packOf: new Map(pack.rules.map(rule => [rule.id, pack.id])),
     sources: new Map(documents.flatMap(document => document.kind === "code" ? [[document.rule.id, document.rule] as const] : [])),
+    shipped: new Set(documents.map(document => document.rule.id)),
     digest: `test:${overrides.noConsoleRevision ?? 1}`,
     skipped: [],
   };

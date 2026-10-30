@@ -68,6 +68,31 @@ export interface RuleCatalogOptions {
    * inactive. Without the native engine nothing is compiled here; the checkout catalog quarantines such rules.
    */
   readonly compile?: boolean;
+  /**
+   * Whether Nera shipped the pack with this id, so its rules need no approval: one installed from the npm registry
+   * (`registryInstalledPacks`). Without it no pack is, and every pack rule waits for a person's approval.
+   */
+  readonly shipped?: (packId: string) => boolean;
+}
+
+/**
+ * Ids of the packs in `home`'s prefix that npm installed from the registry, by the spec it recorded for each in the
+ * prefix's `package.json`: a version, range or tag. `rerail packs add` records a pack added from a folder or tarball
+ * as `file:…`, and a spec with any protocol (`git+…`, `npm:`, a URL) or a path is not the registry's either. A pack
+ * with no record (copied in by hand) is not among them.
+ */
+export function registryInstalledPacks(home: string = defaultRerailHome()): ReadonlySet<string> {
+  const scope = "@neralabs/rerail-pack-";
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(join(installedPacksPrefix(home), "package.json"), "utf8"));
+  } catch {
+    return new Set();
+  }
+  const dependencies = typeof manifest === "object" && manifest !== null && "dependencies" in manifest ? manifest.dependencies : undefined;
+  if (typeof dependencies !== "object" || dependencies === null) return new Set();
+  return new Set(Object.entries(dependencies).flatMap(([name, spec]) => name.startsWith(scope) && typeof spec === "string"
+    && spec !== "" && !spec.includes(":") && !spec.includes("/") ? [name.slice(scope.length)] : []));
 }
 
 /**
@@ -131,11 +156,14 @@ function skippedPack(path: string, reason: string): SkippedRulePack {
   return { path, packageName, version, reason };
 }
 
-/** Changes whenever a pack is added, removed or changes version, or any of its rule documents or `pack.json` changes. */
-function catalogDigest(packs: readonly LoadedRulePack[]): string {
+/**
+ * Changes whenever a pack is added, removed or changes version, any of its rule documents or `pack.json` changes, or
+ * it becomes or stops being one Nera shipped.
+ */
+function catalogDigest(packs: readonly LoadedRulePack[], shipped: ReadonlySet<string>): string {
   const hash = createHash("sha256");
   for (const { pack, packJson, documents } of packs) {
-    hash.update(`pack\0${pack.id}\0${String(pack.version)}\0${stableJsonText(packJson) ?? ""}\n`);
+    hash.update(`pack\0${pack.id}\0${String(pack.version)}\0${shipped.has(pack.id) ? "shipped" : "local"}\0${stableJsonText(packJson) ?? ""}\n`);
     const digests = documents.map(document => [document.rule.id, ruleDocumentDigest(document)] as const)
       .sort(([left], [right]) => compareDeterministicStrings(left, right));
     for (const [id, digest] of digests) hash.update(`rule\0${id}\0${digest}\n`);
@@ -178,20 +206,23 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
     loaded.push(pack);
   }
   loaded.sort((left, right) => compareRulePacks(left.pack, right.pack));
+  const shippedPacks = new Set(loaded.filter(({ pack }) => options.shipped?.(pack.id) === true).map(({ pack }) => pack.id));
   return {
     documents: new Map(loaded.flatMap(({ documents }) => documents.map(document => [document.rule.id, document] as const))),
     packs: new Map(loaded.map(({ pack }) => [pack.id, pack])),
     packOf: new Map(owner),
     sources: new Map(loaded.flatMap(({ sources }) => [...sources])),
-    digest: catalogDigest(loaded),
+    shipped: new Set(loaded.filter(({ pack }) => shippedPacks.has(pack.id)).flatMap(({ documents }) => documents.map(document => document.rule.id))),
+    digest: catalogDigest(loaded, shippedPacks),
     skipped,
   };
 }
 
 /**
- * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, a pack's
- * files move, or another core version becomes active (its range decides which packs load). It does not see an edit to
- * a rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to reload.
+ * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, records
+ * another spec for one, a pack's files move, or another core version becomes active (its range decides which packs
+ * load). It does not see an edit to a rule document inside a pack linked from a folder (`rerail packs add <folder>`);
+ * touch its `pack.json` to reload.
  */
 function installedStamp(home: string, directories: readonly string[], coreVersion: string): string {
   const stamp = (path: string): string => {
@@ -202,8 +233,9 @@ function installedStamp(home: string, directories: readonly string[], coreVersio
       return "-";
     }
   };
-  const lock = join(installedPacksPrefix(home), "node_modules", ".package-lock.json");
-  return [home, coreVersion, stamp(lock), ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
+  const prefix = installedPacksPrefix(home);
+  const records = [stamp(join(prefix, "package.json")), stamp(join(prefix, "node_modules", ".package-lock.json"))];
+  return [home, coreVersion, ...records, ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
 }
 
 let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undefined;
@@ -219,7 +251,8 @@ export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog
   const coreVersion = activeCoreVersion(home);
   const stamp = installedStamp(home, directories, coreVersion);
   if (installed?.stamp !== stamp) {
-    installed = { stamp, catalog: readRuleCatalog(directories, { coreVersion, compile: true }) };
+    const shipped = registryInstalledPacks(home);
+    installed = { stamp, catalog: readRuleCatalog(directories, { coreVersion, compile: true, shipped: id => shipped.has(id) }) };
   }
   return installed.catalog;
 }

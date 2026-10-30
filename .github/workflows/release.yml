@@ -49,7 +49,7 @@ jobs:
       version: ${{ steps.release-channel.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -85,6 +85,36 @@ jobs:
     needs: metadata
     uses: ./.github/workflows/package.yml
 
+  # The tarball must ship the npm-shrinkwrap.json the tag's package-lock.json gives (docs/release.md, "Shrinkwrap"):
+  # npm installs core's dependencies from it. A missing or stale one fails the release before anything is published.
+  shrinkwrap:
+    name: Packed shrinkwrap
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js v24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Download release tarball
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rerail-package
+          path: release
+
+      - name: Check the tarball's npm-shrinkwrap.json against package-lock.json
+        env:
+          TARBALL: release/${{ needs.package.outputs.tarball }}
+        run: node scripts/release/shrinkwrap-pack.mjs check "$TARBALL"
+
   # The managed install renames a staged version into place, runs the native engine, and starts the
   # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows, Linux
   # and macOS before it ships.
@@ -99,18 +129,18 @@ jobs:
         run: git config --system core.longpaths true
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
       - name: Download release tarball
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
@@ -138,19 +168,19 @@ jobs:
             runner: macos-15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       # Runs the driver only; the guest installs its own Node from nodejs.org.
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
       - name: Download release tarball
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
@@ -162,7 +192,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: install-${{ matrix.runner }}
           path: results
@@ -175,7 +205,7 @@ jobs:
   # example, if this repository is ever made private again), so no release reaches npm without one.
   publish:
     name: Publish to npmjs
-    needs: [metadata, package, windows-install, unix-install]
+    needs: [metadata, package, shrinkwrap, windows-install, unix-install]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -185,7 +215,7 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -196,7 +226,7 @@ jobs:
           npm --version
 
       - name: Download release tarball
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
@@ -219,12 +249,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -259,7 +289,7 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -270,7 +300,7 @@ jobs:
           npm --version
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false

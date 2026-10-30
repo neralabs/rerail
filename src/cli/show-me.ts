@@ -129,7 +129,8 @@ export function startShowMe(repo: string, databasePath = defaultRerailDatabasePa
     if (ruleOwner(database) === "foreign") throw new ShowMeError(`Your library has a rule ${SHOW_ME_RULE_ID} the demo did not add, so the demo left it alone.`);
     removeDemoFile(file);
     const { repositoryKey } = recordCheckout(database, workspace);
-    upsertLibraryRule(database, loadRuleCatalog(), SHOW_ME_RULE, "code");
+    // The demo's rule is content this package ships, written just now, so it runs without waiting for approval.
+    upsertLibraryRule(database, loadRuleCatalog(), SHOW_ME_RULE, "code", { approve: true });
     addAttachment(database, { repositoryKey, sourceKind: "library_rule", sourceId: SHOW_ME_RULE_ID, folder: "" });
   } finally {
     database.$client.close();

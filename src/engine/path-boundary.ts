@@ -1,3 +1,9 @@
+import { realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
+/** The extensions of a data file, as opposed to source: `secrets.json` holds secrets, `secret-manager.ts` handles them. */
+const DATA = "{json,yaml,yml,xml,ini,toml,conf,cfg,properties,txt,csv,env}";
+
 /**
  * File names a checkout commonly keeps secrets under: keys, tokens, passwords, cloud and registry credentials,
  * deployment state. Whatever reads a checkout for a model conversation leaves them out, because what a model is shown
@@ -36,14 +42,31 @@ export const SENSITIVE_FILE_NAMES: readonly string[] = [
   "credentials",
   "credentials.*",
   // `credentials-prod.json`, `credentials_old.yml`: a data file only, so `credentials-helper.ts` is source still.
-  "credentials{-,_}*.{json,yaml,yml,xml,ini,toml,conf,cfg,properties,txt,csv}",
+  `credentials{-,_}*.${DATA}`,
   "secrets.*",
   "*.secret",
   "*.secrets",
+  // `app-secrets.yaml`, `client_secret.json`: a data file only, so `secret-manager.ts` is source still.
+  `*secret*.${DATA}`,
+  "token",
+  `token.${DATA}`,
+  "*.token",
+  ".git-credentials",
+  // Shell and REPL histories (`.bash_history`, `.zsh_history`, `.psql_history`) keep the passwords typed into them.
+  ".*_history",
   "*.tfstate",
   "*.tfstate.*",
   "*.tfvars",
+  "*.tfvars.json",
+  "*.sops.*",
   "service-account*.json",
+  "serviceaccount*.json",
+  // A cloud key file: `gcp-key.json`, `deploy_key.json`; `keyboard.json` and `keymap.json` are not.
+  "*-key.json",
+  "*_key.json",
+  "kubeconfig",
+  "kubeconfig.{json,yaml,yml}",
+  "*.kubeconfig",
   "auth.json",
   "wp-config.php",
   "database.yml",
@@ -77,9 +100,66 @@ export function sensitiveByName(path: string): boolean {
 
 /**
  * Whether a checkout-relative, `/`-separated path is outside the data boundary by its name alone: hidden (a segment
- * starts with `.`) or secret-like ({@link sensitiveByName}). It reads nothing on disk; what Git ignores is the
- * caller's to add.
+ * starts with `.`) or secret-like ({@link sensitiveByName}). It reads nothing on disk ({@link checkoutPathBoundary}
+ * also judges where a link leads); what Git ignores is the caller's to add.
  */
 export function deniedByPathBoundary(path: string): boolean {
   return path.split("/").some(segment => segment !== "" && segment.startsWith(".")) || sensitiveByName(path);
+}
+
+/** How many distinct paths a {@link checkoutPathBoundary} resolves on disk by default; past them a path is judged by name. */
+export const CHECKOUT_PATH_RESOLUTIONS = 256;
+
+/** The path boundary within one checkout: where a path leads on disk, and a judgment by its name and by that. */
+export interface CheckoutPathBoundary {
+  /**
+   * Where `path` leads when a link redirects it: its target's `/`-separated path from the checkout's root, or its
+   * absolute path when it lies outside. Undefined when no link redirects it or it does not resolve.
+   */
+  leadsTo(path: string): string | undefined;
+  /** {@link sensitiveByName}, of the path and of where it leads. */
+  sensitive(path: string): boolean;
+}
+
+function realPath(path: string): string | undefined {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The path boundary for paths relative to (or absolute within) the checkout at `root`, which also judges where a path
+ * leads: a tracked `docs/a.md` linked to `../.env` is judged as `.env` too. A path that does not resolve (it does not
+ * exist, or `root` does not) is judged by its name alone, as is any path past the first `resolutions` distinct ones,
+ * so a boundary makes at most `resolutions + 1` file system calls. Meant to live for one judgment's worth of paths: a
+ * steer, a tool call's input.
+ */
+export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_RESOLUTIONS): CheckoutPathBoundary {
+  const realRoot = realPath(root);
+  const targets = new Map<string, string | undefined>();
+  const leadsTo = (path: string): string | undefined => {
+    if (realRoot === undefined) return undefined;
+    if (targets.has(path)) return targets.get(path);
+    if (targets.size >= resolutions) return undefined;
+    const resolved = realPath(resolve(root, path));
+    let led: string | undefined;
+    // A path no link redirects is judged by its own name, already.
+    if (resolved !== undefined && resolved !== resolve(realRoot, path)) {
+      const inside = relative(realRoot, resolved);
+      const outside = inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
+      led = inside === "" ? undefined : (outside ? resolved : inside).split(sep).join("/");
+    }
+    targets.set(path, led);
+    return led;
+  };
+  return {
+    leadsTo,
+    sensitive: path => {
+      if (sensitiveByName(path)) return true;
+      const led = leadsTo(path);
+      return led !== undefined && sensitiveByName(led);
+    },
+  };
 }

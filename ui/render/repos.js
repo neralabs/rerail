@@ -8,14 +8,14 @@ import { data, runningCount } from "../state.js";
 import { repoLine, repoRuleCounts } from "../repo-rules.js";
 
 /**
- * `{ total, on }` for repository `repo`: its own rules as last read (`loadRepoRuleCounts`), else for the repository
- * the page shows the rules it polled; `null` while unknown.
+ * `{ total, on, awaiting }` for repository `repo`: its own rules as last read (`loadRepoRuleCounts`), else for the
+ * repository the page shows the rules it polled; `null` while unknown.
  */
 export function repoCounts(repo) {
   const read = repoRuleCounts(repo.repositoryKey);
   if (read !== null) return read;
   const shown = data.loaded && repo.repositoryKey === data.repository?.repositoryKey;
-  return shown ? { total: data.rules.size, on: runningCount() } : null;
+  return shown ? { total: data.rules.size, on: runningCount(), awaiting: data.awaitingApproval } : null;
 }
 
 /** The line under the repository's name (`repoLine`), from the counts the page holds for it. */

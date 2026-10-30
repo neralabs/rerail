@@ -103,9 +103,9 @@ person says yes.
    again only with the coding agents already connected, to bring its new commands and skills:
    - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
    - Pi: `packages` entry in `~/.pi/agent/settings.json`
-   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
+   - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), sandbox and permission denies that keep the agent out of Rerail's data (see [What a coding agent can reach](#what-a-coding-agent-can-reach)), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
-   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
+   - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser), and, when the Cursor CLI has written `~/.cursor/cli-config.json`, permission denies for Rerail's data in it
 
    Existing entries from other tools are kept, with their content unchanged,
    but the file is written back as JSON indented by two spaces, so its
@@ -375,6 +375,15 @@ credentials are missing or expired; sign in again with `npm login`, or remove
 the token. Rerail redacts `_authToken` and `_password` values from any npm
 output it prints.
 
+`rerail update` asks the registry for the latest version from an empty temporary
+folder, so a repository's own `.npmrc` cannot choose the registry; your
+`~/.npmrc` still applies. It installs without running any package's install
+scripts, then checks the registry signatures and provenance attestations of
+everything it installed with `npm audit signatures` before running any of it.
+A signature that does not verify stops the update, and nothing is installed. A
+registry that publishes no signing keys, as some private mirrors do, gets a
+warning naming it, and the update goes on.
+
 ## Supported and not supported
 
 Supported:
@@ -416,6 +425,46 @@ Not supported:
 - A coding agent on Windows with Rerail in WSL, or the other way round.
 - Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
+## What a coding agent can reach
+
+Rerail's data sits in two folders: the Rerail home (`~/.rerail`, or `RERAIL_HOME`), with the access token, the
+database of every repository's history and the installed package, and the content cache (`~/.cache/rerail`). A
+coding agent that can run commands runs them as you, so only the agent's own sandbox can keep it out of these. Set-up
+adds denies for both folders where the agent's user settings have a documented place for them. It never turns a
+sandbox on or off, and changes no other sandbox or permission setting. `rerail install --remove` takes out exactly
+what it added; an entry you had already stays. Running set-up again with another `RERAIL_HOME` moves the denies to it.
+
+A Rerail home that is your home folder, or a folder above it, is left out, since denying it would deny every
+project. The cache is still denied.
+
+- **Claude Code** (`~/.claude/settings.json`):
+  - The sandbox's `filesystem.denyRead` and `filesystem.denyWrite` name both folders. `filesystem.allowRead` opens
+    `current` and `versions` in the Rerail home again, so commands can read the installed package but no data.
+  - `permissions.deny` covers the file tools, which the sandbox does not: `Edit(...)` for both folders, `Read(...)`
+    for the whole cache and for the Rerail home's data files (`*.json*`, `*.sqlite*`, `*.log*`, `*.lock`,
+    `access-token*`, `active-profile*`, `device-secrets/`, `profiles/`). The installed package, `bin/` and `packs/`
+    stay readable: `/rerail-create` reads its skill there, and a deny cannot be reopened for one folder.
+  - `sandbox.excludedCommands` holds Rerail's CLI as the Rerail commands run it (`<node> <root>/dist/cli/cli.js *`),
+    the launcher (`~/.rerail/bin/rerail *`) and `rerail *`. These run outside the sandbox and go through your normal
+    permission rules there: what a Rerail command pre-approves runs, and anything else asks you. A Rerail command
+    with a redirect, a `cd` or a `$(...)` stays sandboxed and cannot read Rerail's files.
+  - Hooks, the status line and MCP servers run outside the sandbox, so Rerail's hooks are not affected.
+  - The sandbox is off unless you turn it on (`/sandbox`). With it off, only the file-tool denies apply, and the
+    agent's shell commands can read and change Rerail's data. On native Windows Claude Code has no sandbox, and set-up
+    writes only the file-tool denies.
+- **Codex**: no stable user setting denies a path. Permission profiles can, but they are in beta and replace the
+  `sandbox_mode` settings, so set-up does not write them. The default `workspace-write` sandbox lets commands write
+  only to the workspace and temporary folders and turns network access off, so a sandboxed command cannot change
+  Rerail's data. It can still read it, the access token included.
+- **Cursor**: `sandbox.json` can only add paths, and the editor's agent has no path deny, so the editor gets no
+  entries. By default its sandboxed commands write only to the workspace and temporary folders, and loopback
+  addresses are blocked, but they can read Rerail's data. "Read Access: Workspace" in Cursor's settings makes the
+  agent ask before it reads outside the workspace; it applies to every path, so set-up does not set it. The Cursor
+  CLI (`cursor-agent`) gets `Write(...)` denies for both folders and the same `Read(...)` denies as Claude Code in
+  `~/.cursor/cli-config.json`, for its file tools only. Set-up adds them only when the CLI has written that file, and
+  not on Windows.
+- **OMP and Pi** have no sandbox. Their agents' commands and tools can read and change all of Rerail's data.
+
 ## After setup
 
 The following commands describe the managed installation, from a terminal
@@ -435,6 +484,8 @@ rerail settings --session ID --mode log             # save this workspace's defa
 rerail update check      # is a newer version on the channel?
 rerail update            # install it; `rerail update rollback` undoes it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
+rerail rules list        # your rules, and those waiting for approval
+rerail rules approve ID  # print a waiting rule's content and approve it so it runs
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
 ```
@@ -621,7 +672,9 @@ rerail install --remove
 
 `rerail install --remove` takes out every registration that names this
 installation — harness hooks, the Claude Code status line and commands, the
-Cursor commands, the Codex skill, the OMP extension symlink and MCP entry, and
+sandbox and permission denies set-up added to `~/.claude/settings.json` and
+`~/.cursor/cli-config.json`, the Cursor commands, the Codex skill, the OMP
+extension symlink and MCP entry, and
 the Pi package entry — and leaves other tools' entries alone, writing a
 `<file>.<timestamp>.bak` beside every file it changes. A folder that held only
 what it removed goes too: each `~/.codex/skills/rerail*` (and `~/.codex/skills`

@@ -2,13 +2,15 @@
  * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
  * nothing changed), backing off to 30 s while the daemon is unreachable, and paused while the tab is hidden.
  * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
- * list and the daemon's health, and with a repository in scope its context; beyond that only the needs the
- * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
- * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
+ * list, the daemon's health and the rules waiting for approval, and with a repository in scope its context; beyond
+ * that only the needs the page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from
+ * `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the further
+ * pages the person loaded.
  */
 import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { historyRuleId } from "./history-model.js";
+import { awaitingReferences } from "./approval-model.js";
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -155,6 +157,14 @@ async function loadContext() {
   return true;
 }
 
+/** Every rule waiting for a person's approval: machine-wide, so read on every page, for the count the frame shows. */
+async function loadApprovals() {
+  const body = await fetchFresh("/api/rule-approvals", "approvals");
+  if (body === undefined) return false;
+  data.approvals = body.rules;
+  return true;
+}
+
 /**
  * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
  * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
@@ -195,6 +205,7 @@ export function toStoredRules(entries) {
       config: entry.config,
       configSource: entry.configSource,
       configError: entry.configError ?? null,
+      approval: entry.approval,
       revision: entry.revision,
       addedAt: entry.addedAt ?? null,
       updatedAt: entry.updatedAt ?? null,
@@ -234,6 +245,8 @@ async function loadRules() {
   if (body === undefined) return false;
   data.rules = toStoredRules(body.rules);
   data.attachedPacks = attachedPacksOf(body.rules, body.unavailable);
+  data.awaiting = awaitingReferences(body.unavailable);
+  data.awaitingApproval = body.awaitingApproval;
   return true;
 }
 
@@ -589,7 +602,7 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth()];
+    const shared = [loadRepositories(), loadHealth(), loadApprovals()];
     const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
@@ -662,7 +675,7 @@ export function changeScope(scope) {
   ui.selectedSession = null;
   ui.sessRule = null;
   Object.assign(data, {
-    repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
+    repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), awaiting: [], awaitingApproval: 0, activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
   });

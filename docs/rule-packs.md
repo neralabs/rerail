@@ -25,7 +25,7 @@ Every pack lives under `packs/` in this repository and is published from there (
 | Node.js | framework | 21 (2) | an `@types/node` dependency, or `*.mjs`/`*.cjs` files |
 | React | framework | 18 (14) | a `react` dependency, or `*.jsx` files |
 
-A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`.
+A pack for a project's own conventions is made the same way: a `repository` pack directory with its rule documents in `rules/`, a `pack.json` that lists them with a match definition naming the files or dependencies that identify the project, and a `package.json` named `@neralabs/rerail-pack-<id>` with core's range under `peerDependencies`. It is installed from its folder with `rerail packs add <folder>`, and its rules wait for a person's approval before they run ([Approval](#approval)).
 
 A rule is listed in the mode its own document has (`steer`), unless `pack.json` sets one: a port of a rule upstream only warns about is listed with `"mode": "log"` ([pack format](pack-format.md#packjson)). A ported rule starts on, unless no approved upstream configuration turns it on or upstream deprecates it: such a rule is experimental and is listed with `"on": false`.
 
@@ -42,7 +42,7 @@ Packs are installed into one npm prefix in the Rerail home, `$RERAIL_HOME/packs`
 
 Only one change to the installed packs runs at a time: set-up's install and `rerail packs add` and `remove` hold a lock on the prefix (`$RERAIL_HOME/packs/.lock`), and one that finds it held waits for up to five minutes. A lock whose process has gone is taken over.
 
-A running daemon follows an install or removal, and a change of the active core (`rerail update`), at once: the catalog is read again when they change, and every checkout's rules, and the dashboard's activity, are rebuilt from it. No restart is needed. An edit inside a pack linked from a folder is not seen until that pack's `pack.json` or `package.json` changes.
+A running daemon follows an install or removal, and a change of the active core (`rerail update`), at once: the catalog is read again when they change, and every checkout's rules, and the dashboard's activity, are rebuilt from it. No restart is needed. An edit inside a pack linked from a folder is not seen until that pack's `pack.json` or `package.json` changes, and then waits for approval.
 
 Each pack's core range (`peerDependencies["@neralabs/rerail"]`, `>=0.1.0-0 <0.2.0` today) covers the core versions it was released for. When `rerail update` or `update rollback` makes active a core that an installed pack's range excludes, the command names each such pack with its range: repositories that add it run none of its rules until a version that fits is installed (`rerail packs add <id>`), or the update is rolled back.
 
@@ -56,13 +56,26 @@ Each installed pack is checked on its own when the catalog is read; a pack that 
 
 Why a pack is left out is said for the person who sees it in set-up, `rerail packs list` or `rerail update`: a core older than the pack's range says the pack needs a newer Rerail and that `rerail update` installs it, and a rule the engine refuses says this Rerail cannot run it, before the engine's own words. A published pack passed the engine of the core it was released with, so on a person's machine a refused rule almost always means their Rerail is older than the pack.
 
+## Approval
+
+The rules of a pack installed from the npm registry, by set-up or `rerail packs add <id>` at a version, range or dist-tag,
+are Nera's: they run as shipped and need no approval (`approval.state` `shipped`). A pack added from a folder or a tarball
+is not Nera's to vouch for. Each of its rules waits for a person's approval before it runs anywhere, and so does every rule
+an update of such a pack adds or changes. A changed rule keeps running the content approved before until its change is
+approved. Where a waiting rule is added, the repository reports it as unavailable with the reason `awaiting-approval`.
+
+A person approves in the dashboard or with `rerail rules approve <id>`; `rerail rules list` shows what waits, and a coding
+agent cannot approve. See [Approving a rule](writing-rules.md#approving-a-rule).
+
 ## Where a pack's rules live
 
 An installed pack's files are its rules. Core reads each installed pack's `pack.json` and the rule documents it lists,
-keeps them in memory, and reads them again when the installed packs change; nothing copies them into the database. The database holds what people decide
+keeps them in memory, and reads them again when the installed packs change; installing a pack copies nothing into the database. The database holds what people decide
 about them: which packs and rules each repository adds (attachments), the `on`, `mode`, `suppressions` and option
-values (`config`) set for them (settings), and the rules people write or copy and edit (the library). All of these name
-a pack or rule by its id.
+values (`config`) set for them (settings), the rules people write or copy and edit (the library), and the content a
+person approved of a rule that needs approval (`rule_approvals`). All of these name a pack or rule by its id. An approval
+keeps a copy of the content it approved, which a rule of a pack from a folder or a tarball runs while a change to it
+waits.
 
 The alternative, copying a pack's rules into the database when it is installed and tracking which rows still match
 their pack, was rejected: every case below would need code to reconcile the copies with what is installed, edits and
@@ -71,12 +84,12 @@ each case is "whatever is installed now":
 
 | Case | What happens |
 |---|---|
-| A pack is upgraded | Its new documents apply as soon as it is installed. Settings and attachments keep applying by id. A rule the upgrade adds starts with the pack's `on` and `mode`; a rule it removes disappears, and the settings that name it do nothing. A `config` naming an option the new document no longer declares stops that rule, with the reason, as any such `config` does. |
+| A pack is upgraded | Its new documents apply as soon as it is installed, for a pack from the npm registry. For a pack from a folder or a tarball, each rule the upgrade adds or changes waits for approval, and a changed rule runs its approved content until then ([Approval](#approval)). Settings and attachments keep applying by id. A rule the upgrade adds starts with the pack's `on` and `mode`; a rule it removes disappears, and the settings that name it do nothing. A `config` naming an option the new document no longer declares stops that rule, with the reason, as any such `config` does. |
 | A pack is downgraded | The same as an upgrade. |
 | A pack is uninstalled | It leaves the catalog. Repositories that add it report it as unavailable (`missing`); their settings and library copies stay, and installing the pack again restores the same configuration. |
 | Two versions of a pack are installed | Only one can be: Rerail installs packs into one place (`$RERAIL_HOME/packs`) and reads only `node_modules/@neralabs/rerail-pack-<id>` there. |
 | A pack's core range excludes the running core | The pack is skipped and reported, and repositories that add it report it as `missing`. |
-| A person edits a pack's rule | The rule is copied into the library and the original switched off where the copy is added; the copy keeps the edit through later upgrades, and the original follows them. Option values are changed with `config` settings instead. |
+| A person edits a pack's rule | The rule is copied into the library and added where the original is; the copy keeps the edit through later upgrades, and the original follows them. Saved in the dashboard, the copy is approved as it is saved and the original switched off where the copy is added. A coding agent's copy waits for approval, and the original keeps running until a person approves the copy. Option values are changed with `config` settings instead. |
 | `rerail rules export` / `import` | `rules.json` carries attachments and settings by id, never pack rules. On a machine without the pack, its attachments are `missing` until it is installed. |
 
 ## Format
@@ -155,6 +168,7 @@ It differs from the study in when and how often the agent hears about it:
 The daemon serves the packs, and each call is also an MCP tool:
 - `GET /api/rule-packs` (`rule_packs_list`): every installed pack with its version and rules, and `skipped`: each installed pack left out, with its path, package name, version and why.
 - `GET /api/rule-packs/recommendations` (`rule_packs_recommend`): the installed packs that fit a target checkout (`repository` or `checkout`; an MCP call defaults to the calling agent's checkout), each with its rule count (the rules that start on), reason and folder. When the checkout is not on disk the repository's main checkout is scanned, else its most recently seen one. The scan runs synchronously in the daemon (about 0.3 to 0.5 s on a large repository), so a checkout is rescanned at most once a minute; a pack installed or removed shows at once.
-- `GET /api/rerail-rules` (`rerail_rules_list`) gives each By Rerail rule its `packId`: the pack that lists it, or `null`.
+- `GET /api/rerail-rules` (`rerail_rules_list`) gives each By Rerail rule its `packId`: the pack that lists it, or `null`, and its `approval`: `shipped` for a rule of a pack from the npm registry, else `approved` or `pending`. `awaitingApproval` counts the rules that wait.
+- `GET /api/rule-approvals` (`rule_approvals_list`) lists every rule that waits for approval, a waiting pack rule with its `packId`; `POST /api/rule-approvals` (`rule_approvals_approve`) approves one, for people only ([Reference](reference.md#run)).
 
 Packs are added to a repository with `PUT /api/repository/attachments` (`repository_attachments_set`), in a folder or for the whole repository; the first addition sets the repository up.

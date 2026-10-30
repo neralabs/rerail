@@ -3,6 +3,8 @@ import { LANGUAGE_NOT_SUPPORTED, languageNotSupportedOf } from "../code-rule/cod
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { RULE_KINDS, type RuleKind } from "../storage/schema.js";
 import { ruleDocumentDigest } from "../stable-json.js";
+import { parseConversationRule } from "./rule-schema.js";
+import type { RuleDocument } from "./rule-store.js";
 
 /** Digest of a stored rule body exactly as it sits in the row, valid or not. */
 export function storedDocumentDigest(kind: RuleKind, rule: unknown): string {
@@ -45,6 +47,27 @@ export function unknownRuleKind(kind: string, document: unknown): { kind: RuleKi
   if (isRuleKind(kind)) return undefined;
   const recorded = typeof document === "object" && document !== null && "kind" in document ? document.kind : undefined;
   return { kind: isRuleKind(recorded) ? recorded : "code", reason: `unknown rule kind ${kind}` };
+}
+
+/**
+ * A stored `{ kind, rule }` document of a row of `kind`, read and validated as a write validates it: a code rule by
+ * {@link readStoredCodeRule}, a conversation rule by its schema. Not ok, with the kind it is reported under, for a
+ * kind this build does not know or a body that fails. Never throws.
+ */
+export function readStoredDocument(kind: string, stored: unknown): { ok: true; document: RuleDocument } | { ok: false; kind: RuleKind; reason: string } {
+  const unknown = unknownRuleKind(kind, stored);
+  if (unknown !== undefined) return { ok: false, kind: unknown.kind, reason: unknown.reason };
+  const body = typeof stored === "object" && stored !== null && "rule" in stored ? stored.rule : undefined;
+  if (kind === "code") {
+    const read = readStoredCodeRule(body);
+    return read.ok ? { ok: true, document: { kind: "code", rule: read.rule } } : { ok: false, kind: "code", reason: read.reason };
+  }
+  // `unknownRuleKind` leaves only the two kinds.
+  try {
+    return { ok: true, document: { kind: "conversation", rule: parseConversationRule(body) } };
+  } catch (error) {
+    return { ok: false, kind: "conversation", reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**

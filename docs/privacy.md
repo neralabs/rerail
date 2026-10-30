@@ -56,8 +56,29 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
 
-`~/.rerail/`, the database, the daemon's state and log files and the session ledgers are created readable by your
-user only (directories `0700`, files `0600`).
+Some secrets Rerail can recognize by name are not stored. A file name is secret-like when it matches the list in
+`src/engine/path-boundary.ts` (`SENSITIVE_FILE_NAMES`, such as `.env`, `id_rsa` or `secrets.yaml`) or sits in a
+folder such as `.ssh`. A hidden name alone, such as `.github/`, is not secret-like.
+
+- When a tool call names a secret-like path, such as `cat .env`, its output is not stored. The database records that
+  it was left out and its size in bytes, and the ledger records the sample without its text. The call itself is
+  kept. Rerail recognizes paths by name only: it sees no path a command builds at run time.
+- The text of a secret-like file is not kept as it was before an edit, only its SHA-256 and size. The `rewind` steer
+  strategy therefore leaves such a file as the edit left it, steers with a message, and says why in the log.
+
+`~/.rerail/`, `~/.cache/rerail/`, the databases, the daemon's state, capability and log files and the session ledgers
+are created readable by your user only (directories `0700`, files `0600`). SQLite gives the files it adds beside a
+database the database's own mode. On macOS and Linux, Rerail also repairs these when they are too open, for example
+when an older release or a loose umask made them. When it opens one that your user owns and that allows group or other
+access, it removes that access. This covers the home and cache folders, `rerail.sqlite*` (pre-update copies
+included), `content-v1.sqlite*`, `harness.sqlite*`, `daemon.json`, `access-token` and `daemon.log`. It never follows a
+symlink to do so, and it leaves other users' files alone.
+
+A repository controls what is in its own `.rerail/` folder. Rerail therefore refuses to keep session records through a
+symlink at `.rerail`, `.rerail/sessions`, or any folder or file below them, so a repository cannot send them
+elsewhere. It names the path in the error and in the log, and the coding agent's session goes on without Rerail. The
+`.gitignore` in `.rerail/sessions/` is the exception: when it is a symlink or holds anything but Rerail's `*`, Rerail
+writes its own over it, so a committed `!*` cannot make `git add -A` commit your session records.
 
 ## The local dashboard and API
 
