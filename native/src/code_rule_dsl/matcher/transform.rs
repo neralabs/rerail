@@ -9,7 +9,8 @@ mod string_case;
 use super::exported::exported_span;
 use super::value::Reading;
 use crate::code_rule_dsl::origin::InFile;
-use crate::code_rule_dsl::value::ecma::to_precision;
+use crate::code_rule_dsl::value::Value;
+use crate::code_rule_dsl::value::ecma::{number, to_precision};
 use crate::code_rule_dsl::value::key::number_to_string;
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::source::Content;
@@ -138,6 +139,23 @@ pub(crate) enum Digits {
 }
 
 impl Trans {
+    /// The kinds a transformation is written as: the key of its one entry.
+    pub(crate) const KINDS: [&'static str; 7] = [
+        "replace",
+        "substring",
+        "convert",
+        "line",
+        "lines",
+        "count",
+        "toPrecision",
+    ];
+
+    /// `KINDS` as a message lists them: `replace, substring, ... or toPrecision`.
+    pub(crate) fn kinds_listed() -> String {
+        let (last, rest) = Self::KINDS.split_last().expect("transformation kinds");
+        format!("{} or {last}", rest.join(", "))
+    }
+
     fn source_spec(&self) -> &Source {
         match self {
             Self::Substring { source, .. }
@@ -304,47 +322,22 @@ fn variable_name(variable: &MetaVariable) -> &str {
     }
 }
 
-/// The number an ECMAScript numeric literal's text (or a value's `String(v)`) denotes: decimal,
-/// `0x`, `0o` and `0b` integers, legacy octal, `_` separators and a sign; `None` for any other
-/// text, a BigInt literal included.
+/// The number an ECMAScript numeric literal's text (`value::ecma::number`) or a value's `String(v)`
+/// (signed, `Infinity`, `NaN`) denotes; `None` for any other text, a BigInt included, whose
+/// `toPrecision` throws.
 fn ecma_number(text: &str) -> Option<f64> {
     let text = text.trim();
     let (negative, unsigned) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, text.strip_prefix('+').unwrap_or(text)),
     };
-    let digits = unsigned.replace('_', "");
-    let radix = |prefix: &[&str]| prefix.iter().find_map(|prefix| digits.strip_prefix(prefix));
-    let integer = |body: &str, base: u32| {
-        (!body.is_empty())
-            .then(|| num_bigint::BigUint::parse_bytes(body.as_bytes(), base))
-            .flatten()
-            .and_then(|value| num_traits::ToPrimitive::to_f64(&value))
-    };
-    let magnitude = if let Some(body) = radix(&["0x", "0X"]) {
-        integer(body, 16)?
-    } else if let Some(body) = radix(&["0o", "0O"]) {
-        integer(body, 8)?
-    } else if let Some(body) = radix(&["0b", "0B"]) {
-        integer(body, 2)?
-    } else if digits.len() > 1
-        && digits.starts_with('0')
-        && digits.bytes().all(|byte| (b'0'..=b'7').contains(&byte))
-    {
-        integer(&digits[1..], 8)?
-    } else if digits == "Infinity" {
-        f64::INFINITY
-    } else if digits == "NaN" {
-        f64::NAN
-    } else if !digits.is_empty()
-        && digits
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'.' | b'e' | b'E' | b'+' | b'-'))
-        && digits.bytes().any(|byte| byte.is_ascii_digit())
-    {
-        digits.parse::<f64>().ok()?
-    } else {
-        return None;
+    let magnitude = match unsigned {
+        "Infinity" => f64::INFINITY,
+        "NaN" => f64::NAN,
+        _ => match number(unsigned) {
+            Value::Float(magnitude) => magnitude,
+            _ => return None,
+        },
     };
     Some(if negative { -magnitude } else { magnitude })
 }
@@ -592,7 +585,7 @@ impl Transform {
 
 #[cfg(test)]
 mod tests {
-    use super::replace_bounded;
+    use super::{Trans, replace_bounded};
     use crate::code_rule_dsl::CompiledCodeRuleDsl;
     use crate::code_rule_dsl::test_support::*;
     use regex::Regex;
@@ -1059,6 +1052,23 @@ mod tests {
     }
 
     #[test]
+    fn to_precision_is_refused_outside_ecmascript() {
+        // `toPrecision` lays a number out as ECMAScript does: a Python rule has no such numbers.
+        let error = compile(
+            json!({ "language": "python",
+                "rule": { "kind": "call", "pattern": "f($N)" },
+                "transform": { "P": { "toPrecision": { "source": "$N", "digits": 3 } } } }),
+            json!({ "anchor": "witness.span", "code": "X", "message": "x" }),
+        )
+        .err()
+        .expect("refused");
+        assert_eq!(
+            error.reason,
+            "/clauses/0/forbid/ast/transform/P/toPrecision: `toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; Python numbers have no such layout"
+        );
+    }
+
+    #[test]
     fn count_passes_over_comments() {
         // A `$$$` capture holds the comments between its nodes, as upstream's does; `count` counts
         // what ESLint's max-params and max-statements count, the parameters and statements.
@@ -1266,7 +1276,8 @@ mod tests {
             (
                 json!({ "B": "substring($A, startChar=1)" }),
                 format!(
-                    "{prefix}/B must be an object with one of replace, substring, convert, line, lines, count or toPrecision; the string form is not supported"
+                    "{prefix}/B must be an object with one of {}; the string form is not supported",
+                    Trans::kinds_listed()
                 ),
             ),
             (
@@ -1296,7 +1307,8 @@ mod tests {
             (
                 json!({ "B": { "substring": { "source": "$A" }, "convert": { "source": "$A", "toCase": "lowerCase" } } }),
                 format!(
-                    "{prefix}/B must hold exactly one of replace, substring, convert, line, lines, count or toPrecision"
+                    "{prefix}/B must hold exactly one of {}",
+                    Trans::kinds_listed()
                 ),
             ),
             (

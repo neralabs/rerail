@@ -1,4 +1,7 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
+use crate::code_rule_dsl::language::adapter::{
+    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+};
 use crate::code_rule_dsl::matcher::{
     Digits, Reading, Separator, Source, StringCase, Trans, Transform,
 };
@@ -85,24 +88,13 @@ fn variable(value: Option<&Value>, path: &str) -> Result<MetaVariable> {
 fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Result<Trans> {
     let Value::Object(entry) = value else {
         return Err(invalid(format!(
-            "{path} must be an object with one of replace, substring, convert, line, lines, count or toPrecision; \
-             the string form is not supported"
+            "{path} must be an object with one of {}; the string form is not supported",
+            Trans::kinds_listed()
         )));
     };
-    reject_unknown(
-        entry,
-        &[
-            "replace",
-            "substring",
-            "convert",
-            "line",
-            "lines",
-            "count",
-            "toPrecision",
-            "rewrite",
-        ],
-        path,
-    )?;
+    let mut keys = Trans::KINDS.to_vec();
+    keys.push("rewrite");
+    reject_unknown(entry, &keys, path)?;
     if entry.contains_key("rewrite") {
         return Err(invalid(format!(
             "{path}/rewrite: rewrite is not supported yet; use replace, substring or convert"
@@ -110,7 +102,8 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
     }
     let [(kind, body)] = entry.iter().collect::<Vec<_>>()[..] else {
         return Err(invalid(format!(
-            "{path} must hold exactly one of replace, substring, convert, line, lines, count or toPrecision"
+            "{path} must hold exactly one of {}",
+            Trans::kinds_listed()
         )));
     };
     let at = format!("{path}/{kind}");
@@ -176,6 +169,12 @@ fn trans(value: &Value, path: &str, limits: &Limits, reading: &Reading) -> Resul
         }
         "toPrecision" => {
             reject_unknown(body, &["source", "default", "value", "digits"], &at)?;
+            gate(
+                &at,
+                with_adapter!(reading.family, A => <<A as Adapter>::Value as ValueRules>::feature(
+                    ValueFeature::ToPrecision
+                )),
+            )?;
             let digits = match body.get("digits") {
                 Some(Value::Number(number)) => match number.as_u64() {
                     Some(digits @ 1..=100) => Digits::Fixed(digits as u32),

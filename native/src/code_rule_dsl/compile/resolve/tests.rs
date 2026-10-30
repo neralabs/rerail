@@ -145,7 +145,7 @@ fn resolves_composes_with_constraints_relations_and_counts() {
 }
 
 #[test]
-fn eslint_global_comments_count_only_with_the_opt_in() {
+fn eslint_global_comments_only_switch_listed_globals_off_with_the_opt_in() {
     let source = "/* global jQuery, alert: off */\njQuery(1);\nalert(2);\nconfirm(3);\n";
     let plain = typescript(
         json!({ "rule": { "kind": "identifier", "resolves": { "global": ["alert", "confirm"] } } }),

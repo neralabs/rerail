@@ -5,25 +5,29 @@
 pub(in crate::code_rule_dsl) mod crossfile;
 pub(in crate::code_rule_dsl) mod select_when;
 
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::adapter::strips_bom;
+use crate::code_rule_dsl::model::{FileInput, RegexSource};
 use regex::Regex;
 use std::ops::Range;
 
-/// Where a `file.content` regex starts reading a file of `language`: past a leading byte order
-/// mark in a file ESLint's ports read (ECMAScript and Vue), whose `SourceCode` strips U+FEFF from
-/// the text its rules read; 0 otherwise. Matches are read from there and their offsets moved back
-/// by as much, so spans, columns and fixes stay over the file's own bytes, as every AST
-/// witness's do.
-pub(in crate::code_rule_dsl) fn content_start(
-    source: &str,
-    language: Option<GrammarDialect>,
-) -> usize {
-    let eslint =
-        language.is_some_and(|language| matches!(Family::of(language), Family::Ecma | Family::Vue));
-    if eslint && source.starts_with('\u{feff}') {
-        '\u{feff}'.len_utf8()
-    } else {
-        0
+/// The text a regex clause reading `source` scans in `file`, and the offset of its start in what
+/// it was cut from. A `file.content` regex reads past a leading byte order mark the file's family
+/// strips (`Adapter::STRIPS_BOM`: ESLint's `SourceCode` does); a match's offsets are moved back by
+/// as much, so spans, columns and fixes stay over the file's own bytes, as every AST witness's do.
+pub(in crate::code_rule_dsl) fn regex_haystack<'a>(
+    source: &RegexSource,
+    file: &'a FileInput,
+) -> (&'a str, usize) {
+    match source {
+        RegexSource::Content => {
+            let start = if strips_bom(&file.language) && file.source.starts_with('\u{feff}') {
+                '\u{feff}'.len_utf8()
+            } else {
+                0
+            };
+            (&file.source[start..], start)
+        }
+        RegexSource::Path => (&file.path, 0),
     }
 }
 

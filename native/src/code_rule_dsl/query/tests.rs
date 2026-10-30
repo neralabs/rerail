@@ -159,8 +159,8 @@ fn f841_work_grows_linearly_with_assignments() {
 }
 
 /// ESLint's `SourceCode` strips a leading byte order mark before any rule reads the text: a
-/// `file.content` regex reads an ECMAScript file from past it, its spans still over the file's
-/// bytes. Other families' files keep it.
+/// `file.content` regex reads an ECMAScript or Vue file from past it, its spans still over the
+/// file's bytes. Other families' files keep it.
 #[test]
 fn content_regexes_skip_a_leading_byte_order_mark_where_eslint_strips_it() {
     use crate::code_rule_dsl::test_support::{clause_document, compile_document_with, violation};
@@ -186,6 +186,8 @@ fn content_regexes_skip_a_leading_byte_order_mark_where_eslint_strips_it() {
     assert_eq!(run("\\x{FEFF}", "javascript", "a.js"), Vec::<u64>::new());
     assert_eq!(run("\\x{FEFF}", "typescript", "a.ts"), Vec::<u64>::new());
     assert_eq!(run("\\Ax", "javascript", "a.js"), [3]);
+    assert_eq!(run("\\x{FEFF}", "vue", "a.vue"), Vec::<u64>::new());
+    assert_eq!(run("\\Ax", "vue", "a.vue"), [3]);
     assert_eq!(run("\\x{FEFF}", "python", "a.py"), [0]);
     assert_eq!(run("\\Ax", "python", "a.py"), Vec::<u64>::new());
 }

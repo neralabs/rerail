@@ -17,7 +17,7 @@ use crate::code_rule_dsl::value::{
     BigInt, ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value,
 };
 use ast_grep_core::{Doc, Node};
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{ToPrimitive, Zero};
 
 /// A member read's or call's value, and whether an optional chain short-circuited on the way
 /// (`a?.b.c` with `a` null is `undefined`).
@@ -1296,25 +1296,9 @@ fn to_fixed(number: f64, digits: u32) -> Option<String> {
     }
     let sign = if number < 0.0 { "-" } else { "" };
     let magnitude = number.abs();
-    let bits = magnitude.to_bits();
-    let exponent = ((bits >> 52) & 0x7FF) as i64;
-    let fraction = bits & ((1 << 52) - 1);
-    let (mantissa, exponent) = if exponent == 0 {
-        (fraction, -1074)
-    } else {
-        (fraction | (1 << 52), exponent - 1075)
-    };
-    let scale = BigInt::from(10u32).pow(digits);
-    let mut numerator = BigInt::from(mantissa) * scale;
-    let mut denominator = BigInt::from(1u8);
-    if exponent >= 0 {
-        numerator <<= exponent as usize;
-    } else {
-        denominator <<= (-exponent) as usize;
-    }
-    let two = BigInt::from(2u8);
-    let rounded: BigInt = (&numerator * &two + &denominator) / (&denominator * &two);
-    let mut text = rounded.abs().to_string();
+    let (mantissa, exponent) = exact(magnitude);
+    let n = rounded(&mantissa, exponent, i64::from(digits));
+    let mut text = n.to_string();
     if digits > 0 {
         let width = digits as usize + 1;
         if text.len() < width {

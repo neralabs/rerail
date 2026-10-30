@@ -1386,7 +1386,18 @@ class A {
         "class A { #a; #b; m() { return class B { #a; n() { return this.#a + this.#b; } }; } }\n";
     let rule =
         json!({ "rule": { "kind": "private_property_identifier", "binds": { "used": false } } });
-    assert_eq!(run_typescript(rule, "a.ts", source), ["1:#a"]);
+    assert_eq!(run_typescript(rule.clone(), "a.ts", source), ["1:#a"]);
+    // A private name's escapes are decoded, as espree decodes them: `#\u0061` is `#a`.
+    for source in [
+        "class A { #\\u0061 = 1; m() { return this.#a; } }\n",
+        "class A { #a = 1; m() { return this.#\\u{61}; } }\n",
+    ] {
+        assert_eq!(
+            run_typescript(rule.clone(), "a.ts", source),
+            Vec::<String>::new(),
+            "{source}"
+        );
+    }
 }
 
 #[test]

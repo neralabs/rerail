@@ -394,18 +394,12 @@ impl<'a> Leaf<'a> {
         let mut witnesses = Vec::new();
         match query {
             Query::Regex { regex, source } => {
-                let (text, offset): (&str, usize) = match source {
-                    RegexSource::Content => (
-                        &file.source,
-                        crate::code_rule_dsl::query::content_start(
-                            &file.source,
-                            file_language(file),
-                        ),
-                    ),
-                    RegexSource::Path => (&file.path, 0),
+                // A leading byte order mark ESLint strips is no text a regex reads (`regex_haystack`).
+                let (haystack, offset) = crate::code_rule_dsl::query::regex_haystack(source, file);
+                let text: &str = match source {
+                    RegexSource::Content => &file.source,
+                    RegexSource::Path => &file.path,
                 };
-                // A leading byte order mark ESLint strips is no text a regex reads (`content_start`).
-                let haystack = &text[offset..];
                 let lines = LineTable::new(
                     text,
                     file_language(file)

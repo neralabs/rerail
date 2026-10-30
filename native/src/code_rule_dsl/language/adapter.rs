@@ -87,6 +87,10 @@ pub(crate) trait Adapter: 'static {
     /// Whether an ast query's `file` may ask for declaration files (`declaration`,
     /// typescript-eslint's `.d.ts` predicate). Python has stubs instead and refuses it.
     const DECLARATION_FILES: bool;
+    /// Whether the linter the family's ports follow strips a leading byte order mark from the
+    /// text its rules read (ESLint's `SourceCode`), so a `file.content` regex reads a file from
+    /// past it.
+    const STRIPS_BOM: bool;
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;
@@ -131,6 +135,7 @@ impl Adapter for Python {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -181,6 +186,7 @@ impl Adapter for Ecma {
     const PACKAGE_MANIFESTS: bool = true;
     const JSX_RUNTIMES: bool = true;
     const DECLARATION_FILES: bool = true;
+    const STRIPS_BOM: bool = true;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -253,6 +259,7 @@ impl Adapter for Php {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
+    const STRIPS_BOM: bool = false;
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -305,6 +312,7 @@ impl Adapter for Blade {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
+    const STRIPS_BOM: bool = false;
     type Scope = Php;
     type Value = Php;
     type Arguments = Php;
@@ -391,6 +399,13 @@ pub(crate) fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<
 pub(crate) fn package_manifests(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGE_MANIFESTS))
+}
+
+/// Whether files of the dialect labelled `label` are read past a leading byte order mark
+/// (`Adapter::STRIPS_BOM`); `false` for a label no dialect has.
+pub(crate) fn strips_bom(label: &str) -> bool {
+    super::dialect_by_label(label)
+        .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::STRIPS_BOM))
 }
 
 /// Why a family refuses a DSL feature, with the message the refusal reports.
