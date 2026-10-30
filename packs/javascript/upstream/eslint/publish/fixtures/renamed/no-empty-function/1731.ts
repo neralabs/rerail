@@ -1,0 +1,1 @@
+const G = class {@ncgycweyj() set qbp(value: string) {}}; // allow: functions

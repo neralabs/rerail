@@ -1,0 +1,1 @@
+var c = 1, m = 2; wkb(); var p = 3, s = 4;

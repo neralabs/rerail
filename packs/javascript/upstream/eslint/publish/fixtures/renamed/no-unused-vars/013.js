@@ -1,0 +1,1 @@
+function z(a) {alert(a);}; z();

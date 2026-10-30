@@ -1,0 +1,1 @@
+var P = class {static set qxe(value) {}}; // allow: overrideMethods

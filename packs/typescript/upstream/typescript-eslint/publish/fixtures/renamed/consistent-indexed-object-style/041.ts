@@ -1,0 +1,1 @@
+type O = { [key in Dts]: key | number };

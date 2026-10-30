@@ -1,0 +1,1 @@
+/* globals xig1, xig2 */

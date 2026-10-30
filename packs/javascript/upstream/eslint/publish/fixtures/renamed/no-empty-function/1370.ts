@@ -1,0 +1,1 @@
+const hde = {*fah(pmesz: string) {}}; // allow: asyncFunctions

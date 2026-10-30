@@ -1,0 +1,1 @@
+var K = class {static get xme() {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+var fwh = object[czu];

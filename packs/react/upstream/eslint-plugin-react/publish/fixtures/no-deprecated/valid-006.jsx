@@ -1,0 +1,1 @@
+ReactDOMServer.renderToStaticMarkup(element);

@@ -1,0 +1,1 @@
+const H = class {get lsf(): string {}}; // allow: generatorFunctions

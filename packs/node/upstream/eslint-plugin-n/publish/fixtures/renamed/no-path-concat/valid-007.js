@@ -1,0 +1,1 @@
+var eanaMujr = __filename + ".map";

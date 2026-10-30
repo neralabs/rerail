@@ -1,0 +1,1 @@
+var f = 0, n = 1; ycs(); var t = 2;

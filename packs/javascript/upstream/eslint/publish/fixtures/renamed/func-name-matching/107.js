@@ -1,0 +1,1 @@
+tpj &&= function qeo() {};

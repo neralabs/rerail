@@ -1,0 +1,1 @@
+var q = Number.NaN;

@@ -1,0 +1,1 @@
+function uiqr() { function hgs() {} hgs(); if (bvz) { var a = 1; function hgs() { console.log(a); } hgs (); } }

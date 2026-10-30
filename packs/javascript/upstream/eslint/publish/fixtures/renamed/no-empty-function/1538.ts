@@ -1,0 +1,1 @@
+class B {@xrxjhinuc() get zna(): string {}} // allow: asyncFunctions

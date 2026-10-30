@@ -1,0 +1,1 @@
+class C { [this.eval('foo')] }

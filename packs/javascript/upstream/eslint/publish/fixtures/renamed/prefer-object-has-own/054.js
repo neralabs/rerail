@@ -1,0 +1,1 @@
+class C { #call; dui() { ({}.hasOwnProperty.#call(pcb, umrs)) } }

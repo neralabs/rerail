@@ -1,0 +1,1 @@
+'use strict'; function ihy() { "use strict"; return; }

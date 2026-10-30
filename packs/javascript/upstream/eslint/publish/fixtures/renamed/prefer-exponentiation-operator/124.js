@@ -1,0 +1,1 @@
+a+Math.pow(++b, k)

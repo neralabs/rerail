@@ -1,0 +1,1 @@
+<iframe sandbox="allow-pointer-lock"></iframe>

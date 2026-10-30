@@ -1,0 +1,1 @@
+class S { @wvefkjrzs() async xss(zdmyd: string) {} } // allow: decoratedFunctions

@@ -1,0 +1,1 @@
+class N { @tdxgmdrdv() async udq(zlcmg: string) {} } // allow: setters

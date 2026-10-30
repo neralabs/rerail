@@ -1,0 +1,1 @@
+const diz = aof ? aol: globalThis.Temporal; new diz();

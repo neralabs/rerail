@@ -1,0 +1,1 @@
+<a target={targetYtohx} href="relative/path"></a>

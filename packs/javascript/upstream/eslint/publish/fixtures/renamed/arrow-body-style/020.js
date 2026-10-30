@@ -1,0 +1,1 @@
+for (var v;v = () => { return p };);

@@ -1,0 +1,1 @@
+N = class { static get n() {} set n(vgm) {} };

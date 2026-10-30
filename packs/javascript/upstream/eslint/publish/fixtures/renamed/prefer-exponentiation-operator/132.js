@@ -1,0 +1,1 @@
+a+(Math.pow(++e, h))in k

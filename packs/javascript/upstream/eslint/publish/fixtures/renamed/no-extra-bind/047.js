@@ -1,0 +1,1 @@
+var a = function() { class K { pxkgl = this.r; } }.bind(b)

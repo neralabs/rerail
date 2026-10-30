@@ -1,0 +1,1 @@
+class B extends P { override zeb() {} } // allow: methods

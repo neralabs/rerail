@@ -1,0 +1,1 @@
+const A = class {@bwlffhoxe() static set jcb(value: string) { /* empty */ }};

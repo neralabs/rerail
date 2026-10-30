@@ -1,0 +1,1 @@
+const qny = function (b = 1, h: number, m = 2, p: number) {};

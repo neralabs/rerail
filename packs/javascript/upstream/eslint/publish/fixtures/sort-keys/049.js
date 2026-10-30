@@ -1,0 +1,1 @@
+var obj = {b:3, a:1, _:2} // desc, insensitive

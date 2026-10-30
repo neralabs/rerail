@@ -1,0 +1,1 @@
+var h = 1, r = function(p) { return p ? { z1: 1 } : { z1: 2 }; }; switch (h) {case r(true).z1: break; case r(true, false).z1: break; default: break;}

@@ -1,0 +1,1 @@
+class J extends S { @svdfqyhjf() override vzj() {} } // allow: generatorMethods

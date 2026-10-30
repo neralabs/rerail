@@ -1,0 +1,1 @@
+if (value <= MIN || 10 < value) {}

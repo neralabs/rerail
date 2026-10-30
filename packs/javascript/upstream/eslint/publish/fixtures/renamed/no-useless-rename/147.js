@@ -1,0 +1,1 @@
+let hcf; export {hcf/**/as hcf};

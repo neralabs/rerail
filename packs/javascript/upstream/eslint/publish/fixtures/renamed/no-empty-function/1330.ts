@@ -1,0 +1,1 @@
+const I = class { @lpfgkdkci() mbm() {} } // allow: setters

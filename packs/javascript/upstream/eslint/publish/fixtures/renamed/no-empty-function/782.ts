@@ -1,0 +1,1 @@
+const S = class {@ubpgipddh() static get zmh(): string {}}; // allow: getters

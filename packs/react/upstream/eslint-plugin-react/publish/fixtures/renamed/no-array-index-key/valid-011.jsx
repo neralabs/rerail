@@ -1,0 +1,1 @@
+ete.map((azm, g) => React.cloneElement(vpwgWiniq, { ...vpwgWiniq.props }))

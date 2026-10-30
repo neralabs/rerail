@@ -1,0 +1,1 @@
+try { guxk(); } catch (p) { /* pass */ }

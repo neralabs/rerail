@@ -1,0 +1,1 @@
+Object.defineProperty(gal, { set: (zce) => 1 })

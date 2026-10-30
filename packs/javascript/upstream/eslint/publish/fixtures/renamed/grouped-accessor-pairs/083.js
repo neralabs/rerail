@@ -1,0 +1,1 @@
+class G { get #gwd(){} l(){} set #gwd(qmj){} }

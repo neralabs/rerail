@@ -1,0 +1,1 @@
+const J = class { @rlprkkfkf() vts() {} } // allow: protectedConstructors

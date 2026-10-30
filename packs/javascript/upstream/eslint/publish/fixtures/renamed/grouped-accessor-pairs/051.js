@@ -1,0 +1,1 @@
+({ get b(){}, get t(){}, set t(twd){} })

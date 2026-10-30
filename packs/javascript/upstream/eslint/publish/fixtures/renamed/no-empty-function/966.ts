@@ -1,0 +1,1 @@
+const K = class {@mmelbfuec() get ytz(): string {}}; // allow: getters

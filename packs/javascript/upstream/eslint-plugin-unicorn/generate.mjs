@@ -20,7 +20,9 @@
 // Tests that build a `filename` from process.cwd() (filename-case's `path.join(cwd, …)` and `outsideCwd`) are imported
 // under `withUpstreamTestCwd`, so the expected findings never carry the maintainer's own directory, neither in a fixture path (which
 // must stay short enough to check out on Windows) nor in the case's code; `assertPortableCase` refuses one that would.
-// `source.units` names each file's origin, the rule whose test file it came from; each such file also gets a rename
+// `source.units` names each file's origin, the rule whose test file it came from, and the case's own language where it
+// differs from ESLint's defaults for its extension (`languageOptions`, eslint-expected.mjs `unitLanguage`), which the
+// conformance runner evaluates it under; each such file also gets a rename
 // variant under renamed/ (scripts/pack-data/eslint-expected.mjs `writeRenameVariants`), linted in the original's
 // language and marked `renamedFrom` it.
 // provenance.json and LICENSES.md (scripts/pack-data/provenance.mjs `writeProvenance`) record each kept file as
@@ -36,6 +38,7 @@ import {
   isVariantPath,
   lint,
   pinnedRequire,
+  unitLanguage,
   withOrigins,
   withUpstreamTestCwd,
   writeExpectedFindings,
@@ -220,7 +223,14 @@ for (const { path } of linted.skipped.filter(({ path }) => !isVariantPath(path))
 }
 const unparsed = new Set(linted.skipped.map(({ path }) => path));
 const kept = files.filter(file => !unparsed.has(file)).sort();
-const recorded = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings);
+// Each file's own language, as ESLint linted it, rides along in `source.units` for the conformance runner.
+const fileLanguages = new Map(
+  [...languages].flatMap(([group, members]) => {
+    const { language } = JSON.parse(group);
+    return members.map(member => [member, unitLanguage(member, language ?? undefined)]);
+  }),
+);
+const recorded = withOrigins(fixtures, kept, origins, variants, unparsed, linted.findings, fileLanguages);
 const { files: units, units: origin, findings } = recorded;
 writeExpectedFindings(join(HERE, "fixtures.expected.json"), TOOL, VERSION, { kind: "fixtures", origin: `${CHECKOUT.repository}@${CHECKOUT.commit}`, rules: RULES, files: units, units: origin }, findings);
 // Each kept file is extracted from its rule's test file (`<rule>/…`); its variant is renamed from it.

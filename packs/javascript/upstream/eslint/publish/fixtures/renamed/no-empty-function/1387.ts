@@ -1,0 +1,1 @@
+class I { *lds(mwgpk: string) {} } // allow: protectedConstructors

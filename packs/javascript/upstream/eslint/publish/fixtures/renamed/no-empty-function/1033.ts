@@ -1,0 +1,1 @@
+const A = class extends J {override set kpw(value: string) { ale(); }};

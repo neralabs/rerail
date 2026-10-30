@@ -1,0 +1,1 @@
+const mdn = function*(yebfq: string) {}; // allow: asyncMethods

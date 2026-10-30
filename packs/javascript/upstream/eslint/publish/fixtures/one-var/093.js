@@ -1,0 +1,1 @@
+var a, b; const c = 1; const d = 2; let e; let f; 

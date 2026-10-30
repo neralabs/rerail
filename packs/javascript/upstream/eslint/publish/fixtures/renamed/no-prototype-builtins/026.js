@@ -1,0 +1,1 @@
+dsz['hasOwn' + 'Property']('bar')

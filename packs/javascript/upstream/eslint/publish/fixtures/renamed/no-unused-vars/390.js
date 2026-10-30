@@ -1,0 +1,1 @@
+import { a as cbi } from 'module';

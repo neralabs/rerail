@@ -1,0 +1,1 @@
+class D { static d() {} get g() {} static s() {} }

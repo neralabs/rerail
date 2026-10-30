@@ -1,0 +1,1 @@
+'use strict'; var qry = function() { 'use strict'; return; };

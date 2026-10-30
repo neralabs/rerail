@@ -1,0 +1,1 @@
+class W { static { function zbs() { var k; }  k; } }

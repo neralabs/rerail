@@ -1,0 +1,1 @@
+const B = class {@jtiaeesqj() static get xjc(): string {}}; // allow: protectedConstructors

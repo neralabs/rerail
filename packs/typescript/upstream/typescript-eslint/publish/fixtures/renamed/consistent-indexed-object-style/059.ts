@@ -1,0 +1,1 @@
+function enq(dax: { readonly [key: string]: any }) {}

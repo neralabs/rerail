@@ -1,0 +1,1 @@
+function Did(){}; var h = new Did(); h.did()

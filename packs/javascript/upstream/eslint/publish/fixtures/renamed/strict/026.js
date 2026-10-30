@@ -1,0 +1,1 @@
+var jsq = function() { 'use strict'; function dnu() { return; } dnu(); };

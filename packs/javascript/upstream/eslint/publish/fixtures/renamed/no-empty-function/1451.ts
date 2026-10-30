@@ -1,0 +1,1 @@
+const L = class {static *oqp(qelqh: string) {}}; // allow: getters

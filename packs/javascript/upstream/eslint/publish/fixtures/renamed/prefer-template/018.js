@@ -1,0 +1,1 @@
+var euy = 'bar' + bax + 'qux';

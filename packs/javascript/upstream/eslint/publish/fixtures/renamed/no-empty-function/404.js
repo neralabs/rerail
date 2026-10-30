@@ -1,0 +1,1 @@
+class A {get cnf() {}} // allow: asyncMethods

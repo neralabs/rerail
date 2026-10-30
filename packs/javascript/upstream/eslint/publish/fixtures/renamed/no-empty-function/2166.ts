@@ -1,0 +1,1 @@
+class C { @idjdozqeq() async vfj(wfkhu: string) {} }

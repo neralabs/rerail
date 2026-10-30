@@ -1,0 +1,1 @@
+var a; class C { static { if (foo) { var b; } } }

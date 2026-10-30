@@ -1,0 +1,1 @@
+var ebfbpzk = require('events').EventEmitter, fs = require('fs')

@@ -1,0 +1,1 @@
+var xwe = () => {}; // allow: functions

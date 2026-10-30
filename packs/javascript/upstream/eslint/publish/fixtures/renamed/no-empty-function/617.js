@@ -1,0 +1,1 @@
+const clj = async () => {}; // allow: decoratedFunctions

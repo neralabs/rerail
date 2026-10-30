@@ -1,0 +1,1 @@
+const j = 0, k = 1; xwh(); const w = 2;

@@ -1,0 +1,1 @@
+class C { private nah() {} } // allow: generatorMethods

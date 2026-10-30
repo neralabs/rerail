@@ -1,0 +1,1 @@
+class K extends N { constructor(...kozp){ super(...kozp); } }

@@ -1,0 +1,1 @@
+class A extends B {static override set mrl(value: string) {}} // allow: functions

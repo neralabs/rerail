@@ -1,0 +1,1 @@
+class L {private static *vil() {}} // allow: asyncFunctions

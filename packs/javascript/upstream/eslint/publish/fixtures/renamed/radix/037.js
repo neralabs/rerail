@@ -1,0 +1,1 @@
+class J { #parseInt; kwe() { Number.#parseInt(kwe, 'bar'); } }

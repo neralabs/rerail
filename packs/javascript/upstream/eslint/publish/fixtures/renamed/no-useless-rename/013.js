@@ -1,0 +1,1 @@
+let {pes, ['bar']: {['baz']: yrf}} = udi;

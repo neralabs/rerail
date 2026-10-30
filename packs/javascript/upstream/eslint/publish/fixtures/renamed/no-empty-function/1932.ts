@@ -1,0 +1,1 @@
+class Q { async tvn(ubwho: string) {} } // allow: arrowFunctions

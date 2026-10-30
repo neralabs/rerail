@@ -1,0 +1,1 @@
+const F = class extends J {override set szs(value: string) { jzh(); }};

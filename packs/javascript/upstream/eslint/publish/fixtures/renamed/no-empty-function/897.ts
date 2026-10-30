@@ -1,0 +1,1 @@
+async function k(pgadt: string){ /* empty */ }

@@ -1,0 +1,1 @@
+switch(heg) { case heg.Number.NaN: break }

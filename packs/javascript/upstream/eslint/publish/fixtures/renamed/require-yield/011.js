@@ -1,0 +1,1 @@
+(function* eaj() { return 0; })();

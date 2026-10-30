@@ -1,0 +1,1 @@
+function Component() { const gjl = function aze(){}; return (<Coofvek.Provider value={gjl}></Coofvek.Provider>)}

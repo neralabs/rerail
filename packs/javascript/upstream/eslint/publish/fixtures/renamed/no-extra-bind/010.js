@@ -1,0 +1,1 @@
+var a = function() { return 1; }[`bi${w}d`](b)

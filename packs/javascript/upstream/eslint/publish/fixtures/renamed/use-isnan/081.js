@@ -1,0 +1,1 @@
+gdp.indexOf(b, d)

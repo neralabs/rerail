@@ -1,0 +1,1 @@
+zfc.apply(null, [1, 2]);

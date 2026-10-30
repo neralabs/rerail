@@ -1,0 +1,1 @@
+var logger = DEBUG ? require('dev-logger') : require('logger');

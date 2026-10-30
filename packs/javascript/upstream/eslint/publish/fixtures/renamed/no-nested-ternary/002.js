@@ -1,0 +1,1 @@
+var mnt = abc === abd ? yiv : yivq;

@@ -1,0 +1,1 @@
+l(Math.pow(h, i), lmd)

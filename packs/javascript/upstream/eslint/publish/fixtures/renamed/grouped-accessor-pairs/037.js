@@ -1,0 +1,1 @@
+(class { get a(){} t(){} a(vza){} })

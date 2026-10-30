@@ -1,0 +1,1 @@
+class I {@lbvjxwlkx() static get rzz(): string {}} // allow: asyncFunctions

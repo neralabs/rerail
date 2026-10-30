@@ -1,0 +1,1 @@
+<source onLoad={bar} onError={foo} />

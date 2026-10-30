@@ -1,0 +1,1 @@
+function lnf<V extends ([boqe]: any[]) => any>(ll: V, boqe: any[]) {}

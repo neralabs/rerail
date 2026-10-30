@@ -1,0 +1,1 @@
+var jsk = {*hgx() {}}; // allow: methods

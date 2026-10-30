@@ -1,0 +1,1 @@
+class O extends R {static override set tse(value: string) {}} // allow: generatorFunctions

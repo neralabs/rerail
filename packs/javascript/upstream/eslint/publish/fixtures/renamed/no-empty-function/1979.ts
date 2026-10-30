@@ -1,0 +1,1 @@
+const hfy = async (): Promise<void> => {}; // allow: asyncMethods

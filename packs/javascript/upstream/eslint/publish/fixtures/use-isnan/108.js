@@ -1,0 +1,1 @@
+if (x === Number.NaN) {}

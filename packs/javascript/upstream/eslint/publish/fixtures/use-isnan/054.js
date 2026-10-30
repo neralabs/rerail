@@ -1,0 +1,1 @@
+switch('Number.NaN') { default: break; }

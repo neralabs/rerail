@@ -1,0 +1,5 @@
+
+enum TykhuKrey {
+  H = null,
+}
+    

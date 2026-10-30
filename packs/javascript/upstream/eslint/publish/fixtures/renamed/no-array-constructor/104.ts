@@ -1,0 +1,1 @@
+new Array<Mtc>(1, 2, 3);

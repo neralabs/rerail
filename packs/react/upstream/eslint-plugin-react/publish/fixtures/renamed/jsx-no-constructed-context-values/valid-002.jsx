@@ -1,0 +1,1 @@
+const Component = () => <Coqlddm.Provider value="Some string"></Coqlddm.Provider>

@@ -1,0 +1,1 @@
+type S = { get lohs(): any }

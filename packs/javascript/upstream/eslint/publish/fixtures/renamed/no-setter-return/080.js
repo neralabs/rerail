@@ -1,0 +1,1 @@
+Reflect.defineProperty(klx, 'bar', { set(woc) { var klx = function() { return 1; } } })

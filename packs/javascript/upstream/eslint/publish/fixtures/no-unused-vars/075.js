@@ -1,0 +1,1 @@
+/*eslint custom/use-every-a:1*/ !function() { var a; return 1 }

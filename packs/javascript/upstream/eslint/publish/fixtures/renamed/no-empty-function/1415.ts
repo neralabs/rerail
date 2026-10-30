@@ -1,0 +1,1 @@
+class M {private static *ufe() {}} // allow: protectedConstructors

@@ -1,0 +1,1 @@
+const C = class {get reb(): string {}}; // allow: asyncFunctions

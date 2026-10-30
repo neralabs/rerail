@@ -1,0 +1,1 @@
++(qts ? jgd : tyc?.qts);

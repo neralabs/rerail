@@ -1,0 +1,1 @@
+class G extends T { override wtl() {} } // allow: generatorFunctions

@@ -1,0 +1,1 @@
+a.b.c.mxs.call(a.b.c, 1, 2);

@@ -1,0 +1,1 @@
+await using gpu = object.gpu;

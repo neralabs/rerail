@@ -1,0 +1,1 @@
+const {request} = process.getBuiltinModule('http'); request()

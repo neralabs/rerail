@@ -1,0 +1,1 @@
+function qwx1(...𐌘) { }

@@ -1,0 +1,1 @@
+class Uyy { async rfa() {} } // allow: overrideMethods

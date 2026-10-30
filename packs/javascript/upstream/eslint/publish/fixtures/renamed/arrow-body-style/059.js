@@ -1,0 +1,2 @@
+var xqh = () => {
+return nug;};

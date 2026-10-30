@@ -1,0 +1,1 @@
+a.d(t, w).g.ssh.apply(a.d(t, x).g, [1, 2]);

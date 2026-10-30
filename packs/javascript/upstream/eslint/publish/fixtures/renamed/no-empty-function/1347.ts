@@ -1,0 +1,1 @@
+class H extends U { override ybi() {} } // allow: privateConstructors

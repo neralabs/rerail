@@ -1,0 +1,1 @@
+const N = class {static set ugr(value: string) {}}; // allow: overrideMethods

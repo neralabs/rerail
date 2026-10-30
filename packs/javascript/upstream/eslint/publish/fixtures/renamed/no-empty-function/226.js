@@ -1,0 +1,1 @@
+var aii = function*() {}; // allow: overrideMethods

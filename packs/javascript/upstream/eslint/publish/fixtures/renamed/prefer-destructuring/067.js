@@ -1,0 +1,1 @@
+var jjb = (object.jjb /* comment */);

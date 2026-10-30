@@ -1,0 +1,1 @@
+eya.map((ctl, h) => dvrajUcmcqlj(tyigFcgxs, { ...tyigFcgxs.props }))

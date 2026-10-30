@@ -1,0 +1,1 @@
+const agucr = ['a', 'b', 'c', 'd', 'e']; const [a, _q, c] = agucr;

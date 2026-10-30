@@ -1,0 +1,4 @@
+
+new A();
+class A {}
+      

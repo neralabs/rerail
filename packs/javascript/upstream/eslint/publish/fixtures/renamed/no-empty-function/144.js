@@ -1,0 +1,1 @@
+function xgz() {} // allow: arrowFunctions

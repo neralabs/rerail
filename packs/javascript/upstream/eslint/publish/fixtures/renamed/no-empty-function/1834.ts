@@ -1,0 +1,1 @@
+class F { private constructor() {} } // allow: overrideMethods

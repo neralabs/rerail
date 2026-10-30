@@ -1,0 +1,1 @@
+var getModule = x => require(x);

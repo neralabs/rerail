@@ -1,0 +1,1 @@
+const gahhvwdd = ".SPEC.js";

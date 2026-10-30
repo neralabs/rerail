@@ -1,0 +1,1 @@
+class I { @nhsdhnlup() async osj(qnoxc: string) {} } // allow: protectedConstructors

@@ -1,0 +1,1 @@
+class F {private static *sfw() {}} // allow: generatorMethods

@@ -1,0 +1,1 @@
+var C = class {static set hth(value) {}}; // allow: methods

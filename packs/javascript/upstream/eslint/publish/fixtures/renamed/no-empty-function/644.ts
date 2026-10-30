@@ -1,0 +1,1 @@
+const irc = function*(pmynt: string) { /* empty */ };

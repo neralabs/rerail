@@ -1,0 +1,1 @@
+let juf = 5 as 5;

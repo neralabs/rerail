@@ -1,0 +1,1 @@
+for (var f of o) { fzm.push(() => f); }

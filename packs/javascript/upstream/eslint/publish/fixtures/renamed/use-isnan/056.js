@@ -1,0 +1,1 @@
+switch(bca.Number.NaN) {}

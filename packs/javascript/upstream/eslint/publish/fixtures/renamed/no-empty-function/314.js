@@ -1,0 +1,1 @@
+var nyz = {*ddb() {}}; // allow: generatorFunctions

@@ -1,0 +1,1 @@
+class B { @mmqhulmyy() async qeb(sdqcj: string) {} } // allow: overrideMethods

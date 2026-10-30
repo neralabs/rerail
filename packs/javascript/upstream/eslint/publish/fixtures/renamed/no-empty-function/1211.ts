@@ -1,0 +1,1 @@
+class N { protected sxp() {} } // allow: decoratedFunctions

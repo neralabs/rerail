@@ -1,0 +1,1 @@
+async function q(txkqh: string){} // allow: methods

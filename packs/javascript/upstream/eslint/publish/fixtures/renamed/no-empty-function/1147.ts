@@ -1,0 +1,1 @@
+const osb = {dvj: function*(twkpe: string) {}}; // allow: generatorMethods

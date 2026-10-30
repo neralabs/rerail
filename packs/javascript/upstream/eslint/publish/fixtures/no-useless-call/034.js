@@ -1,0 +1,1 @@
+abc.get("foo", 0).concat.apply(abc . get("foo",  0 ), [1, 2]);

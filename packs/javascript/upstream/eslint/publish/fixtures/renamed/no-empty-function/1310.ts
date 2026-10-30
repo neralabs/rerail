@@ -1,0 +1,1 @@
+const C = class {protected static hyk() {}}; // allow: overrideMethods

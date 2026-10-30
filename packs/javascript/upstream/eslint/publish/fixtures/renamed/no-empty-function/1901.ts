@@ -1,0 +1,1 @@
+const cdz = { async pvoiwh(vbqsu: string) {} } // allow: overrideMethods

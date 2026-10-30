@@ -1,0 +1,1 @@
+const B = class extends O {override set rql(value: string) {}}; // allow: asyncMethods

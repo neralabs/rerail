@@ -1,0 +1,1 @@
+class H {static set uqq(value: string) {}} // allow: privateConstructors

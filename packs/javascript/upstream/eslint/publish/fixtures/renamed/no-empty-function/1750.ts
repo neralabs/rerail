@@ -1,0 +1,1 @@
+const A = class {@cgqgpuqam() static set ezs(value: string) {}}; // allow: constructors

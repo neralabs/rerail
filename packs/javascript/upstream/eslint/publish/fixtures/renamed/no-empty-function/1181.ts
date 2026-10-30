@@ -1,0 +1,1 @@
+class N { rwp(yehbn: string) {} } // allow: privateConstructors

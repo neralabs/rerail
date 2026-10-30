@@ -1,0 +1,1 @@
+aqh.indexOf((1, NaN), 1)

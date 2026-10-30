@@ -1,0 +1,1 @@
+const bj = process.getBuiltinModule(bj);

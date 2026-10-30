@@ -1,0 +1,1 @@
+if (iga) { const Pyrarbnc = 1; new Pyrarbnc(); }

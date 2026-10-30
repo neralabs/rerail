@@ -1,0 +1,1 @@
+class Ozz implements Bwl { ["property"] = () => {} }

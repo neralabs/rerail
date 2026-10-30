@@ -1,0 +1,1 @@
+const L = class {@qsgmoghbk() static get udb(): string {}}; // allow: asyncFunctions

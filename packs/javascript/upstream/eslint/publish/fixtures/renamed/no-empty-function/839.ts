@@ -1,0 +1,1 @@
+const G = class {@qdvztzluj() static set suj(value: string) { oso(); }};

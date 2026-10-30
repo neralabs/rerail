@@ -1,0 +1,1 @@
+const hasVvjvpfuq = (( Object.prototype.hasOwnProperty.call ))(object, proeutzw);

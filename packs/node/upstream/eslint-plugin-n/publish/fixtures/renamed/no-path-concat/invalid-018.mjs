@@ -1,0 +1,1 @@
+var fprzXlq = import.meta.vto + "/foo.js";

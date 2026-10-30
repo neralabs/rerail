@@ -1,0 +1,1 @@
+if(hyw){ module.exports = { hyw: 1};} else { module.exports = {hyw: 2};}

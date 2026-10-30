@@ -1,0 +1,1 @@
+async function oiy() { ((oiy, await qnp?.oiy))(); }

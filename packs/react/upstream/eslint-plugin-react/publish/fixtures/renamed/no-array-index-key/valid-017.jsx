@@ -1,0 +1,1 @@
+ggj.map((exf, j) => <Ggj key={j.exq.toString()} />)

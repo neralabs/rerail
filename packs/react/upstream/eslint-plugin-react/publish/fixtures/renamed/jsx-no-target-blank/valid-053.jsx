@@ -1,0 +1,1 @@
+<a href={href} target={kgUixadeop ? "_blank" : undefined} rel="noopener noreferrer" />

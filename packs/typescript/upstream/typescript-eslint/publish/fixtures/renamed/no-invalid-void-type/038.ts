@@ -1,0 +1,1 @@
+function mrlkgqcfEoigtfj2<V extends void = void>(jxn: V) {}

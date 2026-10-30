@@ -1,0 +1,1 @@
+g ** Math.pow(j, k)

@@ -1,0 +1,1 @@
+async function teu() { rxb + (teu || await vya?.teu); }

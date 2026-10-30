@@ -1,0 +1,1 @@
+class K {@oltmexgez() static get zrs(): string {}} // allow: decoratedFunctions

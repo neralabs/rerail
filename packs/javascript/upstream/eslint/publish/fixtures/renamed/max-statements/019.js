@@ -1,0 +1,1 @@
+function gyp() { let pam; let zvw = class { static { let zugba; let gyty; let gusp; if (wyf) { let wrtlp; let cymom; let nwsn; } } }; }

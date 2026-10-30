@@ -1,0 +1,1 @@
+var hzk = (/* comment */ object).hzk;

@@ -1,0 +1,1 @@
+function Component() { let ksz = {}; return (<Coowwss.Provider value={ksz}></Coowwss.Provider>) }

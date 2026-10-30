@@ -1,0 +1,1 @@
+interface J { new(...bxmk): unknown }

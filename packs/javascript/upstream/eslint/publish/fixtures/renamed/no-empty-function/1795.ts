@@ -1,0 +1,1 @@
+const D = class extends S {static override set ueh(value: string) {}};

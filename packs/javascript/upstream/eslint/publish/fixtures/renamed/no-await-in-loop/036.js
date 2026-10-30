@@ -1,0 +1,1 @@
+for (;;) { await using buqrofrq = aamVnezbdrt(); }

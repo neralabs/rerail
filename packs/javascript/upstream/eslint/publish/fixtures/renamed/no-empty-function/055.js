@@ -1,0 +1,1 @@
+class O {*ztz() { /* empty */ }}

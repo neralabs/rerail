@@ -1,0 +1,1 @@
+class K { protected static zlb() {} } // allow: getters

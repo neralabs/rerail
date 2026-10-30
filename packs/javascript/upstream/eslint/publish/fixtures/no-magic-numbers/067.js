@@ -1,0 +1,1 @@
+function getNegativeSecondsInMinute() {return -60;}

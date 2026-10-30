@@ -1,0 +1,1 @@
+function* wzs() {} // allow: protectedConstructors

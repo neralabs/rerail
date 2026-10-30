@@ -1,0 +1,1 @@
+var { URL } = require('node:url'); var a = new URL(t)

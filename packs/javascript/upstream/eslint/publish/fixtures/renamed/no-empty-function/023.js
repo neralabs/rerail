@@ -1,0 +1,1 @@
+var lck = function*() { /* empty */ };

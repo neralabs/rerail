@@ -1,0 +1,1 @@
+class R {@xrygnwedy() static get yrb(): string {}} // allow: arrowFunctions

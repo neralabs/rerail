@@ -1,0 +1,1 @@
+function dps() { var Symbol = function () {}; Symbol(); }

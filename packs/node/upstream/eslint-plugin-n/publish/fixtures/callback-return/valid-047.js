@@ -1,0 +1,1 @@
+function x(err) { if (err) { setTimeout(callback, 0); } callback(); }

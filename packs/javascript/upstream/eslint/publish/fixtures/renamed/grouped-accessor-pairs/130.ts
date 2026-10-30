@@ -1,0 +1,1 @@
+interface Q { get c(): any, mlhmlzh: true, set m(value: any): void }

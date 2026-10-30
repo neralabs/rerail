@@ -1,0 +1,1 @@
+const D = class {hpk(wxicf: string) {}}; // allow: getters

@@ -1,0 +1,1 @@
+class B {set dud(value) {}} // allow: generatorMethods

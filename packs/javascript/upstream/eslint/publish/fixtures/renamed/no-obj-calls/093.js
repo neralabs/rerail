@@ -1,0 +1,1 @@
+/* global Pyxwfcgk */ new Pyxwfcgk();

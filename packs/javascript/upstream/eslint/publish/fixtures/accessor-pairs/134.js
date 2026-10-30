@@ -1,0 +1,1 @@
+var o = { set [f(abc)](foo) {} };

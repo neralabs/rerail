@@ -1,0 +1,1 @@
+foo.dwj((dwj, g) => <Foo key={`foo-${g}`} />)

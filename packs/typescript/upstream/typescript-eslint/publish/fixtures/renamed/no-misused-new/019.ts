@@ -1,0 +1,5 @@
+
+interface M {
+  constructor(): '';
+}
+      

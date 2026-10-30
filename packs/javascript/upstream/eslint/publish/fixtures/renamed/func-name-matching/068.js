@@ -1,0 +1,1 @@
+txg({ value: function value() {} })

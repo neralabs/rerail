@@ -1,0 +1,1 @@
+buk.hasOwnProperty(ycqi)

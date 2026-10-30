@@ -1,0 +1,1 @@
+class Smb { ahxpiai = 1 }

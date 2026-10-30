@@ -1,0 +1,1 @@
+React.createElement("button", {type: cflrkveqy ? 'button' : 'submit'})

@@ -1,0 +1,1 @@
+class C { set c(vrd) { return 1; } set q(vrd) { return 1; } }

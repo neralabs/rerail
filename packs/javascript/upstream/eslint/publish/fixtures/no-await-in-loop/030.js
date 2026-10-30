@@ -1,0 +1,1 @@
+async function foo() { do { await bar; } while (baz); }

@@ -1,0 +1,1 @@
+const rnl = {*dtc(zmhhj: string) {}}; // allow: protectedConstructors

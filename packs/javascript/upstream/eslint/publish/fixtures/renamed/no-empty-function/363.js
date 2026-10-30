@@ -1,0 +1,1 @@
+var O = class {*uck() {}}; // allow: privateConstructors

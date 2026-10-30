@@ -1,0 +1,1 @@
+React.createElement(GhOxyqzifrw, {children: function* () {}});

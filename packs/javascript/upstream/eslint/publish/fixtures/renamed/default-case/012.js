@@ -1,0 +1,2 @@
+switch (h) { // no default
+ }

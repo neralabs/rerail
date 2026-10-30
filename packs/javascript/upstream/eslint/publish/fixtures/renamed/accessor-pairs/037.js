@@ -1,0 +1,1 @@
+var m = { get b() {}, set f(lev) {}, set b(cxr) {}, get c() {}, get f() {}, set c(cxs) {} };

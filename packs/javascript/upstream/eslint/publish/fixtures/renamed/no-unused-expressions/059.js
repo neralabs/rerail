@@ -1,0 +1,1 @@
+function aus() { var aus = true; "use strict"; }

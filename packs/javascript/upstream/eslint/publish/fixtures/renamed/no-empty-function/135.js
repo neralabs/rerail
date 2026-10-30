@@ -1,0 +1,1 @@
+const bvz = async () => { /* empty */ };

@@ -1,0 +1,1 @@
+window.setInterval(function() { y = 1; }, 100);

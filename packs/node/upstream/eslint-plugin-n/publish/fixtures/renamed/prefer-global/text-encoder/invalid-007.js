@@ -1,0 +1,1 @@
+var { TextEncoder } = process.getBuiltinModule('util'); var d = new TextEncoder(q)

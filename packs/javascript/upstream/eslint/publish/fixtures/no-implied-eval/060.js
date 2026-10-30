@@ -1,0 +1,1 @@
+setTimeout(foobar, 'buzz')

@@ -1,0 +1,1 @@
+function igf(aod: { [key: string]: any; gig: string }) {}

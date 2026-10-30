@@ -1,0 +1,1 @@
+const pmi = async function(xwtty: string) {} // allow: getters

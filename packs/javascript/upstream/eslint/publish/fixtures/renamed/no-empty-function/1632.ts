@@ -1,0 +1,1 @@
+const H = class extends K {static override get pam(): string {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+var a = function() { class C { static dfcug = this.r; } }.bind(b)

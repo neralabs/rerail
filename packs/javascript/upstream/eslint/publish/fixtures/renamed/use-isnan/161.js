@@ -1,0 +1,1 @@
+q === (bbTrlvu(), Number.NaN);

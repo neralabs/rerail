@@ -1,0 +1,1 @@
+new globalThis.Math().cbd;

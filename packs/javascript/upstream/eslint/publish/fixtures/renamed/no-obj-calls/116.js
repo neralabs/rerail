@@ -1,0 +1,1 @@
+var ekd = dze ? dzp: globalThis.JSON; new ekd();

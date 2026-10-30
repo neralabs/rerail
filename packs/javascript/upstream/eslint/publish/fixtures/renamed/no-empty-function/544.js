@@ -1,0 +1,1 @@
+var S = class {constructor() {}}; // allow: asyncMethods

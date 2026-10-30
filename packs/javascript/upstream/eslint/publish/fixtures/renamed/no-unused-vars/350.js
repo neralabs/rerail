@@ -1,0 +1,1 @@
+const [a, ...[c]] = amqjl; alert(c);

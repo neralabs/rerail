@@ -1,0 +1,1 @@
+const D = class {static nfp(qfydz: string) {}}; // allow: overrideMethods

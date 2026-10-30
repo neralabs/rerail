@@ -1,0 +1,1 @@
+(function() { for (let i in [1,2,3]) { i = 0; } })();

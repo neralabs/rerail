@@ -1,0 +1,1 @@
+class T extends W {static override get zxb(): string {}} // allow: protectedConstructors

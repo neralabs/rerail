@@ -1,0 +1,1 @@
+const B = class {*fic(jsquo: string) {}};

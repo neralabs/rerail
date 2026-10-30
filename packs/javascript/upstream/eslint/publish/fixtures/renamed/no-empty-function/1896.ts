@@ -1,0 +1,1 @@
+const nmz = { async oswadg(xmnih: string) {} } // allow: constructors

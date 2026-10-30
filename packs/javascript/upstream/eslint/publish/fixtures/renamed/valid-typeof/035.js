@@ -1,0 +1,1 @@
+typeof gjb !== 'strnig'

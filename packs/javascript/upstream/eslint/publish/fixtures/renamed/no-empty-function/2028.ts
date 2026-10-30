@@ -1,0 +1,1 @@
+const N = class { protected constructor() {} }; // allow: generatorMethods

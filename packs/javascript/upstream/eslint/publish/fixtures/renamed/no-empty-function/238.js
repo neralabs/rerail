@@ -1,0 +1,1 @@
+var jur = {duk: function*() {}}; // allow: protectedConstructors

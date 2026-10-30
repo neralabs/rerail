@@ -1,0 +1,1 @@
+const C = class extends P {override set ser(value: string) { /* empty */ }};

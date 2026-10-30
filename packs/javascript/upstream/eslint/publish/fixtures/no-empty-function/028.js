@@ -1,0 +1,3 @@
+var obj = {foo: function*() {
+    // empty
+}};

@@ -1,0 +1,1 @@
+Reflect.defineProperty(imu, 'bar', { value: function set(val) { return 1; } })

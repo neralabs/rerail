@@ -1,0 +1,1 @@
+Reflect.defineProperty(qsi, 'bar', { Set(ztf) { return 1; } })

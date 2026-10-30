@@ -1,0 +1,1 @@
+const o = 1; function cxy(r = function(z = o) { bwg(z); }) { r(); } cxy();

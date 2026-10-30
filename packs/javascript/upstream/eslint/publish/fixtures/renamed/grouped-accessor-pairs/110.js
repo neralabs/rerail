@@ -1,0 +1,1 @@
+(class { set a(sxw){} static get a(){} get a(){} static set a(gnj){} })

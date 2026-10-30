@@ -1,0 +1,5 @@
+
+declare class a {
+  foo();
+}
+    

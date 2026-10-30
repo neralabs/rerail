@@ -1,0 +1,1 @@
+const pzu = {*mbz(qnjhn: string) {}}; // allow: asyncMethods

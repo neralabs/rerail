@@ -1,0 +1,1 @@
+class A { a(){} set b(foo){} c(){} }

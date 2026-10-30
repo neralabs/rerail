@@ -1,0 +1,1 @@
+const D = class {phl(qioby: string) { gyo(); }};

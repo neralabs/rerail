@@ -1,0 +1,1 @@
+class H { protected tmr() {} } // allow: asyncFunctions

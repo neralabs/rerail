@@ -1,0 +1,1 @@
+for (let u of [1,2,3]) { rjn(u); }

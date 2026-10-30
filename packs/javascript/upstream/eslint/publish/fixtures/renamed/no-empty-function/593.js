@@ -1,0 +1,1 @@
+class Yjt { async spf() {} } // allow: arrowFunctions

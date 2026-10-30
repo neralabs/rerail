@@ -1,0 +1,1 @@
+const F = class {static get rzy(): string {}}; // allow: asyncFunctions

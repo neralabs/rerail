@@ -1,0 +1,1 @@
+var jsu = 1, buc = null, buz = 2;

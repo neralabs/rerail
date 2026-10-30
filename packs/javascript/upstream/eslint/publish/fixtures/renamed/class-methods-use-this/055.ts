@@ -1,0 +1,1 @@
+class D { pxy() {this} eys() {} }

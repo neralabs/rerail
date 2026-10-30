@@ -1,0 +1,1 @@
+const I = class extends M {static override get yap(): string {}}; // allow: protectedConstructors

@@ -1,0 +1,1 @@
+var A = class {static set ipe(value) {}}; // allow: functions

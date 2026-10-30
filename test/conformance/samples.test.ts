@@ -336,7 +336,7 @@ describe("rename variants", () => {
     expect(failingChecks(report)).toEqual(["holds-under-rename"]);
   });
 
-  it("count a variant the renaming took every finding of the rule from, without failing: vacuous, reported", async () => {
+  it("fail a rule the renaming took every finding from: vacuous, blocking", async () => {
     // renamed/asserts.py is asserts.py with its asserts gone: examplelint reports the original, not the variant.
     const fixtures = join(directory, "upstream", "examplelint", "fixtures");
     mkdirSync(join(fixtures, "renamed"), { recursive: true });
@@ -344,9 +344,13 @@ describe("rename variants", () => {
     setUnits({ "asserts.py": { rules: ["EX101"] }, "renamed/asserts.py": { rules: ["EX101"], renamedFrom: "asserts.py" } }, ["renamed/asserts.py"]);
     const report = await runPack(loadPack(directory), { fixtures: true, samples: false, date: DATE });
     expect(fixturesRow(report).renamed).toMatchObject({ units: 1, tp: 0, fp: 0, fn: 0, renamedAway: 1 });
-    expect(reportFailures(report)).toEqual([]);
+    expect(reportFailures(report)).toEqual(["assert-used (fixtures): the renaming took every finding from its 1 rename variant(s) and none survives"]);
     const check = conformanceChecks(conformanceOf(loadPack(directory), report), "assert-used").find(entry => entry.id === "holds-under-rename");
-    expect(check).toEqual({ id: "holds-under-rename", ok: true, vacuous: true, detail: "vacuous: no finding of the rule survives on its 1 rename variant unit(s); 1 variant(s) lost every finding of the rule (renamed away)" });
+    expect(check).toEqual({
+      id: "holds-under-rename",
+      ok: false,
+      detail: "vacuous: no finding of the rule survives on its 1 rename variant unit(s); 1 variant(s) lost every finding of the rule (renamed away): the rule matches the test cases' names, not the construct; fix the rule",
+    });
   });
 });
 

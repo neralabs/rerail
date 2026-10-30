@@ -1,0 +1,1 @@
+const s: bigint = 10n;

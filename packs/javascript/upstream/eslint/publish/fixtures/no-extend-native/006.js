@@ -1,0 +1,1 @@
+Object.defineProperty(x, 'p', {value: 0})

@@ -1,0 +1,1 @@
+const C = class {@kqvflulve() get qut(): string {}}; // allow: asyncFunctions

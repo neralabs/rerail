@@ -1,0 +1,1 @@
+class O { set o(vvc) { return pgq(); } }

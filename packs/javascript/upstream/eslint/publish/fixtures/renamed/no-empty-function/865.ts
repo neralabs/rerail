@@ -1,0 +1,1 @@
+class M { constructor(obmnj: string) { /* empty */ } }

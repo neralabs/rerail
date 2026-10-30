@@ -1,0 +1,1 @@
+var clone = React.cloneElement(element);

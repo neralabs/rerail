@@ -1,0 +1,5 @@
+
+      class D {
+        constructor(kft);
+      }
+          

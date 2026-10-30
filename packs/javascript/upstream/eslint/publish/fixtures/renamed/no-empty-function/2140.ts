@@ -1,0 +1,1 @@
+const N = class {@tsfedmunu() set url(value: string) {}};

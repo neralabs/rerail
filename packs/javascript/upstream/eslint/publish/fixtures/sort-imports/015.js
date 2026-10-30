@@ -1,0 +1,1 @@
+import {B, a, C, d} from 'foo.js';

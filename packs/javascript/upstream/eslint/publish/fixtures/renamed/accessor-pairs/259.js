@@ -1,0 +1,1 @@
+class I { i() {} static get l() {} y() {} }

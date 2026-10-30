@@ -1,0 +1,1 @@
+ymy.kdz = function egn() {};

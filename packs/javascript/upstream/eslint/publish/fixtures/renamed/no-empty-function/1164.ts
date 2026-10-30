@@ -1,0 +1,1 @@
+const yjp = {pgw(ztulr: string) {}}; // allow: constructors

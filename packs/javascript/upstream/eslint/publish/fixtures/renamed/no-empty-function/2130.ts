@@ -1,0 +1,1 @@
+class D {@qgnfhubyw() static set sdk(value: string) {}} // allow: generatorFunctions

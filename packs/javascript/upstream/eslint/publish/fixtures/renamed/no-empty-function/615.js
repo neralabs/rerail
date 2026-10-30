@@ -1,0 +1,1 @@
+const zle = async () => {}; // allow: privateConstructors

@@ -1,0 +1,1 @@
+if (z) for (var h in z) { if (h > 0) console.log(h); } else console.log('whoops');

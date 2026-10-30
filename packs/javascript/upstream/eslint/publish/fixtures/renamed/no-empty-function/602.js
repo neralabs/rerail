@@ -1,0 +1,1 @@
+class Jtd { async atb() {} } // allow: protectedConstructors

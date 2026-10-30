@@ -1,0 +1,1 @@
+function* foo(param: string) {}

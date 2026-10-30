@@ -1,0 +1,1 @@
+if (ckk) { const Intl = 1; new Intl(); }

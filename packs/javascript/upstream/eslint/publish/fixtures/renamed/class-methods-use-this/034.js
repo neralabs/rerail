@@ -1,0 +1,1 @@
+class P { #sjc() { } sjc() {} #qck() {} }

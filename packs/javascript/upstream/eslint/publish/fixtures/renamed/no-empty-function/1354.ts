@@ -1,0 +1,1 @@
+class G extends H { @ucvlmzval() override zim() {} } // allow: generatorMethods

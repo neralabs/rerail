@@ -1,0 +1,4 @@
+
+                function isq() {}
+                Object()
+                

@@ -1,0 +1,1 @@
+async function gur() { for (var k = await ewo; k < l; k++) {  } }

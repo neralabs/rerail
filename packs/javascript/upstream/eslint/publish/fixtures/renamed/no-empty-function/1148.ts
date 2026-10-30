@@ -1,0 +1,1 @@
+const hah = {asi: function*(zzlvj: string) {}}; // allow: getters

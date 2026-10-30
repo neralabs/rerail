@@ -1,0 +1,1 @@
+function yskt({yir: yir}) {}

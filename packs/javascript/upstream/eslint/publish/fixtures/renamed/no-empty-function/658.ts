@@ -1,0 +1,1 @@
+class C { ihq(lxues: string) {} } // allow: methods

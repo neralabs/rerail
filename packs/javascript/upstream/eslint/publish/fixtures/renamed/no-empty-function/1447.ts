@@ -1,0 +1,1 @@
+const G = class {static *twx(urmeg: string) {}}; // allow: functions

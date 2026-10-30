@@ -1,0 +1,1 @@
+var a = 'javascript:void(0);';

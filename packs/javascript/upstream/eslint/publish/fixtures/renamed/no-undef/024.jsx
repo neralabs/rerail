@@ -1,0 +1,1 @@
+var React, Pgu, p=1; React.render(<Pgu pmfe={p} />);

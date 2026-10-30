@@ -1,0 +1,1 @@
+jtl(2 / Number.NaN)

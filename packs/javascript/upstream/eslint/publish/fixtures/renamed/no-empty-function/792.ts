@@ -1,0 +1,1 @@
+class C extends D {static override get msh(): string {}} // allow: getters

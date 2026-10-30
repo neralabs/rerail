@@ -1,0 +1,1 @@
+function* swp() { cpt(); }

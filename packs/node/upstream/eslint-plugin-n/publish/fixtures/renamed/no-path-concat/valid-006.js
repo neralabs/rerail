@@ -1,0 +1,1 @@
+var fqwrHuin = "/foo.js" + __dirname;

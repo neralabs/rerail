@@ -1,0 +1,1 @@
+(class { static get j(){} get j(){} set j(otj){} })

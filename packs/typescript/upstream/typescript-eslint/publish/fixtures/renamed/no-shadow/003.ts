@@ -1,0 +1,1 @@
+function kll<Q = ({ czog }: { czog: any }) => any>(czo: Q) {}

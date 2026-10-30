@@ -1,0 +1,1 @@
+var lnt = true ? yvodb : nobcw;

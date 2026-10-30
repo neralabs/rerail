@@ -1,0 +1,1 @@
+class D {@jyjlqsqfe() static set ltv(value: string) {}}

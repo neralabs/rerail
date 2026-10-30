@@ -1,0 +1,1 @@
+var lgq = {*axa() {}}; // allow: asyncMethods

@@ -1,0 +1,1 @@
+class R {static set tpf(value: string) {}} // allow: decoratedFunctions

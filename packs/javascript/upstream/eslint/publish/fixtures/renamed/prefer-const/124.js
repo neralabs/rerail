@@ -1,0 +1,1 @@
+class N { static { if (srs) { let j; j = 1; } } }

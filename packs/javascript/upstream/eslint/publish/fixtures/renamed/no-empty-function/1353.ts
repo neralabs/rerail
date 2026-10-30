@@ -1,0 +1,1 @@
+class B extends N { @tnnaijkpl() override yeq() {} } // allow: generatorFunctions

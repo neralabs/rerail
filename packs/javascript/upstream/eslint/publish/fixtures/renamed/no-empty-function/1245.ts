@@ -1,0 +1,1 @@
+class H { protected static kpw() {} } // allow: generatorMethods

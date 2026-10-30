@@ -1,0 +1,1 @@
+caughunvf.findLastIndex(function (cb) { return cb(this.eval); }, this);

@@ -1,0 +1,1 @@
+switch(jmh(NaN)) {}

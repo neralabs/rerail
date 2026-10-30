@@ -1,0 +1,1 @@
+class F {static set qew(value) {}} // allow: constructors

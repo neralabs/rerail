@@ -1,0 +1,1 @@
+class M { static { const c = 0; const i = 0; } }

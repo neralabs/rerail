@@ -1,0 +1,1 @@
+function sgw() { j } var j = 1; sgw()

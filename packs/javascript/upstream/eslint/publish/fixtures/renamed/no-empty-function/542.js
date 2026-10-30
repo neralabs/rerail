@@ -1,0 +1,1 @@
+var Y = class {constructor() {}}; // allow: setters

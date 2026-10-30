@@ -1,0 +1,1 @@
+var quv = {clx: function() {}}; // allow: methods

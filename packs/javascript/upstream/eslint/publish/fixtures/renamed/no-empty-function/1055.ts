@@ -1,0 +1,1 @@
+class G extends I { override wbj() { /* empty */ } }

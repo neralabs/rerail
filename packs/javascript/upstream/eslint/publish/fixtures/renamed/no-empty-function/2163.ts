@@ -1,0 +1,1 @@
+const J = class {@kwbtwbskq() static set pyt(value: string) {}}; // allow: privateConstructors

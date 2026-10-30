@@ -1,0 +1,1 @@
+const xwp = function (j: number, k?: number, o: number) {};

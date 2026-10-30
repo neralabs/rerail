@@ -1,0 +1,1 @@
+function *qms() { yield(1) < f }

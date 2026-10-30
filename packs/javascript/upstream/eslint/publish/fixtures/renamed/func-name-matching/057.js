@@ -1,0 +1,1 @@
+Object.defineProperties(iuf, { aux: { value: function aux() {} } })

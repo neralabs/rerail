@@ -1,0 +1,1 @@
+var y1 = { set q(tgz) {} }, y2 = { get q() {} };

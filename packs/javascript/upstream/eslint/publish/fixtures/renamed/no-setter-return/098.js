@@ -1,0 +1,1 @@
+gntkrxp.defineProperty(fet, 'bar', { set(uun) { if (uun) { return 1; } } })

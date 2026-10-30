@@ -1,0 +1,1 @@
+const xxd = async () => {}; // allow: asyncMethods

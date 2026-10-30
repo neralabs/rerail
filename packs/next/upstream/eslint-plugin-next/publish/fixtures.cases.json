@@ -1,0 +1,2850 @@
+{
+ "cases": [
+  {
+   "rule": "google-font-display",
+   "kind": "valid",
+   "index": 0,
+   "path": "google-font-display/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "valid",
+   "index": 1,
+   "path": "google-font-display/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "valid",
+   "index": 2,
+   "path": "google-font-display/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "invalid",
+   "index": 0,
+   "path": "google-font-display/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "invalid",
+   "index": 1,
+   "path": "google-font-display/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "invalid",
+   "index": 2,
+   "path": "google-font-display/invalid-002.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "invalid",
+   "index": 3,
+   "path": "google-font-display/invalid-003.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-preconnect",
+   "kind": "valid",
+   "index": 0,
+   "path": "google-font-preconnect/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-preconnect",
+   "kind": "invalid",
+   "index": 0,
+   "path": "google-font-preconnect/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-preconnect",
+   "kind": "invalid",
+   "index": 1,
+   "path": "google-font-preconnect/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 0,
+   "path": "inline-script-id/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 1,
+   "path": "inline-script-id/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 2,
+   "path": "inline-script-id/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 3,
+   "path": "inline-script-id/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 4,
+   "path": "inline-script-id/valid-004.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 5,
+   "path": "inline-script-id/valid-005.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 6,
+   "path": "inline-script-id/valid-006.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "valid",
+   "index": 7,
+   "path": "inline-script-id/valid-007.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "invalid",
+   "index": 0,
+   "path": "inline-script-id/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "invalid",
+   "index": 1,
+   "path": "inline-script-id/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "invalid",
+   "index": 2,
+   "path": "inline-script-id/invalid-002.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "invalid",
+   "index": 3,
+   "path": "inline-script-id/invalid-003.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "valid",
+   "index": 0,
+   "path": "next-script-for-ga/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "valid",
+   "index": 1,
+   "path": "next-script-for-ga/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "valid",
+   "index": 2,
+   "path": "next-script-for-ga/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "valid",
+   "index": 3,
+   "path": "next-script-for-ga/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "invalid",
+   "index": 0,
+   "path": "next-script-for-ga/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "invalid",
+   "index": 1,
+   "path": "next-script-for-ga/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "invalid",
+   "index": 2,
+   "path": "next-script-for-ga/invalid-002.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "invalid",
+   "index": 3,
+   "path": "next-script-for-ga/invalid-003.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-assign-module-variable",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-assign-module-variable/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-assign-module-variable",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-assign-module-variable/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-async-client-component/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-async-client-component/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-async-client-component/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-async-client-component/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-async-client-component/valid-004.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-async-client-component/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-async-client-component/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-async-client-component/invalid-002.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "invalid",
+   "index": 3,
+   "path": "no-async-client-component/invalid-003.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "invalid",
+   "index": 4,
+   "path": "no-async-client-component/invalid-004.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-before-interactive-script-outside-document/valid-000/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-before-interactive-script-outside-document/valid-001/pages/_document.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-before-interactive-script-outside-document/valid-002/pages/_document.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-before-interactive-script-outside-document/valid-003/Users/user_name/projects/project-name/app/layout.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-before-interactive-script-outside-document/valid-004/C/Users/username/projects/project-name/app/layout.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 5,
+   "path": "no-before-interactive-script-outside-document/valid-005/Users/user_name/projects/project-name/src/app/layout.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "valid",
+   "index": 6,
+   "path": "no-before-interactive-script-outside-document/valid-006/C/Users/username/projects/project-name/src/app/layout.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-before-interactive-script-outside-document/invalid-000/pages/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-before-interactive-script-outside-document/invalid-001/components/outside-known-dirs.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-before-interactive-script-outside-document/invalid-002/Users/user_name/projects/project-name/pages/layout.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "invalid",
+   "index": 3,
+   "path": "no-before-interactive-script-outside-document/invalid-003/C/Users/username/projects/project-name/pages/layout.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "invalid",
+   "index": 4,
+   "path": "no-before-interactive-script-outside-document/invalid-004/Users/user_name/projects/project-name/src/pages/layout.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "invalid",
+   "index": 5,
+   "path": "no-before-interactive-script-outside-document/invalid-005/C/Users/username/projects/project-name/src/pages/layout.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-css-tags/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-css-tags/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-css-tags/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-css-tags/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-css-tags/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-css-tags/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-document-import-in-page/valid-000/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-document-import-in-page/valid-001/pages/_document.page.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-document-import-in-page/valid-002/pages/_document/index.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-document-import-in-page/valid-003/pages/_document/index.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-document-import-in-page/valid-004/pagesapp/src/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-document-import-in-page/invalid-000/components/test.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-document-import-in-page/invalid-001/pages/test.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-duplicate-head/valid-000/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-duplicate-head/valid-001/pages/_document.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-duplicate-head/invalid-000/pages/_document.js",
+   "errors": 2,
+   "dropped": false
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-duplicate-head/invalid-001/pages/_document.page.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-head-element/valid-000/pages/index.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-head-element/valid-001/pages/index.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-head-element/valid-002/app/layout.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-head-element/invalid-000/pages/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-head-element/invalid-001/pages/index.ts",
+   "errors": 1,
+   "dropped": true
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-head-import-in-document/valid-000/pages/_document.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-head-import-in-document/valid-001/pages/index.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-head-import-in-document/invalid-000/pages/_document.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-head-import-in-document/invalid-001/pages/_document.page.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-head-import-in-document/invalid-002/pages/_document/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "invalid",
+   "index": 3,
+   "path": "no-head-import-in-document/invalid-003/pages/_document/index.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-img-element/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-img-element/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-img-element/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-img-element/valid-003/src/app/icon.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-img-element/valid-004/app/opengraph-image.tsx",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-img-element/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-img-element/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-img-element/invalid-002/some/non-metadata-route-image.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-location-assign-relative-destination/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-location-assign-relative-destination/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-location-assign-relative-destination/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-location-assign-relative-destination/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-location-assign-relative-destination/valid-004.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 5,
+   "path": "no-location-assign-relative-destination/valid-005.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 6,
+   "path": "no-location-assign-relative-destination/valid-006.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 7,
+   "path": "no-location-assign-relative-destination/valid-007.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 8,
+   "path": "no-location-assign-relative-destination/valid-008.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 9,
+   "path": "no-location-assign-relative-destination/valid-009.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 10,
+   "path": "no-location-assign-relative-destination/valid-010.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 11,
+   "path": "no-location-assign-relative-destination/valid-011.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 12,
+   "path": "no-location-assign-relative-destination/valid-012.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 13,
+   "path": "no-location-assign-relative-destination/valid-013.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 14,
+   "path": "no-location-assign-relative-destination/valid-014.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 15,
+   "path": "no-location-assign-relative-destination/valid-015.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 16,
+   "path": "no-location-assign-relative-destination/valid-016.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 17,
+   "path": "no-location-assign-relative-destination/valid-017.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 18,
+   "path": "no-location-assign-relative-destination/valid-018.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 19,
+   "path": "no-location-assign-relative-destination/valid-019.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 20,
+   "path": "no-location-assign-relative-destination/valid-020.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 21,
+   "path": "no-location-assign-relative-destination/valid-021.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 22,
+   "path": "no-location-assign-relative-destination/valid-022.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 23,
+   "path": "no-location-assign-relative-destination/valid-023.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 24,
+   "path": "no-location-assign-relative-destination/valid-024.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 25,
+   "path": "no-location-assign-relative-destination/valid-025.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "valid",
+   "index": 26,
+   "path": "no-location-assign-relative-destination/valid-026.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-location-assign-relative-destination/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-location-assign-relative-destination/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-location-assign-relative-destination/invalid-002.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 3,
+   "path": "no-location-assign-relative-destination/invalid-003.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 4,
+   "path": "no-location-assign-relative-destination/invalid-004.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 5,
+   "path": "no-location-assign-relative-destination/invalid-005.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 6,
+   "path": "no-location-assign-relative-destination/invalid-006.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 7,
+   "path": "no-location-assign-relative-destination/invalid-007.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 8,
+   "path": "no-location-assign-relative-destination/invalid-008.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 9,
+   "path": "no-location-assign-relative-destination/invalid-009.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 10,
+   "path": "no-location-assign-relative-destination/invalid-010.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 11,
+   "path": "no-location-assign-relative-destination/invalid-011.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 12,
+   "path": "no-location-assign-relative-destination/invalid-012.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 13,
+   "path": "no-location-assign-relative-destination/invalid-013.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 14,
+   "path": "no-location-assign-relative-destination/invalid-014.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 15,
+   "path": "no-location-assign-relative-destination/invalid-015.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 16,
+   "path": "no-location-assign-relative-destination/invalid-016.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 17,
+   "path": "no-location-assign-relative-destination/invalid-017.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 18,
+   "path": "no-location-assign-relative-destination/invalid-018.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 19,
+   "path": "no-location-assign-relative-destination/invalid-019.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 20,
+   "path": "no-location-assign-relative-destination/invalid-020.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 21,
+   "path": "no-location-assign-relative-destination/invalid-021.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 22,
+   "path": "no-location-assign-relative-destination/invalid-022.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 23,
+   "path": "no-location-assign-relative-destination/invalid-023.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 24,
+   "path": "no-location-assign-relative-destination/invalid-024.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 25,
+   "path": "no-location-assign-relative-destination/invalid-025.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 26,
+   "path": "no-location-assign-relative-destination/invalid-026.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 27,
+   "path": "no-location-assign-relative-destination/invalid-027.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "invalid",
+   "index": 28,
+   "path": "no-location-assign-relative-destination/invalid-028.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-page-custom-font/valid-000/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-page-custom-font/valid-001/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-page-custom-font/valid-002/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-page-custom-font/valid-003/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-page-custom-font/valid-004/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "valid",
+   "index": 5,
+   "path": "no-page-custom-font/valid-005/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-page-custom-font/invalid-000/pages/index.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-page-custom-font/invalid-001/pages/_document.js",
+   "errors": 2,
+   "dropped": false
+  },
+  {
+   "rule": "no-script-component-in-head",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-script-component-in-head/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-script-component-in-head",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-script-component-in-head/invalid-000/pages/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-styled-jsx-in-document/valid-000/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-styled-jsx-in-document/valid-001/pages/_document.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-styled-jsx-in-document/valid-002/pages/index.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-styled-jsx-in-document/invalid-000/pages/_document.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-sync-scripts/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-sync-scripts/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-sync-scripts/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-sync-scripts/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-title-in-document-head",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-title-in-document-head/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-title-in-document-head",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-title-in-document-head/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-title-in-document-head",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-title-in-document-head/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-typos/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-typos/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-typos/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-typos/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "valid",
+   "index": 4,
+   "path": "no-typos/valid-004.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "valid",
+   "index": 5,
+   "path": "no-typos/valid-005.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-typos/invalid-000/pages/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-typos/invalid-001/pages/index.js",
+   "errors": 2,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-typos/invalid-002/pages/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-typos",
+   "kind": "invalid",
+   "index": 3,
+   "path": "no-typos/invalid-003/pages/index.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "valid",
+   "index": 0,
+   "path": "no-unwanted-polyfillio/valid-000.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "valid",
+   "index": 1,
+   "path": "no-unwanted-polyfillio/valid-001.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "valid",
+   "index": 2,
+   "path": "no-unwanted-polyfillio/valid-002.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "valid",
+   "index": 3,
+   "path": "no-unwanted-polyfillio/valid-003.js",
+   "errors": 0,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "invalid",
+   "index": 0,
+   "path": "no-unwanted-polyfillio/invalid-000.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "invalid",
+   "index": 1,
+   "path": "no-unwanted-polyfillio/invalid-001.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "invalid",
+   "index": 2,
+   "path": "no-unwanted-polyfillio/invalid-002.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "invalid",
+   "index": 3,
+   "path": "no-unwanted-polyfillio/invalid-003.js",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "authored",
+   "index": 0,
+   "path": "no-img-element/rerail-bare-ampersand.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "authored",
+   "index": 1,
+   "path": "no-sync-scripts/rerail-bare-ampersand.tsx",
+   "errors": 1,
+   "dropped": false
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/google-font-display/invalid-000.js",
+   "of": "google-font-display/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/google-font-display/invalid-001.js",
+   "of": "google-font-display/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/google-font-display/invalid-002.js",
+   "of": "google-font-display/invalid-002.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/google-font-display/invalid-003.js",
+   "of": "google-font-display/invalid-003.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/google-font-display/valid-000.js",
+   "of": "google-font-display/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/google-font-display/valid-001.js",
+   "of": "google-font-display/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "google-font-display",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/google-font-display/valid-002.js",
+   "of": "google-font-display/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "google-font-preconnect",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/google-font-preconnect/invalid-000.js",
+   "of": "google-font-preconnect/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "google-font-preconnect",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/google-font-preconnect/invalid-001.js",
+   "of": "google-font-preconnect/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "google-font-preconnect",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/google-font-preconnect/valid-000.js",
+   "of": "google-font-preconnect/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/inline-script-id/invalid-000.js",
+   "of": "inline-script-id/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/inline-script-id/invalid-001.js",
+   "of": "inline-script-id/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/inline-script-id/invalid-002.js",
+   "of": "inline-script-id/invalid-002.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/inline-script-id/invalid-003.js",
+   "of": "inline-script-id/invalid-003.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/inline-script-id/valid-000.js",
+   "of": "inline-script-id/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/inline-script-id/valid-001.js",
+   "of": "inline-script-id/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/inline-script-id/valid-002.js",
+   "of": "inline-script-id/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/inline-script-id/valid-003.js",
+   "of": "inline-script-id/valid-003.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/inline-script-id/valid-004.js",
+   "of": "inline-script-id/valid-004.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 5,
+   "path": "renamed/inline-script-id/valid-005.js",
+   "of": "inline-script-id/valid-005.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 6,
+   "path": "renamed/inline-script-id/valid-006.js",
+   "of": "inline-script-id/valid-006.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "inline-script-id",
+   "kind": "renamed",
+   "index": 7,
+   "path": "renamed/inline-script-id/valid-007.js",
+   "of": "inline-script-id/valid-007.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/next-script-for-ga/invalid-000.js",
+   "of": "next-script-for-ga/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/next-script-for-ga/invalid-001.js",
+   "of": "next-script-for-ga/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/next-script-for-ga/invalid-002.js",
+   "of": "next-script-for-ga/invalid-002.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/next-script-for-ga/invalid-003.js",
+   "of": "next-script-for-ga/invalid-003.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/next-script-for-ga/valid-000.js",
+   "of": "next-script-for-ga/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/next-script-for-ga/valid-001.js",
+   "of": "next-script-for-ga/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/next-script-for-ga/valid-002.js",
+   "of": "next-script-for-ga/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "next-script-for-ga",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/next-script-for-ga/valid-003.js",
+   "of": "next-script-for-ga/valid-003.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-assign-module-variable",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-assign-module-variable/invalid-000.js",
+   "of": "no-assign-module-variable/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-assign-module-variable",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-assign-module-variable/valid-000.js",
+   "of": "no-assign-module-variable/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-async-client-component/invalid-000.js",
+   "of": "no-async-client-component/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-async-client-component/invalid-001.js",
+   "of": "no-async-client-component/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-async-client-component/invalid-002.js",
+   "of": "no-async-client-component/invalid-002.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-async-client-component/invalid-003.js",
+   "of": "no-async-client-component/invalid-003.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-async-client-component/invalid-004.js",
+   "of": "no-async-client-component/invalid-004.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-async-client-component/valid-000.js",
+   "of": "no-async-client-component/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-async-client-component/valid-001.js",
+   "of": "no-async-client-component/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-async-client-component/valid-002.js",
+   "of": "no-async-client-component/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-async-client-component/valid-003.js",
+   "of": "no-async-client-component/valid-003.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-async-client-component",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-async-client-component/valid-004.js",
+   "of": "no-async-client-component/valid-004.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-000/pages/index.js",
+   "of": "no-before-interactive-script-outside-document/invalid-000/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-001/components/outside-known-dirs.js",
+   "of": "no-before-interactive-script-outside-document/invalid-001/components/outside-known-dirs.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-002/Users/user_name/projects/project-name/pages/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/invalid-002/Users/user_name/projects/project-name/pages/layout.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-003/C/Users/username/projects/project-name/pages/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/invalid-003/C/Users/username/projects/project-name/pages/layout.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-004/Users/user_name/projects/project-name/src/pages/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/invalid-004/Users/user_name/projects/project-name/src/pages/layout.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 5,
+   "path": "renamed/no-before-interactive-script-outside-document/invalid-005/C/Users/username/projects/project-name/src/pages/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/invalid-005/C/Users/username/projects/project-name/src/pages/layout.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-000/pages/_document.js",
+   "of": "no-before-interactive-script-outside-document/valid-000/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-001/pages/_document.tsx",
+   "of": "no-before-interactive-script-outside-document/valid-001/pages/_document.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-002/pages/_document.tsx",
+   "of": "no-before-interactive-script-outside-document/valid-002/pages/_document.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-003/Users/user_name/projects/project-name/app/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/valid-003/Users/user_name/projects/project-name/app/layout.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-004/C/Users/username/projects/project-name/app/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/valid-004/C/Users/username/projects/project-name/app/layout.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 5,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-005/Users/user_name/projects/project-name/src/app/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/valid-005/Users/user_name/projects/project-name/src/app/layout.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-before-interactive-script-outside-document",
+   "kind": "renamed",
+   "index": 6,
+   "path": "renamed/no-before-interactive-script-outside-document/valid-006/C/Users/username/projects/project-name/src/app/layout.tsx",
+   "of": "no-before-interactive-script-outside-document/valid-006/C/Users/username/projects/project-name/src/app/layout.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-css-tags/invalid-000.js",
+   "of": "no-css-tags/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-css-tags/valid-000.js",
+   "of": "no-css-tags/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-css-tags/valid-001.js",
+   "of": "no-css-tags/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-css-tags/valid-002.js",
+   "of": "no-css-tags/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-css-tags",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-css-tags/valid-003.js",
+   "of": "no-css-tags/valid-003.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-document-import-in-page/invalid-000/components/test.js",
+   "of": "no-document-import-in-page/invalid-000/components/test.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-document-import-in-page/invalid-001/pages/test.js",
+   "of": "no-document-import-in-page/invalid-001/pages/test.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-document-import-in-page/valid-000/pages/_document.js",
+   "of": "no-document-import-in-page/valid-000/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-document-import-in-page/valid-001/pages/_document.page.tsx",
+   "of": "no-document-import-in-page/valid-001/pages/_document.page.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-document-import-in-page/valid-002/pages/_document/index.js",
+   "of": "no-document-import-in-page/valid-002/pages/_document/index.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-document-import-in-page/valid-003/pages/_document/index.tsx",
+   "of": "no-document-import-in-page/valid-003/pages/_document/index.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-document-import-in-page",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-document-import-in-page/valid-004/pagesapp/src/pages/_document.js",
+   "of": "no-document-import-in-page/valid-004/pagesapp/src/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-duplicate-head/invalid-000/pages/_document.js",
+   "of": "no-duplicate-head/invalid-000/pages/_document.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-duplicate-head/invalid-001/pages/_document.page.tsx",
+   "of": "no-duplicate-head/invalid-001/pages/_document.page.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-duplicate-head/valid-000/pages/_document.js",
+   "of": "no-duplicate-head/valid-000/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-duplicate-head",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-duplicate-head/valid-001/pages/_document.tsx",
+   "of": "no-duplicate-head/valid-001/pages/_document.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-head-element/invalid-000/pages/index.js",
+   "of": "no-head-element/invalid-000/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-head-element/valid-000/pages/index.js",
+   "of": "no-head-element/valid-000/pages/index.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-head-element/valid-001/pages/index.tsx",
+   "of": "no-head-element/valid-001/pages/index.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-head-element",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-head-element/valid-002/app/layout.js",
+   "of": "no-head-element/valid-002/app/layout.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-head-import-in-document/invalid-000/pages/_document.js",
+   "of": "no-head-import-in-document/invalid-000/pages/_document.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-head-import-in-document/invalid-001/pages/_document.page.tsx",
+   "of": "no-head-import-in-document/invalid-001/pages/_document.page.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-head-import-in-document/invalid-002/pages/_document/index.js",
+   "of": "no-head-import-in-document/invalid-002/pages/_document/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-head-import-in-document/invalid-003/pages/_document/index.tsx",
+   "of": "no-head-import-in-document/invalid-003/pages/_document/index.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-head-import-in-document/valid-000/pages/_document.tsx",
+   "of": "no-head-import-in-document/valid-000/pages/_document.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-head-import-in-document",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-head-import-in-document/valid-001/pages/index.tsx",
+   "of": "no-head-import-in-document/valid-001/pages/index.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-img-element/invalid-000.js",
+   "of": "no-img-element/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-img-element/invalid-001.js",
+   "of": "no-img-element/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-img-element/invalid-002/some/non-metadata-route-image.tsx",
+   "of": "no-img-element/invalid-002/some/non-metadata-route-image.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-img-element/valid-000.js",
+   "of": "no-img-element/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-img-element/valid-001.js",
+   "of": "no-img-element/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-img-element/valid-002.js",
+   "of": "no-img-element/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-img-element/valid-003/src/app/icon.js",
+   "of": "no-img-element/valid-003/src/app/icon.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-img-element",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-img-element/valid-004/app/opengraph-image.tsx",
+   "of": "no-img-element/valid-004/app/opengraph-image.tsx",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-location-assign-relative-destination/invalid-002.js",
+   "of": "no-location-assign-relative-destination/invalid-002.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 13,
+   "path": "renamed/no-location-assign-relative-destination/invalid-013.js",
+   "of": "no-location-assign-relative-destination/invalid-013.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 23,
+   "path": "renamed/no-location-assign-relative-destination/invalid-023.js",
+   "of": "no-location-assign-relative-destination/invalid-023.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 24,
+   "path": "renamed/no-location-assign-relative-destination/invalid-024.js",
+   "of": "no-location-assign-relative-destination/invalid-024.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 25,
+   "path": "renamed/no-location-assign-relative-destination/invalid-025.js",
+   "of": "no-location-assign-relative-destination/invalid-025.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 26,
+   "path": "renamed/no-location-assign-relative-destination/invalid-026.js",
+   "of": "no-location-assign-relative-destination/invalid-026.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 27,
+   "path": "renamed/no-location-assign-relative-destination/invalid-027.js",
+   "of": "no-location-assign-relative-destination/invalid-027.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 28,
+   "path": "renamed/no-location-assign-relative-destination/invalid-028.js",
+   "of": "no-location-assign-relative-destination/invalid-028.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 11,
+   "path": "renamed/no-location-assign-relative-destination/valid-011.js",
+   "of": "no-location-assign-relative-destination/valid-011.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 12,
+   "path": "renamed/no-location-assign-relative-destination/valid-012.js",
+   "of": "no-location-assign-relative-destination/valid-012.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 13,
+   "path": "renamed/no-location-assign-relative-destination/valid-013.js",
+   "of": "no-location-assign-relative-destination/valid-013.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 14,
+   "path": "renamed/no-location-assign-relative-destination/valid-014.js",
+   "of": "no-location-assign-relative-destination/valid-014.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 15,
+   "path": "renamed/no-location-assign-relative-destination/valid-015.js",
+   "of": "no-location-assign-relative-destination/valid-015.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 16,
+   "path": "renamed/no-location-assign-relative-destination/valid-016.js",
+   "of": "no-location-assign-relative-destination/valid-016.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 17,
+   "path": "renamed/no-location-assign-relative-destination/valid-017.js",
+   "of": "no-location-assign-relative-destination/valid-017.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 18,
+   "path": "renamed/no-location-assign-relative-destination/valid-018.js",
+   "of": "no-location-assign-relative-destination/valid-018.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 19,
+   "path": "renamed/no-location-assign-relative-destination/valid-019.js",
+   "of": "no-location-assign-relative-destination/valid-019.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 20,
+   "path": "renamed/no-location-assign-relative-destination/valid-020.js",
+   "of": "no-location-assign-relative-destination/valid-020.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 21,
+   "path": "renamed/no-location-assign-relative-destination/valid-021.js",
+   "of": "no-location-assign-relative-destination/valid-021.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 23,
+   "path": "renamed/no-location-assign-relative-destination/valid-023.js",
+   "of": "no-location-assign-relative-destination/valid-023.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-location-assign-relative-destination",
+   "kind": "renamed",
+   "index": 25,
+   "path": "renamed/no-location-assign-relative-destination/valid-025.js",
+   "of": "no-location-assign-relative-destination/valid-025.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-page-custom-font/invalid-000/pages/index.tsx",
+   "of": "no-page-custom-font/invalid-000/pages/index.tsx",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-page-custom-font/invalid-001/pages/_document.js",
+   "of": "no-page-custom-font/invalid-001/pages/_document.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-page-custom-font/valid-000/pages/_document.js",
+   "of": "no-page-custom-font/valid-000/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-page-custom-font/valid-001/pages/_document.js",
+   "of": "no-page-custom-font/valid-001/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-page-custom-font/valid-002/pages/_document.js",
+   "of": "no-page-custom-font/valid-002/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-page-custom-font/valid-003/pages/_document.js",
+   "of": "no-page-custom-font/valid-003/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-page-custom-font/valid-004/pages/_document.js",
+   "of": "no-page-custom-font/valid-004/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-page-custom-font",
+   "kind": "renamed",
+   "index": 5,
+   "path": "renamed/no-page-custom-font/valid-005/pages/_document.js",
+   "of": "no-page-custom-font/valid-005/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-script-component-in-head",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-script-component-in-head/invalid-000/pages/index.js",
+   "of": "no-script-component-in-head/invalid-000/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-script-component-in-head",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-script-component-in-head/valid-000.js",
+   "of": "no-script-component-in-head/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-styled-jsx-in-document/invalid-000/pages/_document.js",
+   "of": "no-styled-jsx-in-document/invalid-000/pages/_document.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-styled-jsx-in-document/valid-000/pages/_document.js",
+   "of": "no-styled-jsx-in-document/valid-000/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-styled-jsx-in-document/valid-001/pages/_document.js",
+   "of": "no-styled-jsx-in-document/valid-001/pages/_document.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-styled-jsx-in-document",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-styled-jsx-in-document/valid-002/pages/index.js",
+   "of": "no-styled-jsx-in-document/valid-002/pages/index.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-sync-scripts/invalid-001.js",
+   "of": "no-sync-scripts/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-sync-scripts",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-sync-scripts/valid-001.js",
+   "of": "no-sync-scripts/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-title-in-document-head",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-title-in-document-head/invalid-000.js",
+   "of": "no-title-in-document-head/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-title-in-document-head",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-title-in-document-head/valid-000.js",
+   "of": "no-title-in-document-head/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-title-in-document-head",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-title-in-document-head/valid-001.js",
+   "of": "no-title-in-document-head/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-typos/invalid-000/pages/index.js",
+   "of": "no-typos/invalid-000/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-typos/invalid-001/pages/index.js",
+   "of": "no-typos/invalid-001/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-typos/invalid-002/pages/index.js",
+   "of": "no-typos/invalid-002/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-typos/invalid-003/pages/index.js",
+   "of": "no-typos/invalid-003/pages/index.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-typos/valid-000.js",
+   "of": "no-typos/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-typos/valid-001.js",
+   "of": "no-typos/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-typos/valid-002.js",
+   "of": "no-typos/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-typos/valid-003.js",
+   "of": "no-typos/valid-003.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 4,
+   "path": "renamed/no-typos/valid-004.js",
+   "of": "no-typos/valid-004.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-typos",
+   "kind": "renamed",
+   "index": 5,
+   "path": "renamed/no-typos/valid-005.js",
+   "of": "no-typos/valid-005.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-unwanted-polyfillio/invalid-000.js",
+   "of": "no-unwanted-polyfillio/invalid-000.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-unwanted-polyfillio/invalid-001.js",
+   "of": "no-unwanted-polyfillio/invalid-001.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-unwanted-polyfillio/invalid-002.js",
+   "of": "no-unwanted-polyfillio/invalid-002.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-unwanted-polyfillio/invalid-003.js",
+   "of": "no-unwanted-polyfillio/invalid-003.js",
+   "renamedKind": "invalid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 0,
+   "path": "renamed/no-unwanted-polyfillio/valid-000.js",
+   "of": "no-unwanted-polyfillio/valid-000.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 1,
+   "path": "renamed/no-unwanted-polyfillio/valid-001.js",
+   "of": "no-unwanted-polyfillio/valid-001.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 2,
+   "path": "renamed/no-unwanted-polyfillio/valid-002.js",
+   "of": "no-unwanted-polyfillio/valid-002.js",
+   "renamedKind": "valid"
+  },
+  {
+   "rule": "no-unwanted-polyfillio",
+   "kind": "renamed",
+   "index": 3,
+   "path": "renamed/no-unwanted-polyfillio/valid-003.js",
+   "of": "no-unwanted-polyfillio/valid-003.js",
+   "renamedKind": "valid"
+  }
+ ],
+ "unrenamed": [
+  {
+   "of": "no-css-tags/invalid-001.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-000.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-001.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-002.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-003.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-004.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-005.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-006.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-007.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-008.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-009.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-010.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-022.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-024.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/valid-026.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-000.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-001.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-003.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-004.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-005.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-006.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-007.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-008.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-009.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-010.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-011.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-012.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-014.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-015.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-016.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-017.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-018.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-019.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-020.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-021.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-location-assign-relative-destination/invalid-022.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-sync-scripts/valid-000.js",
+   "problem": "nothing to rename"
+  },
+  {
+   "of": "no-sync-scripts/invalid-000.js",
+   "problem": "nothing to rename"
+  }
+ ],
+ "mismatches": [
+  {
+   "path": "no-img-element/valid-003/src/app/icon.js",
+   "expected": 0,
+   "recorded": 1
+  },
+  {
+   "path": "no-img-element/valid-004/app/opengraph-image.tsx",
+   "expected": 0,
+   "recorded": 1
+  }
+ ]
+}

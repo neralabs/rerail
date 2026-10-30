@@ -1,0 +1,1 @@
+const O = class {@qdzdtdgww() static get reh(): string {}}; // allow: privateConstructors

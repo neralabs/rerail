@@ -1,0 +1,1 @@
+var xra = () => { var cet = () => 1; cet(); };

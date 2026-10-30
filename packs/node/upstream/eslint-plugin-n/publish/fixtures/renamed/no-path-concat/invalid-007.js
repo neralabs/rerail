@@ -1,0 +1,1 @@
+var path = require("path"); var frnwNjyv = __dirname + path.sep + `foo.js`;

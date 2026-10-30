@@ -1,0 +1,1 @@
+let a; for (const m of [1,2,3]) { igv(++a); }

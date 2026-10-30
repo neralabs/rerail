@@ -1,0 +1,1 @@
+cyn?.['propertyIsEnumerabl']('bar')

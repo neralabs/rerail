@@ -51,8 +51,7 @@ is reported:
 | --- | --- |
 | a shipped rule of a gated tool-pack that fails a blocking check (`loads`, `compact`, `conformance`) or whose tool-pack fails a tool-pack check | every candidate's checks, and which candidates are ready to promote |
 | a pack's scoring errors, above | `upstream-status`, and a shipped rule whose `pack.json` `on` disagrees with it |
-| a not-gated or pending list that grows against the base | a shipped rule that passes a check with no evidence behind it (`holds-under-rename` held vacuously) |
-| | a report on a labelled sample's unlabelled line, and engine failures on samples' context files |
+| a not-gated or pending list that grows against the base | a report on a labelled sample's unlabelled line, and engine failures on samples' context files |
 
 The job writes `summary.md`, `gates.json` and the pull request comment (`comment.md`) to the `conformance-summary`
 artifact, and the `conformance-report` job posts the comment ([The pull request comment](#the-pull-request-comment)).
@@ -66,7 +65,7 @@ not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
 | `loads` (blocks) | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (the scope covers every file type in `gates.yaml`'s `upstream.lints`, or in `rerail.in_scope` when the pack narrows it, or in the port's own `lints` in `conformance.json`) | the document, the engine, `gates.yaml` |
 | `compact` (blocks) | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic | the document |
 | `conformance` (blocks) | `scored`; `no-unexplained-false-positives`, `no-unexplained-misses`, `catches-something` (a true positive, or examples in `pack.json`), `engine-reads-fixtures` | the fixtures: upstream's cases and Rerail's probes, after `divergences.json` |
-| | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check holds vacuously, which is reported as a pass without evidence. "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
+| | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check fails: nothing shows the rule matches the construct rather than the cases' names (the renamer keeps literals and every two names' order, so a rule that reads a literal or an order keeps its findings). "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
 | | `samples-catch-labelled`, `samples-silent-on-clean`, `engine-reads-samples` ([How samples are judged](#how-samples-are-judged)) | the samples labelled for the rule |
 | | `stays-silent`: at least one own upstream unit where upstream and the rule both report nothing, or one clean sample in the rule's reach that it is silent on | `source.units` origins and clean samples |
 | | `divergences-current`: every declared divergence explains a disagreement ([Divergences](#divergences)) | `divergences.json` |
@@ -130,7 +129,16 @@ Each generator writes, in `fixtures.expected.json`, `source.units`: per unit (by
 multi-file unit), `rules`, the upstream rules whose tests it came from. A rule's own units are the original units whose
 origin names its upstream rule; they count for `stays-silent` and `upstream-rule`. A unit without an entry (Rerail's
 probes, or one whose origin is unknown) is scored but is no rule's own evidence. A rename variant's entry also carries
-`renamedFrom`, the key of the original unit, which must itself be an original with an origin.
+`renamedFrom`, the key of the original unit, which must itself be an original with an origin. An ECMA unit's entry may
+carry `languageOptions`, the language upstream linted it under beyond ESLint's defaults for its extension
+(`ecmaVersion`, `sourceType`, `parserOptions`; a variant carries its original's). The runner evaluates such a unit with
+a copy of each port whose AST clauses' `languageOptions` take them (`ecmaVersion`, `sourceType`,
+`parserOptions.ecmaFeatures.globalReturn` and `impliedStrict`, and typescript-eslint's `jsxPragma`, `jsxFragmentName` and
+`lib`), compiled once per distinct language. A query of the port that had no `languageOptions` of its own keeps
+reading the `global` names its `resolves` lists as unbound names (`declared: false`), as it does without them; a unit
+without them is evaluated with the port as it is, under ESLint's
+flat-config defaults (`module`, or `commonjs` for `.cjs`, at the latest `ecmaVersion`) unless the port sets others
+([pack-format.md](../docs/pack-format.md#conformancejson-divergencesjson-upstream)).
 
 ### Divergences
 
@@ -161,7 +169,6 @@ and the commit it judged, links the job summary, and has these sections:
 - **Ready to promote**: each candidate that passes every check, with its upstream rule and whether `upstream-status`
   starts it on or off;
 - **On or off**: shipped rules whose `pack.json` `on` disagrees with `upstream-status`;
-- **Passing without evidence**: shipped rule checks that hold vacuously, reported;
 - **Candidates**: per tool-pack, how many candidates stop first at each gate, then each candidate's first failure,
   grouped by gate.
 

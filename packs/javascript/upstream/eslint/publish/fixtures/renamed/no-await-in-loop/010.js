@@ -1,0 +1,1 @@
+async function pgy() { while (true) { var w = async () => await pgy; } }

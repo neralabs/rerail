@@ -1,0 +1,1 @@
+async    /* test */ function rwa() { hnCgyhllaql() }

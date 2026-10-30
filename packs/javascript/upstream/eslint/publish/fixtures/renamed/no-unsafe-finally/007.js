@@ -1,0 +1,1 @@
+var hjq = function() { try {} finally { while (true) break; } }

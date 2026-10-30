@@ -1,0 +1,1 @@
+const hai = {avu: function(mrenf: string) {}}; // allow: generatorMethods

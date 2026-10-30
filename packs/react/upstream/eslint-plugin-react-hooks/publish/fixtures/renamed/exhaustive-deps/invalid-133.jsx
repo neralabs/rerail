@@ -1,0 +1,4 @@
+
+function Edzbt() {
+  useEffect(async () => {}, []);
+}

@@ -1,0 +1,1 @@
+class P { static set #p(vpz) {} }

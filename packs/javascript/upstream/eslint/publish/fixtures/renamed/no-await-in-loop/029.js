@@ -1,0 +1,1 @@
+async function hnf() { for (var o; o < s; o = await esz) {  } }

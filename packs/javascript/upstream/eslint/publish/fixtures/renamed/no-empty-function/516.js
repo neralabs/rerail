@@ -1,0 +1,1 @@
+var G = class {static set oqg(value) {}}; // allow: asyncMethods

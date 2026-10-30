@@ -1,0 +1,1 @@
+class L { static set l(skm) {} static set l(skm) {} static get l() {} }

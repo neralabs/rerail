@@ -1,0 +1,1 @@
+Reflect.defineProperty(qyj, 'bar', { value: function bav() {} })

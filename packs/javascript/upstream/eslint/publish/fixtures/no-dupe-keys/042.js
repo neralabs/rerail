@@ -1,0 +1,1 @@
+var x = { a: 1, set a(value) {} };

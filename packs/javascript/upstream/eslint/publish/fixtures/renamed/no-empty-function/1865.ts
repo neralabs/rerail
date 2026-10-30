@@ -1,0 +1,1 @@
+const J = class { private constructor() {} } // allow: generatorFunctions

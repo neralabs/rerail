@@ -1,0 +1,1 @@
+class G { private wza() {} } // allow: methods

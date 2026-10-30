@@ -1,0 +1,1 @@
+function help(done) { var err = new Error('error'); done(); }

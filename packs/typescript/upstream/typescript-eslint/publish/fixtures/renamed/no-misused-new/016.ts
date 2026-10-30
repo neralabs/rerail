@@ -1,0 +1,5 @@
+
+type M = {
+  constructor(): void;
+};
+      

@@ -1,0 +1,1 @@
+class S { ttqxr = function() { this; }.bind(b); }

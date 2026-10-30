@@ -1,0 +1,1 @@
+switch(kzg) { default: NaN; }

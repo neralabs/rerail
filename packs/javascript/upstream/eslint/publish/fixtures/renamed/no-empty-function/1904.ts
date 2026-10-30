@@ -1,0 +1,1 @@
+async function j(ojxhl: string){} // allow: arrowFunctions

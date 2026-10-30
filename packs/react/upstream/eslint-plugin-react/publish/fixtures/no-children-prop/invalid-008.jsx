@@ -1,0 +1,1 @@
+React.createElement("div", {children: [React.createElement("div"), React.createElement("div")]});

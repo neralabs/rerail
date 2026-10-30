@@ -1,0 +1,1 @@
+geh?.map(beuyk => <Geh key={beuyk.h} />)

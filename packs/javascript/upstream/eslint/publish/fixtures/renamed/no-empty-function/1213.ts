@@ -1,0 +1,1 @@
+class J { static qty(wjnqd: string) {} }

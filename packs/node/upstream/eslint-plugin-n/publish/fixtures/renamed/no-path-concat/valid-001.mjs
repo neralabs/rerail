@@ -1,0 +1,1 @@
+var fvwvOglb = beizfzr + "foo.js";

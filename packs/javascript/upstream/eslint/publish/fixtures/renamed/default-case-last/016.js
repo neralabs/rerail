@@ -1,0 +1,1 @@
+switch (gtn) { case 1: default: }

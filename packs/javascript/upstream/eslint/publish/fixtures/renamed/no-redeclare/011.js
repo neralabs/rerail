@@ -1,0 +1,1 @@
+class V { static { function u(){}; { function u(){} } } }

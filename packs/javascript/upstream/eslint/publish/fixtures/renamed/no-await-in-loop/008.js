@@ -1,0 +1,1 @@
+async function irj() { do { } while (bvv); }

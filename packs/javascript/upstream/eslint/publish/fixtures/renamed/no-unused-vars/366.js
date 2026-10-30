@@ -1,0 +1,1 @@
+function i([{k}]) {} i();

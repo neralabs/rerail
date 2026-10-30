@@ -1,0 +1,1 @@
+class G { static get g(){} static set g(oxm){} }

@@ -1,0 +1,1 @@
+for (var d = 0; d < ljqx.length; ++d) { brz(d) }

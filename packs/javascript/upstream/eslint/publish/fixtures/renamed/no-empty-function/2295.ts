@@ -1,0 +1,1 @@
+class C extends H { override async qui(uoabz: string) {} }

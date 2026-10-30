@@ -1,0 +1,1 @@
+function vnq(a = 1, d){alert(d);} vnq();

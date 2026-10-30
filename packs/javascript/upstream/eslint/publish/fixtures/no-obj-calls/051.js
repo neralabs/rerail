@@ -1,0 +1,1 @@
+function foo(JSON) { new JSON(); }

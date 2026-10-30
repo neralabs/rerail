@@ -1,0 +1,1 @@
+class F { get f(){} constructor (){} set f(tud){} get k(){} static r(){} set k(kqj){} }

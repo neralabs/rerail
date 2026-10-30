@@ -1,0 +1,1 @@
+const L = class {get tbv(): string { /* empty */ }};

@@ -1,0 +1,4 @@
+
+function MyComponent() {
+  useCallback(() => {}, [window]);
+}

@@ -1,0 +1,1 @@
+async function bld() { for await (var e of el) { while (1) await b(e) } }

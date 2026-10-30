@@ -1,0 +1,1 @@
+class C {protected static *ehh() {}}

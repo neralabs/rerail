@@ -1,0 +1,1 @@
+function p() { var d = 1; return function(){ p(d *= 2); }; }

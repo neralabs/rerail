@@ -1,0 +1,1 @@
+const C = class {@mhzqopwja() static get syz(): string {}}; // allow: asyncMethods

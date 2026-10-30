@@ -1,0 +1,1 @@
+function ydb() { let j, o; }

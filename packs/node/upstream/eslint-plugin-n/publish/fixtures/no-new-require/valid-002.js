@@ -1,0 +1,1 @@
+var AppHeader = new (require('app-header'))

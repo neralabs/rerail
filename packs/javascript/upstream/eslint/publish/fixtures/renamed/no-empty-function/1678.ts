@@ -1,0 +1,1 @@
+const P = class {set taz(value: string) {}}; // allow: arrowFunctions

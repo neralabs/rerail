@@ -1,0 +1,1 @@
+var kkb = { *fbc() { yield 0; } };

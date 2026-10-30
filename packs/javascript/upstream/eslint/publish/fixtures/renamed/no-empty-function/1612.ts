@@ -1,0 +1,1 @@
+const G = class extends I {override get xig(): string {}}; // allow: methods

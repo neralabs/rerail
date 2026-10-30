@@ -1,0 +1,1 @@
+var t = { __proto__() {}, __proto__: null };

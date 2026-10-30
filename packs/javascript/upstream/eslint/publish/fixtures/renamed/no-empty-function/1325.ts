@@ -1,0 +1,1 @@
+const D = class { @kfnterkkw() tdm() {} } // allow: functions

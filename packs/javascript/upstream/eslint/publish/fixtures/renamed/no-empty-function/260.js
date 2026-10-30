@@ -1,0 +1,1 @@
+class Q {xqv() {}} // allow: getters

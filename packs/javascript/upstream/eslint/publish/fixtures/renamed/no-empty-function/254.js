@@ -1,0 +1,1 @@
+var laa = {jgx() {}}; // allow: overrideMethods

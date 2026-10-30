@@ -1,0 +1,1 @@
+class R {static *umu(wjjxi: string) {}} // allow: asyncMethods

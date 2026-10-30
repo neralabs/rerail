@@ -1,0 +1,1 @@
+class N {set pcs(value) {}} // allow: overrideMethods

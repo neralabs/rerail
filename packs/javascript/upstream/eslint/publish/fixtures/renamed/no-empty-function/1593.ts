@@ -1,0 +1,1 @@
+class G extends K {override get wmg(): string {}} // allow: protectedConstructors

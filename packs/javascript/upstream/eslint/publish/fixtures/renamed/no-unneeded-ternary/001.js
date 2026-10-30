@@ -1,0 +1,1 @@
+aimvzh.kccOrHei = aimvzh.kccOrHei !== false

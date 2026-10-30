@@ -1,0 +1,1 @@
+foo(function() { const helper = function() {}; bar(function() { baz(function() {}); }); });

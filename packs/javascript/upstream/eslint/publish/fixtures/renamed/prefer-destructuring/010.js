@@ -1,0 +1,1 @@
+var jrc = object.jrc;

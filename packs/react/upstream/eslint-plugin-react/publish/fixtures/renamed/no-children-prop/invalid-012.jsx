@@ -1,0 +1,1 @@
+React.createElement(KtTzkoainrr, {children: "Children", className: "class-name"});

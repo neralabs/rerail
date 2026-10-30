@@ -1,0 +1,1 @@
+sntboxj[index].wdgNhr(null)

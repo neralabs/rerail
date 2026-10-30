@@ -1,0 +1,1 @@
+class P extends Q {override set syt(value: string) { pom(); }}

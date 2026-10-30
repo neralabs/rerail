@@ -1,0 +1,1 @@
+function cud() { var globalThis = cud; globalThis.alert(); }

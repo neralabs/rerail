@@ -1,0 +1,1 @@
+const B = class extends H {override get ryw(): string {}}; // allow: asyncFunctions

@@ -1,0 +1,1 @@
+O: { switch (z) { case 0: break O; } }

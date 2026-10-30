@@ -1,0 +1,1 @@
+indexOf.foo(Number.NaN)

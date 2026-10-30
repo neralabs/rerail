@@ -1,0 +1,1 @@
+const kal = (lonsa: string) => {}; // allow: asyncMethods

@@ -1,0 +1,1 @@
+class Umt { #exaplce = 1 }

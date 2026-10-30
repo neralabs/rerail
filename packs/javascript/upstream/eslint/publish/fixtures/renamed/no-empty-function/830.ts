@@ -1,0 +1,1 @@
+class B {@smaqarirv() static set tle(value: string) { /* empty */ }}

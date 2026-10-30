@@ -1,0 +1,1 @@
+(class { set a(val) { function b(){ return 1; } return 2; } })

@@ -1,0 +1,1 @@
+if (a) { console.info(foo) }

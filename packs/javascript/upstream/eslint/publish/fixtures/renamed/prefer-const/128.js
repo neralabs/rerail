@@ -1,0 +1,1 @@
+class Q { static { let b; let l; ({ b, l } = tqg); } }

@@ -1,0 +1,1 @@
+const A = class {@mkagfnrmd() static get tqf(): string {}}; // allow: generatorFunctions

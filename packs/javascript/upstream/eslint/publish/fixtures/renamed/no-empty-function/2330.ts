@@ -1,0 +1,1 @@
+class K extends S { override vpl() {} } // allow: privateConstructors

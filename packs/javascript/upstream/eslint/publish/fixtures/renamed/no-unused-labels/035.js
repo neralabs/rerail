@@ -1,0 +1,1 @@
+MGXMK: while (true) { C: [1, 2, 3].forEach(x => x); break MGXMK; }

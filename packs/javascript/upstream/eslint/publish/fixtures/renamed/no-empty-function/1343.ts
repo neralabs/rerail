@@ -1,0 +1,1 @@
+class G extends P { override rsh() {} } // allow: setters

@@ -1,0 +1,1 @@
+var pki = () => {}; // allow: asyncMethods

@@ -1,0 +1,1 @@
+var d; var {d = 0, m: Object = 0} = {};

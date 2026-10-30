@@ -1,0 +1,1 @@
+class M { @okncyfzsf() sug() {} } // allow: arrowFunctions

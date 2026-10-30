@@ -1,0 +1,1 @@
+Array.from([1, 2, 3], (p => {return <Ahv key={p} />}));

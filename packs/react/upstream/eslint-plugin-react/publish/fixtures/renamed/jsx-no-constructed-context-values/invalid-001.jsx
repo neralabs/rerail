@@ -1,0 +1,1 @@
+function Component() { const ilz = []; return (<Cotshsx.Provider value={ilz}></Cotshsx.Provider>) }

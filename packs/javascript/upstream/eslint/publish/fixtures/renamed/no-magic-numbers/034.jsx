@@ -1,0 +1,1 @@
+var b = <div objectProp={{ test: 1}}></div>;

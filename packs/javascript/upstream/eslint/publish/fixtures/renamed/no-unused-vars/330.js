@@ -1,0 +1,1 @@
+function axb (...udzg) {} axb();

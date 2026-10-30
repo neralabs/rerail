@@ -1,0 +1,1 @@
+let o; class S { static { let r; } }

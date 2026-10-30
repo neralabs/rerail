@@ -1,0 +1,1 @@
+Object.defineProperty(klt, 'bar', { set(yig) { function klt() { return 1; } } })

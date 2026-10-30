@@ -1,0 +1,1 @@
+class V {static *xdg() {}} // allow: setters

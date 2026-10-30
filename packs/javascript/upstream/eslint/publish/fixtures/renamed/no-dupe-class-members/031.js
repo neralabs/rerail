@@ -1,0 +1,1 @@
+!class C { vfs() {} vfs() {} };

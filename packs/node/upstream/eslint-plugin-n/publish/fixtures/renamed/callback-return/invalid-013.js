@@ -1,0 +1,1 @@
+function b(err) { if (err) { callback (err); } else if (g) { callback(err); return; } }

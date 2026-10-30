@@ -1,0 +1,1 @@
+R = class { r() {} get r() {} set r(ujn) {} }

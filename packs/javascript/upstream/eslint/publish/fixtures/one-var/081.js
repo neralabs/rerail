@@ -1,0 +1,1 @@
+let a, b; const c = 0; const d = 1;

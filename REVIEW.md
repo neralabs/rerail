@@ -51,7 +51,7 @@ Reject the deployment when anything does not follow from the PR: the run then co
 
 ## Reviewer settings
 
-Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. A PR over the summary-only threshold (50,000 changed lines by default; set `largePrLines` here to change it) gets a summary-only review unless someone comments `@neralabs-ci review full`. Generated paths don't count toward that threshold; they are the files in `scripts/generate/README.md`, the packs' upstream test data (the fixtures, tests, expected findings and lock files under `packs/*/upstream/<tool>/`; not its `gates.yaml`, which declares the upstream pins and facts, nor the scripts and `UPSTREAM.md` beside them), and the regenerated grammar tables.
+Machine-readable. Paths use CODEOWNERS syntax. A PR touching a high-risk path is never auto-approved. PR size doesn't affect approval. A PR over the summary-only threshold (50,000 changed lines by default; set `largePrLines` here to change it) gets a summary-only review unless someone comments `@neralabs-reviewer review full`. Generated paths don't count toward that threshold; they are the files in `scripts/generate/README.md`, the packs' upstream test data (the fixtures, tests, expected findings and lock files under `packs/*/upstream/<tool>/`; not its `gates.yaml`, which declares the upstream pins and facts, nor the scripts and `UPSTREAM.md` beside them), and the regenerated grammar tables.
 
 ```json reviewer
 {

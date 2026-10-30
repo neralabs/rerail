@@ -1,0 +1,1 @@
+var G = class {static llg() {}}; // allow: asyncFunctions

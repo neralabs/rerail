@@ -1,0 +1,1 @@
+function ifc(): { [key: string]: any; fkg: string } {}

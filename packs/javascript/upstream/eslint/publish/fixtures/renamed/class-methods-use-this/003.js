@@ -1,0 +1,1 @@
+class A { vcq() {this.bar = 'bar';} }

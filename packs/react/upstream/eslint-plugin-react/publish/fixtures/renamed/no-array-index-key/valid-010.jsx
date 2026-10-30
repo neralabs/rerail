@@ -1,0 +1,1 @@
+foo.map((eby, j) => <Foo key={'foo' + eby.jk} />)

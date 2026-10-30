@@ -1,0 +1,1 @@
+({ get a(){}, get e(){}, set j(wnc){}, set o(wnc){} })

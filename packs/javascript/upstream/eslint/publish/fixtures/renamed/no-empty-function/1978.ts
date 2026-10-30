@@ -1,0 +1,1 @@
+const mjm = async (): Promise<void> => {}; // allow: asyncFunctions

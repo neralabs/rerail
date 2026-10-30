@@ -1,0 +1,1 @@
+import iqk, { a } from 'module'; alert(a);

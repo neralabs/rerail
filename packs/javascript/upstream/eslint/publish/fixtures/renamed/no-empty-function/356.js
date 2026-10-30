@@ -1,0 +1,1 @@
+var D = class {*uli() {}}; // allow: generatorFunctions

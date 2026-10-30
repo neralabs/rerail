@@ -1,0 +1,1 @@
+class L { static { let a = 0; let d = 1; } }

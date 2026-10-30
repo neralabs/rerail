@@ -1,0 +1,1 @@
+class O {static *vmd() {}} // allow: constructors

@@ -1,0 +1,1 @@
+function *b(){ yield(parseInt('A', 16)) }

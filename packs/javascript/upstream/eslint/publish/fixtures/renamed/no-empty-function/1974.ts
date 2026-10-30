@@ -1,0 +1,1 @@
+const buj = async (): Promise<void> => {}; // allow: generatorMethods

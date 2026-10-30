@@ -1,0 +1,1 @@
+function scc_uviqb() { 1; 2; } class D { static { ikz; sdl; sacac; { gmso; gdts; kcc; } } }

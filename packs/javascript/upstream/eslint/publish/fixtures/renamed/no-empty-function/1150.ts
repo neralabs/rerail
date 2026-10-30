@@ -1,0 +1,1 @@
+const rnv = {qvj: function*(zgewv: string) {}}; // allow: constructors

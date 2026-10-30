@@ -1,0 +1,1 @@
+class D {static set qfw(value) {}} // allow: asyncMethods

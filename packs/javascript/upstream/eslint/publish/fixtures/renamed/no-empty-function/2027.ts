@@ -1,0 +1,1 @@
+const M = class { protected constructor() {} }; // allow: methods

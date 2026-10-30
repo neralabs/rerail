@@ -1,0 +1,1 @@
+var { URL } = require('url'); var b = new URL(s)

@@ -1,0 +1,1 @@
+const bit = { async ofsrii() {} } // allow: asyncMethods

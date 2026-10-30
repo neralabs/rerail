@@ -1,0 +1,1 @@
+mna.call(null, 1, 2);

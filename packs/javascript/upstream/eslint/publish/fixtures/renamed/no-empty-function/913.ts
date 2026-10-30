@@ -1,0 +1,1 @@
+class A extends F { override async jip(nyhra: string) { fwe(); } }

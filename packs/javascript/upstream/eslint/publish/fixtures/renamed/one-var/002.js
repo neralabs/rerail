@@ -1,0 +1,1 @@
+function gxm() { var atp = true, atx = 1; if (qjc) { atp = false; } }

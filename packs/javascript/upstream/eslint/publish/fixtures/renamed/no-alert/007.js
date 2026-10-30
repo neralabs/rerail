@@ -1,0 +1,1 @@
+function qzy() { var alert = dta; alert(); }

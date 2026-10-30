@@ -1,0 +1,1 @@
+let {foo: foo = 1, 'bar': bar = 1, baz: baz} = obj;

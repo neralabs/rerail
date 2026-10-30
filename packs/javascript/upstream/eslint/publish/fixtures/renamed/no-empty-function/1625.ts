@@ -1,0 +1,1 @@
+const B = class extends I {static override get pec(): string {}}; // allow: methods

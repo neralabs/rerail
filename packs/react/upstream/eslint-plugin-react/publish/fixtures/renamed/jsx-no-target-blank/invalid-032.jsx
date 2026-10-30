@@ -1,0 +1,1 @@
+<a href="some-link" target="some-non-blank-target" {...rvinvKafri}></a>

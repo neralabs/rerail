@@ -1,0 +1,1 @@
+let c, m;c = m = 'baz'

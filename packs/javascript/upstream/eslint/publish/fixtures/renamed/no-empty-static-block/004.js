@@ -1,0 +1,1 @@
+class Bhf { static { ani(); } static { ani(); } }

@@ -1,0 +1,1 @@
+function tyn(fem: readonly void[]) {}

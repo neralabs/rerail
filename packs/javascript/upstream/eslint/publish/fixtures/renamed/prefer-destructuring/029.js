@@ -1,0 +1,1 @@
+class B { #s; nmq() { s = this.#s; } }

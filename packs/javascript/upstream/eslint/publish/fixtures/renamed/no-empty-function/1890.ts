@@ -1,0 +1,1 @@
+const dta = { async wiyuvj(ybmds: string) {} } // allow: arrowFunctions

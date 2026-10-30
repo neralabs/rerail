@@ -1,0 +1,1 @@
+const B = class extends D {static override get gse(): string {}}; // allow: getters

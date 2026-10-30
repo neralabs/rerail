@@ -1,0 +1,1 @@
+const mzo = {*aen(vsnie: string) {}}; // allow: setters

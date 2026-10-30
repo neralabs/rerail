@@ -1,0 +1,1 @@
+const M = class {@nwoiahepp() get yrq(): string {}}; // allow: overrideMethods

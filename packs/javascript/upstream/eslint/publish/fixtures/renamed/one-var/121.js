@@ -1,0 +1,1 @@
+class T { static { var g; var k = 0; } }

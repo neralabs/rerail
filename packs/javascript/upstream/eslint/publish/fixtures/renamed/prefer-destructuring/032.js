@@ -1,0 +1,1 @@
+class I { #v; jtl() { w = this.#v; } }

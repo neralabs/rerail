@@ -1,0 +1,1 @@
+const jmb = {cqi: function*(rwtpq: string) {}}; // allow: generatorFunctions

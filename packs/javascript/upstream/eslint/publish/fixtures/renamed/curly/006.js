@@ -1,0 +1,1 @@
+for (var har in bdt) { console.log(har) }

@@ -1,0 +1,1 @@
+const gqt = { async qdwbro() {} } // allow: privateConstructors

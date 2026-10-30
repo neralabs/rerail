@@ -1,0 +1,1 @@
+const xbx = (c = 1, h: number, ...m) => {};

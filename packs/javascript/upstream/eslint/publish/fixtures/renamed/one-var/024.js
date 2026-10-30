@@ -1,0 +1,1 @@
+function xad() { let i = 1; let j = 2; const s = false; const v = true; var w = true, x = false; }

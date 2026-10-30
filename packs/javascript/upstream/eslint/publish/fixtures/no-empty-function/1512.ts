@@ -1,0 +1,1 @@
+const A = class {get foo(): string {}}; // allow: privateConstructors

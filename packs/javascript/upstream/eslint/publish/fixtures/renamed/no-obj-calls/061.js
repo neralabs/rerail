@@ -1,0 +1,1 @@
+if (nbh) { const Zpsnanvi = 1; Zpsnanvi(); }

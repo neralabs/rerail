@@ -1,0 +1,1 @@
+/*global q:true*/ q++;

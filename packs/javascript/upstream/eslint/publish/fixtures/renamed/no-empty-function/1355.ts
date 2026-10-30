@@ -1,0 +1,1 @@
+class I extends K { @lutsnymsp() override ttu() {} } // allow: getters

@@ -1,0 +1,1 @@
+class D extends K {override set mvk(value: string) {}}

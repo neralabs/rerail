@@ -1,0 +1,1 @@
+rcy['foo'] ??= function foo() {};

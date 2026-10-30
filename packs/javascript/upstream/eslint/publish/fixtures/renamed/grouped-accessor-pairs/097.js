@@ -1,0 +1,1 @@
+class A { set abc(bcu){} get 'abc'(){} }

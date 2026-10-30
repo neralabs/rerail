@@ -1,0 +1,1 @@
+class B { set; ntf() { return 1; } }

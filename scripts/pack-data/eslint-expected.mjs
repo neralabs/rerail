@@ -173,7 +173,7 @@ export const isVariantPath = path => path.startsWith(`${RENAMED_DIRECTORY}/`);
 
 /**
  * Writes, under `fixtures/renamed/`, a renamed copy of every unit `origins` names: its ECMA sources through
- * scripts/pack-data/rename/ecmascript.ts (identifiers and string and number literal contents), its other files
+ * scripts/pack-data/rename/ecmascript.ts (its identifiers, order-preserving; literals kept), its other files
  * copied. Upstream then lints the copy like any unit, and its findings label it. A unit whose rename would change no
  * source, or change one's length or parse, gets no variant. Returns each variant (`of`, the original's key; `unit`,
  * shaped like the original; `paths`, original path to variant path) and the units skipped, with why.
@@ -208,12 +208,53 @@ export function writeRenameVariants(fixtures, units, origins) {
   return { variants, skipped };
 }
 
+const isPlainObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** `value` without its empty objects (recursively); undefined when nothing is left. */
+function withoutEmpty(value) {
+  if (!isPlainObject(value)) return value;
+  const out = {};
+  for (const [key, inner] of Object.entries(value)) {
+    const kept = withoutEmpty(inner);
+    if (kept !== undefined) out[key] = kept;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
+/**
+ * What a unit's `source.units[key].languageOptions` records of the language ESLint linted `path` under, beyond ESLint's
+ * flat-config defaults for its extension: its `ecmaVersion`, `sourceType` and `parserOptions` (never `globals`, which
+ * no generator applies, nor the parser, which the extension gives). Left out as defaults: `ecmaVersion: "latest"`, the
+ * extension's own `sourceType` (`commonjs` for `.cjs` and `.cts`, `module` otherwise) and `ecmaFeatures.jsx` (the
+ * extension's: `.jsx` and `.tsx` are JSX). Undefined when nothing is left, so most units carry nothing.
+ */
+export function unitLanguage(path, languageOptions) {
+  if (!isPlainObject(languageOptions)) return undefined;
+  const own = {};
+  if (languageOptions.ecmaVersion !== undefined && languageOptions.ecmaVersion !== "latest") own.ecmaVersion = languageOptions.ecmaVersion;
+  const defaultSourceType = /\.c[jt]s$/u.test(path) ? "commonjs" : "module";
+  if (languageOptions.sourceType !== undefined && languageOptions.sourceType !== defaultSourceType) own.sourceType = languageOptions.sourceType;
+  if (isPlainObject(languageOptions.parserOptions)) {
+    const { ecmaFeatures, ...parserOptions } = JSON.parse(JSON.stringify(languageOptions.parserOptions));
+    if (isPlainObject(ecmaFeatures)) {
+      const { jsx: _jsx, ...features } = ecmaFeatures;
+      parserOptions.ecmaFeatures = features;
+    }
+    const kept = withoutEmpty(parserOptions);
+    if (kept !== undefined) own.parserOptions = kept;
+  }
+  return Object.keys(own).length === 0 ? undefined : own;
+}
+
 /**
  * The expected findings' `files` and `units` once ESLint has run, and its findings. `kept` are the original units that
  * parsed; a variant is kept when its original is and none of its files is in `unparsed`. A dropped variant's files
- * are deleted and its findings dropped.
+ * are deleted and its findings dropped. `languages` maps an original unit's key to the language options ESLint linted
+ * it under (`unitLanguage`'s form; a unit with none has no entry), recorded as its `languageOptions` and its rename
+ * variant's: a generator that lints a unit under its upstream case's own language passes them, so the conformance
+ * runner evaluates the unit under the same language.
  */
-export function withOrigins(fixtures, kept, origins, variants, unparsed, findings) {
+export function withOrigins(fixtures, kept, origins, variants, unparsed, findings, languages = new Map()) {
   const keptKeys = new Set(kept.map(unitKey));
   const keptVariants = [];
   const dropped = new Set();
@@ -224,8 +265,11 @@ export function withOrigins(fixtures, kept, origins, variants, unparsed, finding
   }
   for (const path of dropped) rmSync(join(fixtures, path), { force: true });
   const entries = [];
-  for (const key of keptKeys) if (origins.has(key)) entries.push([key, { rules: [...new Set(origins.get(key))].sort() }]);
-  for (const variant of keptVariants) entries.push([unitKey(variant.unit), { rules: [...new Set(origins.get(variant.of))].sort(), renamedFrom: variant.of }]);
+  const language = key => (languages.get(key) === undefined ? {} : { languageOptions: languages.get(key) });
+  for (const key of keptKeys) if (origins.has(key)) entries.push([key, { rules: [...new Set(origins.get(key))].sort(), ...language(key) }]);
+  for (const variant of keptVariants) {
+    entries.push([unitKey(variant.unit), { rules: [...new Set(origins.get(variant.of))].sort(), renamedFrom: variant.of, ...language(variant.of) }]);
+  }
   entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
   return {
     files: [...kept, ...keptVariants.map(variant => variant.unit)],

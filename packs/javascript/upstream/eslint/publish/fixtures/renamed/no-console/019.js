@@ -1,0 +1,1 @@
+class B { static { console.error(ypw) } }

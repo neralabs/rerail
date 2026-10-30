@@ -1,0 +1,1 @@
+const wkb = function(yyjmd: string) {}; // allow: overrideMethods

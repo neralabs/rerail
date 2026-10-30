@@ -1,0 +1,1 @@
+this.Object.prototype.toString = 0

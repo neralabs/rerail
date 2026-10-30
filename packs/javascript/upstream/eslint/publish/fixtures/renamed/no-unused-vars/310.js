@@ -1,0 +1,1 @@
+const [k = kVutjmyr] = zre;

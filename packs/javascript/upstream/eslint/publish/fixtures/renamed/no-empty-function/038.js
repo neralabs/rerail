@@ -1,0 +1,1 @@
+class F {static ufk() { orp(); }}

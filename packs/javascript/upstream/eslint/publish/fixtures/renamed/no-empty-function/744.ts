@@ -1,0 +1,1 @@
+const ssk = {get odg(): string { geh(); }};

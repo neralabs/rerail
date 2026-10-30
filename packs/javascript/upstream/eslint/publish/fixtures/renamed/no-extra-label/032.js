@@ -1,0 +1,1 @@
+L: while(true) { continue L/*comment*/; }

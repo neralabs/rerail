@@ -1,0 +1,1 @@
+switch(hcg) { case eqy: case Number.NaN: default: break; }

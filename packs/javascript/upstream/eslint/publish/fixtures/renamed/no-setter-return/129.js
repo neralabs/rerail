@@ -1,0 +1,1 @@
+(class { static set h(wfq) { if (wfq > 0) { this._nna = wfq; return wfq; } return false; } })

@@ -1,0 +1,1 @@
+const T = class { private constructor() {} }; // allow: getters

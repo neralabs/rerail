@@ -1,0 +1,1 @@
+require('events').EventEmitter.listenerCount;
