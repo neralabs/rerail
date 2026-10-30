@@ -689,6 +689,8 @@ impl ScopeTable {
             let Some(name) = text.get(reference.start - base..reference.end - base) else {
                 continue;
             };
+            let name = name_in(self.language, Cow::Borrowed(name));
+            let name = name.as_ref();
             if let Some((scope, index)) = self.resolve_lexical_index(reference, name) {
                 charges.push((
                     scope,

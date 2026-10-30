@@ -5,6 +5,7 @@
 use super::{
     Binding, BuildError, Builder, Form, Grammar, NodeRef, ScopeKind, ScopeTable, Site, TYPE, VALUE,
 };
+use crate::code_rule_dsl::identifier::ecma_name;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::eslint_directive::Directive;
 use ast_grep_core::{Doc, Node};
@@ -690,7 +691,7 @@ impl Visitor<'_, '_> {
     }
 
     fn bind<D: Doc>(&mut self, target: Target, name: &Node<'_, D>, spaces: u8, site: Site) {
-        let text = name.text();
+        let text = ecma_name(name.text());
         self.bind_name(target, &text, spaces, site, Some(NodeRef::of(name)));
     }
 
@@ -988,7 +989,7 @@ impl Visitor<'_, '_> {
         }
         self.builder.push(ScopeKind::Class, node.range());
         if let Some(inner) = &inner_name {
-            let text = inner.text();
+            let text = ecma_name(inner.text());
             let name = own_name.then(|| NodeRef::of(inner));
             let site = site(Form::Definition, node);
             self.bind_name(Target::Block, &text, VALUE | TYPE, site, name);

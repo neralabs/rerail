@@ -954,6 +954,14 @@ fn lib_adds_typescript_eslint_lib_globals_in_their_namespaces() {
         "{result}"
     );
     // A `/* global */` comment's `off` and a configured `off` leave a lib variable in place.
+    // An escaped reference names its decoded name (ESLint's no-undef/227): the comment declares it.
+    let source = "/*global 𠮷𩸽*/ \\u{20BB7}\\u{29E3D}; \\u0078;\n";
+    let rule = typescript(json!({
+        "languageOptions": {},
+        "rule": { "kind": "identifier", "resolves": { "unresolved": true, "directives": "eslint" } },
+    }));
+    let result = evaluate_file(&rule, "javascript", "a.js", source);
+    assert_eq!(found(&result, source), ["1:\\u0078"], "{result}");
     let source = "/* global NodeList: off */\nNodeList; Node;\n";
     let rule = typescript(json!({
         "languageOptions": { "lib": ["dom"], "globals": { "Node": "off" } },
