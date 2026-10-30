@@ -91,7 +91,7 @@ rules:
     deprecated: null
     recommended: { config: "recommended", options: [] }
     # The rule reports an exported name one edit away from getStaticProps, getStaticPaths or getServerSideProps; its
-    # findings are those names, so every rename variant loses them (NER-2148).
+    # findings are those names, so every rename variant loses them.
     rename_exempt: "reports exported names one edit away from Next's data-fetching function names"
   "@next/next/no-unwanted-polyfillio":
     deprecated: null

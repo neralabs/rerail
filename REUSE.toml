@@ -568,9 +568,9 @@ precedence = "override"
 SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
-# Candidate rule documents re-implementing eslint-plugin-unicorn's rules.
+# Rule documents and candidate rule documents re-implementing eslint-plugin-unicorn's rules.
 [[annotations]]
-path = "packs/javascript/candidates/rules/unicorn-*.json"
+path = ["packs/javascript/rules/unicorn-*.json", "packs/javascript/candidates/rules/unicorn-*.json"]
 precedence = "override"
 SPDX-FileCopyrightText = ["Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
