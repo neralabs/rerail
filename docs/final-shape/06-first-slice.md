@@ -297,12 +297,26 @@ interpreter.
   - **Measured.** Before, the rounds moved the recursion one tree edge each, encoded to bounds
     of 25–154 (f704 needed 18). Now f704 settles in one sweep, and the S2 parity gate (87 clauses
     one at a time) takes 1,196 launches instead of 4,731, at most 47 for a clause.
-- **Left for later:**
-  - **CPU cost.** The CPU JIT compiles the wave's programs on every chunk, which is slower than the
-    interpreter. The JIT binding (Phase 4d) caches them.
-  - **Root programs on Metal.** The wave's demand step still runs on the CPU JIT. On Metal, the
-    roots step of `roots_metal` is the shape to take.
-  - **Planner.** The step is still hand-written; O14 has the planner-emitted version.
+- **Left for later, resolved (2026-10-30):**
+  - **CPU cost.** The cost was not compiling (the JIT cache is per program) but the JIT's linear
+    scan of supertypes. `SUPERTYPE` now binary-searches the memberships, and a derived class is
+    one bit test: `PackedBatch` carries the labels as bitsets (`derived`), in place of
+    `TapeDoc::transducer_classes`. The CPU's labels run by the levels the Metal plan uses
+    (`levels`), recursive groups as sweeps in node order, on the interpreter. The root programs'
+    execution went from 12.5 s to 78 ms on 4 fixtures; on 15 fixtures the whole wave takes 19.1 s
+    (CPU 21.3 s, load about 17), from 100 s.
+  - **Background compilation** (decision 0012): `CpuBackground` and `MetalBackground` run a batch
+    on its compiled programs once they are ready, and on the interpreter until then, with the
+    compilation requested on a thread. Metal builds its interpreter (and the sweep kernel) as part
+    of the compilation. Checked by `the_wave_runs_while_its_programs_compile` and the
+    `compilation` tests.
+  - **Root programs on Metal.** `Wave::demand` on a Metal backend evaluates labels and roots with
+    `LoweredWave::labelled_metal`; `the_wave_finds_ws_matches_on_metal` (8 fixtures, and chunks of
+    one in the background mode) has 0 differ. The roots take 178 ms; the label passes before them
+    are slow (O26).
+  - **Planner.** `logic::plan::emit` gives a lowered program as a `schedule::Program`, and T's
+    workload, workload_demand and calls give `run_atoms`' outputs through `schedule::run` (O14).
+    The wave's own step stays one statement: it reads the demand relation, and is not a rule.
 
 ### S5. Findings layer (first version of §8)
 

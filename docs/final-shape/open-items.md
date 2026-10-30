@@ -19,13 +19,14 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O11 | Phase 6 | §12's "unbounded value cycle" has no definition of a bound; T's programs recurse through `@cat` | open, **decision needed** |
 | O12 | Phase 6 | `nearest` has no executor after the native tape functions were dropped; Phase 6's check needs one | open, **decision needed** |
 | O13 | Phase 6 | Symbols as atoms in the planner's SQL | SQL side done (decision 0009); native strata open |
-| O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | open |
+| O14 | Phase 7 | `logic::plan` still runs its own stratum loop; it should emit wave steps for `waves::schedule` | emission done (2026-10-30, `logic::plan::emit`); open: counts at the boundary, one wave per stratum |
 | O15 | Phase 8 | S's oracle (`native_oracle.rs`) needs S's `matcher/` deltas, which no copy row covers | copy placed (2026-10-29): S's oracle runs as copied on P's anchor engine (`findings::tests::s_native_oracle`, `matcher::p_anchors`); open only: which comparison survives (O19) |
 | O16 | Phase 0 | 05 says port `mimalloc`; W already runs a tuned jemalloc | closed (2026-10-29): jemalloc stays the global allocator (user decision); `mimalloc` remains a dependency only |
 | O22 | Phase 9 | P's text prefilter on three-valued clauses against W's consumers' pass | closed (2026-10-29): option (a), user decision |
 | O23 | Phase 4 / 9 | Lowered matchers' node labels on Metal (06 S1, decision 0011) | open |
 | O24 | Phase 4 / 10 | Semantic predicates as labels from fact producers (06 S1, decision 0011) | open |
 | O25 | Phase 4 / 9 | A wave's recursive label rounds on Metal: one evaluation under 100 launches (06 S4) | closed (2026-10-30): sweeps in node order, 77 launches |
+| O26 | Phase 4 / 9 | The wave's label passes on Metal take seconds: host buffer sizing and the one-thread-per-file sweep (06 S4) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -293,6 +294,18 @@ trap T18). Lattice relations (`merge_lattice`) have no step form yet. Closure: t
 a `schedule::Program` (one step per rule and delta variant, its stratum from `strata`), with
 lattice merges as a fold kind, and T's programs give the same outputs through `schedule::run` as
 through `run_atoms`; the planner's counts then come from `rows.<relation>` at the boundary.
+
+2026-10-30: emission done. `logic::plan::emit` makes one stratum per component (constant rows
+before them all), one step per rule over whole relations (a recursive component's reading only
+lower strata), and per own positive atom one delta variant planned with its delta first.
+`schedule` folds lattice relations by key as `merge_lattice` does (`Program::lattices`).
+`t_programs_as_wave_programs_give_run_atoms_outputs`: workload (77 steps, 50 waves),
+workload_demand (127, 44) and calls (306, 117) equal `run_atoms`. Still open:
+- **Waves per stratum.** The scheduler runs only the lowest pending stratum each wave, so a
+  program takes at least one wave per stratum (calls has about 100 components), not its data
+  dependency depth. Strata whose inputs are settled could run in one wave.
+- **Counts.** Plans are made up front from input statistics; `run` re-plans a stratum from the
+  counts of those before it. The counts should come from `rows.<relation>` at the boundary.
 
 ## O15. S's oracle needs S's matcher deltas
 
@@ -632,3 +645,12 @@ Candidates, in rough order of reach:
 
 The CPU wave is unaffected: its labels settle per group by fixpoint, and the root programs run as
 one `demand(batch)` per chunk.
+
+## O26. The wave's label passes on Metal
+
+06 S4: on Metal, `the_wave_finds_ws_matches_on_metal` (8 fixtures) takes 17.6 s, of which the roots
+are 178 ms. Measured on 4 fixtures: the host's buffer sizing (`size()`) takes 3.5 s and the GPU's
+flush about 7.3 s. This predates moving the roots to Metal. Candidates: size buffers from the batch's
+counts instead of walking it, and split a recursive group's sweep over more than one thread per
+file (subtrees whose verdicts do not read each other). Closure: the wave on Metal no slower than on
+the CPU for the same fixtures.

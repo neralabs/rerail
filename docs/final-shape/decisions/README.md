@@ -9,3 +9,5 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0008 | Base facts are read through per-wave vtab bindings over core facts; integers only | accepted |
 | 0009 | The planner lowers programs, statistics and inputs to the same integers | accepted |
 | 0010 | Waves run on one owner connection; SQL selects each wave's frontier; derived relations are fact families | accepted |
+| 0011 | Composite matchers lower to node-label passes plus positive walking programs | accepted |
+| 0012 | Compilation runs in the background, on demand; the interpreter runs until it is ready | accepted |
