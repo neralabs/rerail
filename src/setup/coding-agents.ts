@@ -7,6 +7,7 @@ import {
   CODEX_TRUST_NOTE,
   detectHarnesses,
   HARNESSES,
+  OMP_PLUGIN_NOTE,
   registerHarnesses,
   UnreadableConfigError,
   unregisterHarnesses,
@@ -139,6 +140,8 @@ export interface ConnectResult {
   failures: ConnectProblem[];
   /** Codex's hooks were written: Codex runs them only once the person trusts them with `/hooks`. */
   codexTrust: boolean;
+  /** OMP also loads its own plugin install of Rerail (`OMP_PLUGIN_NOTE`): the person removes it with `omp plugin uninstall`. */
+  ompPlugin: boolean;
 }
 
 /**
@@ -147,12 +150,13 @@ export interface ConnectResult {
  * connected. `workspaceDir`: the repository the person said yes to, for Claude Code's project status line.
  */
 export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
-  const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false };
+  const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false, ompPlugin: false };
   for (const id of agents) {
     try {
       const report = await registerHarnesses({ root, home, harnesses: [id], ...(workspaceDir === undefined ? {} : { workspaceDir }) });
       if (report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
       if (report.notes.includes(CODEX_TRUST_NOTE)) result.codexTrust = true;
+      if (report.notes.includes(OMP_PLUGIN_NOTE)) result.ompPlugin = true;
     } catch (error) {
       result.failures.push(error instanceof UnreadableConfigError
         ? { agent: id, message: error.reason, file: error.path }
