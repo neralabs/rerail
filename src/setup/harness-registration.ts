@@ -34,7 +34,7 @@ import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
-import { ENTRY_POINTS } from "../engine/package-root.js";
+import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { pinnedNodePath } from "./node-path.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
@@ -476,21 +476,23 @@ function planMutation(
   };
 }
 
+/** `detail` may be a function, read after `transform`, for what the transform found. */
 async function planJsonFile(
   harness: Harness,
   path: string,
   context: Context,
-  detail: string,
+  detail: string | (() => string),
   transform: (value: JsonObject) => JsonObject | Promise<JsonObject>,
 ): Promise<Plan> {
   assertInside(path, context.home, "home");
   const existing = await readJsonFile(path);
   const next = await transform(structuredClone(existing.value));
+  const text = typeof detail === "string" ? detail : detail();
   if (stableJsonText(existing.value) === stableJsonText(next)) {
     const reason = context.mode === "register" ? "already in place" : "nothing to remove";
-    return { change: { harness, path, action: "unchanged", detail: `${detail}: ${reason}` } };
+    return { change: { harness, path, action: "unchanged", detail: `${text}: ${reason}` } };
   }
-  return planMutation(context, harness, path, existing.exists ? "updated" : "created", detail,
+  return planMutation(context, harness, path, existing.exists ? "updated" : "created", text,
     () => writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing));
 }
 
@@ -970,30 +972,66 @@ function planCursor(context: Context): Promise<Plan> {
 }
 
 /**
- * Whether a Pi package entry is this install or, on registration, another install of this package or one that is gone
+ * Whether a Pi package source is this install or, on registration, another install of this package or one that is gone
  * (`isGoneInstallRoot`). Only an absolute path, the shape setup writes, can be gone; an `npm:` or `git:` source never is.
  */
-async function isPackagePiEntry(context: Context, agentDir: string, entry: string): Promise<boolean> {
-  const root = resolve(agentDir, entry);
+async function isPackagePiEntry(context: Context, agentDir: string, source: string): Promise<boolean> {
+  const root = resolve(agentDir, source);
   if (context.mode === "unregister") return root === context.root;
-  return await isRerailPackageRoot(context, root) || (isAbsolute(entry) && await isGoneInstallRoot(root));
+  return await isRerailPackageRoot(context, root) || (isAbsolute(source) && await isGoneInstallRoot(root));
 }
 
+/**
+ * Rerail's own package as a Pi npm source, as Pi's package gallery installs it (`pi install npm:@neralabs/rerail`), at
+ * any version, range or tag. Only the core package: a rule pack's `npm:@neralabs/rerail-pack-…` is another package.
+ */
+function isRerailNpmSource(source: string): boolean {
+  const npm = `npm:${RERAIL_PACKAGE_NAME}`;
+  return source === npm || source.startsWith(`${npm}@`);
+}
+
+/** A Pi `packages` entry's source: the entry itself, or the object form's `source`, which filters what loads. */
+function piPackageSource(entry: unknown): string | undefined {
+  if (typeof entry === "string") return entry;
+  return isObject(entry) && typeof entry.source === "string" ? entry.source : undefined;
+}
+
+/**
+ * Pi loads a package once per identity, and an npm source and a path are two, so registration keeps one Rerail entry:
+ * this install, in the place of Rerail's npm source, or of this install's own entry, with an object's filters; appended
+ * when there is neither. Removal takes out Rerail's npm source too.
+ */
 function planPi(context: Context): Promise<Plan> {
   const agentDir = join(context.home, ".pi", "agent");
   const path = join(agentDir, "settings.json");
-  const detail =
-    context.mode === "register" ? `register ${context.root} in Pi packages` : "remove rerail from Pi packages";
+  const replaced: string[] = [];
+  const detail = (): string => {
+    if (context.mode === "unregister") return "remove rerail from Pi packages";
+    return `register ${context.root} in Pi packages${replaced.length === 0 ? "" : `, replacing ${replaced.join(" and ")}`}`;
+  };
   return planJsonFile("pi", path, context, detail, async (value) => {
     const packages = value.packages ?? [];
     if (!Array.isArray(packages))
       throw new Error(`Cannot register rerail package: "packages" in ${path} is not an array`);
     const kept: unknown[] = [];
+    let placed = false;
     for (const entry of packages as unknown[]) {
-      if (typeof entry === "string" && await isPackagePiEntry(context, agentDir, entry)) continue;
+      const source = piPackageSource(entry);
+      if (source === undefined) {
+        kept.push(entry);
+        continue;
+      }
+      const npm = isRerailNpmSource(source);
+      if (npm && context.mode === "register") replaced.push(source);
+      if (context.mode === "register" && !placed && (npm || resolve(agentDir, source) === context.root)) {
+        kept.push(isObject(entry) ? { ...entry, source: context.root } : context.root);
+        placed = true;
+        continue;
+      }
+      if (npm || await isPackagePiEntry(context, agentDir, source)) continue;
       kept.push(entry);
     }
-    if (context.mode === "register") kept.push(context.root);
+    if (context.mode === "register" && !placed) kept.push(context.root);
     const next = { ...value };
     if (kept.length > 0 || (Array.isArray(value.packages) && value.packages.length === 0)) next.packages = kept;
     else delete next.packages;
@@ -1035,6 +1073,32 @@ async function planOmpPackageDuplicates(context: Context): Promise<Plan[]> {
   }
   return plans;
 }
+
+/**
+ * Whether OMP loads its own plugin install of this package (`omp plugin install @neralabs/rerail`, in
+ * `~/.omp/plugins/node_modules`) beside the extension link. OMP keys extensions on their real file, so a copy that is not
+ * this install loads too and runs Rerail's hooks a second time. Registration tells the person (`OMP_PLUGIN_NOTE`) and
+ * removes nothing: OMP uninstalls a plugin through bun, which keeps the plugin folder's package.json, bun's lockfile and
+ * OMP's plugin lockfile in step, and those are not set-up's to edit. A copy `omp plugin disable` turned off goes unmentioned.
+ */
+async function hasOmpPluginCopy(context: Context): Promise<boolean> {
+  const plugins = join(context.home, ".omp", "plugins");
+  const copy = join(plugins, "node_modules", RERAIL_PACKAGE_NAME);
+  if (!(await isRerailPackageRoot(context, copy))) return false;
+  if (await realpath(copy) === await realpath(context.root).catch(() => context.root)) return false;
+  let lock: unknown;
+  try {
+    lock = JSON.parse(await readFile(join(plugins, "omp-plugins.lock.json"), "utf8"));
+  } catch {
+    return true;
+  }
+  const state = isObject(lock) && isObject(lock.plugins) ? lock.plugins[RERAIL_PACKAGE_NAME] : undefined;
+  return !(isObject(state) && state.enabled === false);
+}
+
+/** The note a registration of OMP carries while OMP's plugin install of Rerail loads too (`hasOmpPluginCopy`). */
+export const OMP_PLUGIN_NOTE =
+  `OMP also loads Rerail from its plugin install, so two copies run: remove that one with omp plugin uninstall ${RERAIL_PACKAGE_NAME}.`;
 
 async function planOmp(context: Context): Promise<Plan> {
   const path = join(context.home, ".omp", "agent", "extensions", OMP_EXTENSION_NAME);
@@ -1313,6 +1377,7 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
   if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
     notes.push(CODEX_TRUST_NOTE);
   }
+  if (mode === "register" && selected.has("omp") && await hasOmpPluginCopy(context)) notes.push(OMP_PLUGIN_NOTE);
   return { changes, notes };
 }
 
