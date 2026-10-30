@@ -1,20 +1,24 @@
 #!/usr/bin/env node
 // Publishes the tarballs packs-pack.ts wrote to <dir>, each public and under `latest` (under `next` for a pack
 // named in $HELD, space-separated ids that packs-plan.mjs found held at an older `latest`), checks that an anonymous
-// reader gets the version, and tags the released commit `<name>@<version>` on GitHub. Any failed run
+// reader gets the version, points `next` at a version published under `latest` unless `next` is already at a newer
+// one (so `next` never trails `latest`), and tags the released commit `<name>@<version>` on GitHub. Any failed run
 // can be run again, with the same tarballs or fresh ones: a version already tagged is skipped, and one already on the
-// registry without its tag is checked and tagged, not published again (releasePacks in packs.mjs).
+// registry without its tag is checked, has its `next` raised and is tagged, not published again (releasePacks in
+// packs.mjs).
 //
-// In the release workflow npm authenticates through trusted publishing, publishes with `--provenance` (failing when npm
-// cannot attach an attestation), and the commit is $GITHUB_SHA. By hand (a pack's first publish), npm uses your login
-// and publishes without provenance, which only CI can generate; gh uses your GitHub login with write access, and the
-// commit is HEAD, which must be clean and pushed. Both are checked before anything is published. Writes `released` (each
-// `<name>@<version>:<dist-tag>` it released, space-separated, for dist-tags-check.mjs) to $GITHUB_OUTPUT when it is set.
+// In the release workflow npm authenticates through trusted publishing (`npm dist-tag` over it needs npm 11.21.0 or
+// newer), publishes with `--provenance` (failing when npm cannot attach an attestation), and the commit is
+// $GITHUB_SHA. By hand (a pack's first publish), npm uses your login and publishes without provenance, which only CI
+// can generate; gh uses your GitHub login with write access, and the commit is HEAD, which must be clean and pushed.
+// Both are checked before anything is published. Writes `released` (each `<name>@<version>:<dist-tag>` it released,
+// space-separated, for dist-tags-check.mjs) to $GITHUB_OUTPUT when it is set.
 //
 //   [HELD="<id> ..."] node scripts/release/packs-publish.mjs <dir>
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { addDistTag, readNextTag } from "./dist-tags.mjs";
 import { assertCommitOnGitHub, createReleaseTag, listPacks, REGISTRY, releasePacks, releaseTags, ROOT } from "./packs.mjs";
 
 const git = (args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
@@ -67,6 +71,8 @@ const released = await releasePacks(
   {
     publish: (file, distTag) => publish(join(out, file), distTag),
     assertPublic,
+    readNext: readNextTag,
+    distTag: addDistTag,
     tag: (tag) => createReleaseTag(tag, commit),
     log: (line) => console.log(line),
   },
