@@ -13,7 +13,7 @@ In Cursor, in the repository you want Rerail in, ask the agent to install Rerail
 The skill has Cursor run Rerail's own installer, pinned to one version:
 
 ```sh
-npx --yes @neralabs/rerail@0.1.0 setup --relay
+npx --yes @neralabs/rerail@0.1.1 setup --relay
 ```
 
 `npx` downloads `@neralabs/rerail` from npm. Set-up then asks you each of its questions in the session (Cursor relays them as written), and changes nothing in a repository before you say yes. Once you answer, it:

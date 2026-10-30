@@ -1,5 +1,17 @@
 # @neralabs/rerail-pack-typescript
 
+## 0.1.5
+
+### Patch Changes
+
+- 61cda45: Each pack's `covers`, the line the dashboard shows under the pack's name, says in one sentence what the pack's rules are for and where they come from. It no longer counts rules or says how many start on: the dashboard shows both beside it, and the counts went stale whenever a rule shipped.
+- 1e7042b: README: the note that deriving pack test data is paused is gone, since derive runs again; no rule changes.
+- c8352a7: README, `pack.json` descriptions and licence notes: the conformance check is the one gate a port passes to ship, the ECMAScript packs' tests carry rename variants that upstream labels (`holds-under-rename`), and new test data is published through a tool-pack's `publish/` directory; no rule changes.
+- c8352a7: Licence notes: each `licenses/<project>/UPSTREAM.md` records its upstream repository per repo (source, the path patterns taken, what is not copied) instead of one row per copied test file; no rule changes.
+- 3fb36af: The README describes only the rules the pack ships. What it said about the candidate ports moves to `candidates/README.md`, which is not published.
+- c8352a7: README and licence notes: the ports are scored on labelled real-code samples instead of pinned corpora; no rule changes.
+- e1b9a49: TypeScript pack: ships 22 more rules, 46 in all, now that they pass every conformance check. Start on: `typescript-eslint-ban-ts-comment`, `typescript-eslint-no-misused-new`, `typescript-eslint-no-require-imports`, `typescript-eslint-no-this-alias` and `typescript-eslint-no-wrapper-object-types`. Start off, as no approved upstream configuration turns them on: `typescript-eslint-adjacent-overload-signatures`, `typescript-eslint-array-type`, `typescript-eslint-consistent-type-assertions`, `typescript-eslint-explicit-member-accessibility`, `typescript-eslint-explicit-module-boundary-types`, `typescript-eslint-max-params`, `typescript-eslint-no-dynamic-delete`, `typescript-eslint-no-extraneous-class`, `typescript-eslint-no-inferrable-types`, `typescript-eslint-no-invalid-void-type`, `typescript-eslint-no-magic-numbers`, `typescript-eslint-no-non-null-asserted-nullish-coalescing`, `typescript-eslint-no-redeclare`, `typescript-eslint-no-unnecessary-parameter-property-assignment`, `typescript-eslint-no-unused-private-class-members`, `typescript-eslint-no-use-before-define` and `typescript-eslint-prefer-for-of`.
+
 ## 0.1.4
 
 ### Patch Changes

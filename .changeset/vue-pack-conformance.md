@@ -1,5 +1,0 @@
----
-"@neralabs/rerail-pack-vue": patch
----
-
-Vue pack: eslint-plugin-vue is gated by the conformance check, and the 19 rules that pass it ship: `attribute-hyphenation`, `no-async-in-computed-properties`, `no-child-content`, `no-deprecated-v-on-native-modifier`, `no-duplicate-attributes`, `no-export-in-script-setup`, `no-mutating-props`, `no-ref-as-operand`, `no-side-effects-in-computed-properties`, `no-template-shadow`, `no-unused-vars`, `no-use-v-if-with-v-for`, `no-v-html`, `no-v-text-v-html-on-component`, `no-watch-after-await`, `require-v-for-key`, `v-on-event-hyphenation` and `valid-v-for` on, as `flat/recommended` turns them on, and `no-setup-props-reactivity-loss` off (no recommended eslint-plugin-vue configuration turns it on). The ports report the ranges eslint-plugin-vue reports (the directive, attribute, start tag, identifier or child content, no longer a point at its start), `no-unused-vars` reads a Vue 2 filter's name as no reference, as vue-eslint-parser does, and `no-mutating-props` checks `v-model` before the prop lookup so it stays within the engine's work budget. 5 remain candidates.
