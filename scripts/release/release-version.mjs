@@ -4,7 +4,7 @@
 //   - Packs: with changesets pending, `npm run version:packs` (each pack's version and CHANGELOG.md, then the lockfile).
 //   - Core: when core's version is released (its `v<version>` tag exists) and anything core ships has changed since
 //     that tag (coreChanges in core-paths.mjs), the next version (nextCoreVersion) in package.json and package-lock.json's
-//     root entries, the Claude Code plugin's pins of it (CLAUDE_PLUGIN_PINS), and the root CHANGELOG.md's unreleased
+//     root entries, the installer plugins' pins of it (PLUGIN_PINS), and the root CHANGELOG.md's unreleased
 //     section dated today as that version. A version not tagged yet is a release under way (release-pr.yml tags it
 //     before this runs), so core is left alone.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags fetched.
@@ -13,7 +13,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { changelogSection, CLAUDE_PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setClaudePluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
+import { changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { listPacks, readChangesets, ROOT } from "./packs.mjs";
 
@@ -65,7 +65,7 @@ function versionCore() {
   const changelog = releaseChangelog(readText("CHANGELOG.md"), version, new Date().toISOString().slice(0, 10));
   writeFileSync(join(ROOT, "package.json"), setPackageVersion(readText("package.json"), version));
   writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(setLockVersion(JSON.parse(readText("package-lock.json")), version), null, 2)}\n`);
-  for (const path of CLAUDE_PLUGIN_PINS) writeFileSync(join(ROOT, path), setClaudePluginVersion(readText(path), version));
+  for (const path of PLUGIN_PINS) writeFileSync(join(ROOT, path), setPluginVersion(readText(path), version));
   writeFileSync(join(ROOT, "CHANGELOG.md"), changelog.text);
   console.log(`core ${current} -> ${version}: ${changes.length} shipped path(s) changed since ${tag}`);
   return { from: current, version, notes: changelog.notes, changes };

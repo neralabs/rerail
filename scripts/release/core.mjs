@@ -77,13 +77,18 @@ export function setLockVersion(lock, version) {
 }
 
 /**
- * The Claude Code plugin's files that pin core's version (`plugins/claude`, the installer the Claude plugin directory
- * lists): its manifest's `version`, and the `npx @neralabs/rerail@<version>` its skill runs and its README shows.
+ * The files of the installer plugins that coding agents' plugin directories list (`plugins/<agent>`) that pin core's
+ * version: each manifest's `version`, and the `npx @neralabs/rerail@<version>` each `install` skill runs and each
+ * README shows.
  */
-export const CLAUDE_PLUGIN_PINS = ["plugins/claude/.claude-plugin/plugin.json", "plugins/claude/skills/install/SKILL.md", "plugins/claude/README.md"];
+export const PLUGIN_PINS = ["claude", "codex", "cursor"].flatMap((agent) => [
+  { claude: "plugins/claude/.claude-plugin/plugin.json", codex: "plugins/codex/plugin.json", cursor: "plugins/cursor/.cursor-plugin/plugin.json" }[agent],
+  `plugins/${agent}/skills/install/SKILL.md`,
+  `plugins/${agent}/README.md`,
+]);
 
-/** The text of one of CLAUDE_PLUGIN_PINS with its manifest `version` and every `@neralabs/rerail@<version>` set to `version`. */
-export function setClaudePluginVersion(text, version) {
+/** The text of one of PLUGIN_PINS with its manifest `version` and every `@neralabs/rerail@<version>` set to `version`. */
+export function setPluginVersion(text, version) {
   return text.replace(/^( {2}"version": ")[^"]*(")/mu, `$1${version}$2`).replace(/@neralabs\/rerail@\d[^\s`]*/gu, `@neralabs/rerail@${version}`);
 }
 

@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { CLAUDE_PLUGIN_PINS, changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setClaudePluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { PLUGIN_PINS, changelogSection, coreTagRefusal, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
 import { distTagReport, parseDistTagList, parseExpectation } from "../../scripts/release/dist-tags.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -108,12 +108,12 @@ describe("setPackageVersion and setLockVersion", () => {
   });
 });
 
-describe("the Claude Code plugin's pins of core", () => {
+describe("the installer plugins' pins of core", () => {
   const read = (path) => readFileSync(join(ROOT, path), "utf8");
 
   it("pin the version core's package.json names, so the directory's installer runs the release it ships with", () => {
     const { version } = JSON.parse(read("package.json"));
-    for (const path of CLAUDE_PLUGIN_PINS) {
+    for (const path of PLUGIN_PINS) {
       const pins = [...read(path).matchAll(/@neralabs\/rerail@(\S+?)[\s`]/gu)].map((match) => match[1]);
       if (path.endsWith("plugin.json")) expect(JSON.parse(read(path)).version, path).toBe(version);
       else expect(pins.length, path).toBeGreaterThan(0);
@@ -123,9 +123,9 @@ describe("the Claude Code plugin's pins of core", () => {
 
   it("moves the manifest version and every npx pin, and leaves rule pack names alone", () => {
     const manifest = '{\n  "name": "rerail",\n  "version": "0.1.0",\n  "author": {\n    "version": "x"\n  }\n}\n';
-    expect(setClaudePluginVersion(manifest, "0.1.1")).toBe(manifest.replace('"0.1.0"', '"0.1.1"'));
+    expect(setPluginVersion(manifest, "0.1.1")).toBe(manifest.replace('"0.1.0"', '"0.1.1"'));
     const skill = "Run `npx @neralabs/rerail@0.1.0 setup`, then:\n\nnpx --yes @neralabs/rerail@0.1.0 setup --relay\n\nnot @neralabs/rerail-pack-sql@0.1.4";
-    expect(setClaudePluginVersion(skill, "0.2.0")).toBe(skill.replaceAll("rerail@0.1.0", "rerail@0.2.0"));
+    expect(setPluginVersion(skill, "0.2.0")).toBe(skill.replaceAll("rerail@0.1.0", "rerail@0.2.0"));
   });
 });
 
