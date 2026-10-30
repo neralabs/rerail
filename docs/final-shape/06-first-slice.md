@@ -191,7 +191,8 @@ interpreter.
     launches. Its rounds are bounded by the tree's depth or sibling runs, and a skipped round
     still counts. The launch budget's target of under 100 per evaluation
     (`metal_launch_budget.rs`) is S4's check, where a wave's clauses share one evaluation and
-    its levels and rounds.
+    its levels and rounds. The user confirmed on 2026-10-30 that this target belongs to S4,
+    not S2.
   - A label-domain program starts at every node, because its label is not known when the
     command buffer is encoded. Its first `SUPERTYPE` drops the others.
 
