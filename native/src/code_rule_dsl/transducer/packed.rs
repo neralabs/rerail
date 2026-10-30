@@ -88,6 +88,7 @@ mod scm;
 #[path = "packed/compile/matcher.rs"]
 #[cfg_attr(not(test), allow(dead_code))]
 mod compile_matcher;
+pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
 #[cfg(test)]
 #[path = "packed/compile/matcher_tests.rs"]
 mod compile_matcher_tests;
@@ -3691,7 +3692,19 @@ pub(in crate::code_rule_dsl) fn execute_with_backend_packed_result_limits(
                 result_limits,
             )
         }
-        ExecutionBackend::CpuInterpreter => Err(Error::UnsupportedBackend),
+        // One file per execution: the demand relation partitions its batch by file for it.
+        ExecutionBackend::CpuInterpreter => match (files, anchors) {
+            ([file], [roots]) => {
+                let unlimited = vec![u32::MAX; programs.len()];
+                packed_batch::PackedExecution::interpret_reference(
+                    programs,
+                    file,
+                    roots,
+                    result_limits.unwrap_or(&unlimited),
+                )
+            }
+            _ => Err(Error::UnsupportedBackend),
+        },
         ExecutionBackend::Metal => Err(Error::UnsupportedBackend),
         #[cfg(not(target_os = "macos"))]
         ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit => {

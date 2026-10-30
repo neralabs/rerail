@@ -364,6 +364,13 @@ impl Families {
             .map(|(_, tape)| Arc::new(tape)))
     }
 
+    /// The tape `path`'s tape name binds now, decoded from the store: what a reader of the
+    /// families outside a push (a wave) reads.
+    pub(crate) fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
+        let read = graph.binding(&tape_name(scope, path))?.unwrap_or(ABSENT);
+        Self::default().take(graph, scope, path, read)
+    }
+
     /// The core derivation of `path`, from the tape its tape name binds now, and its facts
     /// (`None` where there is no tape: the output is then `ABSENT`).
     pub(crate) fn core(

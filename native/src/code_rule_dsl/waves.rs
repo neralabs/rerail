@@ -6,5 +6,8 @@ mod owner;
 #[cfg(test)]
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod relational;
+/// The first slice's wave over lowered matchers (06 S4).
+#[allow(dead_code)]
+pub(in crate::code_rule_dsl) mod matches;
 mod schedule;
 mod storage;

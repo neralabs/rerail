@@ -1311,9 +1311,10 @@ impl PackedExecution {
         }
     }
 
-    // Test oracle only: preserve all interpreter values through the production
-    // publication adapter without planning a JIT execution workspace.
-    #[cfg(test)]
+    // The reference interpreter's values through the production publication adapter, without
+    // planning a JIT execution workspace: the tests' oracle, and the CPU interpreter backend
+    // (one file per execution), which reads a tape's derived classes (a lowered matcher's labels,
+    // `TapeDoc::with_labels`) as the packed image does not.
     pub(super) fn interpret_reference(
         programs: &[Program],
         file: &TapeDoc,

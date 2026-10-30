@@ -23,16 +23,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
 
 /// A lowered clause: label passes, in order, then the root program.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct LoweredMatcher {
     labels: Labels,
     program: Program,
     domain: Domain,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Labels {
-    /// By label id less `LABEL_BASE`.
+    /// By label id less `LABEL_BASE` and `offset`.
     defs: Vec<Label>,
+    /// Where this clause's labels start among a wave's (`LoweredWave`): 0 alone.
+    offset: u16,
     /// Evaluation order: each step a group of labels evaluated together, to their least fixpoint
     /// where the group is a recursive utility's (one label otherwise).
     steps: Vec<Vec<u16>>,
@@ -70,6 +73,7 @@ pub(in crate::code_rule_dsl) enum Backend {
     MetalInterpreter,
 }
 
+#[derive(Clone)]
 enum Label {
     /// The roots an ast-grep pattern matches.
     Pattern(Program, Domain),
@@ -105,11 +109,54 @@ impl Labels {
     /// A label not yet in the evaluation order.
     fn reserve(&mut self, label: Label) -> u16 {
         self.defs.push(label);
-        LABEL_BASE + (self.defs.len() - 1) as u16
+        LABEL_BASE + self.offset + (self.defs.len() - 1) as u16
     }
 
     fn def(&self, id: u16) -> &Label {
-        &self.defs[usize::from(id - LABEL_BASE)]
+        &self.defs[usize::from(id - LABEL_BASE - self.offset)]
+    }
+
+    /// The labels' ids, past the last label of the wave's clauses before this one.
+    fn ids(&self) -> std::ops::Range<u16> {
+        LABEL_BASE + self.offset..LABEL_BASE + self.offset + self.defs.len() as u16
+    }
+
+    /// The same labels with every id `by` higher.
+    fn shifted(&self, by: u16) -> Self {
+        let up = |label: u16| label + by;
+        let domain = |domain: &Domain| match domain {
+            Domain::Label(label) => Domain::Label(up(*label)),
+            other => other.clone(),
+        };
+        let defs = self
+            .defs
+            .iter()
+            .map(|label| match label {
+                Label::Pattern(program, starts) => Label::Pattern(program.shifted(by), domain(starts)),
+                Label::Constrained(program, starts, constraints) => Label::Constrained(
+                    program.shifted(by),
+                    domain(starts),
+                    constraints.iter().map(|(name, label)| (name.clone(), up(*label))).collect(),
+                ),
+                Label::Roots(program, starts) => Label::Roots(program.shifted(by), domain(starts)),
+                Label::Targets(program, starts) => Label::Targets(program.shifted(by), domain(starts)),
+                Label::Count { program, domain: starts, by: tally, min, max } => Label::Count {
+                    program: program.shifted(by),
+                    domain: domain(starts),
+                    by: *tally,
+                    min: *min,
+                    max: *max,
+                },
+                Label::Complement(of) => Label::Complement(up(*of)),
+                Label::Empty => Label::Empty,
+            })
+            .collect();
+        Self {
+            defs,
+            offset: self.offset + by,
+            steps: self.steps.iter().map(|step| step.iter().copied().map(up).collect()).collect(),
+            recursive: self.recursive.iter().map(|(at, label)| (*at, up(*label))).collect(),
+        }
     }
 
     /// The labels a label's pass reads.
@@ -176,12 +223,23 @@ impl LoweredMatcher {
         if let Backend::MetalInterpreter = backend {
             return self.roots_metal(tapes).map(|(roots, _)| roots);
         }
-        let mut sets = tapes
+        let mut sets = empty_sets(tapes, self.labels.defs.len());
+        self.label(tapes, &mut sets)?;
+        let views = tapes
             .iter()
-            .map(|tape| {
-                Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; self.labels.defs.len()])
-            })
+            .zip(&sets)
+            .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
             .collect::<Vec<_>>();
+        let outputs = run(&self.program, &views, &self.domain, &sets)?;
+        Ok(outputs
+            .into_iter()
+            .map(|outputs| outputs.into_iter().map(|output| output.start).collect())
+            .collect())
+    }
+
+    /// Evaluates the clause's labels over the batch into `sets`, which hold every label of the
+    /// wave the clause is part of (its own from `labels.ids()`), each step to its fixpoint.
+    fn label(&self, tapes: &[TapeDoc], sets: &mut [Arc<Vec<Vec<u64>>>]) -> Result<(), Error> {
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
         for step in &self.labels.steps {
             let recursive = self.labels.recursive.values().any(|id| step.contains(id));
@@ -194,10 +252,10 @@ impl LoweredMatcher {
                 for &id in step {
                     let views = tapes
                         .iter()
-                        .zip(&sets)
+                        .zip(sets.iter())
                         .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
                         .collect::<Vec<_>>();
-                    let found = self.evaluate(self.labels.def(id), &views, &sets)?;
+                    let found = self.evaluate(self.labels.def(id), &views, sets)?;
                     for (sets, set) in sets.iter_mut().zip(found) {
                         let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
                         if *slot != set {
@@ -215,16 +273,7 @@ impl LoweredMatcher {
                 return Err(Error::WorkLimit);
             }
         }
-        let views = tapes
-            .iter()
-            .zip(&sets)
-            .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
-            .collect::<Vec<_>>();
-        let outputs = run(&self.program, &views, &self.domain, &sets)?;
-        Ok(outputs
-            .into_iter()
-            .map(|outputs| outputs.into_iter().map(|output| output.start).collect())
-            .collect())
+        Ok(())
     }
 
     /// A label's set on each tape of the batch.
@@ -334,6 +383,93 @@ impl LoweredMatcher {
     }
 }
 
+impl Program {
+    /// The program with every label it tests `by` higher (a clause's place in a wave).
+    fn shifted(&self, by: u16) -> Self {
+        let mut program = self.clone();
+        for word in &mut program.words {
+            if let (SUPERTYPE, mode, class) = split(*word)
+                && class >= LABEL_BASE
+            {
+                *word = super::word(SUPERTYPE, mode, class + by);
+            }
+        }
+        program
+    }
+}
+
+impl LoweredMatcher {
+    /// The clause with its labels `by` higher.
+    fn shifted(&self, by: u16) -> Self {
+        Self {
+            labels: self.labels.shifted(by),
+            program: self.program.shifted(by),
+            domain: self.domain.clone(),
+        }
+    }
+}
+
+/// A wave's lowered clauses evaluated together (06 S4): each clause's labels shifted past the
+/// clauses' before it, so one set of label bitsets per tape holds them all and every pass and
+/// root program reads its own. The roots then run as one batch of programs (`demand(batch)`'s
+/// packed producers), or, on Metal, every clause's passes and roots in one command buffer.
+pub(in crate::code_rule_dsl) struct LoweredWave {
+    clauses: Vec<LoweredMatcher>,
+    labels: usize,
+}
+
+impl LoweredWave {
+    pub(in crate::code_rule_dsl) fn new(clauses: &[&LoweredMatcher]) -> Result<Self, Error> {
+        let mut at = 0_usize;
+        let mut shifted = Vec::with_capacity(clauses.len());
+        for clause in clauses {
+            let by = u16::try_from(at).map_err(|_| Error::InvalidOperand(0))?;
+            shifted.push(clause.shifted(by));
+            at += clause.labels.defs.len();
+        }
+        // Each clause's root label on Metal follows every pass's.
+        if at + clauses.len() > usize::from(u16::MAX - LABEL_BASE) {
+            return Err(Error::InvalidOperand(0));
+        }
+        Ok(Self { clauses: shifted, labels: at })
+    }
+
+    /// How many label passes the wave runs before its roots.
+    pub(in crate::code_rule_dsl) fn passes(&self) -> usize {
+        self.labels
+    }
+
+    /// Each clause's root program, in clause order.
+    pub(in crate::code_rule_dsl) fn programs(&self) -> Vec<Program> {
+        self.clauses.iter().map(|clause| clause.program.clone()).collect()
+    }
+
+    /// Every clause's labels over the batch, as views of its tapes the root programs read.
+    pub(in crate::code_rule_dsl) fn labelled(&self, tapes: &[TapeDoc]) -> Result<Vec<TapeDoc>, Error> {
+        let mut sets = empty_sets(tapes, self.labels);
+        for clause in &self.clauses {
+            clause.label(tapes, &mut sets)?;
+        }
+        Ok(tapes.iter().zip(sets).map(|(tape, sets)| tape.with_labels(sets)).collect())
+    }
+
+    /// Whether clause `clause`'s root program starts at `node` of `tape`: its root's kinds.
+    pub(in crate::code_rule_dsl) fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
+        match &self.clauses[clause].domain {
+            Domain::All | Domain::Label(_) => true,
+            Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
+        }
+    }
+}
+
+/// Per tape, `labels` empty label sets.
+fn empty_sets(tapes: &[TapeDoc], labels: usize) -> Vec<Arc<Vec<Vec<u64>>>> {
+    tapes
+        .iter()
+        .map(|tape| Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; labels]))
+        .collect()
+}
+
 fn has(sets: &[Vec<u64>], label: u16, node: u32) -> bool {
     sets[usize::from(label - LABEL_BASE)][node as usize / 64] >> (node % 64) & 1 != 0
 }
@@ -360,54 +496,91 @@ impl LoweredMatcher {
         &self,
         tapes: &[TapeDoc],
     ) -> Result<(Vec<BTreeSet<u32>>, metal_program_backend::label_passes::Outcome), Error> {
-        use metal_program_backend::label_passes::{Pass, Plan, run};
-        let bases = tapes
+        let no_labels = empty_sets(tapes, self.labels.defs.len());
+        let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&self.domain, tape, sets).collect()).collect();
+        let (mut found, outcome) = metal(&[self], self.labels.defs.len(), tapes, &[roots])?;
+        Ok((found.pop().expect("one clause"), outcome))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl LoweredWave {
+    /// Each clause's matches of the batch from `roots` (per clause, per tape: the candidates its
+    /// root program starts from), every clause's passes and roots in one command buffer.
+    pub(in crate::code_rule_dsl) fn roots_metal(
+        &self,
+        tapes: &[TapeDoc],
+        roots: &[Vec<Vec<u32>>],
+    ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
+        metal(&self.clauses.iter().collect::<Vec<_>>(), self.labels, tapes, roots)
+    }
+}
+
+/// `clauses`' matches of the batch on Metal, in one command buffer: their labels (disjoint, `labels`
+/// in all) as passes, then each clause's root program from its `roots` (per tape) as one pass more.
+/// The clauses' segments are merged by position: the i-th run of single-label steps of every
+/// clause, or its i-th recursive group, are one segment, recursive if any is, so the wave's levels
+/// and rounds are the deepest clause's, not their sum. A pass of a merged recursive segment that is
+/// not itself recursive re-runs each round on settled inputs, and gives the same label.
+#[cfg(target_os = "macos")]
+fn metal(
+    clauses: &[&LoweredMatcher],
+    labels: usize,
+    tapes: &[TapeDoc],
+    clause_roots: &[Vec<Vec<u32>>],
+) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
+    use metal_program_backend::label_passes::{Pass, Plan, run};
+    let bases = tapes
+        .iter()
+        .scan(0_u32, |base, tape| {
+            let at = *base;
+            *base += tape.transducer_len() as u32;
+            Some(at)
+        })
+        .collect::<Vec<_>>();
+    let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
+    let words = nodes.div_ceil(32).max(1);
+    let no_labels = empty_sets(tapes, labels);
+    // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
+    // Metal, where the label is not known before the command buffer runs, it starts everywhere.
+    let roots = |starts: &Domain| {
+        tapes
             .iter()
-            .scan(0_u32, |base, tape| {
-                let at = *base;
-                *base += tape.transducer_len() as u32;
-                Some(at)
+            .zip(&no_labels)
+            .map(|(tape, sets)| match starts {
+                Domain::Label(_) => (0..tape.transducer_len() as u32).collect(),
+                _ => domain(starts, tape, sets).collect(),
             })
-            .collect::<Vec<_>>();
-        let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
-        let words = nodes.div_ceil(32).max(1);
-        let labels = self.labels.defs.len() + 1;
-        let no_labels = tapes
-            .iter()
-            .map(|tape| Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; self.labels.defs.len()]))
-            .collect::<Vec<_>>();
-        // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
-        // Metal, where the label is not known before the command buffer runs, it starts everywhere.
-        let roots = |starts: &Domain| {
-            tapes
-                .iter()
-                .zip(&no_labels)
-                .map(|(tape, sets)| match starts {
-                    Domain::Label(_) => (0..tape.transducer_len() as u32).collect(),
-                    _ => domain(starts, tape, sets).collect(),
-                })
-                .collect::<Vec<Vec<u32>>>()
-        };
-        let index = |label: u16| u32::from(label - LABEL_BASE);
+            .collect::<Vec<Vec<u32>>>()
+    };
+    let index = |label: u16| u32::from(label - LABEL_BASE);
+    let mut slots = 0_u32;
+    let mut patterns = Vec::new();
+    // Per merged segment: whether it is recursive, its levels, its recursive labels' kinds (None:
+    // any) and whether it steps to siblings.
+    let mut steps: Vec<(bool, Vec<Vec<Pass<'_>>>)> = Vec::new();
+    let mut chains: Vec<(Option<BTreeSet<u16>>, bool)> = Vec::new();
+    for clause in clauses {
         // Segments: each run of single-label steps, and each recursive group, as its levels. A
         // label's level is one past the deepest label of its segment it reads that is computed
         // before it; in a recursive group, a read of a later member is the last round's.
         let mut segments: Vec<(bool, Vec<u16>)> = Vec::new();
-        for step in &self.labels.steps {
-            let recursive = self.labels.recursive.values().any(|id| step.contains(id));
+        for step in &clause.labels.steps {
+            let recursive = clause.labels.recursive.values().any(|id| step.contains(id));
             match segments.last_mut() {
                 Some((false, members)) if !recursive => members.extend(step),
                 _ => segments.push((recursive, step.clone())),
             }
         }
-        let mut slots = 0_u32;
-        let mut patterns = Vec::new();
-        let mut steps = Vec::new();
-        for (recursive, members) in &segments {
+        for (position, (recursive, members)) in segments.iter().enumerate() {
             let mut level = BTreeMap::<u16, usize>::new();
-            let mut levels: Vec<Vec<Pass<'_>>> = Vec::new();
+            if steps.len() <= position {
+                steps.push((false, Vec::new()));
+                chains.push((Some(BTreeSet::new()), false));
+            }
+            let levels = &mut steps[position].1;
             for &id in members {
-                let at = self
+                let at = clause
                     .labels
                     .reads(id)
                     .iter()
@@ -416,9 +589,9 @@ impl LoweredMatcher {
                     .max()
                     .unwrap_or(0);
                 let target = index(id);
-                let pass = match self.labels.def(id) {
+                let pass = match clause.labels.def(id) {
                     Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
-                        let constraints = match self.labels.def(id) {
+                        let constraints = match clause.labels.def(id) {
                             Label::Constrained(_, _, constraints) => {
                                 constraints.iter().map(|(name, label)| (name.clone(), index(*label))).collect()
                             }
@@ -441,7 +614,7 @@ impl LoweredMatcher {
                         target,
                         program,
                         roots: roots(starts),
-                        captured: matches!(self.labels.def(id), Label::Targets(..)),
+                        captured: matches!(clause.labels.def(id), Label::Targets(..)),
                     },
                     Label::Count {
                         program,
@@ -470,67 +643,80 @@ impl LoweredMatcher {
                 }
                 levels[at].push(pass);
             }
-            levels.retain(|level| !level.is_empty());
-            steps.push((*recursive, levels));
+            if !recursive {
+                continue;
+            }
+            steps[position].0 = true;
+            let (kinds, siblings) = &mut chains[position];
+            for id in members.iter().filter(|id| clause.labels.recursive.values().any(|label| label == *id)) {
+                match (clause.labels.def(*id), kinds.as_mut()) {
+                    (Label::Roots(_, Domain::Kinds(own)), Some(kinds)) => kinds.extend(own.iter().copied()),
+                    _ => *kinds = None,
+                }
+            }
+            *siblings |= members.iter().any(|id| match clause.labels.def(*id) {
+                Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. } => {
+                    program.words.iter().any(|&word| matches!(split(word).0, NEXT | FOLLOWING))
+                }
+                _ => false,
+            });
         }
-        let last = labels as u32 - 1;
-        steps.push((
-            false,
-            vec![vec![Pass::Program {
-                target: last,
-                program: &self.program,
-                roots: roots(&self.domain),
-                captured: false,
-            }]],
-        ));
-        // Per step: a recursive group's recursive labels' kinds, and whether it steps to siblings.
-        let chains = segments
-            .iter()
-            .map(|(recursive, members)| {
-                if !recursive {
-                    return (None, false);
-                }
-                let mut kinds = Some(BTreeSet::new());
-                for id in members.iter().filter(|id| self.labels.recursive.values().any(|label| label == *id)) {
-                    match (self.labels.def(*id), kinds.as_mut()) {
-                        (Label::Roots(_, Domain::Kinds(own)), Some(kinds)) => kinds.extend(own.iter().copied()),
-                        _ => kinds = None,
-                    }
-                }
-                let siblings = members.iter().any(|id| match self.labels.def(*id) {
-                    Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. } => {
-                        program.words.iter().any(|&word| matches!(split(word).0, NEXT | FOLLOWING))
-                    }
-                    _ => false,
-                });
-                (kinds.map(|kinds| kinds.into_iter().collect()), siblings)
-            })
-            .chain([(None, false)])
-            .collect();
-        let outcome = run(
-            &Plan {
-                labels,
-                counts: slots as usize,
-                patterns,
-                steps,
-                chains,
-            },
-            tapes,
-        )?;
-        let found = tapes
-            .iter()
-            .zip(&bases)
-            .map(|(tape, base)| {
-                (0..tape.transducer_len() as u32)
-                    .filter(|node| {
-                        let global = (base + node) as usize;
-                        outcome.labels[last as usize * words + global / 32] >> (global % 32) & 1 != 0
-                    })
-                    .collect()
-            })
-            .collect();
-        Ok((found, outcome))
     }
+    for (_, levels) in &mut steps {
+        levels.retain(|level| !level.is_empty());
+    }
+    // A clause's roots: one label past every pass's.
+    steps.push((
+        false,
+        vec![
+            clauses
+                .iter()
+                .zip(clause_roots)
+                .enumerate()
+                .map(|(at, (clause, roots))| Pass::Program {
+                    target: (labels + at) as u32,
+                    program: &clause.program,
+                    roots: roots.clone(),
+                    captured: false,
+                })
+                .collect(),
+        ],
+    ));
+    let chains = chains
+        .into_iter()
+        .zip(&steps)
+        .map(|((kinds, siblings), (recursive, _))| {
+            if *recursive { (kinds.map(|kinds| kinds.into_iter().collect()), siblings) } else { (None, false) }
+        })
+        .chain([(None, false)])
+        .collect();
+    let outcome = run(
+        &Plan {
+            labels: labels + clauses.len(),
+            counts: slots as usize,
+            patterns,
+            steps,
+            chains,
+        },
+        tapes,
+    )?;
+    let found = (0..clauses.len())
+        .map(|at| {
+            tapes
+                .iter()
+                .zip(&bases)
+                .map(|(tape, base)| {
+                    (0..tape.transducer_len() as u32)
+                        .filter(|node| {
+                            let global = (base + node) as usize;
+                            outcome.labels[(labels + at) * words + global / 32] >> (global % 32) & 1 != 0
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    Ok((found, outcome))
 }
 
 /// The nodes of `tape` in `domain`, in preorder.

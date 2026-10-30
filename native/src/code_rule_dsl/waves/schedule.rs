@@ -18,7 +18,9 @@
 //!   relations otherwise.
 //! - A stratum runs only when no lower stratum has pending steps, so negation and aggregation
 //!   read complete relations.
-//! - A statement may read the chunk's `demand(batch)` relations through `:batch`.
+//! - A statement may read the chunk's `demand(batch)` relations through `:batch`. A batch's
+//!   files are the chunk's documents in order: `temp.wave_document(position, d)` maps a
+//!   relation's `file_index` to the document's key.
 //!
 //! Chunks:
 //! - Documents run in chunks bounded by bytes (500 MB pools, 03 §10 answer 1).
@@ -35,6 +37,7 @@ use crate::code_rule_dsl::facts::Graph;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::facts::vtab::syntax::{Document, fresh, sources};
 use crate::content_store::{DerivationInput, DerivationRecord, StoreError, StoreResult};
+use rusqlite::OptionalExtension as _;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -57,6 +60,10 @@ pub(in crate::code_rule_dsl) struct Program {
     pub steps: Vec<Step>,
     /// Every step joins rows of one document at a time, so chunks of documents run apart.
     pub file_local: bool,
+    /// Relations recorded as one family per value of their first column besides their own: the
+    /// i-th name's family holds the rows whose first column is i (a match-fact family per rule
+    /// clause, 06 S4).
+    pub partitions: Vec<(String, Vec<String>)>,
 }
 
 impl Program {
@@ -131,11 +138,12 @@ fn chunks(documents: Vec<Document>, budget: usize, file_local: bool) -> Vec<Vec<
     out
 }
 
-const CONTROL: [(&str, &str); 4] = [
+const CONTROL: [(&str, &str); 5] = [
     ("wave_step", "CREATE TEMP TABLE wave_step(step INTEGER PRIMARY KEY, stratum INTEGER NOT NULL, output TEXT NOT NULL, sql TEXT NOT NULL)"),
     ("wave_read", "CREATE TEMP TABLE wave_read(rel TEXT NOT NULL, step INTEGER NOT NULL, PRIMARY KEY (rel, step)) WITHOUT ROWID"),
     ("wave_delta", "CREATE TEMP TABLE wave_delta(wave INTEGER NOT NULL, rel TEXT NOT NULL, rows INTEGER NOT NULL, PRIMARY KEY (wave, rel)) WITHOUT ROWID"),
     ("wave_pending", "CREATE TEMP TABLE wave_pending(step INTEGER PRIMARY KEY)"),
+    ("wave_document", "CREATE TEMP TABLE wave_document(position INTEGER PRIMARY KEY, d INTEGER NOT NULL)"),
 ];
 
 fn sql(e: rusqlite::Error) -> StoreError {
@@ -234,19 +242,26 @@ fn waves(lease: &Lease<'_>, program: &Program, token: Option<i64>, max_waves: u3
     Ok(wave)
 }
 
-/// The digest of a relation's rows in key order.
-fn rows_digest(lease: &Lease<'_>, rel: &str, arity: usize) -> rusqlite::Result<[u8; 32]> {
+/// The digest of a relation's rows in key order, and their count: all of them, or those whose
+/// first column is `part`.
+fn rows_digest(lease: &Lease<'_>, rel: &str, arity: usize, part: Option<i64>) -> rusqlite::Result<([u8; 32], i64)> {
     let order = (0..arity).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
     let mut hash = Sha256::new();
     hash.update((arity as u64).to_le_bytes());
-    let mut statement = lease.prepare(&format!("SELECT * FROM {rel} ORDER BY {order}"))?;
-    let mut rows = statement.query([])?;
+    let filter = if part.is_some() { "WHERE c0 = ?1" } else { "" };
+    let mut statement = lease.prepare(&format!("SELECT * FROM {rel} {filter} ORDER BY {order}"))?;
+    let mut rows = match part {
+        Some(part) => statement.query([part])?,
+        None => statement.query([])?,
+    };
+    let mut count = 0;
     while let Some(row) = rows.next()? {
+        count += 1;
         for i in 0..arity {
             hash.update(row.get::<_, i64>(i)?.to_le_bytes());
         }
     }
-    Ok(hash.finalize().into())
+    Ok((hash.finalize().into(), count))
 }
 
 type Built = StoreResult<(Vec<Document>, Vec<(&'static str, Arc<dyn Source>)>)>;
@@ -284,11 +299,35 @@ pub(in crate::code_rule_dsl) fn run(
         for built in receive {
             let (docs, relations) = built?;
             fresh(graph, &docs)?;
+            lease.execute_batch("DELETE FROM temp.wave_document")?;
+            {
+                let mut position = lease.prepare_cached("INSERT INTO temp.wave_document(position, d) VALUES (?1, ?2)")?;
+                for (at, d) in docs.iter().enumerate() {
+                    position.execute(rusqlite::params![at as i64, d.key])?;
+                }
+            }
             for (name, source) in relations {
                 lease.bind(name, source).map_err(sql)?;
             }
             let token = demand(&docs)?.map(|d| lease.registry.register(d));
-            let waves = waves(lease, program, token, limits.max_waves);
+            let waves = waves(lease, program, token, limits.max_waves).and_then(|waves| match token {
+                // A batch the steps read that did not complete fails its chunk: its relations
+                // would be silently short.
+                Some(token) if program.steps.iter().any(|step| step.sql.contains(":batch")) => {
+                    let failed: Option<String> = lease
+                        .query_row(
+                            "SELECT coalesce(error_code, 'incomplete') FROM rerail_batch_status WHERE batch = ?1 AND complete = 0",
+                            [token],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    match failed {
+                        Some(error) => Err(StoreError::Invalid(format!("{}: demand(batch) failed: {error}", program.name))),
+                        None => Ok(waves),
+                    }
+                }
+                _ => Ok(waves),
+            });
             if let Some(token) = token {
                 lease.registry.remove_batch(token);
             }
@@ -298,20 +337,24 @@ pub(in crate::code_rule_dsl) fn run(
     })?;
     outcome.rows = lease.storage.borrow_mut().statistics_boundary(lease)?;
     let producer = program.digest();
-    let records = program
-        .relations
-        .iter()
-        .map(|(rel, arity)| {
-            Ok(DerivationRecord {
-                output: family_name(scope, &program.name, rel),
-                producer,
-                inputs: inputs.clone(),
-                digest: rows_digest(lease, rel, *arity)?,
-                status: 0,
-                cost: outcome.rows.get(&format!("rows.{rel}")).copied().unwrap_or(0) as i64,
-            })
-        })
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let record = |output: String, (digest, rows): ([u8; 32], i64)| DerivationRecord {
+        output,
+        producer,
+        inputs: inputs.clone(),
+        digest,
+        status: 0,
+        cost: rows,
+    };
+    let mut records = Vec::new();
+    for (rel, arity) in &program.relations {
+        records.push(record(family_name(scope, &program.name, rel), rows_digest(lease, rel, *arity, None)?));
+        for (_, names) in program.partitions.iter().filter(|(partitioned, _)| partitioned == rel) {
+            for (part, name) in names.iter().enumerate() {
+                let rows = rows_digest(lease, rel, *arity, Some(part as i64))?;
+                records.push(record(family_name(scope, &program.name, &format!("{rel}:{name}")), rows));
+            }
+        }
+    }
     outcome.changed = graph.record_derivations(&records)?;
     Ok(outcome)
 }

@@ -31,6 +31,7 @@ fn ancestry() -> Program {
             step("root", 1, &["anc"], "INSERT OR IGNORE INTO new_root SELECT DISTINCT c0 FROM anc WHERE c0 NOT IN (SELECT c1 FROM anc)"),
         ],
         file_local: true,
+        partitions: Vec::new(),
     }
 }
 fn none(_: &[Document]) -> StoreResult<Option<PackedDemand>> {
@@ -122,6 +123,7 @@ fn steps_read_the_chunks_demand_batch() {
         relations: vec![("seen".into(), 1)],
         steps: vec![step("seen", 0, &["rerail_batch_status"], "INSERT OR IGNORE INTO new_seen SELECT complete FROM rerail_batch_status WHERE batch = :batch")],
         file_local: true,
+        partitions: Vec::new(),
     };
     let mut batches = 0;
     let mut demand = |_: &[Document]| {
