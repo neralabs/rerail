@@ -7,7 +7,8 @@
 import { h } from "./dom.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
-import { data, ui, panelRuleId, readScope, setScope, repoName } from "./state.js";
+import { data, ui, panelRuleId, readScope, setScope, repoName, packById } from "./state.js";
+import { isWorktreePack } from "./derive.js";
 import { refreshNow, changeScope } from "./poll.js";
 import { bootRoute, parseRoute, repositoryUrl, urlFor } from "./routes.js";
 import { resetPanelScroll } from "./render/panel.js";
@@ -106,10 +107,14 @@ export async function loadMore(load) {
 /* ---------- writes ---------- */
 
 /**
- * Who a change belongs to: always the repository (Oct 16: no worktree-or-repository choice), also when the URL names
- * a worktree. The writers still take an owner, so a test can write as a worktree.
+ * Who a change belongs to: the repository (Oct 16: no worktree-or-repository choice), also when the URL names a
+ * worktree. A change to the worktree's own rules (`packId` the pack of `.rerail/rules`, which no other checkout has)
+ * belongs to this worktree. The writers still take an owner, so a test can write as a worktree.
  */
-export const changeOwner = () => "repository";
+export const changeOwner = packId => {
+  const pack = packId === undefined ? undefined : packById(packId);
+  return pack !== undefined && isWorktreePack(pack) && data.checkout?.checkoutPath !== undefined ? "checkout" : "repository";
+};
 
 /**
  * The page's writes: a rule's or a pack's settings, written as `changeOwner()` (`settings-writes.js`), and rule

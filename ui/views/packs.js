@@ -1,5 +1,5 @@
 /**
- * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack that comes with Rerail, alphabetical, filtered
+ * Add rule packs (`#packs`; `#rule-packs` before v8): every rule pack installed on this machine, alphabetical, filtered
  * by kind, as a list or as cards; each added or not, with Add pack or a quiet Remove pack that asks first, its
  * question on a line of its own under the pack's text. A pack removed here reads Removed with Undo until the page is
  * left. A pack is added whole: its rules arrive as the pack starts them, opt-in ones off. The review
@@ -8,7 +8,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { isRunning } from "../derive.js";
+import { isRerailPack, isRunning, isWorktreePack, publisherLabel } from "../derive.js";
 import { data, ui, isAttached, packGroups, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
@@ -21,8 +21,8 @@ export const needs = ["rules", "packs", "activity"];
 /** The catalog's kind filter ("all" or a pack category); back to All each time the catalog is entered. */
 let kind = "all";
 
-/** The packs the catalog and the review list: the ones with rules to add. */
-const listed = () => data.packs.filter(pack => pack.rules.length > 0);
+/** The packs the catalog and the review list: the installed ones with rules to add, never the worktree's own rules. */
+const listed = () => data.packs.filter(pack => pack.rules.length > 0 && !isWorktreePack(pack));
 
 /** "8 rules", plus how many are on once it is added and Rerail is started here: before that, nothing is on. */
 function packMeta(pack) {
@@ -54,7 +54,8 @@ function catalogItem(pack) {
       h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
   }
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers), h("span.meta", null, packMeta(pack))),
+    packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
+      h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),
     asking ? null : h("div.pend", null, h("span.pstatus", null, status), action),
     question);
 }

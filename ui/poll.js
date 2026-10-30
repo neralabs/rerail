@@ -183,7 +183,7 @@ export function toStoredRules(entries) {
       kind: entry.kind,
       rule: { ...entry.rule, mode: entry.mode },
       enabled: entry.on,
-      origin: entry.source.kind === "library_rule" ? "user" : "rerail",
+      origin: entry.source.kind === "library_rule" ? "user" : "pack",
       source: entry.source,
       folders: [entry.folder],
       folderStates: [folderState(entry)],
@@ -197,6 +197,8 @@ export function toStoredRules(entries) {
       configError: entry.configError ?? null,
       revision: entry.revision,
       addedAt: entry.addedAt ?? null,
+      // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
+      approval: entry.approval ?? null,
       updatedAt: entry.updatedAt ?? null,
     });
   }
@@ -237,10 +239,13 @@ async function loadRules() {
   return true;
 }
 
+/** The installed packs, and the scoped checkout's own rules (`.rerail/rules`) as the pack `worktree`. */
 async function loadPacks() {
-  const body = await fetchFresh("/api/rule-packs", "packs");
+  const checkout = ui.scope?.checkout;
+  const body = await fetchFresh(checkout === undefined ? "/api/rule-packs" : `/api/rule-packs?${new URLSearchParams({ checkout })}`, "packs");
   if (body === undefined) return false;
   data.packs = body.packs;
+  data.packsSkipped = body.skipped;
   return true;
 }
 
@@ -534,7 +539,7 @@ function pumpTitles() {
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
  * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
- * - `packs`: every rule pack that comes with Rerail (`data.packs`).
+ * - `packs`: every rule pack installed on this machine, and the scoped checkout's own rules (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
  * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
  * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.

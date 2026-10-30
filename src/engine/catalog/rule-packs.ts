@@ -18,11 +18,12 @@ import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
- * Rule packs: named sets of rules, each its own npm package (`@neralabs/rerail-pack-<id>`), installed into the Rerail
- * home and read by `rule-catalog.ts`. A pack's match definition says which repositories it fits and why; a pack
- * without a rule that starts on is never recommended. A pack is a directory (`docs/pack-format.md`): `pack.json` lists
- * each rule with the document in the pack's `rules/` that defines it. A pack's rules run only in repositories that add
- * it (`repository_attachments_set`); this module defines, validates and recommends.
+ * Rule packs: named sets of rules, each its own npm package (`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`; Rerail's
+ * own are `@neralabs/rerail-pack-<id>`), installed into the Rerail home and read by `rule-catalog.ts`. A pack's match
+ * definition says which repositories it fits and why; a pack without a rule that starts on is never recommended. A pack
+ * is a directory (`docs/pack-format.md`): `pack.json` lists each rule with the document in the pack's `rules/` that
+ * defines it. A pack's rules run only in repositories that add it (`repository_attachments_set`); this module defines,
+ * validates and recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;
@@ -38,6 +39,12 @@ const exampleSchema = z
     text: nonEmpty,
   })
   .strict();
+
+/**
+ * A pack's id, its `pack.json` `id`: lowercase letters, digits and dashes, starting with a letter. It is also the end
+ * of the pack's package name (`rerail-pack-<id>`), and repositories add the pack by it.
+ */
+export const RULE_PACK_ID = /^[a-z][a-z0-9-]*$/u;
 
 /**
  * A pack rule's id: lowercase letters, digits and dashes, one style in every pack (`eslint-no-empty`,
@@ -78,7 +85,7 @@ const matchSchema: z.ZodType<RulePackMatch> = z.object({ any: z.array(signalSche
 export const rulePackFileSchema = z
   .object({
     format: z.literal(RULE_PACK_FORMAT),
-    id: z.string().regex(/^[a-z][a-z0-9-]*$/u, "must be lowercase letters, digits and dashes"),
+    id: z.string().regex(RULE_PACK_ID, "must be lowercase letters, digits and dashes"),
     name: nonEmpty,
     category: z.enum(RULE_PACK_CATEGORIES),
     covers: nonEmpty,
@@ -92,8 +99,49 @@ export const rulePackFileSchema = z
   .strict();
 export type RulePackFile = z.infer<typeof rulePackFileSchema>;
 
-/** The npm package name of pack `<id>`. */
-export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pack-${id}`;
+/** The npm scope Rerail publishes its own packs under. */
+const RERAIL_PACK_SCOPE = "@neralabs";
+/** The publisher of Rerail's own packs, as the catalog and the API name it. */
+export const RERAIL_PUBLISHER = "rerail";
+
+/**
+ * A pack's npm package name: `rerail-pack-<id>`, or `@<scope>/rerail-pack-<id>` under any scope, where `<id>` is the
+ * pack's `pack.json` id. The first group is the scope, the second the id.
+ */
+export const RULE_PACK_PACKAGE_NAME = /^(?:(@[a-z0-9][a-z0-9._-]*)\/)?rerail-pack-([a-z][a-z0-9-]*)$/u;
+
+/** The npm package name of Rerail's own pack `<id>`. */
+export const rulePackPackageName = (id: string): string => `${RERAIL_PACK_SCOPE}/rerail-pack-${id}`;
+
+/** The pack id a pack's package name holds (`@acme/rerail-pack-sql` → `sql`); undefined for any other name. */
+export const packIdOfPackage = (packageName: string): string | undefined => RULE_PACK_PACKAGE_NAME.exec(packageName)?.[2];
+
+/**
+ * Who publishes the pack in package `packageName`: `rerail` for `@neralabs/*`, else the npm scope (`@acme`), else the
+ * package name (`rerail-pack-foo`). A pack directory without a package (null) is a Rerail checkout's `packs/<id>/`.
+ */
+export function rulePackPublisher(packageName: string | null): string {
+  if (packageName === null) return RERAIL_PUBLISHER;
+  const scope = RULE_PACK_PACKAGE_NAME.exec(packageName)?.[1];
+  return scope === RERAIL_PACK_SCOPE ? RERAIL_PUBLISHER : scope ?? packageName;
+}
+
+/**
+ * How `rerail packs add` and set-up's `--packs` name the pack in package `packageName`: its id for one of Rerail's own
+ * (`sql`), else its package name (`@acme/rerail-pack-sql`). `rulePackPackageOf` reads either back as the package.
+ */
+export function rulePackShortName(packageName: string): string {
+  return rulePackPublisher(packageName) === RERAIL_PUBLISHER ? packIdOfPackage(packageName) ?? packageName : packageName;
+}
+
+/**
+ * The package a pack's short name names: a pack's package name is itself (`rerail-pack-foo` is one, not an id), and a
+ * pack id is Rerail's own package; undefined for anything else.
+ */
+export function rulePackPackageOf(name: string): string | undefined {
+  if (RULE_PACK_PACKAGE_NAME.test(name)) return name;
+  return RULE_PACK_ID.test(name) ? rulePackPackageName(name) : undefined;
+}
 
 /**
  * `package.json`: the pack's npm package. Core's version range is a peer dependency, a declaration and not an import;
@@ -101,7 +149,7 @@ export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pac
  * that `files` publishes no validation material, and that `license` agrees with `licenses/`.
  */
 export const rulePackPackageSchema = z.looseObject({
-  name: z.string().regex(/^@neralabs\/rerail-pack-[a-z][a-z0-9-]*$/u, "must be @neralabs/rerail-pack-<id>"),
+  name: z.string().regex(RULE_PACK_PACKAGE_NAME, "must be rerail-pack-<id> or @<scope>/rerail-pack-<id>"),
   version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u, "must be a semver version"),
   description: nonEmpty.optional(),
   /** An SPDX expression naming every licence the published files carry. */
@@ -133,11 +181,27 @@ export interface RulePackRule {
   readonly examples?: { readonly caught: RuleExample; readonly passes: RuleExample };
 }
 
+/** Where a pack installed from disk came from: a folder, or a tarball, by its absolute path. */
+export interface RulePackLocalSource {
+  readonly kind: "folder" | "tarball";
+  readonly path: string;
+}
+
 export interface RulePack {
   readonly id: string;
   readonly name: string;
   /** The version of the pack's npm package; null for a pack directory without one. */
   readonly version: string | null;
+  /** The pack's npm package name, e.g. `@neralabs/rerail-pack-sql`; null for a pack directory without one. */
+  readonly packageName: string | null;
+  /** Who publishes the pack (`rulePackPublisher`): `rerail` for Rerail's own, else e.g. `@acme` or `rerail-pack-foo`. */
+  readonly publisher: string;
+  /**
+   * The folder or tarball the pack was installed from (`rerail packs add <folder>`), its absolute path, rather than
+   * from the npm registry; absent for a pack from the registry or one read where it is. Its `package.json` name is
+   * whatever the folder says, published by no one.
+   */
+  readonly localSource?: RulePackLocalSource;
   readonly category: RulePackCategory;
   /** What the pack covers, in one sentence. */
   readonly covers: string;
@@ -192,7 +256,7 @@ function readPackageJson(directory: string, id: string): RulePackPackage | undef
   }
   const parsed = rulePackPackageSchema.safeParse(readJsonDocument(path));
   if (!parsed.success) throw new Error(`Rule pack ${id}: package.json ${parsed.error.issues[0]?.path.join(".") ?? ""} ${parsed.error.issues[0]?.message ?? "is invalid"}`.replace(/\s+/gu, " "));
-  if (parsed.data.name !== rulePackPackageName(id)) throw new Error(`Rule pack ${id} must be the package ${rulePackPackageName(id)}, not ${parsed.data.name}`);
+  if (packIdOfPackage(parsed.data.name) !== id) throw new Error(`Rule pack ${id} must be the package rerail-pack-${id} or @<scope>/rerail-pack-${id}, not ${parsed.data.name}`);
   return parsed.data;
 }
 
@@ -251,6 +315,8 @@ export function readRulePack(directory: string): LoadedRulePack {
     id: file.id,
     name: file.name,
     version: packageJson?.version ?? null,
+    packageName: packageJson?.name ?? null,
+    publisher: rulePackPublisher(packageJson?.name ?? null),
     category: file.category,
     covers: file.covers,
     reason: file.reason,

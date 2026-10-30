@@ -3,41 +3,59 @@
  * local directory into the prefix's `node_modules` and records it in the prefix's `package.json` as `file:<path>`.
  * Core ships no packs, so a test that needs one installs it.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { defaultRerailHome, installedPacksPrefix, rulePackPackageName } from "../../src/engine/index.js";
-import { repositoryPath } from "./oracles.js";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
+import { defaultRerailHome, installedPacksPrefix, rulePackPackageOf } from "../../src/engine/index.js";
+import type { PackStore } from "../../src/setup/index.js";
+import { fixturesPath, repositoryPath } from "./oracles.js";
 
-/** Sets or, with `spec` undefined, removes `id`'s entry in the prefix's `package.json` dependencies. */
-function record(home: string, id: string, spec: string | undefined): void {
+/** The package `name` names, as `rerail packs add` reads it: a pack id is Rerail's own package, a package name itself. */
+function packageNamed(name: string): string {
+  const packageName = rulePackPackageOf(name);
+  if (packageName === undefined) throw new Error(`${name} is neither a pack id nor a pack's package name`);
+  return packageName;
+}
+
+/** Sets or, with `spec` undefined, removes `packageName`'s entry in the prefix's `package.json` dependencies. */
+function record(home: string, packageName: string, spec: string | undefined): void {
   const path = join(installedPacksPrefix(home), "package.json");
   const manifest = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as { dependencies?: Record<string, string> } : {};
   const dependencies = { ...manifest.dependencies };
-  if (spec === undefined) delete dependencies[rulePackPackageName(id)];
-  else dependencies[rulePackPackageName(id)] = spec;
+  if (spec === undefined) delete dependencies[packageName];
+  else dependencies[packageName] = spec;
   writeFileSync(path, JSON.stringify({ ...manifest, dependencies }, null, 2));
 }
 
-/** Links `directory` into `home`'s packs as `@neralabs/rerail-pack-<name>`; returns the installed path. */
-export function installPackDirectory(directory: string, name: string, home: string = defaultRerailHome()): string {
-  const scope = join(installedPacksPrefix(home), "node_modules", "@neralabs");
-  mkdirSync(scope, { recursive: true });
-  const installed = join(scope, `rerail-pack-${name}`);
+/**
+ * Links `directory` into `home`'s packs as package `name`: a pack id is Rerail's own `@neralabs/rerail-pack-<id>`, and a
+ * package name (`rerail-pack-<id>`, `@<scope>/rerail-pack-<id>`) is itself. npm's record of it is `spec`: by default
+ * `file:<directory>`, as `rerail packs add <folder>` leaves it; a version, as installing from the registry does.
+ * Returns the installed path.
+ */
+export function installPackDirectory(directory: string, name: string, home: string = defaultRerailHome(), spec = `file:${directory}`): string {
+  const packageName = packageNamed(name);
+  const installed = join(installedPacksPrefix(home), "node_modules", packageName);
+  mkdirSync(dirname(installed), { recursive: true });
   rmSync(installed, { recursive: true, force: true });
   symlinkSync(directory, installed, process.platform === "win32" ? "junction" : "dir");
-  record(home, name, `file:${directory}`);
+  record(home, packageName, spec);
   return installed;
 }
 
-/** Installs `packs/<id>` from this repository into `home` (the test file's Rerail home by default). */
+/** The version in the `package.json` of the pack in `directory`. */
+const versionOf = (directory: string): string => (JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { version: string }).version;
+
+/** Installs `packs/<id>` from this repository into `home` (the test file's Rerail home by default), as the registry would. */
 export function installPack(id: string, home: string = defaultRerailHome()): string {
-  return installPackDirectory(repositoryPath("packs", id), id, home);
+  const directory = repositoryPath("packs", id);
+  return installPackDirectory(directory, id, home, versionOf(directory));
 }
 
-/** Removes an installed pack, as `rerail packs remove <id>` does. */
-export function uninstallPack(id: string, home: string = defaultRerailHome()): void {
-  rmSync(join(installedPacksPrefix(home), "node_modules", "@neralabs", `rerail-pack-${id}`), { recursive: true, force: true });
-  if (existsSync(join(installedPacksPrefix(home), "package.json"))) record(home, id, undefined);
+/** Removes an installed pack, a pack id naming Rerail's own package, as `rerail packs remove <package>` does. */
+export function uninstallPack(name: string, home: string = defaultRerailHome()): void {
+  const packageName = packageNamed(name);
+  rmSync(join(installedPacksPrefix(home), "node_modules", packageName), { recursive: true, force: true });
+  if (existsSync(join(installedPacksPrefix(home), "package.json"))) record(home, packageName, undefined);
 }
 
 /** Removes every pack installed in `home`: a test that installs packs leaves the next one a home without them. */
@@ -45,8 +63,66 @@ export function removeInstalledPacks(home: string = defaultRerailHome()): void {
   rmSync(installedPacksPrefix(home), { recursive: true, force: true });
 }
 
-/** The directory a `@neralabs/rerail-pack-<id>@file:<directory>` spec names, or undefined for a spec of a version. */
+/** The directory a `<package>@file:<directory>` spec names, or undefined for a spec of a version. */
 export function fileSpecDirectory(spec: string): string | undefined {
   const at = spec.indexOf("@file:");
   return at === -1 ? undefined : spec.slice(at + "@file:".length);
+}
+
+/**
+ * A copy, under `root`, of the valid fixture pack as a third party publishes it: package `packageName`, pack id `id`,
+ * each rule id `<id>-<rule>` (so it can clash with another pack only by its pack id), at `version` and, with `range`,
+ * for those versions of core. Returns its folder.
+ */
+export function thirdPartyPack(root: string, packageName: string, id: string, version = "1.0.0", range?: string): string {
+  const copy = join(root, packageName, version);
+  cpSync(fixturesPath("packs", "valid"), copy, { recursive: true, filter: source => !source.includes("upstream") });
+  const pack = JSON.parse(readFileSync(join(copy, "pack.json"), "utf8")) as { rules: { id: string }[] };
+  const rules = pack.rules.map(rule => {
+    const document = JSON.parse(readFileSync(join(copy, "rules", `${rule.id}.json`), "utf8")) as Record<string, unknown>;
+    rmSync(join(copy, "rules", `${rule.id}.json`));
+    writeFileSync(join(copy, "rules", `${id}-${rule.id}.json`), JSON.stringify({ ...document, id: `${id}-${rule.id}` }));
+    return { ...rule, id: `${id}-${rule.id}`, document: `rules/${id}-${rule.id}.json` };
+  });
+  writeFileSync(join(copy, "pack.json"), JSON.stringify({ ...pack, id, name: `${packageName}'s ${id}`, rules }));
+  const manifest = JSON.parse(readFileSync(join(copy, "package.json"), "utf8")) as Record<string, unknown>;
+  const peerDependencies = range === undefined ? {} : { peerDependencies: { "@neralabs/rerail": range } };
+  writeFileSync(join(copy, "package.json"), JSON.stringify({ ...manifest, name: packageName, version, repository: undefined, ...peerDependencies }));
+  return copy;
+}
+
+/**
+ * A `PackStore` on `home` that installs `<package>@<version>` by linking `folders[package]`, recorded as that version as
+ * npm records a registry install, and `<package>@file:<folder>` from that folder, recorded as `file:<folder>`; it
+ * records each install's and removal's arguments.
+ */
+export function linkingPackStore(home: string, folders: Readonly<Record<string, string>>): PackStore & { installs: string[][]; removes: string[][] } {
+  const installs: string[][] = [];
+  const removes: string[][] = [];
+  return {
+    home,
+    installs,
+    removes,
+    fetch: async () => ({ fetched: [], problems: [], release: async () => {} }),
+    async install(specs) {
+      installs.push([...specs]);
+      for (const spec of specs) {
+        // A folder (`rerail packs add <folder>`) installs under the name its package.json gives, recorded as `file:`.
+        if (isAbsolute(spec)) {
+          installPackDirectory(spec, (JSON.parse(readFileSync(join(spec, "package.json"), "utf8")) as { name: string }).name, home);
+          continue;
+        }
+        const at = spec.indexOf("@", 1);
+        const name = spec.slice(0, at);
+        const local = fileSpecDirectory(spec);
+        const folder = local ?? folders[name];
+        if (folder === undefined) throw new Error(`npm error code E404\nnpm error 404 Not Found - ${name}`);
+        installPackDirectory(folder, name, home, local === undefined ? spec.slice(at + 1) : `file:${local}`);
+      }
+    },
+    async remove(packageNames) {
+      removes.push([...packageNames]);
+      for (const packageName of packageNames) uninstallPack(packageName, home);
+    },
+  };
 }

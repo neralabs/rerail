@@ -52,6 +52,21 @@ async function setRepository(key, verb) {
   await refreshNow();
 }
 
+/**
+ * Approve `subject` (the rule by its id, or the pack by package name, at the digest this page read), for this worktree
+ * when the page names one, where its own rules are read. Content that changed since is refused, and the page reloads.
+ */
+async function approveContent(subject) {
+  const checkout = ui.scope?.checkout;
+  try {
+    await send("POST", "/api/rule-approvals", { ...subject, ...(checkout === undefined ? {} : { checkout }) });
+    toast(`Approved ${subject.id}. It runs in the mode it is set to from the coding agent’s next turn.`);
+  } catch (error) {
+    toast(`Could not approve: ${error.message}`);
+  }
+  await refreshNow();
+}
+
 export const commonActions = {
   /** `data-i` is a view's hash (`routes.js`): "overview", "pack/<id>", "packs", "create", "history"… */
   nav: hash => { const route = parseRoute(hash); if (route.view !== null) go(route); },
@@ -78,4 +93,6 @@ export const commonActions = {
   repostop: key => setRepository(key, "stop"),
   /** The Undo on a deleted rule's toast. */
   ruleundo: id => restoreRule(id),
+  /** Approve a rule's or pack's content as this page read it (`data-kind`, `data-digest`): it then runs in its mode. */
+  approve: (id, element) => approveContent({ kind: element.dataset.kind, id, digest: element.dataset.digest }),
 };

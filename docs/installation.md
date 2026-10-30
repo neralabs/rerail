@@ -49,7 +49,8 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── daemon.json / daemon.log                           the running daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
-├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
+├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (`rerail packs`)
+├── packs/node_modules/[@<scope>/]rerail-pack-<id>/    third parties' rule packs you installed
 └── versions/<older>/…                                 the versions `rerail update` replaced
 ```
 
@@ -313,7 +314,8 @@ agent to relay, as written, with one command per answer, and exits 0. The
 coding agent runs set-up again with the person's answer: `--answer <allow|decline|yes|other-folder|pick-myself|start|choose|not-now|folder|skip>`,
 `--repo <folder>`, `--agents <ids>` (`omp,pi,claude-code,codex,cursor`; it
 works on its own, with any answer, and no question asks for it) and
-`--packs <id@version,…>` (the exact versions an answer installs; `none` for
+`--packs <id@version,…>` (the exact versions an answer installs, a third
+party's pack by its package name, `@acme/rerail-pack-sql@1.0.0`; `none` for
 none).
 Each answer run starts from what it is told, so running one twice repeats no
 earlier step's side effect. Claude Code's, Cursor's and Codex's `/rerail-start`

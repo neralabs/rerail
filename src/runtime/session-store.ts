@@ -5,9 +5,11 @@ import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
 import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
-import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
+import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
+import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
@@ -91,6 +93,13 @@ const sessionCursorSchema = z.tuple([z.number().int(), z.string()]);
 export interface SessionHud {
   activeRuleCount: number | null;
   steeringCount: number | null;
+  /**
+   * The labels of the rule overlays in force in the session's checkout while `activeRuleCount` is current: `worktree`
+   * while its `.rerail/rules` holds rules that load (`worktree-pack.ts`); empty otherwise.
+   */
+  overlays: string[];
+  /** While `activeRuleCount` is current, how many rules and packs that are on run in Log waiting for a person's approval. */
+  awaitingApproval: number | null;
 }
 
 /** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
@@ -371,7 +380,7 @@ export class SqliteSessionReader {
 
   hud(sessionId: string): SessionHud {
     const database = this.#database.open();
-    if (database === undefined) return { activeRuleCount: null, steeringCount: null };
+    if (database === undefined) return { activeRuleCount: null, steeringCount: null, overlays: [], awaitingApproval: null };
     // Read coverage, lifetime totals, and the catalog signature from one snapshot.
     return database.transaction(() => {
       const baseline = database.select({
@@ -386,11 +395,12 @@ export class SqliteSessionReader {
         ruleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.ruleSignature')`,
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
-      // Coverage written before repository configuration has no rule signature and is never current.
-      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && coverage.ownerCheckoutPaths !== null
-        && coverage.ruleSignature === ruleConfigurationSignature(
-          database, loadRuleCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
-        );
+      // Coverage written before repository configuration has no rule signature and is never current. Its first owner
+      // is the checkout it was recorded in, whose own rules are in its catalog.
+      const owners = coverage?.ownerCheckoutPaths == null ? null : JSON.parse(coverage.ownerCheckoutPaths) as string[];
+      const catalog = owners?.[0] === undefined ? loadRuleCatalog() : worktreeRuleCatalog(loadRuleCatalog(), owners[0]);
+      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && owners !== null
+        && coverage.ruleSignature === ruleConfigurationSignature(database, catalog, coverage.repositoryId, owners);
       // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
       // rules. A receipt naming no rules still delivered one steer.
       const steeringCount = baseline?.complete === 1
@@ -399,7 +409,12 @@ export class SqliteSessionReader {
         }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
-      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount };
+      return {
+        activeRuleCount: current ? coverage.activeRuleCount : null,
+        steeringCount,
+        overlays: current && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
+        awaitingApproval: current ? awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners) : null,
+      };
     });
   }
 
@@ -538,3 +553,16 @@ export class SqliteSessionReader {
     this.#database.close();
   }
 }
+
+/**
+ * How many rules and packs (each counted once) the session's checkout runs in Log because their content waits for a
+ * person's approval; only rules that are on count.
+ */
+function awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repositoryKey: string, owners: readonly string[]): number {
+  const [checkoutPath, ...parentCheckoutPaths] = owners;
+  const { rules } = listRepositoryRules(database, catalog, repositoryKey, checkoutPath === undefined ? {} : { checkoutPath, parentCheckoutPaths });
+  const waiting = new Set(rules.filter(rule => rule.on && rule.approval?.approved === false)
+    .map(rule => `${rule.approval!.subject.kind}\0${rule.approval!.subject.id}`));
+  return waiting.size;
+}
+

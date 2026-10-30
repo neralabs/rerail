@@ -91,12 +91,13 @@ Coding-agent configurations invoke the stable `rerail` launcher rather than a ve
 |- bin/rerail
 |- daemon.json
 |- packs/node_modules/@neralabs/rerail-pack-<id>/
+|- packs/node_modules/[@<scope>/]rerail-pack-<id>/
 `- versions/
    |- 0.2.0/node_modules/@neralabs/rerail/
    `- 0.2.1/node_modules/@neralabs/rerail/
 ```
 
-Rule packs are npm packages too, installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` keeps them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
+Rule packs are npm packages too, Rerail's under `@neralabs` and a third party's as `rerail-pack-<id>` or `@<scope>/rerail-pack-<id>` ([rule packs](rule-packs.md#third-parties-packs)), installed with the same npm configuration into `packs/`, beside the versions rather than inside one, so `rerail update` keeps them. A pack names the core versions it works with (`peerDependencies["@neralabs/rerail"]`); after an update the catalog leaves out, and `rerail packs list` reports, any installed pack whose range excludes the new version until a newer pack is installed.
 
 The state file is the active-version pointer. It records the selected npm dist-tag, current installation, previous known-good installation, and the last explicit check. State updates use a temporary file and atomic rename.
 

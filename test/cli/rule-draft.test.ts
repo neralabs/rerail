@@ -284,6 +284,22 @@ describe("rerail rules test", () => {
     expect(report.repository).toMatchObject({ matches: 1, examples: [{ path: "src/a.ts", text: "console.log('inside');" }] });
   });
 
+  it("tests a worktree's rule document on its own, with no cases, over the repo; rules add still needs a draft", async () => {
+    const repo = await repository({ "src/a.ts": "console.log(1);\n" });
+    mkdirSync(join(repo, ".rerail", "rules"), { recursive: true });
+    const file = join(repo, ".rerail", "rules", "no-console-log.json");
+    writeFileSync(file, JSON.stringify(noConsolePolicy()));
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report).toMatchObject({ valid: true, cases: [], repository: { matches: 1 } });
+    expect(stdout).toContain("● No cases to run; only the repo was checked.");
+    const { exit: added, stderr } = await run("add", [file, "--repo", repo]);
+    expect(added).toBe(1);
+    expect(stderr).toContain("The rule was not added");
+  });
+
   it("reports a case and repo files a clause could not check, rather than passing them", async () => {
     // The negated `inside` is an absence claim over ancestors the parser may not have read, so the clause does not
     // run on a file with syntax errors.
@@ -428,7 +444,7 @@ describe("rerail rules add", () => {
     const { exit, stdout } = await run("add", [file, "--repo", repo]);
 
     expect(exit).toBe(0);
-    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n$/);
+    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n {2}It runs in Log until a person approves it: rerail rules approve acme:no-console-log\n$/);
     const after = rulesOf(repo);
     expect(after.library).toContain("acme:no-console-log");
     expect(after).toMatchObject({

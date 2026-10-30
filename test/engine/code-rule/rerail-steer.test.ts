@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   asLateSteer,
@@ -11,10 +12,15 @@ import {
   type SteerFinding,
 } from "../../../src/engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../../../src/engine/code-rule/steer-origin.js";
-import { installPack } from "../../support/installed-packs.js";
+import { installPack, installPackDirectory, thirdPartyPack } from "../../support/installed-packs.js";
 
-// The steer names a rule's pack from the installed catalog.
+// The steer names a rule's pack from the installed catalog, the publisher of a third party's, and a pack installed from
+// a folder, whatever its package.json calls itself.
 installPack("complexity");
+const thirdParty = join(process.env.RERAIL_HOME!, "third-party");
+installPackDirectory(thirdPartyPack(thirdParty, "@acme/rerail-pack-lint", "lint"), "@acme/rerail-pack-lint", undefined, "1.0.0");
+installPackDirectory(thirdPartyPack(thirdParty, "@neralabs/rerail-pack-local", "local"), "@neralabs/rerail-pack-local");
+installPackDirectory(thirdPartyPack(thirdParty, "@acme/rerail-pack-folder", "folder"), "@acme/rerail-pack-folder");
 
 const DASHBOARD = "http://127.0.0.1:4791/";
 const finding = (overrides: Partial<SteerFinding> = {}): SteerFinding => ({
@@ -70,6 +76,25 @@ describe("Rerail steer text", () => {
     expect(steerOrigin("typescript-eslint-no-explicit-any", { kind: "pack", packId: "typescript" })).toBe("From the typescript rule pack.");
     expect(steerOrigin("mine", { kind: "library_rule", packId: null })).toBe("From your rule library.");
     expect(steerOrigin("local:unknown")).toBeUndefined();
+  });
+
+  it("names who publishes a third party's pack, which Rerail has not reviewed, whether its rule came through the pack or on its own", () => {
+    const origin = "From the @acme/rerail-pack-lint's lint rule pack by @acme, which Rerail has not reviewed.";
+    expect(steerOrigin("lint-assert-used")).toBe(origin);
+    expect(steerOrigin("lint-assert-used", { kind: "pack", packId: "lint" })).toBe(origin);
+    expect(steerOrigin("lint-assert-used", { kind: "rerail_rule", packId: null })).toBe(origin);
+    expect(steerOrigin("complexity-cyclomatic-python", { kind: "rerail_rule", packId: null })).toBe("From Rerail's own rules.");
+  });
+
+  it("names a checkout's own rules, which no installed pack holds", () => {
+    expect(steerOrigin("wt-no-needle", { kind: "pack", packId: "worktree" })).toBe("From this worktree's own rules.");
+  });
+
+  it("says a pack came from a folder, not npm, even one whose package.json names Rerail's scope", () => {
+    expect(steerOrigin("local-assert-used", { kind: "pack", packId: "local" }))
+      .toBe("From the @neralabs/rerail-pack-local's local rule pack, installed from a folder, which Rerail has not reviewed.");
+    expect(steerOrigin("folder-assert-used"))
+      .toBe("From the @acme/rerail-pack-folder's folder rule pack by @acme, installed from a folder, which Rerail has not reviewed.");
   });
 
   it("keeps each rule once, first-seen, with its state and source, out of the agent's text", () => {

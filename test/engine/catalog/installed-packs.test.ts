@@ -1,5 +1,5 @@
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addAttachment,
@@ -9,12 +9,13 @@ import {
 } from "../../../src/engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
-import { activeCoreVersion, installedPackDirectories, loadRuleCatalog, readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
+import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { copyRerailRuleToLibrary, getLibraryRule } from "../../../src/engine/catalog/rule-library.js";
+import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
 import type { RerailDatabase } from "../../../src/engine/storage/database.js";
 import { ruleSettings } from "../../../src/engine/storage/schema.js";
-import { installPackDirectory, removeInstalledPacks, uninstallPack } from "../../support/installed-packs.js";
+import { installPackDirectory, removeInstalledPacks, thirdPartyPack, uninstallPack } from "../../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../../support/oracles.js";
 import {
   addRepository,
@@ -124,7 +125,7 @@ describe("the installed-pack catalog", () => {
       {
         name: "a package.json named for another pack",
         breakPack: directory => editJson(directory, "package.json", manifest => ({ ...manifest, name: "@neralabs/rerail-pack-other" })),
-        reason: /^Rule pack complexity must be the package @neralabs\/rerail-pack-complexity, not @neralabs\/rerail-pack-other$/u,
+        reason: /^Rule pack complexity must be the package rerail-pack-complexity or @<scope>\/rerail-pack-complexity, not @neralabs\/rerail-pack-other$/u,
       },
       {
         name: "a listed document that does not exist",
@@ -171,8 +172,116 @@ describe("the installed-pack catalog", () => {
 
       const catalog = loadRuleCatalog();
 
-      expect(summary(catalog)).toEqual({ packs: ["valid"], skipped: [{ path: installed, reason: "rule assert-used is already in pack valid" }] });
+      expect(summary(catalog)).toEqual({ packs: ["valid"], skipped: [{ path: installed, reason: "rule assert-used is already in @neralabs/rerail-pack-valid" }] });
       expect(catalog.skipped[0]).toMatchObject({ packageName: "@neralabs/rerail-pack-valid-copy", version: "0.1.0" });
+    });
+
+    it("for a package.json named for no pack at all", async () => {
+      installPackDirectory(VALID, "valid");
+      const directory = await copyPack(COMPLEXITY);
+      editJson(directory, "package.json", manifest => ({ ...manifest, name: "@acme/complexity" }));
+      const installed = installPackDirectory(directory, "@acme/rerail-pack-complexity");
+
+      expect(summary(loadRuleCatalog()).skipped).toEqual([
+        { path: installed, reason: "Rule pack complexity: package.json name must be rerail-pack-<id> or @<scope>/rerail-pack-<id>" },
+      ]);
+    });
+  });
+
+  describe("third parties' packs", () => {
+    it("loads a scoped and an unscoped one, each with its package name and its publisher", async () => {
+      const copies = await temporaryDirectory();
+      installPackDirectory(VALID, "valid");
+      installPackDirectory(thirdPartyPack(copies, "@acme/rerail-pack-acme-valid", "acme-valid"), "@acme/rerail-pack-acme-valid");
+      installPackDirectory(thirdPartyPack(copies, "rerail-pack-lint", "lint"), "rerail-pack-lint");
+
+      const catalog = loadRuleCatalog();
+
+      expect([...catalog.packs.values()].map(({ id, packageName, publisher }) => ({ id, packageName, publisher })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+        { id: "acme-valid", packageName: "@acme/rerail-pack-acme-valid", publisher: "@acme" },
+        { id: "lint", packageName: "rerail-pack-lint", publisher: "rerail-pack-lint" },
+        { id: "valid", packageName: "@neralabs/rerail-pack-valid", publisher: "rerail" },
+      ]);
+      expect(catalog.packOf.get("lint-assert-used")).toBe("lint");
+      expect(catalog.skipped).toEqual([]);
+    });
+
+    it("leaves one out whose pack id Rerail's own pack holds, whichever is found first", async () => {
+      const copies = await temporaryDirectory();
+      // `@aaa` sorts before `@neralabs`, and `rerail-pack-valid` after it: the scan meets one before Rerail's and one after.
+      const before = installPackDirectory(thirdPartyPack(copies, "@aaa/rerail-pack-valid", "valid"), "@aaa/rerail-pack-valid");
+      const rerail = installPackDirectory(VALID, "valid");
+      const after = installPackDirectory(thirdPartyPack(copies, "rerail-pack-valid", "valid"), "rerail-pack-valid");
+
+      const catalog = loadRuleCatalog();
+
+      expect(catalog.packs.get("valid")?.packageName).toBe("@neralabs/rerail-pack-valid");
+      expect(summary(catalog).skipped).toEqual([
+        { path: before, reason: "pack id valid is taken by @neralabs/rerail-pack-valid" },
+        { path: after, reason: "pack id valid is taken by @neralabs/rerail-pack-valid" },
+      ]);
+      for (const order of [[before, rerail, after], [after, before, rerail]]) {
+        expect(readRuleCatalog(order).packs.get("valid")?.packageName).toBe("@neralabs/rerail-pack-valid");
+      }
+    });
+
+    it("leaves one out that ships a rule id Rerail's own pack holds, whichever is found first", async () => {
+      // A third party's copy of valid under another pack id: the same rule ids.
+      const directory = await copyPack(VALID);
+      editJson(directory, "pack.json", pack => ({ ...pack, id: "copied" }));
+      editJson(directory, "package.json", manifest => ({ ...manifest, name: "@aaa/rerail-pack-copied" }));
+      const copied = installPackDirectory(directory, "@aaa/rerail-pack-copied");
+      const rerail = installPackDirectory(VALID, "valid");
+
+      expect(summary(loadRuleCatalog())).toEqual({ packs: ["valid"], skipped: [{ path: copied, reason: "rule assert-used is already in @neralabs/rerail-pack-valid" }] });
+      expect(summary(readRuleCatalog([rerail, copied])).packs).toEqual(["valid"]);
+    });
+
+    it("loads the first by package name of two others that hold one pack id, whichever is found first", async () => {
+      const copies = await temporaryDirectory();
+      const acme = thirdPartyPack(copies, "@acme/rerail-pack-sql", "sql");
+      const unscoped = thirdPartyPack(copies, "rerail-pack-sql", "sql");
+
+      for (const order of [[acme, unscoped], [unscoped, acme]]) {
+        const catalog = readRuleCatalog(order);
+        expect(catalog.packs.get("sql")).toMatchObject({ packageName: "@acme/rerail-pack-sql", publisher: "@acme" });
+        expect(catalog.skipped).toEqual([expect.objectContaining({ path: unscoped, packageName: "rerail-pack-sql", reason: "pack id sql is taken by @acme/rerail-pack-sql" })]);
+      }
+    });
+
+    it("never reads a pack the person did not install, nor one whose package.json names another package", async () => {
+      const copies = await temporaryDirectory();
+      // Hoisted by npm as a dependency of another package: on disk, in no dependency list.
+      const hoisted = join(installedPacksPrefix(), "node_modules", "@neralabs", "rerail-pack-sql");
+      mkdirSync(dirname(hoisted), { recursive: true });
+      cpSync(thirdPartyPack(copies, "@neralabs/rerail-pack-sql", "sql"), hoisted, { recursive: true });
+      // Installed as rerail-pack-foo, but its package.json claims Rerail's scope.
+      const spoofed = installPackDirectory(thirdPartyPack(copies, "@neralabs/rerail-pack-foo", "foo"), "rerail-pack-foo");
+
+      const catalog = loadRuleCatalog();
+
+      expect(installedPackDirectories()).toEqual([spoofed]);
+      expect(summary(catalog)).toEqual({
+        packs: [],
+        skipped: [{ path: spoofed, reason: "it is installed as rerail-pack-foo, but its package.json names @neralabs/rerail-pack-foo" }],
+      });
+      // Reported under the name it is installed as, not the one it claims.
+      expect(catalog.skipped[0]?.packageName).toBe("rerail-pack-foo");
+    });
+
+    it("keeps a pack id for Rerail's own pack while it is installed but left out, so no other pack runs in its place", async () => {
+      const copies = await temporaryDirectory();
+      // Rerail's own sql, for a core newer than this one, beside a third party's sql that fits.
+      const rerail = installPackDirectory(thirdPartyPack(copies, "@neralabs/rerail-pack-sql", "sql", "9.0.0", ">=9.0.0"), "@neralabs/rerail-pack-sql");
+      const acme = installPackDirectory(thirdPartyPack(copies, "@acme/rerail-pack-sql", "sql", "1.0.0", ">=0.0.0-0"), "@acme/rerail-pack-sql");
+
+      const catalog = loadRuleCatalog();
+
+      expect(catalog.packs.has("sql")).toBe(false);
+      expect(summary(catalog).skipped).toEqual([
+        { path: acme, reason: "pack id sql is kept for @neralabs/rerail-pack-sql, which is installed but left out" },
+        { path: rerail, reason: expect.stringMatching(/^it needs a newer Rerail \(>=9\.0\.0\)/u) as string },
+      ]);
     });
   });
 
@@ -311,9 +420,11 @@ describe("a repository's rule configuration across installs", () => {
   it("keeps applying across an upgrade and a downgrade of an attached pack", async () => {
     const v1 = await tinyPack("0.1.0", TINY_V1);
     const v2 = await tinyPack("0.2.0", TINY_V2);
-    installPackDirectory(v1, "tiny");
+    installPackDirectory(v1, "tiny", undefined, "0.1.0");
     const { db, copyId } = await configuredRepository();
     const copy = getLibraryRule(db, copyId);
+    // The person's own edit: approved, so it runs in its mode.
+    approve(db, ruleSubject(copyId, copy!.payloadHash));
     const atV1 = loadRuleCatalog();
     const signatureV1 = ruleConfigurationSignature(db, atV1, REPOSITORY, []);
     const rulesV1 = effectiveRules(db, atV1);
@@ -327,7 +438,7 @@ describe("a repository's rule configuration across installs", () => {
       unavailable: [],
     });
 
-    installPackDirectory(v2, "tiny");
+    installPackDirectory(v2, "tiny", undefined, "0.2.0");
     const atV2 = loadRuleCatalog();
 
     expect(atV2.packs.get("tiny")?.version).toBe("0.2.0");
@@ -343,7 +454,7 @@ describe("a repository's rule configuration across installs", () => {
     expect(getLibraryRule(db, copyId)).toEqual(copy);
     expect(ruleConfigurationSignature(db, atV2, REPOSITORY, [])).not.toBe(signatureV1);
 
-    installPackDirectory(v1, "tiny");
+    installPackDirectory(v1, "tiny", undefined, "0.1.0");
     const backAtV1 = loadRuleCatalog();
 
     expect(backAtV1.packs.get("tiny")?.version).toBe("0.1.0");
@@ -354,7 +465,7 @@ describe("a repository's rule configuration across installs", () => {
 
   it("reports an uninstalled pack's attachment as missing, keeps its settings, and restores them on reinstall", async () => {
     const v1 = await tinyPack("0.1.0", TINY_V1);
-    installPackDirectory(v1, "tiny");
+    installPackDirectory(v1, "tiny", undefined, "0.1.0");
     const { db } = await configuredRepository();
     const installed = effectiveRules(db, loadRuleCatalog());
     const settings = db.select().from(ruleSettings).all();
@@ -367,13 +478,13 @@ describe("a repository's rule configuration across installs", () => {
     expect(Object.values(without.rules).map(rule => rule.source)).toEqual(["library_rule"]);
     expect(db.select().from(ruleSettings).all()).toEqual(settings);
 
-    installPackDirectory(v1, "tiny");
+    installPackDirectory(v1, "tiny", undefined, "0.1.0");
     expect(effectiveRules(db, loadRuleCatalog())).toEqual(installed);
   });
 
   it("imports a rules dump on a home without the pack, keeping its attachment missing until the pack is installed", async () => {
     const v1 = await tinyPack("0.1.0", TINY_V1);
-    installPackDirectory(v1, "tiny");
+    installPackDirectory(v1, "tiny", undefined, "0.1.0");
     const { db } = await configuredRepository();
     const exported = effectiveRules(db, loadRuleCatalog());
     const dump = exportRulesDump(db);
@@ -385,7 +496,7 @@ describe("a repository's rule configuration across installs", () => {
     expect(exportRulesDump(imported).repositories).toEqual(dump.repositories);
     expect(effectiveRules(imported, loadRuleCatalog()).unavailable).toEqual([{ sourceKind: "pack", sourceId: "tiny", folder: "", reason: "missing" }]);
 
-    installPackDirectory(v1, "tiny");
+    installPackDirectory(v1, "tiny", undefined, "0.1.0");
     expect(effectiveRules(imported, loadRuleCatalog())).toEqual(exported);
   });
 });

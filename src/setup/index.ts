@@ -13,6 +13,7 @@ export { type Harness } from "./harness-registration.js";
 export {
   addPackSpecs,
   discoverPacks,
+  installedPackagesOf,
   installedPackVersion,
   installPackVersions,
   npmPackStore,

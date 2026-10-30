@@ -6,7 +6,7 @@ type SourceKind = "pack" | "rerail_rule" | "library_rule";
 
 interface StoredRule {
   kind: string;
-  origin: "rerail" | "user";
+  origin: "pack" | "user";
   source: { kind: SourceKind; id: string; packId: string | null };
   folders: string[];
   enabled: boolean;
@@ -16,16 +16,17 @@ interface StoredRule {
 /** A rule as `poll.js` stores it: present through a pack, added on its own, or created by you. */
 const fileRule = (id: string, kind: SourceKind, sourceId: string = id): StoredRule => ({
   kind: "file",
-  origin: kind === "library_rule" ? "user" : "rerail",
+  origin: kind === "library_rule" ? "user" : "pack",
   source: { kind, id: sourceId, packId: kind === "pack" ? sourceId : null },
   folders: [""],
   enabled: true,
   rule: { id, mode: "steer", clauses: [{ id: "c", violation: { message: id } }] },
 });
 
-const pack = (id: string, name: string, rules: Array<[string, string]>) => ({
+const pack = (id: string, name: string, rules: Array<[string, string]>, publisher = "rerail") => ({
   id,
   name,
+  publisher,
   category: "repository",
   covers: "",
   reason: "",
@@ -93,6 +94,13 @@ describe("Rules sections", () => {
 
     expect(sections.map(s => s.key)).toEqual(["mine", "pack:tslint", "legacy"]);
     expect(sections[2]!.groups.map(g => [g.name, ids(g.all)])).toEqual([["acme", ["acme-sql:hand-rolled-sql"]]]);
+  });
+
+  it("names a third party's pack with its publisher when its rule is filed on its own", () => {
+    data.packs = [pack("acme-sql", "Acme SQL", [["acme-sql-raw", "acme-sql"]], "@acme")];
+    load([fileRule("acme-sql-raw", "rerail_rule")]);
+
+    expect(ruleSections()[1]!.groups.map(g => g.name)).toEqual(["Acme SQL · By @acme · not reviewed"]);
   });
 });
 

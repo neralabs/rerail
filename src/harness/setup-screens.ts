@@ -23,7 +23,7 @@ export interface CodingAgent {
 }
 
 export interface RecommendedPack {
-  /** The pack's id, which `--packs` names it by. */
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
   readonly name: string;
   readonly ruleCount: number;
@@ -33,11 +33,18 @@ export interface RecommendedPack {
   readonly version: string;
   /** The version installed now, if any. Every repository on this computer runs it, so installing another replaces it there too. */
   readonly installed: string | null;
+  /** Who publishes it when that is not Rerail (`@acme`): a pack Rerail has not reviewed. */
+  readonly thirdParty?: string;
+  /** Set when the installed pack came from a folder or tarball, not npm: whatever its package.json says, unreviewed. */
+  readonly installedFrom?: "folder" | "tarball";
 }
 
-/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not. */
+/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not, and every one installed. */
 export interface AvailablePack {
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
+  /** The npm package set-up installs. */
+  readonly packageName: string;
   readonly version: string;
   readonly name: string;
   /** Why it fits the repository; undefined for a pack that does not. */
@@ -458,14 +465,39 @@ function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   ];
 }
 
+/** A pack's row name: its name, with its publisher when a third party's and where it came from when not npm. */
+function packRowName(pack: RecommendedPack): string {
+  const notes = [
+    ...(pack.thirdParty === undefined ? [] : [`by ${clean(pack.thirdParty)}`]),
+    ...(pack.installedFrom === undefined ? [] : [`from a ${pack.installedFrom}`]),
+  ];
+  return notes.length === 0 ? clean(pack.name) : `${clean(pack.name)} (${notes.join(", ")})`;
+}
+
+/** The packs that fit, one row each; a third party's pack is named with its publisher, and one from a folder says so. */
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
-  const names = packs.map(pack => clean(pack.name));
+  const names = packs.map(packRowName);
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
   const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
   return [header, ...rows];
+}
+
+/**
+ * The packs "Yes" would add that Rerail has not reviewed, a third party's or one installed from a folder or tarball:
+ * they run in Log until a person approves them, and then their steer text reaches the coding agent, so the person sees
+ * that before saying yes.
+ */
+function unreviewedLines(packs: readonly RecommendedPack[], style: Style): string[] {
+  return packs.flatMap(pack => {
+    const what = pack.installedFrom !== undefined ? `was installed from a ${pack.installedFrom}, not from npm`
+      : pack.thirdParty !== undefined ? `is by ${clean(pack.thirdParty)}, not Rerail`
+      : undefined;
+    if (what === undefined) return [];
+    return [`  ${style.yellow("△")} ${clean(pack.packageName)} ${what}. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve ${clean(pack.packageName)}), then their steer text reaches the coding agent.`];
+  });
 }
 
 /**
@@ -514,6 +546,7 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
     lane === "terminal" ? bullet(scanned, style) : scanned,
     ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
     ...replaceLines(input.packs, style),
+    ...unreviewedLines(input.packs, style),
     ...withoutRulesLines(input.withoutRules, true),
     ...lintConfigLines(input, style),
     ...unavailableLines(input.unavailable, style),

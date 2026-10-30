@@ -5,8 +5,8 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { isByRerail, isRunning } from "../derive.js";
-import { data, ui, activityAllOf, fires, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { awaitingApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
+import { data, ui, activityAllOf, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
@@ -25,7 +25,7 @@ const ALL_TIME = 9999;
 function ruleSources() {
   const sections = ruleSections();
   const packs = sections.filter(s => s.kind === "pack");
-  const mine = rulesArray().filter(r => !isByRerail(r)).length;
+  const mine = rulesArray().filter(r => !isFromPack(r)).length;
   return { packs, mine };
 }
 
@@ -78,6 +78,41 @@ function renderBanner(root, state) {
   const on = rulesArray().filter(isRunning).length;
   setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey]), () =>
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
+}
+
+/** The worktree's `.rerail/rules` files left out, each with why; they run nothing until fixed. Not dismissible. */
+function renderLeftOut(root) {
+  const leftOut = data.loaded ? worktreeLeftOut(data.packsSkipped, data.checkout?.checkoutPath) : [];
+  const n = leftOut.length;
+  setContent(root, JSON.stringify(leftOut), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+    h("b", null, `${fmt(n)} ${plural(n, "file")} in this worktree's .rerail/rules ${n === 1 ? "was" : "were"} left out, so ${n === 1 ? "its rule does" : "their rules do"} not run.`),
+    ...leftOut.map(({ file, reason }) => h("p", null, h("span.mono", null, file), `: ${reason}`)),
+    h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
+}
+
+/**
+ * The rules here whose content, or whose pack's, waits for a person's approval: each runs in Log until then. Each item
+ * opens the sheet where it is approved. Not dismissible.
+ */
+function renderApprovals(root) {
+  const items = new Map();
+  for (const stored of data.loaded ? rulesArray() : []) {
+    if (!awaitingApproval(stored)) continue;
+    const { kind, id } = stored.approval.subject;
+    if (items.has(`${kind}\0${id}`)) continue;
+    const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
+    items.set(`${kind}\0${id}`, kind === "pack" && packId !== undefined
+      ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
+      : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id });
+  }
+  const list = [...items.values()], n = list.length;
+  const packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
+  const what = [rules && `${fmt(rules)} ${plural(rules, "rule")}`, packs && `${fmt(packs)} ${plural(packs, "pack")}`].filter(Boolean).join(" and ");
+  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+    h("b", null, `${what} ${n === 1 ? "waits" : "wait"} for approval, so ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one.`),
+    h("p", null, `Rerail did not write ${n === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page, or ask your coding agent: `,
+      h("span.mono", null, "/rerail-create approve the rules"), "."),
+    h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))))));
 }
 
 /* ---------- tiles ---------- */
@@ -226,6 +261,8 @@ let page = null;
 
 function build() {
   const banner = h("div.banners");
+  const leftOut = h("div.banners");
+  const approvals = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
   const empty = h("div.ovempty");
@@ -243,10 +280,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner,
+  const root = h("div.ov", null, banner, leftOut, approvals,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, leftOut, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -270,6 +307,8 @@ export function render(root) {
   const sources = ruleSources();
   const repo = repoName();
   renderBanner(page.banner, state);
+  renderLeftOut(page.leftOut);
+  renderApprovals(page.approvals);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
 

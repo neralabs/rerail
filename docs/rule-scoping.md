@@ -24,14 +24,15 @@ Rerail is off until it is started. Each repository and each checkout has a start
 
 A repository is **Not set up** until its first configuration. Starting Rerail in a repository that is not set up runs set-up there: it asks before reading the repository, recommends rule packs with the reason for each, and asks you to confirm. "Start" installs the recommended packs ([Installing packs](rule-packs.md#installing-packs)), sets the repository up with them, each attached at the folder the recommendation names, and starts it: a language or framework pack at the folder holding everything that matched it (for example `web` when only `web/` has TypeScript), a repository pack for the whole repository. "Not now" (`--answer not-now`) installs, connects and turns on nothing. "Skip, I'll pick packs" at the question before it (`--answer pick-myself`) reads no code: it lists every rule pack set-up fetched, installs the ones you pick and attaches each for the whole repository, taking nothing from the lint config; "None for now" (`--packs none`) sets the repository up with no packs. A repository where an earlier version of set-up offered the dashboard's review, and nothing was changed there, goes straight to the confirm question. A repository set up any way (in the dashboard, `rerail rules add` or `/rerail-create`, a coding agent adding rules or packs, `rerail rules import`) is set up, so starting it just starts it with what is attached, asking nothing. Set-up run again in a repository that is set up never asks again: it shows the summary, or says Rerail is stopped there. Set-up never adds rules created by you; you add them yourself.
 
-A repository that is set up runs only what is attached to it. The rules of the installed rule packs run only in repositories that add them. Nothing else runs: there are no rule files in the working tree.
+A repository that is set up runs only what is attached to it, and each checkout also runs its own rules, the rule documents in its `.rerail/rules/` folder ([a worktree's own rules](rule-packs.md#a-worktrees-own-rules)). The rules of the installed rule packs run only in repositories that add them. Nothing else runs: no other rule file in the working tree is read.
 
 ## Rules: attachments and settings
 
-Rules come from two places:
+Rules come from three places:
 
-- **By Rerail**: the rules of the rule packs installed from npm (`$RERAIL_HOME/packs`). They are read from the installed packs, never copied into the database.
+- **By Rerail**: the rules of the rule packs installed from npm (`$RERAIL_HOME/packs`). They are read from the installed packs, never copied into the database. A third party's pack is installed and read the same way; the dashboard labels its rules **By** its publisher (`By @acme`) instead ([third parties' packs](rule-packs.md#third-parties-packs)), and everything below applies to them as to Rerail's.
 - **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If an installed pack later ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
+- **In this worktree**: the rule documents in one checkout's `.rerail/rules/`, read from its working tree as the pack `worktree`, present for that whole checkout without an attachment and in no other checkout. Settings apply to them as to any pack's rules ([a worktree's own rules](rule-packs.md#a-worktrees-own-rules)).
 
 A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.
 
@@ -63,6 +64,14 @@ Every effective rule reports what decided each field: `repository_rules_get` ret
 
 Conversation rules, which are in [internal testing](../README.md#internal-testing), are resolved the same way for the folder the session started in.
 
+## Approval
+
+A rule Rerail did not publish runs in Log, whatever its settings say, until a person approves its content: a rule created by you (the library), a rule in a worktree's `.rerail/rules/`, and every rule of a pack that is not Rerail's own from npm (a third party's pack, or any pack installed from a folder or tarball). Rerail's own published packs need none. Its mode then comes from no setting: `modeSource` is `{ "by": "awaiting-approval" }`, and the rule's `approval` gives the `subject` to approve (`kind` `rule` or `pack`, `id`, `digest`) and `approved: false`.
+
+An approval is of content, on this machine: a rule by its id and the digest of its document, a pack by its package name and the digest of its version, `honourSuppressionComments` and every rule document it lists. An edit, or a new version of a pack, is new content and waits again; going back to approved content needs no second approval. A library rule a person writes through the dashboard or HTTP API is approved with the write; one a coding agent writes, or `rerail rules add` adds, waits. Library rules stored before approvals existed count as approved.
+
+A person approves with `rerail rules approve <id | package>` (no name lists what waits), the Approve button on the rule's page or the pack's sheet in the dashboard, or `rule_approvals_set`. The session footer counts what waits (`2 to approve`) and Overview lists it. An approval changes the configuration signature, so a running session picks it up at its next event.
+
 ## Which checkout judges a file
 
 Each file is judged by the checkout that owns it, with that checkout's configuration. The owner is the nearest folder above the file that holds a `.git` entry Git confirms as a checkout's top level, found from both the file's lexical and real paths (a symlink into another checkout or out of its owner is not evaluated). A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout); while it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded (an untracked `git init`, a stray `.git`) is judged with the checkout around it. Only checkouts that are recorded, started and set up evaluate files; a session that starts in a stopped or unrecorded checkout judges nothing.
@@ -75,7 +84,7 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 - change the repository's attachments and settings only while it is not set up;
 - add a rule it creates in the same call, or the copy of a By Rerail rule it edits, to a set-up repository.
 
-Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, or starts and stops a whole repository.
+Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, starts and stops a whole repository, or approves a rule's content ([approval](#approval)); a rule a coding agent writes runs in Log until then.
 
 **Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders, and a repository setting switches the original off there. The original stays a reference to its installed pack.
 
@@ -96,6 +105,7 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 | `coding_agents_list` | `GET /api/coding-agents` | Each coding agent Rerail works with: found on this computer, connected, and any problem. Changes nothing. |
 | `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack. |
 | `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit. |
+| `rule_approvals_set` | `POST /api/rule-approvals` | Approve a rule's or pack's content: `kind`, `id` and the `digest` read from `approval.subject`, with `checkout` for a worktree's own rule. `409 approval-stale` when the content changed since; `404 rule-not-found` when no rule or pack that needs approval has that name. People only. |
 
 `rules_activity`, `sessions_list`, `violations_list`, `audits_list` and `repository_audits_list` take an optional `repository`; without it they cover the whole machine for a person, and the caller's own repository for a coding agent.
 
@@ -105,6 +115,6 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings, start state and approvals belong to this machine and are not exported, so an imported library rule runs in Log until a person approves it. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

@@ -22,6 +22,7 @@ import {
   type LibraryRule,
   type RepositoryStartState,
   type RepositoryStatus,
+  type RuleCatalog,
   type RuleConfig,
   type RuleSetting,
   type RuleSettingTargetKind,
@@ -43,9 +44,12 @@ import {
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import type { RuleMode } from "../engine/catalog/rule-mode.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
+import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
+import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import {
+  approvalSubjectSchema,
   attachmentRecordSchema,
   attachmentsSetBodySchema,
   followGitignoreBodySchema,
@@ -117,7 +121,7 @@ function checkoutNotFound(path: string): ApiError {
  * The checkout `path` is in and the folder inside it, never recording one: the API only acts on checkouts the CLI,
  * hooks or a trusted runtime recorded. Writes need the checkout itself recorded, not just its clone.
  */
-function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
+export function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
   let physical: string;
   try {
     physical = realpathSync(path);
@@ -151,6 +155,11 @@ function guardAgentRepository(
   if (own === repository.repositoryKey) return;
   throw new ApiError(403, "agent-not-permitted",
     `a coding agent ${does} only in the repository it works in${own === undefined ? "" : `, ${own}`}; a person can see ${repository.displayName} in the dashboard`);
+}
+
+/** The catalog an operation on `checkout` reads: the installed packs, plus the checkout's own rules when it names one. */
+export function checkoutRuleCatalog(stores: RerailApiStores, checkout: CheckoutContext | undefined): RuleCatalog {
+  return checkout === undefined ? stores.ruleCatalog() : worktreeRuleCatalog(stores.ruleCatalog(), checkout.checkoutPath);
 }
 
 /**
@@ -296,6 +305,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
     configError: rule.configError,
     revision: rule.revision,
     payloadHash: rule.payloadHash,
+    ...(rule.approval === undefined ? {} : { approval: { subject: { ...rule.approval.subject }, approved: rule.approval.approved } }),
   };
   return rule.document.kind === "code"
     ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
@@ -351,14 +361,14 @@ function foldedChanges(changes: readonly SettingChange[]): SettingChange[] {
  * Rejects a `config` that can't apply: it is for one code rule by Rerail over the whole repository, and each option
  * must be one the rule's document declares, with a value its declaration allows.
  */
-function checkConfig(stores: RerailApiStores, change: SettingChange): void {
+function checkConfig(stores: RerailApiStores, catalog: RuleCatalog, change: SettingChange): void {
   if (change.config === undefined || change.config === null) return;
   const id = change.targetId;
   if (change.targetKind !== "rule") throw new ApiError(400, "invalid-setting", `config applies to one rule, not to pack ${id}`);
   if (change.folder !== "") throw new ApiError(400, "invalid-setting", "config applies to a rule over the whole repository; set it with folder \"\"");
   const library = stores.database().select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
-  const configured = configureBundledCodeRule(stores.ruleCatalog(), id, change.config);
+  const configured = configureBundledCodeRule(catalog, id, change.config);
   if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
 }
 
@@ -499,7 +509,7 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
       const db = stores.database();
-      const view = listRepositoryRules(db, stores.ruleCatalog(), target.repository.repositoryKey, target.checkout === undefined ? {} : {
+      const view = listRepositoryRules(db, checkoutRuleCatalog(stores, target.checkout), target.repository.repositoryKey, target.checkout === undefined ? {} : {
         checkoutPath: target.checkout.checkoutPath,
         parentCheckoutPaths: parentCheckouts(db, target.checkout).map(parent => parent.checkoutPath),
       });
@@ -536,7 +546,8 @@ export const repositoryOperations: readonly Operation[] = [
         folder: target.folder, targetKind: change.kind, targetId: change.id,
         on: input.on, mode: input.mode, suppressions: input.suppressions, config: input.config,
       }));
-      for (const change of changes) checkConfig(stores, change);
+      const catalog = checkoutRuleCatalog(stores, target.checkout);
+      for (const change of changes) checkConfig(stores, catalog, change);
       const settings = changes.map(change => mergedSetting(db, owner, change));
       for (const setting of settings) setRuleSetting(db, setting);
       return { settings: settings.map(settingRecord) };
@@ -560,7 +571,8 @@ export const repositoryOperations: readonly Operation[] = [
       if (missing !== undefined) throw new ApiError(404, "rule-source-not-found", `${missing.sourceKind} ${missing.sourceId} does not exist`);
       const owner = { kind: "repository" as const, repositoryKey };
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
-      for (const change of changes) checkConfig(stores, change);
+      const catalog = checkoutRuleCatalog(stores, target.checkout);
+      for (const change of changes) checkConfig(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
       db.transaction(tx => {
         const settings = changes.map(change => mergedSetting(tx, owner, change));
@@ -734,6 +746,8 @@ export const repositoryOperations: readonly Operation[] = [
         const target = resolveTarget(stores, input, caller, true);
         guardAgent(stores, caller, target, true);
         const copied = libraryWrite(() => copyRerailRuleToLibrary(db, ruleCatalog, target.repository.repositoryKey, input.id, input.rule));
+        // A person's own write is their approval; a coding agent's waits for one (`rule_approvals_set`).
+        if (caller.kind === "person") approve(db, ruleSubject(copied.rule.document.rule.id, copied.rule.payloadHash));
         return {
           rule: libraryRecord(copied.rule),
           copiedFromRuleId: input.id,
@@ -758,6 +772,7 @@ export const repositoryOperations: readonly Operation[] = [
       }, { behavior: "immediate" }));
       const rule = getLibraryRule(db, input.id);
       if (rule === undefined) throw new ApiError(500, "internal", `library rule ${input.id} was not stored`);
+      if (caller.kind === "person") approve(db, ruleSubject(input.id, rule.payloadHash));
       if (target === undefined) return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: null };
       return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: { repositoryKey: target.repository.repositoryKey, folders: [target.folder] } };
     },
@@ -774,6 +789,28 @@ export const repositoryOperations: readonly Operation[] = [
       if (caller.kind === "agent") guardRepositoriesUsing(stores, caller, input.id);
       if (!removeLibraryRule(db, input.id)) throw new ApiError(404, "rule-not-found", `library rule ${input.id} does not exist`);
       return { removed: 1 as const };
+    },
+  }),
+  defineOperation({
+    id: "rule_approvals_set",
+    method: "POST",
+    path: "/api/rule-approvals",
+    summary: "Approve a rule's content so it steers: a rule created by you, a rule in a checkout's .rerail/rules, or a pack Rerail does not publish (a third party's, or one installed from a folder), at the digest repository_rules_get or rule_packs_list gave. Until then it runs in Log. Content that changed since is refused, so a person approves what they read. People only: a coding agent asks the person, who approves with rerail rules approve or in the dashboard.",
+    body: approvalSubjectSchema.extend({ ...targetShape }).strict(),
+    output: z.object({ approved: approvalSubjectSchema }),
+    handler: (stores, input, caller) => {
+      if (caller.kind === "agent") {
+        throw new ApiError(403, "agent-not-permitted", "only a person approves a rule; ask them, and they approve it with rerail rules approve or in the dashboard");
+      }
+      // A checkout names where a worktree's own rules are read from; library rules and packs are the machine's.
+      const checkout = input.checkout === undefined ? undefined : checkoutAt(stores, input.checkout, false).checkout;
+      const current = currentSubject(stores.database(), checkoutRuleCatalog(stores, checkout), input.id);
+      if (current === undefined) throw new ApiError(404, "rule-not-found", `${input.id} is no rule or pack waiting for approval here`);
+      if (current.kind !== input.kind || current.digest !== input.digest) {
+        throw new ApiError(409, "approval-stale", `${input.id} changed since it was read: read it again and approve what it is now`);
+      }
+      approve(stores.database(), current);
+      return { approved: { ...current } };
     },
   }),
 ];
