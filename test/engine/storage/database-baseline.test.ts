@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -652,5 +653,24 @@ describe("the migration path", () => {
     const failing: Migration = { id: "fails", up: () => { throw new Error("step failed"); } };
     expect(() => openRerailDatabase(path, { readonly: true, migrations: [failing] })).toThrow(new Error("step failed"));
     expect(migrationState(path)).toEqual({ recorded: WITHOUT_NOTE, note: false, version: RERAIL_BASELINE_SCHEMA_VERSION });
+  });
+});
+
+describe("a writer's delete", () => {
+  it("leaves nothing of the deleted row in the file once the connection has closed", async () => {
+    const path = await temporaryDatabase();
+    const secret = `distinctive-${randomUUID()}`;
+    const insert = "INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES (?, ?, 0, 0)";
+    const written = openRerailDatabase(path);
+    written.$client.prepare(insert).run("kept", "kept");
+    written.$client.prepare(insert).run("gone", secret);
+    written.$client.close();
+    expect(readFileSync(path).toString("latin1")).toContain(secret);
+
+    const deleting = openRerailDatabase(path);
+    deleting.$client.prepare("DELETE FROM repositories WHERE repository_key = 'gone'").run();
+    deleting.$client.close();
+
+    expect(readFileSync(path).toString("latin1")).not.toContain(secret);
   });
 });

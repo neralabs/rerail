@@ -34,6 +34,7 @@ use crate::code_rule_dsl::model::{
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
 use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
+use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
 use crate::content_store::HashKey;
@@ -1028,6 +1029,7 @@ fn evaluate_clauses(
             // a `rerail-ignore` naming the code rule always does.
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
+            names::take_unavailable();
             let Some((result, ran)) = work.run(file.input.source.len(), || {
                 let roots = select(position);
                 // An anchor selection of no roots leaves nothing for the clause to match.
@@ -1178,6 +1180,13 @@ fn evaluate_clauses(
                         .entry(id)
                         .or_insert(("budget-exceeded", CLAUSE_WORK_BUDGET_EXCEEDED));
                 }
+            }
+            // A `\N{...}` escape the malformed names table could not answer read as unknown: the
+            // clause has no verdict of its own, and the engine's build is at fault, not the file.
+            if names::take_unavailable() {
+                file.failures
+                    .insert(id, ("adapter-error", names::TABLE_UNAVAILABLE));
+                file.unstored.insert(id);
             }
         }
         Ok(())

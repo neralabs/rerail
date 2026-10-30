@@ -18,6 +18,12 @@ export interface ModelFingerprint {
   kernelFormatVersion: number;
 }
 
+/** What `verifyModelFiles` found: `problem` and `file` are absent where every file matches `manifest.json`. */
+export interface NativeModelCheck {
+  problem?: "missing" | "unreadable" | "invalid-manifest" | "checksum-mismatch" | null;
+  file?: string | null;
+}
+
 export interface NativeRuleInput {
   id: string;
   /** Similarity rules only: the text samples are compared against. */
@@ -112,6 +118,16 @@ export interface NativeStorageAttachment {
 }
 
 /**
+ * The names `enableStorageAsync` keeps out of the content store (`SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`
+ * in path-boundary.ts): `files` match a path's last segment and `folders` any segment on the way, as `sensitiveByName`
+ * reads them.
+ */
+export interface NativeSecretNames {
+  files: readonly string[];
+  folders: readonly string[];
+}
+
+/**
  * The bytes of violations a host reads a whole result in per `resultPageAsync` page. Small, since a page is held three
  * times while it is read (the JSON, its parse, its validated copy) and V8 keeps what it grew to: 256 KiB pages read
  * django's 15.5k violations (6.8 MB) with 40 MiB less peak RSS than one 8 MiB page.
@@ -121,9 +137,10 @@ export const RESULT_PAGE_BYTES = 256 * 1024;
 export interface NativeCodeRuleDslWorkspace {
   /**
    * Attaches the content store at `storePath` (see `contentStorePath`) to the repository containing `root`; the
-   * binding never chooses a store itself and refuses an empty path.
+   * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
+   * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
    */
-  enableStorageAsync(root: string, storePath: string): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -268,6 +285,8 @@ export interface NativeExclusiveFileLock {
 
 export interface NativeBinding {
   health(): NativeHealth;
+  /** Checks the model directory against its `manifest.json` (each file's SHA-256) without loading the model. */
+  verifyModelFiles(modelPath: string): NativeModelCheck;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
   /** The module a file of dialect `label` carries as `module`, from the package markers on disk; null where its family names no modules or the file is outside a package. */

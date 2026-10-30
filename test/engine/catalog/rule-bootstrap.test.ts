@@ -148,7 +148,7 @@ describe("rules dump", () => {
 
     const target = openRerailDatabase(await temporaryDatabase());
     try {
-      expect(importRulesDump(target, testBundle(), dump)).toEqual({ library: 0, repositories: 1 });
+      expect(importRulesDump(target, testBundle(), dump)).toEqual({ library: 0, repositories: 1, onBlock: [] });
       expect(exportRulesDump(target).repositories[0]?.settings).toEqual([{ folder: "", targetKind: "pack", targetId: "lint", on: false, mode: null }]);
     } finally {
       target.$client.close();

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     napi_build::setup();
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    check_names_table(&manifest);
     let lock_text = std::fs::read_to_string(
         manifest
             .parent()
@@ -231,8 +232,8 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
         format!("regenerate it with `node {GENERATOR}` (about 15 minutes) and commit {path}");
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|error| panic!("{path} is unreadable ({error}): {regenerate}"));
-    if bytes.starts_with(b"version https://git-lfs") {
-        panic!("{path} is a Git LFS pointer: run `git lfs pull` (CONTRIBUTING.md)");
+    if bytes.starts_with(LFS_POINTER) {
+        panic!("{path} is a Git LFS pointer, not the file: run `{LFS_REMEDY}` (CONTRIBUTING.md)");
     }
     let mut parser = String::new();
     flate2::read::GzDecoder::new(bytes.as_slice())
@@ -246,6 +247,32 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
         );
     }
     parser
+}
+
+/// What a Git LFS pointer file starts with: a checkout without Git LFS holds these in place of the
+/// binaries `.gitattributes` stores in LFS.
+const LFS_POINTER: &[u8] = b"version https://git-lfs";
+const LFS_REMEDY: &str = "git lfs install && git lfs pull";
+
+/// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
+/// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
+fn check_names_table(manifest: &Path) {
+    let relative = "src/code_rule_dsl/value/names/names.bin";
+    let path = manifest.join(relative);
+    println!("cargo:rerun-if-changed={}", path.display());
+    let bytes = std::fs::read(&path).unwrap_or_else(|error| {
+        panic!("native/{relative} is unreadable ({error}): run `{LFS_REMEDY}`")
+    });
+    if bytes.starts_with(LFS_POINTER) {
+        panic!(
+            "native/{relative} is a Git LFS pointer, not the names table: run `{LFS_REMEDY}` (CONTRIBUTING.md)"
+        );
+    }
+    if !bytes.starts_with(b"TNAMES01") {
+        panic!(
+            "native/{relative} is not a names table (no TNAMES01 header): run `{LFS_REMEDY}`, or regenerate it with scripts/generate/value/names.py"
+        );
+    }
 }
 
 fn build_grammar(grammar: &VendoredGrammar, generator: &str) {

@@ -15,7 +15,7 @@ mod model;
 pub mod process;
 mod rules;
 
-use model::{ModelFingerprint, load_model};
+use model::{ModelFingerprint, load_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
@@ -112,6 +112,31 @@ pub fn health() -> Health {
     Health {
         ok: true,
         engine_version: "1".to_owned(),
+    }
+}
+
+/// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
+#[napi(object)]
+pub struct ModelCheck {
+    /// `missing`, `unreadable`, `invalid-manifest` or `checksum-mismatch`.
+    pub problem: Option<String>,
+    /// The file in the model directory at fault, `manifest.json` included.
+    pub file: Option<String>,
+}
+
+/// Checks the model directory at `model_path` against its `manifest.json` (every file's SHA-256),
+/// as a session's attach does, without loading the model.
+#[napi]
+pub fn verify_model_files(model_path: String) -> ModelCheck {
+    match verify_model(Path::new(&model_path)) {
+        Ok(()) => ModelCheck {
+            problem: None,
+            file: None,
+        },
+        Err(fault) => ModelCheck {
+            problem: Some(fault.problem.to_owned()),
+            file: Some(fault.file.to_owned()),
+        },
     }
 }
 

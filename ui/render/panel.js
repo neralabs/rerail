@@ -104,7 +104,7 @@ function renderModes(stored) {
     setAttr(b, "title", pressed ? null : why);
     setAttr(b, "data-act", pressed ? null : "modeinfo");
   }
-  // Only what the chosen mode does; that Block is not in this release is the Block button's to say.
+  // What the chosen mode does; a rule on Block reads that Block is not in this release and it steers instead.
   setText(p.modeText, MODE_PLAIN[mode] ?? "");
 }
 

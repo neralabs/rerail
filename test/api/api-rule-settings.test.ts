@@ -21,6 +21,7 @@ import {
   upsertLibraryRule,
 } from "../../src/engine/index.js";
 import { fixturesPath } from "../support/oracles.js";
+import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript"), fixturesPath("packs", "config-regex")], { shipped: () => true });
@@ -95,6 +96,26 @@ describe("rule settings: suppressions and config", () => {
     expect(JSON.stringify(view.rule)).toContain("\"config\":{\"option\":\"type\"}");
     expect(await setting({ config: null })).toMatchObject({ status: 200, body: { settings: [{ config: null }] } });
     expect(await ruleView()).toMatchObject({ config: null });
+  });
+
+  it("answers a write that puts a rule on Block with the note that it steers in this release, and stores block", async () => {
+    const blocked = await setting({ mode: "block" });
+    expect(blocked).toMatchObject({ status: 200, body: { settings: [{ mode: "block" }], note: BLOCK_STEERS_NOTE } });
+    expect(await ruleView()).toMatchObject({ mode: "block" });
+    expect((await setting({ mode: "steer" })).body.note).toBeUndefined();
+
+    const attached = await put("/api/repository/attachments", {
+      repository: repositoryKey, settings: [{ targetKind: "pack", targetId: "typescript", mode: "block" }],
+    });
+    expect(attached).toMatchObject({ status: 200, body: { note: BLOCK_STEERS_NOTE } });
+
+    const rule = {
+      format: "rerail.policy/v1", id: "acme:no-eval", revision: 1, mode: "block", description: "No eval.",
+      scope: { include: ["**/*.ts"], exclude: [] },
+      clauses: [{ id: "no-eval", forbid: { regex: { pattern: String.raw`\beval\(`, source: "file.content" } }, violation: { anchor: "witness.span", code: "NO_EVAL", message: "No eval." } }],
+    };
+    const upserted = await put("/api/library-rules/acme:no-eval", { kind: "code", rule });
+    expect(upserted).toMatchObject({ status: 200, body: { rule: { rule: { mode: "block" } }, note: BLOCK_STEERS_NOTE } });
   });
 
   it("refuses a config the rule's document does not declare, or a value its option does not allow", async () => {

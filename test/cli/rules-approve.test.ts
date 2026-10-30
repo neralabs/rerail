@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runRulesCommand } from "../../src/cli/project-cli.js";
+import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { defaultRerailDatabasePath, getLibraryRule, loadRuleCatalog, openRerailDatabase, upsertLibraryRule, type CodeRule } from "../../src/engine/index.js";
 import { codeRule } from "../support/rule-configuration-builders.js";
 
@@ -57,5 +58,14 @@ describe("rerail rules list and approve", () => {
     propose(codeRule("cli-settled"), true);
     expect(() => rules("approve", "cli-settled")).toThrow(/nothing of rule cli-settled waits for approval/u);
     expect(() => rules("approve", "cli-unknown")).toThrow(/waits for approval/u);
+  });
+
+  it("says a rule on Block steers in this release, when listing and approving it", () => {
+    propose(codeRule("cli-blocking", { mode: "block" }));
+
+    expect(rules("list")).toContain(BLOCK_STEERS_NOTE);
+    expect(rules("approve", "cli-blocking")).toContain(BLOCK_STEERS_NOTE);
+    propose(codeRule("cli-steering", { mode: "steer" }));
+    expect(rules("approve", "cli-steering")).not.toContain(BLOCK_STEERS_NOTE);
   });
 });

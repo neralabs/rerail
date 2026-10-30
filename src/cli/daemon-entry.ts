@@ -4,9 +4,14 @@
  */
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { scrubWrites } from "../engine/secret-scrub.js";
 import { runRerailDaemon } from "../daemon/daemon.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+
+// The daemon's stdout and stderr are `daemon.log`: what Rerail logs there is written scrubbed of secrets.
+scrubWrites(process.stdout);
+scrubWrites(process.stderr);
 
 // Whatever starts the daemon passes on its own node, which can be an older `node` from PATH once the one set-up
 // recorded is gone; the daemon refuses it with set-up's message, which its starter shows from the log.

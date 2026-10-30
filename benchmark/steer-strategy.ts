@@ -57,6 +57,7 @@ import {
   hostCommand,
   jsonlFiles,
   readDeliveries,
+  removeHostAuth,
   run,
   sandboxAvailable,
   sandboxEnvironment,
@@ -705,7 +706,12 @@ async function runTrial(host: RerailHost, strategy: SteerStrategy, trial: number
     } finally {
       if (previousRerailHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousRerailHome;
-      if (!options.keep) await rm(sandbox, { recursive: true, force: true });
+      // `--keep` keeps the sandbox for inspection, never the credential copy imported into it.
+      try {
+        await removeHostAuth(sandbox);
+      } finally {
+        if (!options.keep) await rm(sandbox, { recursive: true, force: true });
+      }
     }
   }
 }

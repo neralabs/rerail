@@ -45,7 +45,8 @@ test.describe("History by rule over a mature repository", () => {
     const api = new URL("/api/violations", origin);
     api.search = new URLSearchParams({ ruleId: "eslint-eqeqeq", since: "0", limit: "1", repository: manifest.primary.repositoryKey }).toString();
     const { violations } = await (await rerail.get(api.href)).json() as { violations: { message: string }[] };
-    await expect(content(page).locator(".hist .hkv .oc-blocked")).toBeVisible();
+    // eslint-eqeqeq is on Block, which steers in this release: its chip shows as steered and says so.
+    await expect(content(page).locator(".hist .hkv .oc-steered")).toContainText("steers for now");
     await expect(content(page).locator(".hist .hkv .said2")).toHaveText(violations[0]!.message);
     await expect(violationRows(page).first().locator(".when")).toHaveText(/^\d{2}:\d{2}$/);
     await expect(violationRows(page).first().locator(".loc")).not.toBeEmpty();

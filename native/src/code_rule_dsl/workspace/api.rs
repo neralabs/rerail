@@ -18,6 +18,7 @@ use super::results::{
     ResultText, evicted_file_states, profile_result, replace_global_changes, serialize_result,
     serialize_result_page,
 };
+use super::secret_names::{SecretNamePatterns, SecretNames};
 use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
@@ -88,20 +89,28 @@ impl CodeRuleDslWorkspace {
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
-    /// The host chooses the file (each build owns its own); the binding never derives one.
+    /// The host chooses the file (each build owns its own); the binding never derives one. The
+    /// store never holds a copy of a file `secret_names` names: such a file is evaluated as any
+    /// other and stays resident instead.
     #[napi]
     pub fn enable_storage_async(
         &self,
         root: String,
         store_path: String,
+        secret_names: SecretNamePatterns,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
-        Ok(AsyncTask::new(self.storage_task(root, store_path)?))
+        Ok(AsyncTask::new(self.storage_task(
+            root,
+            store_path,
+            &secret_names,
+        )?))
     }
 
     pub(super) fn storage_task(
         &self,
         root: String,
         store_path: String,
+        secret_names: &SecretNamePatterns,
     ) -> Result<WorkspaceStorageTask> {
         if store_path.is_empty() {
             return Err(invalid("content store path is required"));
@@ -111,6 +120,7 @@ impl CodeRuleDslWorkspace {
             closed: Arc::clone(&self.closed),
             root,
             store_path: PathBuf::from(store_path),
+            secret_names: Arc::new(SecretNames::compile(secret_names)?),
         })
     }
 
@@ -495,17 +505,19 @@ impl CodeRuleDslWorkspace {
             .map_err(|_| invalid("policy workspace is evaluating"))?;
         // Cross-file clauses read the evidence index and the call graph, which eviction keeps: they
         // are summaries of the files, and an edit after eviction updates the graph in place.
-        // A file without stored results stays only when a busy store left it unpublished.
+        // A file without stored results stays only when a busy store left it unpublished, or the
+        // store never holds it (`withheld`).
         if state.storage.is_none()
             || state
                 .files
                 .values()
-                .any(|file| file.stored.is_none() && !file.unpublished)
+                .any(|file| file.stored.is_none() && !file.unpublished && !file.withheld)
         {
             return Ok(false);
         }
         // A file the store lacks results of (`FileState::stays_resident`: a transient evaluation,
-        // an unstored clause, or results a busy store left unpublished) has none to page; it stays.
+        // an unstored clause, results a busy store left unpublished, or a withheld file) has none
+        // to page; it stays.
         let evicted = state
             .files
             .values()
@@ -718,6 +730,8 @@ pub struct WorkspaceStorageTask {
     root: String,
     /// The store file the host named.
     store_path: PathBuf,
+    /// The names whose files the store never holds.
+    secret_names: Arc<SecretNames>,
 }
 
 impl Task for WorkspaceStorageTask {
@@ -746,8 +760,12 @@ impl Task for WorkspaceStorageTask {
         };
         // A busy store is a cache miss: the workspace runs without reuse, and says why.
         let publication_started = Instant::now();
-        let attached =
-            attach_storage(&self.root, discovered, std::mem::take(&mut self.store_path))?;
+        let attached = attach_storage(
+            &self.root,
+            discovered,
+            std::mem::take(&mut self.store_path),
+            Arc::clone(&self.secret_names),
+        )?;
         let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
         let context = match attached {
             Attached::Storage(context) => context,
@@ -985,6 +1003,17 @@ impl WorkspaceApplyTask {
             );
         }
         if let Some(storage) = state.storage.clone() {
+            // A file named like one holding secrets is evaluated but never published: the store,
+            // a cache shared by every checkout, keeps no copy of it, so it stays resident.
+            persistence_paths.retain(|path| {
+                if !storage.withholds(path) {
+                    return true;
+                }
+                if let Some(file) = state.files.get_mut(path) {
+                    file.withheld = true;
+                }
+                false
+            });
             let mut busy = removal_busy;
             if !busy && !state.pending_removals.is_empty() {
                 check_closed(&self.closed)?;

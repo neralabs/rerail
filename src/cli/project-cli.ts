@@ -3,10 +3,11 @@ import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { approveRule, pendingRules, RuleApprovalError, type PendingRule } from "../engine/catalog/rule-approval.js";
+import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
 import { pendingRuleRecord } from "../api/repository-operations.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
@@ -148,6 +149,7 @@ export function runRulesCommand(args: readonly string[], usage: () => string, io
       const ruleCatalog = loadRuleCatalog();
       const report = importRulesDump(db, ruleCatalog, value);
       stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      if (report.onBlock.length > 0) stdout.write(`On Block: ${report.onBlock.join(", ")}. ${BLOCK_STEERS_NOTE}\n`);
       const waiting = pendingRules(db, ruleCatalog).filter(pending => pending.owner === "library").length;
       if (waiting > 0) stdout.write(`${waiting} ${plural(waiting, "rule")} created by you ${waiting === 1 ? "waits" : "wait"} for your approval: rerail rules list\n`);
     } finally {
@@ -175,8 +177,10 @@ export function runRulesCommand(args: readonly string[], usage: () => string, io
     stdout.write(`${waiting.length} ${plural(waiting.length, "rule")} ${waiting.length === 1 ? "waits" : "wait"} for approval:\n`);
     for (const pending of waiting) {
       const state = pending.approved === undefined ? "new: runs nowhere until approved" : "edited: the approved content runs meanwhile";
-      stdout.write(`  ${pending.document.rule.id}  (${ownerText(pending)})  ${state}\n`);
+      const block = pending.document.rule.mode === "block" ? "  on Block, steers for now" : "";
+      stdout.write(`  ${pending.document.rule.id}  (${ownerText(pending)})  ${state}${block}\n`);
     }
+    if (waiting.some(pending => pending.document.rule.mode === "block")) stdout.write(`${BLOCK_STEERS_NOTE}\n`);
     stdout.write("Approve one with: rerail rules approve <id>\n");
     return 0;
   }
@@ -198,6 +202,7 @@ export function runRulesCommand(args: readonly string[], usage: () => string, io
           throw error;
         }
         stdout.write(`● Approved ${id}. It runs with this content from now on.\n`);
+        if (pending.document.rule.mode === "block") stdout.write(`  ${id} is on Block. ${BLOCK_STEERS_NOTE}\n`);
       }
     } finally {
       db.$client.close();
@@ -248,7 +253,9 @@ function plural(count: number, noun: string): string {
 /**
  * Delete this repository's execution history, across all its checkouts, from the Rerail database: sessions recorded
  * under its key or aliases, and older ones under its checkouts' clone ids. Rules, other repositories, and settings
- * stay; live sessions never observe a rule reset.
+ * stay; live sessions never observe a rule reset. The file is then rewritten (`eraseFreedPages`) so the deleted
+ * history cannot be read back from its bytes or its WAL. When that rewrite fails or another reader keeps the WAL, the
+ * history is still deleted; the command says what may remain and exits 1, and running it again finishes the rewrite.
  */
 export function runResetCommand(args: readonly string[], usage: () => string): number {
   parseArguments(args, { flags: [], options: [] }, argument => `Unknown reset option: ${argument}\n\n${usage()}`);
@@ -261,6 +268,8 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
   let repositoryKey: string;
   let sessions: number;
   let openSessions: number;
+  let erased = false;
+  let eraseFailure: string | undefined;
   try {
     const checkout = lookupCheckout(db, process.cwd());
     if (checkout === undefined) {
@@ -270,6 +279,11 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     repositoryKey = checkout.repositoryKey;
     const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
     ({ sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository)));
+    try {
+      erased = eraseFreedPages(db);
+    } catch (error) {
+      eraseFailure = error instanceof Error ? error.message : String(error);
+    }
   } finally {
     db.$client.close();
   }
@@ -280,5 +294,17 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     + kept
     + ". Rules and other repositories are unchanged.\n",
   );
+  if (eraseFailure !== undefined) {
+    process.stdout.write(
+      `Could not rewrite ${database} to erase the deleted history (${eraseFailure}). The history is deleted, but its `
+      + `text may remain in ${database}-wal or the file's free pages. Run rerail reset again when Rerail is idle, with `
+      + "free disk space for a second copy of the database.\n",
+    );
+    return 1;
+  }
+  if (!erased) {
+    process.stdout.write(`Another Rerail process was reading the database, so the deleted history may remain in ${database}-wal until it stops; run rerail reset again then.\n`);
+    return 1;
+  }
   return 0;
 }

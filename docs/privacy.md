@@ -56,15 +56,29 @@ Rerail stores what it needs to evaluate rules and show you their history. None o
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed copies of the source files Rerail has read, with their syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per coding-agent session: its events, and the text of files as they were before the agent edited them. The folder holds a `.gitignore` of `*`, so Git never shows or commits it |
 
-Some secrets Rerail can recognize by name are not stored. A file name is secret-like when it matches the list in
+Rerail redacts secrets it can recognize before anything reaches disk (`src/engine/secret-scrub.ts`). Rules and steers
+still read the original text in memory. This applies to stored events (your prompts, the agent's replies, tool inputs
+and outputs), session ledgers, stored findings, and the lines Rerail writes to `daemon.log`. The scrubber redacts:
+
+- **Secrets in known formats.** Keys and tokens from cloud providers, Git hosts, chat, payment and AI providers;
+  private keys; JWTs; URL passwords; and `Authorization` credentials. Each becomes `[redacted:<kind>:<6 hex>]`, where
+  the hex is the start of the secret's SHA-256, so the same secret shows the same marker.
+- **Values assigned to a secret-like key** such as `password`, `api_key` or `token`, when the value is long and random
+  enough. Such a value becomes `[redacted:<kind>]` with no hash, because it may be a password.
+
+Hashes, UUIDs, lockfile integrity strings and code are left as they are. A secret in a format Rerail does not know can
+still be stored. `rerail scrub` redacts history an earlier version stored the same way: the database, its pre-update
+copy, every recorded checkout's ledgers, and `daemon.log`. It then rewrites the database file.
+
+Rerail also leaves out what it recognizes by name. A file name is secret-like when it matches the list in
 `src/engine/path-boundary.ts` (`SENSITIVE_FILE_NAMES`, such as `.env`, `id_rsa` or `secrets.yaml`) or sits in a
 folder such as `.ssh`. A hidden name alone, such as `.github/`, is not secret-like.
 
 - When a tool call names a secret-like path, such as `cat .env`, its output is not stored. The database records that
   it was left out and its size in bytes, and the ledger records the sample without its text. The call itself is
   kept. Rerail recognizes paths by name only: it sees no path a command builds at run time.
-- The text of a secret-like file is not kept as it was before an edit, only its SHA-256 and size. The `rewind` steer
-  strategy therefore leaves such a file as the edit left it, steers with a message, and says why in the log.
+- When a file is secret-like by name, or its text holds a recognized secret, Rerail keeps only its SHA-256 and size
+  from before an edit, not its text. A session resumed from the ledger therefore cannot rewind that file.
 
 `~/.rerail/`, `~/.cache/rerail/`, the databases, the daemon's state, capability and log files and the session ledgers
 are created readable by your user only (directories `0700`, files `0600`). SQLite gives the files it adds beside a
@@ -94,17 +108,21 @@ other site or local server can read. So another user of the same computer, or a
 sandboxed program that may reach localhost, cannot read your history or change your rules through the daemon. A
 program running as you can read that file, as it can read your files; the capability is not a boundary against it.
 A daemon started with `--allow-remote` or `--public-host` can be reached from other machines and makes a fresh
-capability on each start.
+capability on each start. It serves HTTPS with the certificate you pass (`--tls-cert`, `--tls-key`), and refuses to
+start over plain HTTP unless you pass `--insecure-http`. Rerail's own clients check the certificate's recorded
+fingerprint before they send the capability.
 
 ## Deleting your data
 
 - `rerail reset`, run inside a repository, deletes that repository's recorded history (sessions, events, audits) from
   the database. It keeps rules and settings, and does not touch `.rerail/sessions/`, the content cache or the daemon
-  log.
+  log. It then rewrites the database file, so the deleted history cannot be read back from it. Every write to the
+  database also zeroes the space it frees (`secure_delete`).
 - `rerail install --remove` disconnects every coding agent, stops the daemon and takes Rerail off your `PATH`. It
   **moves** the database to a backup folder, `~/.rerail-clean-YYYYMMDD`, rather than deleting it.
-- To remove everything: run `rerail install --remove`, then delete `~/.rerail`, `~/.rerail-clean-*`,
-  `~/.cache/rerail` and the `.rerail/` folder of each repository you used Rerail in.
+- `rerail install --remove --delete-data` deletes instead: the databases, every `~/.rerail-clean-*` backup, the
+  content cache, and the `.rerail/sessions/` folder of every checkout Rerail recorded. `--dry-run` lists what it would
+  delete. It does not reach ledgers in checkouts Rerail never recorded, or in a custom `RERAIL_STORAGE_ROOT`.
 
 Questions about this page: [open an issue](https://github.com/neralabs/rerail/issues). Report a vulnerability as
 [SECURITY.md](../SECURITY.md) describes.

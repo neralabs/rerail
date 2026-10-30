@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 import * as native from "../../../src/engine/native/native.js";
-import type { NativeBinding, NativeCodeRuleDslWorkspace } from "../../../src/engine/native/native.js";
+import type { NativeBinding, NativeCodeRuleDslWorkspace, NativeSecretNames } from "../../../src/engine/native/native.js";
 
 export interface GatedWorkspace {
   /** The real native workspace behind the proxy the code under test holds. */
@@ -34,10 +34,10 @@ export function gateStorageAttachments(): StorageAttachGate {
       return new Proxy(inner, {
         get(target, key) {
           if (key === "enableStorageAsync")
-            return async (root: string, storePath: string) => {
+            return async (root: string, storePath: string, secretNames: NativeSecretNames) => {
               await start.promise;
               try {
-                return await target.enableStorageAsync(root, storePath);
+                return await target.enableStorageAsync(root, storePath, secretNames);
               } finally {
                 attached.resolve();
               }

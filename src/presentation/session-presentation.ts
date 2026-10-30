@@ -10,7 +10,7 @@ import {
   type sessionResponseSchema,
 } from "../api/session-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import { DAEMON_STATE_FILE, daemonAccessHeaders, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
 import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
@@ -135,7 +135,7 @@ function unavailable(
 
 /** Validate responses with the same contracts used by the daemon, without opening a database. */
 async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema): Promise<z.infer<Schema>> {
-  const response = await fetch(new URL(path, daemon.origin), {
+  const response = await daemonFetch(daemon.state)(new URL(path, daemon.origin), {
     headers: daemonAccessHeaders(daemon.state), signal: AbortSignal.timeout(READ_TIMEOUT_MS), redirect: "error",
   });
   if (!response.ok || response.body === null) throw new Error("Rerail read unavailable");
@@ -321,7 +321,8 @@ async function verifyDaemon(cwd: string): Promise<VerifiedDaemon | string> {
   const state = await readDaemonState(join(defaultRerailHome(), DAEMON_STATE_FILE));
   if (state === undefined) return "daemon unavailable";
   const origin = new URL(state.url);
-  if (origin.protocol !== "http:" || !["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname)
+  const secure = origin.protocol === "https:" && state.tlsFingerprint256 !== undefined;
+  if ((origin.protocol !== "http:" && !secure) || !["127.0.0.1", "[::1]", "localhost"].includes(origin.hostname)
       || origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash) {
     return "daemon unavailable";
   }

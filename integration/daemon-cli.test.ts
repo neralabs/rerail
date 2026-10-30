@@ -83,6 +83,27 @@ describe("Rerail daemon CLI", () => {
     }
   }, 15_000);
 
+  test("refuses a daemon reachable from other machines over plain http unless --insecure-http is passed, before spawning anything", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    try {
+      for (const remote of [["--host", "0.0.0.0", "--allow-remote"], ["--public-host", "rerail.example"]]) {
+        const start = spawn(process.execPath, [join(process.cwd(), "dist", "cli", "cli.js"), "daemon", "start", ...remote, "--port", "0"], {
+          env: { ...process.env, RERAIL_HOME: root },
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        if (start.stderr === null) throw new Error("cli stderr was not piped");
+        const chunks: Buffer[] = [];
+        start.stderr.on("data", chunk => chunks.push(chunk));
+        const [exitCode] = await once(start, "close");
+        expect(exitCode).not.toBe(0);
+        expect(Buffer.concat(chunks).toString()).toContain("--insecure-http");
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("reads the start state from the database --database names, not the home's default", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-state-cli-"));
     try {

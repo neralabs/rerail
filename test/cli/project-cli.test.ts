@@ -1,16 +1,32 @@
-import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { preUpdateSnapshotPath, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
+import { preUpdateSnapshotPath, runResetCommand, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
-import { openRerailDatabase } from "../../src/engine/index.js";
+import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
+
+/** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
+const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
+vi.mock("../../src/engine/storage/database.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
+  return {
+    ...actual,
+    eraseFreedPages: (database: Parameters<typeof actual.eraseFreedPages>[0]) => {
+      if (erase.failure !== undefined) throw erase.failure;
+      return actual.eraseFreedPages(database);
+    },
+  };
+});
 
 const directories: string[] = [];
 
 afterEach(async () => {
+  erase.failure = undefined;
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
@@ -138,5 +154,81 @@ describe("rerail update", () => {
     }
     const target = preUpdateSnapshotPath(path);
     expect(vi.mocked(process.stderr.write)).toHaveBeenCalledWith(expect.stringContaining(`rerail: ${target} is from an earlier update; remove it yourself:`));
+  });
+});
+
+/**
+ * The bytes of the database and its WAL, read by a child process: closing a descriptor of the file in this process
+ * would drop the locks this process's connections hold on it.
+ */
+function databaseBytes(path: string): string {
+  const script = "const fs = require('node:fs'); for (const file of process.argv.slice(1)) if (fs.existsSync(file)) process.stdout.write(fs.readFileSync(file).toString('latin1'));";
+  const read = spawnSync(process.execPath, ["-e", script, path, `${path}-wal`], { encoding: "latin1", maxBuffer: 256 * 1024 * 1024 });
+  if (read.status !== 0) throw new Error(read.stderr);
+  return read.stdout;
+}
+
+describe("rerail reset", () => {
+  // The daemon holds the database open across a reset, so no closing connection checkpoints for it.
+  it("leaves no byte of a deleted event in the database file or its WAL, under a connection that keeps working", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-reset-"));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const checkout = join(root, "repo");
+    mkdirSync(checkout);
+    vi.spyOn(process, "cwd").mockReturnValue(checkout);
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const path = join(root, "home", "rerail.sqlite");
+    const secret = `distinctive-${randomUUID()}`;
+    const live = openRerailDatabase(path);
+    try {
+      const { repositoryKey } = recordCheckout(live, checkout);
+      const session = live.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES (?, 'omp', ?, ?, 1, 2)");
+      session.run("s1", checkout, repositoryKey);
+      const event = live.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES (?, ?, 'user-prompt', 1, ?)");
+      // One copy in the database file, one still in the WAL.
+      event.run("s1", "in-file", JSON.stringify({ text: secret }));
+      live.$client.pragma("wal_checkpoint(TRUNCATE)");
+      event.run("s1", "in-wal", JSON.stringify({ text: secret }));
+      expect(databaseBytes(path)).toContain(secret);
+
+      expect(runResetCommand([], () => "usage")).toBe(0);
+
+      expect(databaseBytes(path)).not.toContain(secret);
+      expect(live.$client.prepare("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      session.run("s2", checkout, repositoryKey);
+      event.run("s2", "after-reset", "{}");
+      expect(live.$client.prepare("SELECT event_id AS id FROM events").all()).toEqual([{ id: "after-reset" }]);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("reports a rewrite of the file that fails, keeps the history deleted, and exits 1", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-reset-"));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const checkout = join(root, "repo");
+    mkdirSync(checkout);
+    vi.spyOn(process, "cwd").mockReturnValue(checkout);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const live = openRerailDatabase(join(root, "home", "rerail.sqlite"));
+    try {
+      const { repositoryKey } = recordCheckout(live, checkout);
+      live.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES ('s1', 'omp', ?, ?, 1, 2)")
+        .run(checkout, repositoryKey);
+      live.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES ('s1', 'e1', 'user-prompt', 1, '{}')").run();
+      erase.failure = new Error("database or disk is full");
+
+      expect(runResetCommand([], () => "usage")).toBe(1);
+
+      const printed = output.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(printed).toContain("database or disk is full");
+      expect(live.$client.prepare("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
+      erase.failure = undefined;
+      expect(runResetCommand([], () => "usage")).toBe(0);
+    } finally {
+      live.$client.close();
+    }
   });
 });
