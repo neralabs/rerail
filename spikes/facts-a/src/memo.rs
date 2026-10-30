@@ -43,7 +43,7 @@ use std::rc::Rc;
 
 /// Bumped when an operator's results change without any plan text changing (stale entries then
 /// never match again).
-pub const ENGINE_VERSION: u32 = 2; // P3b: K1 key checks and algebraic budgets changed fixpoint and budget behaviour (plan text unchanged)
+pub const ENGINE_VERSION: u32 = 3; // R38/R39 (L11): forest closures and forest walks report no fixpoint rounds and charge no rounds to the budget (plan text unchanged)
 /// Part of every plan digest: the memo key is fixed across the store move (PHASE-3.md § Rules).
 const FORMAT: &str = "rerail.facts-memo/v1";
 

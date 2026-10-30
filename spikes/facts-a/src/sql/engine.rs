@@ -3489,8 +3489,9 @@ impl<'d, 'a> Exec<'d, 'a> {
     /// (two values of one distinctness class, `5` and `5.0`, key differently under TEXT
     /// affinity), and is made once per `(carried probe values, node key)` and cached.
     ///
-    /// R18 (`tree`, `docs/facts/REWRITES.md`): when the walk is a forest, `tree_walk` emits the
-    /// same rows in the same order without the distinctness check and without a lookup per row.
+    /// R18 (`tree`, `docs/facts/REWRITES.md`): when the walk is a forest, `tree_walk` numbers it
+    /// once in preorder and R38 emits the same rows in the same order as interval enumerations,
+    /// with no rounds: no distinctness check, no lookup per row, no level loop.
     /// `None` when the plan is not of the closure's shape.
     #[allow(clippy::too_many_arguments)]
     fn closure(&self, batch: usize, init: &[PBody], rec: &[PBody], distinct: bool, tree: bool, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
@@ -3509,12 +3510,14 @@ impl<'d, 'a> Exec<'d, 'a> {
         }
         let ix = self.index(&e, probe, matches!(ei.src, Src::Global(_)));
         let pos_nj = from_w.iter().position(|&c| c == nj).expect("closure probe reads `node`");
-        // R18 (not under `FACTS_REWRITES=0`; no filter on the edge row): the forest walk, when
-        // its side conditions hold on this execution's rows.
+        // R18 (not under `FACTS_REWRITES=0`; no filter on the edge row): the forest numbering,
+        // when its side conditions hold on this execution's rows, and R38's interval emission;
+        // where they fail, the closure below runs (counted).
         if tree && s.level[1].is_empty() {
             if let Some((seed_rows, all)) = self.tree_walk(s, &seeds, &e, &ix, probe, &from_w, (nj, dst, pos_nj), outer) {
                 return Some(closure_table(schema, &seeds, &e, (nj, dst), &seed_rows, &all));
             }
+            self.ph.add(Phys::TreeFallbacks, 1);
         }
         let mut seen = Distinct::new(w);
         // The carried columns' tuples (every column but `node`), interned.
@@ -3590,6 +3593,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             if self.failed() {
                 break;
             }
+            self.ph.add(Phys::RoundsRun, 1);
             steps += level.len();
             if steps > 50_000_000 {
                 self.fail("recursive CTE exceeded 50M rows".into());
@@ -3667,13 +3671,16 @@ impl<'d, 'a> Exec<'d, 'a> {
     /// the seed's own node. Then every walk row of a seed is distinct, so the distinctness check
     /// never removes a row.
     ///
-    /// Order: the closure emits level by level, each level's rows by the previous level's row,
-    /// then by edge row. Within one seed that is the order of the edge-rank paths from the seed,
-    /// which is the preorder of a depth-first numbering visiting children in edge-row order,
-    /// restricted to one depth. So the edge rows are numbered once in that preorder (each
-    /// subtree an interval), bucketed by depth, and level `j` of a seed is the slice of the
-    /// bucket for its depth inside the seed's interval; seeds in their order within a level.
-    /// Per seed this costs a few hash lookups; per walk row, a copy.
+    /// The edge rows are numbered once in a depth-first preorder visiting children in edge-row
+    /// order, so each seed's walk is an interval `[lo, hi)` of that numbering (L11: a closure over
+    /// a forest is an interval probe). R38 emits it with no rounds: level 0 is every admitted
+    /// seed's own node; then one counting sort of the intervals' rows by depth below their seed,
+    /// stable in (seed, preorder). That is the closure's order: it emits level by level, each
+    /// level's rows by the previous level's row, then by edge row, which within one seed is the
+    /// order of the edge-rank paths from the seed, i.e. preorder restricted to one depth, and
+    /// seeds keep their order within a level. No fixpoint rounds are reported (the stage's
+    /// algebraic counts are its rows). Per seed this costs a few hash lookups; per walk row, two
+    /// passes over its interval.
     #[allow(clippy::too_many_arguments)]
     fn tree_walk(&self, s: &PSelect, seeds: &Table, e: &Table, ix: &Index, probe: &Probe, from_w: &[usize], (nj, dst, pos_nj): (usize, usize, usize), outer: Option<&Frame<'_>>) -> Option<(Vec<u32>, Vec<(u32, u32)>)> {
         const NONE: u32 = u32::MAX;
@@ -3849,23 +3856,7 @@ impl<'d, 'a> Exec<'d, 'a> {
         if (0..ng as u32).any(|g| pid_of[g as usize] != NONE && rows_of(g).iter().any(|&r| pre[r as usize] == NONE)) {
             return None;
         }
-        // Preorder positions bucketed by depth, ascending within a bucket.
-        let max_depth = depth.iter().copied().max().map_or(0, |d| d as usize + 1);
-        let mut bucket = vec![0u32; max_depth + 1];
-        for &d in &depth {
-            bucket[d as usize + 1] += 1;
-        }
-        for d in 1..bucket.len() {
-            bucket[d] += bucket[d - 1];
-        }
-        let mut by_depth = vec![0u32; order.len()];
-        let mut fill = bucket.clone();
-        for (p, &d) in depth.iter().enumerate() {
-            by_depth[fill[d as usize] as usize] = p as u32;
-            fill[d as usize] += 1;
-        }
         // Per seed: the interval of its descendants and their first depth.
-        let mut all: Vec<(u32, u32)> = (0..rows.len() as u32).map(|sr| (sr, NONE)).collect();
         let mut active: Vec<(u32, u32, u32, u32)> = Vec::new();
         for (sr, &r) in rows.iter().enumerate() {
             if !s.level[0].is_empty() {
@@ -3897,30 +3888,46 @@ impl<'d, 'a> Exec<'d, 'a> {
             }
             active.push((sr as u32, lo, hi, d));
         }
-        // Level by level: per active seed its slice of the next depth's bucket.
-        let mut rounds = vec![rows.len() as u64];
-        while !active.is_empty() && all.len() <= 50_000_000 {
-            let mut next = Vec::with_capacity(active.len());
-            let before = all.len();
-            for &(sr, lo, hi, d) in &active {
-                if d as usize >= max_depth {
-                    continue;
+        // R38: per active seed, its interval's rows by depth below the seed (level 1 = its
+        // children), counted, then placed by one stable counting sort; level 0 is every admitted
+        // seed's own node, in seed order.
+        let mut width: Vec<usize> = vec![rows.len()];
+        for &(_, lo, hi, d) in &active {
+            for &x in &depth[lo as usize..hi as usize] {
+                let j = (x + 1 - d) as usize;
+                if j >= width.len() {
+                    width.resize(j + 1, 0);
                 }
-                let b = &by_depth[bucket[d as usize] as usize..bucket[d as usize + 1] as usize];
-                let (a, z) = (b.partition_point(|&p| p < lo), b.partition_point(|&p| p < hi));
-                if a == z {
-                    continue;
-                }
-                all.extend(b[a..z].iter().map(|&p| (sr, order[p as usize])));
-                next.push((sr, lo, hi, d + 1));
+                width[j] += 1;
             }
-            rounds.push((all.len() - before) as u64);
-            active = next;
         }
-        if all.len() > 50_000_000 {
+        let total: usize = width.iter().sum();
+        if total > 50_000_000 {
             self.fail("recursive CTE exceeded 50M rows".into());
+            return Some((rows, Vec::new()));
         }
-        self.fix_rounds(outer, rounds);
+        let mut at: Vec<usize> = Vec::with_capacity(width.len());
+        let mut sum = 0;
+        for &n in &width {
+            at.push(sum);
+            sum += n;
+        }
+        let mut all: Vec<(u32, u32)> = vec![(0, NONE); total];
+        for sr in 0..rows.len() {
+            all[sr].0 = sr as u32;
+        }
+        for &(sr, lo, hi, d) in &active {
+            for p in lo..hi {
+                // Mutant 71 (R38, level order dropped): each seed's rows in preorder, seed after
+                // seed, as one level.
+                let j = if crate::mutant::on(71) { 1 } else { (depth[p as usize] + 1 - d) as usize };
+                all[at[j]] = (sr, order[p as usize]);
+                at[j] += 1;
+            }
+        }
+        // The logical fixpoint's rounds (algebraic, as the closure and the reference count them):
+        // the levels' widths; no round ran.
+        self.fix_rounds(outer, width.iter().map(|&n| n as u64).collect());
         #[cfg(test)]
         tests::TREE_WALKS.with(|c| c.set(c.get() + 1));
         Some((rows, all))
@@ -3946,6 +3953,10 @@ impl<'d, 'a> Exec<'d, 'a> {
             return Some(Table::empty(schema.clone()));
         }
         let t0 = Table { schema: schema.clone(), ..t0 }.truncate(w);
+        // R39: over a forest, one pass with no rounds (R19 below otherwise).
+        if let Some(t) = self.forest_walk(batch, rec, (s, &refs, n_slots), &t0, schema, outer) {
+            return Some(t);
+        }
         // Sources: level 0's columns, then the item columns (by column) and literals the step
         // reads.
         let mut srcs: Vec<Rc<Column>> = t0.cols.clone();
@@ -3976,6 +3987,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             if self.failed() {
                 break;
             }
+            self.ph.add(Phys::RoundsRun, 1);
             steps += hi - lo;
             if steps > 50_000_000 {
                 self.fail("recursive CTE exceeded 50M rows".into());
@@ -4039,6 +4051,242 @@ impl<'d, 'a> Exec<'d, 'a> {
         let len = tag.first().map_or(0, Vec::len);
         let cols = tag.into_iter().zip(row).map(|(tag, row)| Rc::new(Column::Pick { srcs: snap.clone(), tag, row })).collect();
         Some(Table { schema: schema.clone(), cols, len })
+    }
+
+    /// R39, a bag walk over a forest in one pass (`docs/facts/REWRITES.md`, L11): the rows, values
+    /// and order of `walk` (R19) with no rounds and no join per level.
+    ///
+    /// Side conditions. On the plan: W1's shape (`walk_bound`: item 1 probed by the walk key,
+    /// every later item a lookup by probe); no conjunct and no later item's probe reads the
+    /// recursion's row (item 0) or holds a subquery; each walk key column of the step is an
+    /// item's column or that same key column carried. Then a row's bindings (its children) are a
+    /// function of its walk key alone. On this execution's rows: no two rows of the walk have the
+    /// same walk key (checked as no group of item 1's index expanded twice: the initial rows'
+    /// keys distinct, no shared child, no cycle). Then the walk is a forest of bindings, each row
+    /// derived once.
+    ///
+    /// Evaluation: one breadth-first pass over that forest from the initial rows, in order,
+    /// appending each row's bindings in the join's candidate order (item 1's group in table
+    /// order, then each lookup's), finds every row once, already in the order the fixpoint emits
+    /// (level by level, each level's rows by the previous level's row, then by binding). The
+    /// projections are then evaluated row by row in that order, a carried column copying its
+    /// parent's (source, row) pair as in R19; a `CASE` condition reading the recursion's row reads
+    /// a snapshot of the parent's level (built only when some condition reads it). No fixpoint
+    /// rounds are reported. `None` when a condition fails, the walk then runs as R19; a failure on
+    /// this execution's rows is counted (`Phys::TreeFallbacks`).
+    #[allow(clippy::too_many_arguments)]
+    fn forest_walk(&self, batch: usize, rec: &[PBody], (s, refs, n_slots): (&PSelect, &[WalkRef<'_>], usize), t0: &Table, schema: &Schema, outer: Option<&Frame<'_>>) -> Option<Table> {
+        const NONE: u32 = u32::MAX;
+        let w = schema.cols.len();
+        // No initial row: R19 ends at once (no index is built).
+        if t0.is_empty() {
+            return None;
+        }
+        #[cfg(test)]
+        if tests::NO_R39.with(std::cell::Cell::get) {
+            return None;
+        }
+        let wb = walk_bound(batch, rec)?;
+        let reads0 = |c: &PE| refs_item(c, 0) || has_sub(c);
+        // Mutant 73 (R39, dropped side condition): a conjunct reading the recursion's row admitted.
+        let conjuncts_free = crate::mutant::on(73) || !s.level.iter().chain(&s.post).flatten().any(reads0);
+        if !s.konst.is_empty() || !conjuncts_free || s.probes[2..].iter().flatten().any(|p| p.exprs.iter().any(reads0)) {
+            return None;
+        }
+        let p1 = s.probes[1].as_ref()?;
+        // Per walk key part of a child: its item column, or `None`: the parent's part carried.
+        let parts: Vec<Option<(usize, usize)>> = wb
+            .key
+            .iter()
+            .map(|&k| match &refs[k as usize] {
+                WalkRef::Item { item, col, .. } => Some(Some((*item as usize, *col as usize))),
+                WalkRef::Carry(c) if *c == k => Some(None),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        fn case_reads0(r: &WalkRef<'_>) -> bool {
+            match r {
+                WalkRef::Case { operand, whens, else_, .. } => operand.is_some_and(|o| refs_item(o, 0)) || whens.iter().any(|(c, t)| refs_item(c, 0) || case_reads0(t)) || case_reads0(else_),
+                _ => false,
+            }
+        }
+        let snapshots = refs.iter().any(case_reads0);
+        let ni = s.items.len();
+        let mut tables: Vec<Rc<Table>> = vec![Rc::new(Table::empty(schema.clone()))];
+        tables.extend(s.items[1..].iter().map(|it| self.table_of(&it.src, outer)));
+        if self.failed() {
+            return None;
+        }
+        let ixs: Vec<Option<Rc<Index>>> = s.probes.iter().zip(&tables).zip(&s.items).map(|((p, t), it)| p.as_ref().map(|p| self.index(t, p, matches!(it.src, Src::Global(_))))).collect();
+        let ix1 = ixs[1].as_ref()?;
+        let np = wb.key.len();
+        // The walk in breadth-first order: per row its parent, its bound rows of items 1..
+        // (`NONE` for an initial row), and its walk key (`None`: a NULL part, no children).
+        let n0 = t0.len();
+        let mut parent: Vec<u32> = vec![NONE; n0];
+        let mut bound: Vec<u32> = vec![NONE; n0 * (ni - 1)];
+        let mut keys: Vec<Option<KCell<'_>>> = Vec::with_capacity(n0 * np);
+        for r in 0..n0 {
+            for (j, &k) in wb.key.iter().enumerate() {
+                keys.push(cell_key(t0.cell(r, k as usize), p1.expr_affs[j]));
+            }
+        }
+        let mut expanded = vec![false; ix1.groups.len()];
+        let mut key: Vec<KCell<'_>> = Vec::with_capacity(np);
+        let mut rows: Vec<RowRef<'_>> = vec![UNBOUND; ni];
+        let mut found: Vec<u32> = Vec::new();
+        let mut x = 0usize;
+        while x < parent.len() {
+            if parent.len() > 50_000_000 {
+                // R19 reports the bound (or the budget first) in its own order.
+                self.ph.add(Phys::TreeFallbacks, 1);
+                return None;
+            }
+            let kx = &keys[x * np..(x + 1) * np];
+            if kx.iter().any(Option::is_none) {
+                x += 1;
+                continue;
+            }
+            key.clear();
+            key.extend(kx.iter().map(|k| k.clone().expect("non-NULL part")));
+            self.ph.add(Phys::Probes, 1);
+            let Some(g) = ix1.group(&key) else {
+                x += 1;
+                continue;
+            };
+            if expanded[g as usize] {
+                // A walk key reached twice: not a forest of bindings on this content.
+                self.ph.add(Phys::TreeFallbacks, 1);
+                return None;
+            }
+            expanded[g as usize] = true;
+            let grp = &ix1.groups[g as usize];
+            let cands = &ix1.rows[grp.start as usize..(grp.start + grp.len) as usize];
+            self.ph.add(Phys::RowsScanned, cands.len() as u64);
+            // The bindings of items 1.. in the join's order, each `ni - 1` rows in `found`.
+            found.clear();
+            for &r1 in cands {
+                rows[1] = RowRef { t: Some(&*tables[1]), r: r1 };
+                self.bindings(s, 1, &tables, &ixs, &mut rows, outer, &mut found);
+            }
+            for b in found.chunks(ni - 1) {
+                self.ph.add(Phys::RowsJoined, 1);
+                parent.push(x as u32);
+                bound.extend_from_slice(b);
+                for (j, part) in parts.iter().enumerate() {
+                    keys.push(match part {
+                        Some((i, c)) => cell_key(tables[*i].cell(b[i - 1] as usize, *c), p1.expr_affs[j]),
+                        None => keys[x * np + j].clone(),
+                    });
+                }
+            }
+            x += 1;
+        }
+        // Sources: level 0's columns, then the item columns and literals the step reads (R19's).
+        let mut srcs: Vec<Rc<Column>> = t0.cols.clone();
+        let mut src_of: FxHashMap<usize, u16> = FxHashMap::default();
+        let mut slot_src = vec![PICK_NULL; n_slots];
+        fn each_slot<'r, 'p>(r: &'r WalkRef<'p>, f: &mut dyn FnMut(&'r WalkRef<'p>)) {
+            match r {
+                WalkRef::Item { .. } | WalkRef::Lit { .. } => f(r),
+                WalkRef::Case { whens, else_, .. } => {
+                    whens.iter().for_each(|(_, t)| each_slot(t, f));
+                    each_slot(else_, f);
+                }
+                WalkRef::Carry(_) | WalkRef::Null => {}
+            }
+        }
+        for r in refs {
+            each_slot(r, &mut |r| match r {
+                WalkRef::Item { item, col, slot } => {
+                    slot_src[*slot] = match tables[*item as usize].cols.get(*col as usize) {
+                        Some(c) => *src_of.entry(Rc::as_ptr(c) as *const u8 as usize).or_insert_with(|| {
+                            srcs.push(c.clone());
+                            srcs.len() as u16 - 1
+                        }),
+                        None => PICK_NULL,
+                    }
+                }
+                WalkRef::Lit { pe, slot } => {
+                    let ctx = EvalCtx { frame: Frame { rows: &[], parent: None }, aggs: None, wins: None };
+                    srcs.push(Rc::new(Column::Const(self.eval(pe, &ctx))));
+                    slot_src[*slot] = srcs.len() as u16 - 1;
+                }
+                _ => {}
+            });
+        }
+        if srcs.len() >= PICK_NULL as usize {
+            return None;
+        }
+        let n = parent.len();
+        let mut tag: Vec<Vec<u16>> = (0..w).map(|j| vec![j as u16; n0]).collect();
+        let mut row: Vec<Vec<u32>> = (0..w).map(|_| (0..n0 as u32).collect()).collect();
+        // Level by level only to place each row's parent level and charge the algebraic budget
+        // as R19 does (the logical fixpoint's rounds, `fix_rounds`); the rows are known.
+        let mut rounds = vec![n0 as u64];
+        self.spend_round(outer, n0 as u64);
+        let (mut lo, mut hi) = (0usize, n0);
+        while hi < n && !self.failed() {
+            let mut end = hi;
+            while end < n && (parent[end] as usize) < hi {
+                end += 1;
+            }
+            let lt = snapshots.then(|| {
+                let snap: Rc<[Rc<Column>]> = srcs.as_slice().into();
+                Table { schema: schema.clone(), cols: (0..w).map(|j| Rc::new(Column::Pick { srcs: snap.clone(), tag: tag[j][lo..hi].to_vec(), row: row[j][lo..hi].to_vec() })).collect(), len: hi - lo }
+            });
+            let mut frow: Vec<RowRef<'_>> = vec![UNBOUND; ni];
+            for y in hi..end {
+                frow[0] = RowRef { t: lt.as_ref(), r: parent[y] - lo as u32 };
+                for (k, &r) in bound[y * (ni - 1)..(y + 1) * (ni - 1)].iter().enumerate() {
+                    frow[k + 1] = RowRef { t: Some(&*tables[k + 1]), r };
+                }
+                let f = Frame { rows: &frow, parent: outer };
+                for (j, r) in refs.iter().enumerate() {
+                    let (t, v) = self.pick(r, &f, &slot_src, lo, &tag, &row);
+                    tag[j].push(t);
+                    row[j].push(v);
+                }
+            }
+            rounds.push((end - hi) as u64);
+            self.spend_round(outer, (end - hi) as u64);
+            (lo, hi) = (hi, end);
+        }
+        self.fix_rounds(outer, rounds);
+        #[cfg(test)]
+        tests::FOREST_WALKS.with(|c| c.set(c.get() + 1));
+        let snap: Rc<[Rc<Column>]> = srcs.as_slice().into();
+        let cols = tag.into_iter().zip(row).map(|(tag, row)| Rc::new(Column::Pick { srcs: snap.clone(), tag, row })).collect();
+        Some(Table { schema: schema.clone(), cols, len: n })
+    }
+
+    /// R39: the bindings of items `k..` for the bound rows `rows[..k]`, in the join's order
+    /// (each lookup's candidates in table order, `s.level` checked as the join does), appended to
+    /// `found` as the bound rows of items 1.. (`ni - 1` per binding).
+    #[allow(clippy::too_many_arguments)]
+    fn bindings<'t>(&self, s: &PSelect, k: usize, tables: &'t [Rc<Table>], ixs: &[Option<Rc<Index>>], rows: &mut Vec<RowRef<'t>>, outer: Option<&Frame<'_>>, found: &mut Vec<u32>) {
+        let ok = {
+            let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
+            s.level[k].iter().all(|c| sv::truth(&self.eval(c, &ctx)) == Some(true))
+        };
+        if !ok {
+            return;
+        }
+        if k + 1 == s.items.len() {
+            found.extend(rows[1..].iter().map(|r| r.r));
+            return;
+        }
+        let (Some(p), Some(ix)) = (s.probes[k + 1].as_ref(), ixs[k + 1].as_ref()) else { unreachable!("walk_bound: every later item is a probe") };
+        self.ph.add(Phys::Probes, 1);
+        let hits: Vec<u32> = {
+            let ctx = EvalCtx { frame: Frame { rows: rows.as_slice(), parent: outer }, aggs: None, wins: None };
+            self.probe_key(p, &ctx).and_then(|key| ix.get(&key)).map_or_else(Vec::new, <[u32]>::to_vec)
+        };
+        self.ph.add(Phys::RowsScanned, hits.len() as u64);
+        for r in hits {
+            rows[k + 1] = RowRef { t: Some(&*tables[k + 1]), r };
+            self.bindings(s, k + 1, tables, ixs, rows, outer, found);
+        }
     }
 
     /// R19: a reference form's (source, row) for the binding `f`; `lo` is the previous level's
@@ -4179,6 +4427,7 @@ impl<'d, 'a> Exec<'d, 'a> {
             if self.failed() {
                 break;
             }
+            self.ph.add(Phys::RoundsRun, 1);
             let t = Rc::new(concat(schema.clone(), width, &std::mem::take(&mut queue)));
             steps += t.len();
             if steps > 50_000_000 {
@@ -5373,6 +5622,10 @@ mod tests {
         pub(super) static TREE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         /// Executions R19 ran (`Exec::walk` returned rows).
         pub(super) static WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// Executions R39 ran (`Exec::forest_walk` returned rows).
+        pub(super) static FOREST_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        /// Tests of R19 itself turn R39 off.
+        pub(super) static NO_R39: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     /// Random graphs for the recursive-CTE rewrites: `nd(p, id, kind, par)` (nodes, `par` the
@@ -5460,11 +5713,12 @@ mod tests {
         (catalog, db, desc)
     }
 
-    /// R18 (tree closure): every closure returns the same rows in the same order with the
-    /// rewrite as without (the closure operator's distinctness walk), over `graph_db`'s forests,
-    /// DAGs, cycles, duplicate and NULL rows and mixed-type ids: seeds one per carried tuple or
-    /// several (fallback), with a seed filter, with an edge filter (no R18), with and without a
-    /// partition key. Kills mutant 27.
+    /// R18 (tree closure) and R38 (its interval emission): every closure returns the same rows
+    /// in the same order with the rewrite as without (the closure operator's distinctness walk),
+    /// over `graph_db`'s forests, DAGs, cycles, duplicate and NULL rows and mixed-type ids: seeds
+    /// one per carried tuple or several (fallback), with a seed filter, with an edge filter (no
+    /// R18), with and without a partition key. The algebraic fixpoint rounds are the closure's
+    /// too; where R38 ran, no round ran (`rounds_run`). Kills mutants 27 and 71.
     #[test]
     fn rewrite_tree_closure_equals_closure() {
         let mut seed = 0x51f1_5ee3_a17b_9c4du64;
@@ -5487,15 +5741,26 @@ mod tests {
             let (catalog, db, desc) = graph_db(&mut rnd, false);
             for q in queries {
                 let rows = |st: &Statement| {
+                    crate::counts::take_fix();
+                    let run0 = crate::counts::phys_now()[Phys::RoundsRun as usize];
                     let t = execute(&db, st).unwrap();
-                    format!("{:?}", (0..t.len()).map(|r| t.row(r)).collect::<Vec<_>>())
+                    let run = crate::counts::phys_now()[Phys::RoundsRun as usize] - run0;
+                    (format!("{:?}", (0..t.len()).map(|r| t.row(r)).collect::<Vec<_>>()), crate::counts::take_fix(), run)
                 };
                 let (with, without) = (plan_with(q, &catalog, true).unwrap(), plan_with(q, &catalog, false).unwrap());
-                assert_eq!(rows(&with), rows(&without), "round {round}: {q}; {desc}");
+                let ran = TREE_WALKS.with(|c| c.get());
+                let (a, fix_a, run_a) = rows(&with);
+                let (b, fix_b, run_b) = rows(&without);
+                assert_eq!(a, b, "round {round}: {q}; {desc}");
+                assert_eq!(fix_a, fix_b, "fixpoint rounds, round {round}: {q}");
+                if TREE_WALKS.with(|c| c.get()) > ran {
+                    assert_eq!(run_a, 0, "R38 ran rounds: {q}");
+                }
+                assert!(run_b > 0 || fix_b.first().is_none_or(|&n| n == 0), "the closure runs its rounds: {q}");
             }
         }
         let fired = TREE_WALKS.with(|c| c.get()) - before;
-        assert!(fired >= 400, "R18 ran {fired} times");
+        assert!(fired >= 400, "R18/R38 ran {fired} times");
     }
 
     /// R19 (bag recursion as a reference walk): every bag recursion returns the same rows in the
@@ -5503,8 +5768,8 @@ mod tests {
     /// `graph_db`'s acyclic graphs (forests, shared children, duplicate edges, NULL and mixed-type
     /// ids): the ownership shape (searched `CASE` over the child and the carried columns), plain
     /// carries, a simple `CASE` mixing literals, NULL and an item column, an `ON` filter, a LEFT
-    /// JOIN's null-extended item, and a step column that is not a reference form (no R19).
-    /// Kills mutant 29.
+    /// JOIN's null-extended item, and a step column that is not a reference form (no R19). R39
+    /// is off here (`NO_R39`), so R19 runs wherever R39 would. Kills mutant 29.
     #[test]
     fn rewrite_walk_equals_levels() {
         let mut seed = 0x2d35_8dcc_aa6c_78a5u64;
@@ -5522,6 +5787,7 @@ mod tests {
             "WITH RECURSIVE r(p, node, d) AS (SELECT p, id, 0 FROM nd UNION ALL SELECT r.p, e.dst, r.d + 1 FROM r JOIN ed e ON e.p = r.p AND e.src = r.node WHERE r.d < 3) SELECT * FROM r",
         ];
         let before = WALKS.with(|c| c.get());
+        NO_R39.with(|c| c.set(true));
         let rounds = 300;
         for round in 0..rounds {
             let (catalog, db, desc) = graph_db(&mut rnd, true);
@@ -5534,8 +5800,66 @@ mod tests {
                 assert_eq!(rows(&with), rows(&without), "round {round}: {q}; {desc}");
             }
         }
+        NO_R39.with(|c| c.set(false));
         let fired = WALKS.with(|c| c.get()) - before;
         assert!(fired >= 4 * rounds, "R19 ran {fired} times");
+    }
+
+    /// R39 (a bag walk over a forest in one pass): every bag recursion returns the same rows in
+    /// the same order with the rewrite as without (the generic level-by-level fixpoint), over
+    /// `graph_db`'s acyclic graphs: on forests R39 runs (the ownership shape, plain carries, a
+    /// `CASE` reading the recursion's row with an `ON` filter on the edge item: level snapshots);
+    /// where a walk key is reached twice (shared children, duplicate node rows: not a forest of
+    /// bindings) it falls back to R19, counted; a step whose conjuncts read the recursion's row
+    /// never runs as R39. The algebraic fixpoint rounds are the fixpoint's too; where R39 ran, no
+    /// round ran (`rounds_run`). Kills mutant 73.
+    #[test]
+    fn rewrite_forest_walk_equals_levels() {
+        let mut seed = 0x6a09_e667_f3bc_c908u64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let queries = [
+            "WITH RECURSIVE owned(p, id, fn, cls, top) AS (SELECT n.p, n.id, CASE WHEN n.kind = 'a' THEN n.id END, CASE WHEN n.kind = 'b' THEN n.id END, CASE WHEN n.kind = 'a' THEN n.id END FROM nd n LEFT JOIN nd q ON q.p = n.p AND q.id = n.par WHERE q.id IS NULL UNION ALL SELECT c.p, c.id, CASE WHEN c.kind = 'a' THEN c.id ELSE o.fn END, CASE WHEN c.kind = 'b' THEN c.id ELSE o.cls END, CASE WHEN o.top IS NULL AND c.kind = 'a' THEN c.id ELSE o.top END FROM owned o JOIN ed e ON e.p = o.p AND e.src = o.id JOIN nd c ON c.p = e.p AND c.id = e.dst) SELECT * FROM owned",
+            "WITH RECURSIVE r(p, root, node) AS (SELECT p, id, id FROM nd WHERE kind <> 'c' UNION ALL SELECT r.p, r.root, e.dst FROM r JOIN ed e ON e.p = r.p AND e.src = r.node) SELECT * FROM r",
+            "WITH RECURSIVE r(p, node, k) AS (SELECT p, id, kind FROM nd WHERE kind <> 'c' UNION ALL SELECT r.p, e.dst, CASE r.k WHEN 'a' THEN 'x' WHEN 'b' THEN NULL ELSE e.ord END FROM r JOIN ed e ON e.p = r.p AND e.src = r.node AND e.ord > 0) SELECT * FROM r",
+            "WITH RECURSIVE r(p, node, k) AS (SELECT n.p, n.id, n.kind FROM nd n LEFT JOIN nd q ON q.p = n.p AND q.id = n.par WHERE q.id IS NULL UNION ALL SELECT r.p, e.dst, r.k FROM r JOIN ed e ON e.p = r.p AND e.src = r.node WHERE r.k <> 'b') SELECT * FROM r",
+            "WITH RECURSIVE r(p, node, d) AS (SELECT n.p, n.id, 1 FROM nd n LEFT JOIN nd q ON q.p = n.p AND q.id = n.par WHERE q.id IS NULL UNION ALL SELECT r.p, e.dst, e.ord FROM r JOIN ed e ON e.p = r.p AND e.src = r.node AND e.ord >= r.d) SELECT * FROM r",
+        ];
+        let (before, fell) = (FOREST_WALKS.with(|c| c.get()), crate::counts::phys_now()[Phys::TreeFallbacks as usize]);
+        let mut reads_recursion = 0;
+        let rounds = 300;
+        for round in 0..rounds {
+            let (catalog, db, desc) = graph_db(&mut rnd, true);
+            for (qi, q) in queries.iter().enumerate() {
+                let rows = |st: &Statement| {
+                    crate::counts::take_fix();
+                    let run0 = crate::counts::phys_now()[Phys::RoundsRun as usize];
+                    let t = execute(&db, st).unwrap();
+                    let run = crate::counts::phys_now()[Phys::RoundsRun as usize] - run0;
+                    (format!("{:?}", (0..t.len()).map(|r| t.row(r)).collect::<Vec<_>>()), crate::counts::take_fix(), run)
+                };
+                let (with, without) = (plan_with(q, &catalog, true).unwrap(), plan_with(q, &catalog, false).unwrap());
+                let ran = FOREST_WALKS.with(|c| c.get());
+                let (a, fix_a, run_a) = rows(&with);
+                let fired = FOREST_WALKS.with(|c| c.get()) > ran;
+                let (b, fix_b, _) = rows(&without);
+                assert_eq!(a, b, "round {round}: {q}; {desc}");
+                assert_eq!(fix_a, fix_b, "fixpoint rounds, round {round}: {q}");
+                reads_recursion += (fired && qi >= 3) as usize;
+                if fired {
+                    assert_eq!(run_a, 0, "R39 ran rounds: {q}");
+                }
+            }
+        }
+        let fired = FOREST_WALKS.with(|c| c.get()) - before;
+        let fallbacks = crate::counts::phys_now()[Phys::TreeFallbacks as usize] - fell;
+        assert!(fired >= rounds / 2, "R39 ran {fired} times");
+        assert!(fallbacks > 0, "R39 never fell back");
+        assert_eq!(reads_recursion, 0, "R39 ran on a step whose conjuncts read the recursion's row");
     }
 
     /// W1 (`walk_bound`, `Exec::check_walk`): a bag recursion of the walk shape over an edge
