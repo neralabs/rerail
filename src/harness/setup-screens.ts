@@ -679,6 +679,8 @@ export interface AgentsConnection {
   readonly failed?: readonly AgentProblem[];
   /** Codex's hooks were written: Codex runs them only once the person trusts them with `/hooks`. */
   readonly codexTrust?: boolean;
+  /** OMP also loads its own plugin install of Rerail (`omp plugin install`), so two copies run until the person removes it. */
+  readonly ompPlugin?: boolean;
   /** Whether any coding agent was found on this computer. */
   readonly anyFound: boolean;
   /** Every coding agent Rerail works with, named when none is connected. */
@@ -733,6 +735,13 @@ function codexTrustRows(agents: AgentsConnection): string[] {
   return agents.codexTrust === true ? summaryRow("Codex", ["Open Codex and run /hooks once to trust Rerail’s hooks.", "Codex runs none of them until you do."]) : [];
 }
 
+/** OMP loads its plugin install of Rerail beside the one set-up connected: how to remove it. */
+function ompPluginRows(agents: AgentsConnection): string[] {
+  return agents.ompPlugin === true
+    ? summaryRow("OMP", ["OMP also loads Rerail from its plugin install, so two copies run.", "Run omp plugin uninstall @neralabs/rerail, then restart OMP."])
+    : [];
+}
+
 /**
  * In place of the rows that need a coding agent, when none is connected and none failed to connect (the failure says
  * what to do): none is connected, which ones Rerail works with, and how to connect one.
@@ -782,6 +791,7 @@ function summaryLines(input: SummaryInput, style: Style): string[] {
     ...connectionNotes(agents, style),
     "",
     ...codexTrustRows(agents),
+    ...ompPluginRows(agents),
     ...noAgentRows(agents),
     ...tryIt,
     ...summaryRow("Manage", manageRows(input.dashboard, style)),
@@ -1057,6 +1067,7 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
     ...connectionNotes(agents, style),
     "",
     ...codexTrustRows(agents),
+    ...ompPluginRows(agents),
     ...noAgentRows(agents),
     ...start,
     "",
@@ -1078,7 +1089,7 @@ export interface StoppedRepoInput {
 export function renderStoppedRepo(input: StoppedRepoInput, lane: SetupLane): string {
   const style = styleFor(lane);
   const start = lane === "terminal" ? "rerail start" : commandIn(input.agents?.connected ?? [], "rerail-start");
-  const notes = input.agents === undefined ? [] : [...connectionNotes(input.agents, style), ...codexTrustRows(input.agents)];
+  const notes = input.agents === undefined ? [] : [...connectionNotes(input.agents, style), ...codexTrustRows(input.agents), ...ompPluginRows(input.agents)];
   return lines([`  ${style.dim("○")} Rerail is set up in ${clean(input.repoName)}, and stopped there. Start it again with ${start}.`, ...notes]);
 }
 

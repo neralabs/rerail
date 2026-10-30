@@ -69,7 +69,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 - **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
 - **You approve what steers.** A rule Rerail did not publish (one you or a coding agent wrote, a worktree's own, a third party's pack) runs in Log until you approve what it says, with `rerail rules approve` or in the dashboard, and again after each edit or new version. See [Approval](docs/rule-scoping.md#approval).
 - **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
-- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it; `rerail update rollback` goes back.
+- **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it.
 
 ## Rule packs
 
@@ -110,6 +110,8 @@ Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; 
 
 Rerail works with five coding agents: Claude Code, Codex, Cursor, OMP (Oh My Pi) and Pi. Set-up connects the ones it finds, or the ones you name (`--agents claude-code,codex,cursor,omp,pi`). It backs up each config before changing it, and `rerail install --remove` takes everything out again.
 
+Pi's [package gallery](https://pi.dev/packages) installs Rerail too, with `pi install npm:@neralabs/rerail`; `/rerail-start` in a Pi session then finishes set-up and swaps that entry for the managed install, so `rerail update` governs the version. See [Installing Rerail](docs/installation.md#from-pis-package-gallery).
+
 | Agent | Integration | In-session commands | Status line |
 | --- | --- | --- | --- |
 | Claude Code | `.claude-plugin`, `hooks/claude.json`; commands in `~/.claude/commands/` | `/rerail-*` | Yes |
@@ -129,7 +131,7 @@ Every agent gets the same commands; Codex has them as `$rerail-*` skills:
 | `/rerail-update` | Update Rerail to the newest version |
 | `/rerail-uninstall` | Remove Rerail from this computer; rules and history are kept in a backup |
 
-Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail update rollback`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
+Everything else is a `rerail` terminal command: `rerail status`, `rerail version`, `rerail update check`, `rerail reset`. Run `rerail --help` for the full list. In Claude Code, OMP and Pi the status line shows `R E R A I L ● <n> rules`, and how many times Rerail steered, while Rerail is on; see [In-session surfaces](docs/in-session-surfaces.md).
 
 ## Internal testing
 

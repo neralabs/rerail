@@ -20,6 +20,21 @@ looked, never one you left out with `--agents` or removed with
 `rerail install --remove --agents <id>`; name one to connect it anyway, for
 example `npx @neralabs/rerail setup --agents codex`.
 
+### From Pi's package gallery
+
+Pi's [package gallery](https://pi.dev/packages) lists Rerail, and
+`pi install npm:@neralabs/rerail` works: the next Pi session loads Rerail and
+says to start it with `/rerail-start`. `/rerail-start` then finishes set-up,
+and in `~/.pi/agent/settings.json` it swaps that `npm:@neralabs/rerail` entry
+for the managed install, `~/.rerail/current`, in the same place. Pi then loads
+one copy, and `rerail update` governs the version, not `pi update`.
+
+`omp plugin install @neralabs/rerail` works the same way to begin with, but
+set-up cannot swap OMP's plugin install: OMP keeps it in its own plugin folder
+(`~/.omp/plugins`), removed through `omp plugin uninstall`, and loads it beside
+the extension link set-up makes, so two copies run. Set-up's summary says so;
+run `omp plugin uninstall @neralabs/rerail` and restart OMP.
+
 ## What setup does
 
 `npx` fetches the package into npm's cache and runs its `rerail` binary from
@@ -36,7 +51,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (`rerail packs`)
 ├── packs/node_modules/[@<scope>/]rerail-pack-<id>/    third parties' rule packs you installed
-└── versions/<older>/…                                 kept for `rerail update rollback`
+└── versions/<older>/…                                 the versions `rerail update` replaced
 ```
 
 Set-up follows the same steps in a terminal and from a coding agent. Nothing
@@ -102,8 +117,8 @@ person says yes.
    stopped on its own. Other repositories stay off. Connecting writes persistent registrations, all pointing at
    `~/.rerail/current`, so hooks follow an update without being rewritten; `rerail update` registers the new version
    again only with the coding agents already connected, to bring its new commands and skills:
-   - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`
-   - Pi: `packages` entry in `~/.pi/agent/settings.json`
+   - OMP: symlink `~/.omp/agent/extensions/rerail → current`, plus a `rerail` MCP server entry in `~/.omp/agent/mcp.json`. When OMP also has its own plugin install of Rerail (`omp plugin install @neralabs/rerail`), set-up changes nothing of it and its summary says to run `omp plugin uninstall @neralabs/rerail`
+   - Pi: `packages` entry in `~/.pi/agent/settings.json`. An `npm:@neralabs/rerail` entry, at any version, as Pi's gallery writes it, is replaced by this one in its place; in the `{ "source": … }` form only its `source` changes, so its filters stay. Other `npm:` entries, rule packs included, stay
    - Claude Code: `hooks` in `~/.claude/settings.json` running `current/dist/hosts/claude/claude-hook.js` (on Windows as exec-form entries that Claude Code 2.1.139+ spawns without Git Bash: `node` from `PATH` starts `dist/harness/hook-launcher.js`, which prefers the `node.exe` recorded at setup and falls back to the `PATH` node once that binary is gone), and the Rerail commands (`/rerail`, `/rerail-manage`, `/rerail-create`, `/rerail-start`, `/rerail-stop`, `/rerail-update`, `/rerail-uninstall`, `/rerail-help`, `/rerail-show-me`) under `~/.claude/commands/` (`/rerail-manage` opens the dashboard as a tab in the Orca or Cursor window before falling back to the system browser)
    - Codex: `~/.codex/hooks.json` running `current/dist/hosts/codex/codex-hook.js` (Codex asks you to trust it once via `/hooks`), plus one skill per Rerail command under `~/.codex/skills/<name>/SKILL.md`, invoked as `$rerail`, `$rerail-manage`, and so on
    - Cursor: `~/.cursor/hooks.json` running `current/dist/hosts/cursor/cursor-hook.js`, plus the same Rerail commands under `~/.cursor/commands/` (`/rerail-manage` opens the dashboard as a tab in the Cursor window before falling back to the system browser)
@@ -435,7 +450,7 @@ rerail session claude-code ID --open  # this session's status line and page URL;
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
-rerail update            # install it; `rerail update rollback` undoes it
+rerail update            # install it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
 rerail rules export      # dump your rules and every repository's configuration to ~/.rerail/rules.json
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
@@ -452,8 +467,7 @@ the ones it retired; a coding agent never connected is left alone. Command files
 and skills Rerail generated are replaced without a `.bak` copy. Updating from
 0.1.0-next.2 or earlier runs that version's update, which does not do this: run
 `rerail install --refresh` once afterwards.
-Settings, scans, status, update checks, rollback and reset are the CLI
-commands above.
+Settings, scans, status, update checks and reset are the CLI commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
 identity. See the [scan and settings contract](reference.md#scan-and-settings-controls)
@@ -474,9 +488,8 @@ daemon serves every repository; its pages are scoped to one with
 (`$RERAIL_HOME/packs`, see [Rule packs](rule-packs.md#installing-packs)) run only
 in repositories that add them (see [Rule scoping](rule-scoping.md)).
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
-(kept only when the update changes the version, and recorded with that change), and
-`rerail update rollback` puts that copy back when rolling that change back and the
-update changed the database in a way the older version cannot read (see
+(kept only when the update changes the version), the database as it was before
+the version now active, to put back by hand if you need it (see
 [Database compatibility](#database-compatibility));
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
 your rules and each repository's configuration by hand. `rerail seed` fills the
@@ -569,33 +582,18 @@ they keep the floor and an older Rerail still opens the file; a hook or the
 status line runs them before reading. A step an older version would misread
 raises the floor and waits for the new version's daemon or a command that
 writes (until then a hook or the status line says to start Rerail, `rerail
-daemon start`); from then on older versions refuse the file, and `rerail update
-rollback` puts back the copy `rerail update` took before that version change
-when the floor is now above what the version rolled back to opens. It writes the
-copy into the database file itself, so anything that has the file open goes on
-with the restored database, after keeping what the database held as
-`rerail.sqlite.before-rollback` (readable only by you; a later rollback keeps its
-own as `.before-rollback.2`, `.3`, …, never over an earlier one). A copy's
-record is used once: once the copy is put back, or you are told how to put it
-back yourself, no later rollback puts it back again. While it writes,
-`rerail.sqlite.restoring` (holding the rollback's process id) sits beside the
-database and every Rerail process refuses to open it; try again in a moment. A
-rollback that was killed leaves the file behind, but once its process is gone
-Rerail opens the database again and the next rollback takes the file over. While
-a coding agent session still has the database open, or another rollback is
-restoring, the copy is not put back: copy it over yourself, as the message says
-(it also says when it stopped the daemon). An update that finds nothing
-newer, or fails, keeps the copy of the last change; one that changes the version
-but cannot keep a copy removes the last one, which no longer belongs to the
-change a rollback would undo.
+daemon start`); from then on older versions refuse the file. To run an older
+version against it anyway, put back the copy `rerail update` took before that
+version change: stop Rerail (`rerail daemon stop`, and close the coding agent
+sessions that have it open), keep `rerail.sqlite` elsewhere if you need what
+changed since the update, then copy `rerail.sqlite.pre-update` over it. An
+update that finds nothing newer, or fails, keeps the copy of the last change;
+one that changes the version but cannot keep a copy removes the last one, which
+is not the database as it was before the version now active.
 
 A database written by 0.1.0-next.1 (stamped 1, before the migration path) is
 adopted: the first Rerail process that opens it records the baseline and stamps
-it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it, and its
-`rerail update` kept a copy with no record of the change, so `rerail update
-rollback` to it does not put the copy back itself: it prints how to (copy
-`rerail.sqlite.pre-update` over `rerail.sqlite` with Rerail stopped, keeping
-the current file if you need what changed since). A database file written by a newer Rerail (a
+it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it. A database file written by a newer Rerail (a
 floor above this release's), by other software, by 0.1.0-next.0 (stamped 1, in
 an older shape) or by a development build (stamped 2) is refused with an error
 and left untouched. Move such a file aside (or point `RERAIL_HOME` elsewhere)
@@ -624,7 +622,7 @@ rerail install --remove
 `rerail install --remove` takes out every registration that names this
 installation — harness hooks, the Claude Code status line and commands, the
 Cursor commands, the Codex skill, the OMP extension symlink and MCP entry, and
-the Pi package entry — and leaves other tools' entries alone, writing a
+the Pi package entry, an `npm:@neralabs/rerail` one included — and leaves other tools' entries alone, writing a
 `<file>.<timestamp>.bak` beside every file it changes. A folder that held only
 what it removed goes too: each `~/.codex/skills/rerail*` (and `~/.codex/skills`
 when those were all it held), and `~/.omp/agent/extensions` when the link was

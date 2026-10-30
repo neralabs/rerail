@@ -425,6 +425,12 @@ describe("T6 / C6 summary", () => {
     expect(text).not.toMatch(/ \/rerail/u);
   });
 
+  it("says how to remove OMP's plugin install of Rerail when OMP loads it beside the one set-up connected", () => {
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, ompPlugin: true } }, "terminal"));
+    expect(text).toContain("  OMP       OMP also loads Rerail from its plugin install, so two copies run.\n            Run omp plugin uninstall @neralabs/rerail, then restart OMP.\n");
+    expect(stripAnsi(renderSummary(SUMMARY, "terminal"))).not.toContain("omp plugin uninstall");
+  });
+
   it("names Codex's form of the commands beside the others' where Codex is one of several agents", () => {
     const text = renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CLAUDE, CODEX] } }, "agent");
     expect(text).toContain("type /rerail-show-me\n            to watch Rerail catch and fix a broken rule.\n            In Codex, type $rerail-show-me.\n");
