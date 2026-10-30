@@ -96,6 +96,6 @@ A clause becomes a sequence of **node-label passes**, then one root program
 - **`count`** (S2): a counting label. Each path of its program is one counted node, tallied by its
   root, or for a backward walk by the node it reaches.
 - **Metal** (S2): labels live in a prefix of the supertype buffer, which `has_supertype` reads.
-  Every pass is a kernel, run a dependency level at a time in one command buffer
-  (`metal_program_backend::label_passes`). The parity gate passes for 87 of 87 clauses. Pattern
-  leaves stay on the host, and recursive rounds wait for the host (O23).
+  Every pass is a GPU kernel, pattern leaves included, run a dependency level at a time in one
+  command buffer per clause (`metal_program_backend::label_passes`). The parity gate passes for
+  87 of 87 clauses.

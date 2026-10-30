@@ -9,19 +9,20 @@ struct Result { uint taskOrdinal,localOrdinal,start,label,captureStart,captureCo
 struct FinalCapture { uint label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; };
 struct Arena { uint start,capacity,cursor; };
 struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; };
-struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount; };
+struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish; };
+// flags: [0] a task failed, [1] the round changed a label, [2] the group settled (skip), [3] a
+// group did not settle within its encoded rounds.
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch label `slot`), 2 and
 // 3 counts by root and by captured node (into count slot `slot`).
 struct Route { uint mode,slot; };
-// kind 1 complement of `of`, 2 count bounds of slot `slot`, 3 constrained rows from `rowStart`.
+// kind 1 complement of `of`, 2 count bounds of slot `slot`.
 struct Op { uint kind,target,of,slot,minimum,maximum; };
 struct Item { uint op,index; };
-struct Row { uint root,captureStart,captureCount; };
-struct Constraint { uint node,label; };
 
 static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&bits[node/32u],1u<<(node%32u),memory_order_relaxed);}
 
 kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Result* results [[buffer(1)]],device const FinalCapture* captures [[buffer(2)]],device const Status* statuses [[buffer(3)]],device const Route* routes [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* counts [[buffer(6)]],device atomic_uint* flags [[buffer(7)]],constant Shape& shape [[buffer(8)]],uint tid [[thread_position_in_grid]]){
+  if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid<shape.taskCount&&statuses[tid].error!=0u)atomic_fetch_or_explicit(&flags[0],1u,memory_order_relaxed);
   Arena arena=arenas[shape.resultArena];
   if(tid>=arena.cursor)return;
@@ -34,8 +35,8 @@ kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Res
   for(uint at=0u;at<result.captureCount;at++){uint node=captures[result.captureStart+at].node;if(route.mode==1u)mark(bits,node);else atomic_fetch_add_explicit(&tally[node],1u,memory_order_relaxed);}
 }
 
-kernel void label_derive(device const uint* labels [[buffer(0)]],device atomic_uint* scratch [[buffer(1)]],device uint* counts [[buffer(2)]],device const Op* ops [[buffer(3)]],device const Item* items [[buffer(4)]],device const Row* rows [[buffer(5)]],device const Constraint* constraints [[buffer(6)]],constant Shape& shape [[buffer(7)]],uint tid [[thread_position_in_grid]]){
-  if(tid>=shape.itemCount)return;
+kernel void label_derive(device const uint* labels [[buffer(0)]],device atomic_uint* scratch [[buffer(1)]],device uint* counts [[buffer(2)]],device const Op* ops [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint* flags [[buffer(5)]],constant Shape& shape [[buffer(6)]],uint tid [[thread_position_in_grid]]){
+  if(tid>=shape.itemCount||flags[2]!=0u)return;
   Item item=items[tid];Op op=ops[item.op];
   device atomic_uint* bits=scratch+op.target*shape.words;
   if(op.kind==1u){
@@ -43,21 +44,29 @@ kernel void label_derive(device const uint* labels [[buffer(0)]],device atomic_u
     uint last=shape.nodeCount%32u;
     if(item.index==shape.words-1u&&last!=0u)word&=(1u<<last)-1u;
     atomic_store_explicit(&bits[item.index],word,memory_order_relaxed);
-  }else if(op.kind==2u){
+  }else{
     uint word=0u;
     for(uint bit=0u;bit<32u;bit++){uint node=item.index*32u+bit;if(node>=shape.nodeCount)break;uint count=counts[op.slot*shape.nodeCount+node];counts[op.slot*shape.nodeCount+node]=0u;if(count>=op.minimum&&count<=op.maximum)word|=1u<<bit;}
     atomic_store_explicit(&bits[item.index],word,memory_order_relaxed);
-  }else{
-    Row row=rows[item.index];
-    for(uint at=0u;at<row.captureCount;at++){Constraint constraint=constraints[row.captureStart+at];if(((labels[constraint.label*shape.words+constraint.node/32u]>>(constraint.node%32u))&1u)==0u)return;}
-    mark(bits,row.root);
   }
 }
 
 // Each of the level's targets takes its scratch bits; a change sets flags[1]; scratch is cleared.
 kernel void label_settle(device uint* labels [[buffer(0)]],device uint* scratch [[buffer(1)]],device atomic_uint* flags [[buffer(2)]],device const uint* targets [[buffer(3)]],constant Shape& shape [[buffer(4)]],uint tid [[thread_position_in_grid]]){
-  if(tid>=shape.targetCount*shape.words)return;
+  if(tid>=shape.targetCount*shape.words||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   uint at=targets[tid/shape.words]*shape.words+tid%shape.words;
   uint word=scratch[at];scratch[at]=0u;
   if(labels[at]!=word){labels[at]=word;atomic_fetch_or_explicit(&flags[1],1u,memory_order_relaxed);}
+}
+
+// A recursive group's round boundary, one thread. Round 0 clears the skip; a later round whose
+// predecessor changed nothing sets it, in flags[2] and the label prefix head that `run_batch`
+// reads. `finish` ends the group: still changing there means it did not settle (flags[3]).
+kernel void label_round(device uint* flags [[buffer(0)]],device uint* head [[buffer(1)]],constant Shape& shape [[buffer(2)]],uint tid [[thread_position_in_grid]]){
+  if(tid!=0u)return;
+  if(shape.finish!=0u){if(flags[2]==0u&&flags[1]!=0u)flags[3]=1u;flags[2]=0u;flags[1]=0u;head[0]&=0x7fffffffu;return;}
+  if(shape.round==0u)flags[2]=0u;
+  else if(flags[2]==0u&&flags[1]==0u)flags[2]=1u;
+  flags[1]=0u;
+  if(flags[2]!=0u)head[0]|=0x80000000u;else head[0]&=0x7fffffffu;
 }

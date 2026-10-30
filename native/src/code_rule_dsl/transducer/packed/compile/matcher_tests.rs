@@ -264,6 +264,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     let tapes = fixtures();
     let compiled = clauses();
     let (mut lowered, mut matched_nodes, mut commands, mut dispatches) = (0, 0, 0, 0);
+    let mut waits = [0; 3];
     let mut differ = Vec::new();
     let (mut cpu_time, mut metal_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     for (policy, compiled) in &compiled {
@@ -281,6 +282,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
             let metal = program.roots_metal(&tapes).map(|(roots, outcome)| {
                 commands += outcome.command_buffers;
                 dispatches += outcome.dispatches;
+                waits.iter_mut().zip(outcome.waits).for_each(|(sum, wait)| *sum += wait);
                 roots
             });
             metal_time += started.elapsed();
@@ -303,7 +305,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
     eprintln!(
         "S2 Metal parity: {} of {lowered} lowered clauses equal on {} fixtures ({matched_nodes} \
          matched nodes); CPU {cpu_time:?}, Metal {metal_time:?} ({commands} command buffers, \
-         {dispatches} dispatches)",
+         {dispatches} dispatches; host waits for growth, rounds, uploads {waits:?})",
         lowered - differ.len(),
         tapes.len(),
     );
@@ -311,4 +313,39 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
         eprintln!("  {differ}");
     }
     assert!(differ.is_empty(), "{} lowered clauses differ between CPU and Metal", differ.len());
+}
+
+/// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn metal_catches_a_widened_walk() {
+    let tapes = fixtures().into_iter().take(16).collect::<Vec<_>>();
+    let mut caught = 0;
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            let Ok(mut tree) = match_tree(grammar) else { continue };
+            if !widen_first_neighbor(&mut tree) {
+                continue;
+            }
+            let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
+            let expected = tapes
+                .iter()
+                .map(|tape| {
+                    let root = Root::doc(tape.clone());
+                    let mut work = usize::MAX;
+                    (0..tape.transducer_len() as u32)
+                        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+                        .collect::<BTreeSet<_>>()
+                })
+                .collect::<Vec<_>>();
+            let metal = program.roots_metal(&tapes).ok().map(|(roots, _)| roots);
+            let cpu = program.roots_batch(super::compile_matcher::Backend::Cpu, &tapes).ok();
+            assert_eq!(metal, cpu, "a widened clause must still agree between CPU and Metal");
+            caught += usize::from(metal != Some(expected));
+            if caught >= 3 {
+                return;
+            }
+        }
+    }
+    panic!("only {caught} widened clauses differ from W's matcher on Metal");
 }

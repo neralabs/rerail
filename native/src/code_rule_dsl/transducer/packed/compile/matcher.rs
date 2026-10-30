@@ -355,8 +355,7 @@ fn run(
 #[cfg(target_os = "macos")]
 impl LoweredMatcher {
     /// The batch's roots with every pass on Metal in one command buffer
-    /// (`metal_program_backend::label_passes`): pattern leaves and constrained patterns' captures
-    /// come from the host pattern matcher first; the rest are kernels.
+    /// (`metal_program_backend::label_passes`), pattern leaves included.
     pub(in crate::code_rule_dsl) fn roots_metal(
         &self,
         tapes: &[TapeDoc],
@@ -373,7 +372,6 @@ impl LoweredMatcher {
         let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
         let words = nodes.div_ceil(32).max(1);
         let labels = self.labels.defs.len() + 1;
-        let mut initial = vec![0_u32; labels * words];
         let no_labels = tapes
             .iter()
             .map(|tape| Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; self.labels.defs.len()]))
@@ -403,6 +401,7 @@ impl LoweredMatcher {
             }
         }
         let mut slots = 0_u32;
+        let mut patterns = Vec::new();
         let mut steps = Vec::new();
         for (recursive, members) in &segments {
             let mut level = BTreeMap::<u16, usize>::new();
@@ -418,39 +417,25 @@ impl LoweredMatcher {
                     .unwrap_or(0);
                 let target = index(id);
                 let pass = match self.labels.def(id) {
-                    Label::Pattern(pattern, starts) => {
-                        for ((tape, sets), base) in tapes.iter().zip(&no_labels).zip(&bases) {
-                            for node in domain(starts, tape, sets) {
-                                if pattern.execute_ast_pattern(tape, node)?.is_some() {
-                                    let global = (base + node) as usize;
-                                    initial[target as usize * words + global / 32] |= 1 << (global % 32);
-                                }
+                    Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
+                        let constraints = match self.labels.def(id) {
+                            Label::Constrained(_, _, constraints) => {
+                                constraints.iter().map(|(name, label)| (name.clone(), index(*label))).collect()
                             }
+                            _ => Vec::new(),
+                        };
+                        let packed = pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?;
+                        patterns.push(packed);
+                        Pass::Pattern {
+                            target,
+                            pattern: patterns.len() - 1,
+                            roots: roots(starts)
+                                .into_iter()
+                                .zip(&bases)
+                                .flat_map(|(roots, base)| roots.into_iter().map(move |node| base + node))
+                                .collect(),
+                            constraints,
                         }
-                        continue;
-                    }
-                    Label::Constrained(pattern, starts, constraints) => {
-                        let mut rows = Vec::new();
-                        for ((tape, sets), base) in tapes.iter().zip(&no_labels).zip(&bases) {
-                            for node in domain(starts, tape, sets) {
-                                let Some(captures) = pattern.execute_ast_pattern(tape, node)? else {
-                                    continue;
-                                };
-                                // As the CPU pass: an unbound or multi-node capture is not checked.
-                                let checks = constraints
-                                    .iter()
-                                    .filter_map(|(name, label)| {
-                                        captures
-                                            .iter()
-                                            .find(|capture| capture.label == *name)
-                                            .filter(|capture| !capture.multi)
-                                            .map(|capture| (base + capture.node, index(*label)))
-                                    })
-                                    .collect();
-                                rows.push((base + node, checks));
-                            }
-                        }
-                        Pass::Constrained { target, rows }
                     }
                     Label::Roots(program, starts) | Label::Targets(program, starts) => Pass::Program {
                         target,
@@ -498,12 +483,19 @@ impl LoweredMatcher {
                 captured: false,
             }]],
         ));
+        let siblings = steps.iter().filter(|(recursive, _)| *recursive).flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
+            Pass::Program { program, .. } | Pass::Count { program, .. } => {
+                program.words.iter().any(|&word| matches!(split(word).0, NEXT | FOLLOWING))
+            }
+            _ => false,
+        });
         let outcome = run(
             &Plan {
                 labels,
                 counts: slots as usize,
-                initial,
+                patterns,
                 steps,
+                siblings,
             },
             tapes,
         )?;

@@ -548,13 +548,12 @@ are equal on CPU and Metal (Bend's rule that every binding must give the same ke
 **2026-10-30, S2:**
 - *Done* (`metal_program_backend::label_passes`):
   - the labels sit in a prefix of the supertype buffer, which `has_supertype` reads;
-  - every pass runs as kernels, a dependency level at a time, in one command buffer;
-  - the host waits only to grow the workspace, past 64 MB of uploads, and per round of a
-    recursive group;
+  - every pass is a GPU kernel, pattern leaves included (one generated kernel per clause);
+  - a clause is one command buffer with no host waits; recursive rounds are encoded and skipped
+    on the GPU once settled;
   - the parity gate passes for 87 of 87 clauses.
 - *Still open:*
-  - pattern leaves are matched on the host, as `demand`'s pattern producers are, until the
-    packed pattern is compiled to words;
+  - about 102 launches per clause against the target of under 100; skipped rounds still count;
   - label-domain programs start at every node;
   - each clause is its own evaluation until S4 batches a wave's clauses.
 

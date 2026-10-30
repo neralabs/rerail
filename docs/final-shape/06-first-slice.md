@@ -131,41 +131,54 @@ interpreter.
   `follows`) runs forward from each match and is tallied by the node it reaches. The tally,
   compared with `min..=max`, is the label. The rule is always a label, so an `any` cannot fork one
   node into two paths.
-- **Labels on Metal, all passes on the GPU** (`metal_program_backend::label_passes`,
-  `metal_label_passes.metal`, `LoweredMatcher::roots_metal`):
+- **Labels on Metal, every pass on the GPU** (`metal_program_backend::label_passes`,
+  `metal_label_passes.metal`, `metal_label_patterns.rs`, `LoweredMatcher::roots_metal`):
   - **Storage.** The labels live in a prefix of the batch's supertype buffer: element 0 is
     {labels, words per label}, then one bitset per label over the batch's global nodes.
     `has_supertype` reads a class at or above `0xf000` from the prefix, so `SUPERTYPE` tests a
     label on Metal as on the CPU. No new operation.
+  - **Pattern leaves.** A clause's ast-grep patterns become one generated kernel. Each
+    `PackedPattern` turns into functions that mirror `PackedPattern::one`/`children` line for
+    line; a pattern is a tree, so no function recurses. A repeated metavariable's structural
+    equality walks an explicit stack, and one too deep for it fails the clause. Constraints are
+    checked in the kernel against the label bits.
   - **Levels.** Passes run a dependency level at a time. A level's labels read only earlier
     levels' labels. Each level is:
-    1. one interpreter `run_batch` dispatch with every program of the level, on one shared
-       workspace whose scheduler image a blit copies in;
+    1. one interpreter `run_batch` dispatch with the level's programs, on one shared workspace
+       whose scheduler image a blit copies in;
     2. `label_sink`: results become scratch bits, or count tallies routed by task;
-    3. `label_derive`: complements, count bounds, constrained-pattern rows;
-    4. `label_settle`: scratch becomes the label, and a change sets a flag.
-  - **Launches** grow with the depth of the label graph, not the number of passes. This keeps
-    them inside the evaluation's launch budget (`metal_launch_budget`, 600, target below 100).
-  - **Host.** Pattern leaves and constrained patterns' captures are matched on the host before
-    the command buffer, as `demand`'s pattern producers are. The host waits only at the end, to
-    grow the workspace, past 64 MB of per-level uploads, and once per round of a recursive group,
-    whose end is the changed flag.
+    3. the pattern kernel;
+    4. `label_derive`: complements and count bounds;
+    5. `label_settle`: scratch becomes the label, and a change sets a flag.
+  - **Recursive groups.** A group's rounds are encoded in the same command buffer. The count is
+    the deepest node (or longest sibling run, where the group walks siblings) plus two, within
+    the launch budget. A one-thread `label_round` kernel marks every round after one that changed
+    nothing as skipped, and every label kernel and `run_batch` return at once on that mark. A
+    group still changing at its last round reruns the clause with twice the rounds. That rerun is
+    counted, and none happened on the fixtures.
+  - **One command buffer per clause.** Every level's batch is built once and the workspace is
+    sized before encoding, so the host never waits to grow it. The host's only work before the
+    command buffer is building the batches and the label-domain root lists; after it, it reads
+    the label words.
 - **Gates:**
   - `lowered_python_clauses_match_where_ws_matcher_does` (CPU against W): 87 of 286 clauses
     lower, all exact. That is 10 more; the other 15 `count` clauses are refused for semantic
     leaves inside them.
   - `lowered_clauses_find_the_same_roots_on_metal` (`metal-tests`): 87 of 87 clauses give the
-    CPU's root sets on Metal, on the default sample of 60 fixtures (1,177 matched nodes).
-  - That took 2,457 launches and 341 command buffers over 87 evaluations, about 28 launches
-    each.
-  - Metal took 39.9 s against the CPU's 37.0 s (test wall time, debug build). The run used
-    122 s user and 10 s sys CPU at load 15–18.
-  - Both gates take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
-    fixtures) for targeted checks. The default sample is every eighth fixture.
+    CPU's root sets on Metal. On 8 fixtures (164 matched nodes) that is 87 command buffers (one
+    per clause), with 0 host waits for growth, rounds or uploads.
+  - That run took 8,892 launches, about 102 per clause, against a launch budget of 600. Metal
+    took 15.6 s, the CPU 18.2 s (test wall time, debug build).
+  - `metal_catches_a_widened_walk`: on 16 fixtures, widened clauses differ from W's matcher on
+    Metal and still agree with the CPU.
+  - All gates take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
+    fixtures). The default sample is every eighth fixture.
 - **Left for later (O23):**
-  - A label-domain program starts at every node on Metal, because its label is not known when the
+  - Launches average about 102 per clause, above the budget's target of under 100. Recursive
+    rounds skipped on the GPU still count as launches. Batching a wave's clauses (S4) shares
+    levels.
+  - A label-domain program starts at every node, because its label is not known when the
     command buffer is encoded. Its first `SUPERTYPE` drops the others.
-  - Each clause is its own evaluation; batching every clause of a wave into one is S4's.
 
 ### S3. Ingest through the push path (closes O2's ingest side)
 
