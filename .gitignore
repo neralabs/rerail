@@ -42,3 +42,6 @@ packs/*/upstream/*/authored/
 # A tool-pack's publish/ is tracked whole: anything in it is a publish request (CONTRIBUTING.md, "Pack test data").
 !packs/*/upstream/*/publish/
 !packs/*/upstream/*/publish/**
+
+# Written by prepack, removed by postpack (scripts/release/shrinkwrap-pack.mjs); a failed pack leaves it behind.
+/npm-shrinkwrap.json

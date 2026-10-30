@@ -43,6 +43,15 @@ export const data = {
    * write still waiting for the recommendations has a promise of its folder until they arrive or the poll reads it back.
    */
   attachedPacks: new Map(),
+  /**
+   * The rules the repository holds that run nowhere until a person approves them (`awaitingReferences` in
+   * `approval-model.js`, from the rules read's `unavailable`).
+   */
+  awaiting: [],
+  /** How many of the scoped repository's rules wait for a person's approval (the rules read's `awaitingApproval`). */
+  awaitingApproval: 0,
+  /** Every rule waiting for a person's approval, machine-wide (`GET /api/rule-approvals`); `null` until read. */
+  approvals: null,
   /** id → activity for the selected range, and for all time (`since=0`). */
   activity: {},
   activityAll: {},
@@ -116,6 +125,8 @@ export const ui = {
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
   removeAsk: null,
+  /** Waiting for approval: the rule (`owner:id`) whose Approve is being sent. */
+  approving: null,
   /** Packs removed from the catalog during this visit: their row reads Removed with Undo until the page is left. */
   removedPacks: new Set(),
   /** Overview's day-one banner, dismissed for this repository. */

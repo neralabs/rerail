@@ -10,7 +10,7 @@ import {
   type sessionResponseSchema,
 } from "../api/session-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import { DAEMON_STATE_FILE, daemonAccessHeaders, processAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, daemonAccessHeaders, ownProcessAlive, readDaemonState, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/schema.js";
 import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
@@ -31,6 +31,8 @@ export interface PresentationCounts {
   rules: number | null;
   /** Steers delivered in this session; null when the history cannot establish a total. */
   steered: number | null;
+  /** Rules of the session's repository whose content waits for the person's approval; null when unknown. */
+  awaitingApproval: number | null;
 }
 
 export interface SessionPresentation {
@@ -155,7 +157,10 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-/** `R E R A I L ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
+/**
+ * `R E R A I L ● 26 rules`, with `N awaiting approval` while rules of the repository wait for the person's approval,
+ * and `steered N×` only once Rerail has steered in this session (A1f).
+ */
 function onPresentation(
   origin: URL,
   { session, hud }: z.infer<typeof sessionResponseSchema>,
@@ -169,12 +174,14 @@ function onPresentation(
   const items: SessionPresentation["parts"] = [
     { text: hud.activeRuleCount === null ? "rules unavailable" : `${hud.activeRuleCount} ${ruleNoun}`, url: rulesDashboardUrl(origin, scope) },
   ];
+  const awaiting = hud.awaitingApproval ?? 0;
+  if (awaiting > 0) items.push({ text: `${awaiting} awaiting approval`, url: rulesDashboardUrl(origin, scope) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
   items.push(...health.map(text => ({ text, url: null })));
   return presentation({
     status: "on", brandUrl: sessionUrl, items, presence, repositoryState: "started",
-    counts: { rules: hud.activeRuleCount, steered: hud.steeringCount },
+    counts: { rules: hud.activeRuleCount, steered: hud.steeringCount, awaitingApproval: hud.awaitingApproval ?? null },
   });
 }
 
@@ -295,7 +302,7 @@ export function notOnHerePresentation(): SessionPresentation {
  * answer `/healthz` as that same pid before any caller is handed a URL.
  */
 async function liveHealth(daemon: VerifiedDaemon): Promise<z.infer<typeof healthSchema> | undefined> {
-  if (!processAlive(daemon.state.pid)) return undefined;
+  if (!ownProcessAlive(daemon.state.pid)) return undefined;
   try {
     const health = await get(daemon, "/healthz", healthSchema);
     return health.pid === daemon.state.pid ? health : undefined;
@@ -349,7 +356,7 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !processAlive(daemon.state.pid)) return null;
+    if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return null;
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationResponseSchema);
     return response.repositoryState;
   } catch {
@@ -405,7 +412,7 @@ export async function readPresentation({ sessionId, host, cwd, onDemand = false,
   try {
     // The `/api/presentation` response proves liveness; it must not pay for a second probe.
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !processAlive(daemon.state.pid)) return await withoutDaemon(startState, presence);
+    if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return await withoutDaemon(startState, presence);
     const { workspace, state, origin } = daemon;
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({
       repository: workspace, host, sessionId, onDemand: String(onDemand),

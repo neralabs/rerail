@@ -19,6 +19,7 @@ import {
   ruleSettings,
   schemaMigrations,
   libraryRules,
+  ruleApprovals,
   ruleCatalogIdentities,
   rules,
   sessions,
@@ -67,6 +68,7 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleAttachments,
   ruleSettings,
   libraryRules,
+  ruleApprovals,
   schemaMigrations,
   });
   const statements = await generateSQLiteMigration(empty, current);

@@ -26,8 +26,9 @@ import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableErr
 import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { normalizeFolder } from "../engine/catalog/repository-model.js";
+import { normalizeFolder, type LibraryRule, type RuleApprovalStatus } from "../engine/catalog/repository-model.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { approvalKey, approvalStatus, readApprovals } from "../engine/catalog/rule-approval.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
@@ -498,12 +499,19 @@ export interface AddedRule {
   folder: string;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
+  /**
+   * How the stored content stands: `approved` when it is content the person approved already, else `pending`, with
+   * `approvedAt` set when content approved before runs meanwhile.
+   */
+  approval: RuleApprovalStatus;
 }
 
 /**
  * Store the draft's rule in your library, through the same validation as `library_rules_upsert`, and add it to
  * `repo`'s repository at the draft's folder. A repository that is not set up yet is set up with this rule (an
- * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: its id is refused.
+ * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: its id is refused. The CLI
+ * only proposes (`rule-approval.ts`): the rule's content waits for a person's approval, and until then the rule runs
+ * the content approved before, or nowhere if it is new.
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
   const database = openRerailDatabase(databasePath);
@@ -514,8 +522,9 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     if (ruleCatalog.documents.has(draft.rule.id)) {
       throw new RuleDraftError(`${draft.rule.id} is a rule by Rerail, so it was not replaced. Give the new rule another id.`);
     }
+    let stored: LibraryRule;
     try {
-      upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
+      stored = upsertLibraryRule(database, ruleCatalog, draft.rule, draft.kind);
     } catch (error) {
       if (error instanceof EngineUnavailableError) throw new RuleDraftError(`the Engine is unavailable, so rule ${draft.rule.id} cannot be checked`);
       throw new RuleDraftError(errorMessage(error));
@@ -524,7 +533,8 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     const setUp = checkoutStatus(database, checkout).setUp === false;
     if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
     else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp };
+    const approval = approvalStatus(stored.contentHash, readApprovals(database, [draft.rule.id]).get(approvalKey("library", draft.rule.id)));
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, approval };
   } finally {
     database.$client.close();
   }
@@ -611,8 +621,11 @@ export async function runRuleDraftCommand(
     return 1;
   }
   const where = added.folder === "" ? added.repositoryName : `${added.repositoryName}/${added.folder}`;
-  stdout.write(`● Added ${added.ruleId} to ${where}.\n`);
+  if (added.approval.state === "approved") stdout.write(`● Added ${added.ruleId} to ${where}, as you approved it before.\n`);
+  else if (added.approval.approvedAt === null) stdout.write(`● Added ${added.ruleId} to ${where}. It runs once you approve it.\n`);
+  else stdout.write(`● Updated ${added.ruleId} in ${where}. The change runs once you approve it; until then the content you approved before runs.\n`);
   if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
+  if (added.approval.state === "pending") stdout.write(`  Approve it in the dashboard, or with: rerail rules approve ${added.ruleId}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });
   if (dashboard.url !== null) {

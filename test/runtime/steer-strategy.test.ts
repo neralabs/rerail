@@ -179,6 +179,24 @@ describe("The rewind steer strategy", () => {
     }
   });
 
+  it("keeps no copy of a secret-like file's text, so it leaves that file as the edit left it and steers as a message", async () => {
+    const before = "TOKEN = 'sk-live-0123456789'\n";
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "secrets.py": before } });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const deliveries = await session.edit("w1", "secrets.py", `${before}NEEDLE = 1\n`);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, "secrets.py"), "utf8")).toBe(`${before}NEEDLE = 1\n`);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("secrets.py is named like a file holding secrets"));
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
+    } finally {
+      stderr.mockRestore();
+      await session.runtime.dispose();
+    }
+  });
+
   it("still steers in the edit's result with what was rolled back when auditing the rollback fails", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const session = await strategySession({

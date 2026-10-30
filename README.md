@@ -43,7 +43,7 @@ To add a rule of your own, type `/rerail-create` followed by what you want:
 /rerail-create never import from src/legacy in new code
 ```
 
-The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
+The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. The rule runs once you approve it, in the dashboard or with `rerail rules approve <id>`, after the agent has audited its content. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
 
 ## How it works
 
@@ -66,7 +66,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 - **Only the agent's new work is judged.** Code rules report only the lines the agent changed in the session, so existing code does not bury the signal.
 - **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
-- **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. `rerail rules evidence` shows what recent sessions suggest a rule for.
+- **Rules in your own words.** `/rerail-create` has your coding agent draft a rule, test it with `rerail rules test`, and add it with `rerail rules add` after you confirm. A rule you add, and every later edit of it, runs only once you approve its content; rules shipped in Nera's packs need no approval. `rerail rules evidence` shows what recent sessions suggest a rule for.
 - **Local and multi-agent.** One daemon serves Claude Code, Codex, Cursor, OMP and Pi, with a dashboard on your own machine.
 - **Explicit updates.** Nothing updates on its own. `rerail update` backs up the database and validates the new version before switching to it.
 
@@ -101,7 +101,7 @@ rerail manage                 # Rule packs page: add it to this repository
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex clauses work on any file. Move your own rules between machines with `rerail rules export` and `rerail rules import`; imported rules wait for your approval.
 
 ## Supported coding agents
 

@@ -188,6 +188,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       presentation,
       repositoryState,
       ruleCount: null,
+      awaitingApproval: null,
       rulesUrl: (await readRulesDashboard({ cwd })).url,
       repositoryName: repositoryName(cwd),
       sigil: "/",

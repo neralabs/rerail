@@ -30,8 +30,8 @@ A repository that is set up runs only what is attached to it. The rules of the i
 
 Rules come from two places:
 
-- **By Rerail**: the rules of the rule packs installed from npm (`$RERAIL_HOME/packs`). They are read from the installed packs, never copied into the database.
-- **Created by you**: the library, rules people wrote, stored once per machine. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If an installed pack later ships a rule with a library rule's id, the library rule wins and the By Rerail rule is reported as unavailable.
+- **By Rerail**: the rules of the installed rule packs (`$RERAIL_HOME/packs`). They are read from the installed packs; installing a pack copies nothing into the database. A pack's rules installed from the npm registry run as shipped; those of a pack added from a folder or a tarball run only with content a person approved ([Approval](#approval)).
+- **Created by you**: the library, rules people wrote, stored once per machine. Each runs only with content a person approved. A library rule can't take a By Rerail rule's id, and one id keeps one kind (`code` or `conversation`). If an installed pack later ships a rule with a library rule's id, the library rule wins once it has approved content, and the By Rerail rule is reported as unavailable.
 
 A **rule attachment** adds a rule pack, a By Rerail rule or a library rule to a repository, in a folder (`""` is the whole repository; folders are relative to the repository root, POSIX, without `.` or `..`). A rule that is in an attached pack belongs to that pack even if it is also attached on its own. An attachment whose target no longer exists is reported as unavailable, never thrown.
 
@@ -47,6 +47,18 @@ A setting belongs to the repository (the default for every checkout) or to one c
 The `suppressions` setting governs only linters' comments. Rerail's own comment, `rerail-ignore`, is always honoured, whatever the setting: `// rerail-ignore complexity-cyclomatic-typescript -- generated` (or `#`, `/* */`, `{{-- --}}` per language) silences the code rules it names by id at the node it covers: the whole file when it comes before the file's first code, the next node when it stands on its own line, and the code it trails on its line otherwise. Every code rule answers to it, with nothing in its document; `docs/code-rule-dsl-reference.html#rerail-ignore` has the exact rules.
 
 **Rule Path Criteria** (`scope.include`, `scope.exclude` on a code rule, excludes winning) still narrow the paths a present rule evaluates. Execution `scope` and run mode still decide when it evaluates.
+
+## Approval
+
+A rule runs only with content a person approved, unless Nera shipped it in a pack installed from the npm registry. The
+content is the whole rule except `mode` and `revision`. A write through `/api`, the dashboard's, is approved as it is
+saved, as are the rules `rerail seed` and `rerail show-me` write. Every other new rule or change waits, from a coding
+agent, the CLI or a pack added from a folder or a tarball: a new rule runs nowhere, and is reported as unavailable with
+the reason `awaiting-approval` where it is attached; a changed rule keeps running the content approved before. Rules
+created by you before approval existed were approved as they stood on upgrade. A person approves in
+the dashboard or with `rerail rules approve <id>`; `rerail rules list` shows what waits. Every effective rule reports its
+`approval` (`shipped`, `approved` or `pending`), and `repository_rules_get` counts the rules that wait
+(`awaitingApproval`). See [Approving a rule](writing-rules.md#approving-a-rule).
 
 ## Precedence
 
@@ -75,9 +87,9 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 - change the repository's attachments and settings only while it is not set up;
 - add a rule it creates in the same call, or the copy of a By Rerail rule it edits, to a set-up repository.
 
-Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, or starts and stops a whole repository.
+Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, or starts and stops a whole repository. Rule content a coding agent writes only proposes: it waits for a person's approval, and `rule_approvals_approve` refuses a coding agent.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders, and a repository setting switches the original off there. The original stays a reference to its installed pack.
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library (`<id>-copy`, `-copy-2`, …) instead. The copy is attached wherever the original is present in the target repository, at the same folders. Once the copy is approved, a repository setting switches the original off there: at once for a person's write, which is approved as it is saved, and for a coding agent's when a person first approves the copy. Until then the original keeps running. The original stays a reference to its installed pack.
 
 ## Management surfaces
 
@@ -87,15 +99,17 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 |---|---|---|
 | `repositories_list` | `GET /api/repositories` | Every repository: key, name, aliases, set up, started, checkout count. |
 | `repository_context_get` | `GET /api/repository` | One repository with its clones and checkouts (own and effective state), and the caller's checkout and folder. |
-| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode, suppressions and config, what decided each, and unavailable references. |
+| `repository_rules_get` | `GET /api/repository/rules` | Effective rules with on, mode, suppressions, config and approval, what decided each, unavailable references (`awaiting-approval` among the reasons), and how many rules wait for approval. |
 | `repository_settings_set` | `PUT /api/repository/settings` | Owner `repository` or `checkout`, folder, targets (rule or pack), `on`, `mode`, `suppressions` and `config` (null clears; omitted keeps). |
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs and rules per folder, with optional repository settings. The first addition, or `configure: true`, sets the repository up. |
 | `repository_start`, `repository_stop` | `POST /api/repository/start`, `/stop` | Scope `checkout` (with the checkouts inside it) or `repository`. |
 | `repository_link` | `POST /api/repository/aliases` | Make another remote address resolve to this repository. People only. |
 | `rule_packs_recommend` | `GET /api/rule-packs/recommendations` | The packs that fit a checkout, each with the folder to add it in. |
 | `coding_agents_list` | `GET /api/coding-agents` | Each coding agent Rerail works with: found on this computer, connected, and any problem. Changes nothing. |
-| `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack. |
-| `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit. |
+| `rerail_rules_list` | `GET /api/rerail-rules` | By Rerail rules, each with its pack and approval. |
+| `library_rules_list`, `library_rules_get`, `library_rules_upsert`, `library_rules_remove` | `/api/library-rules[/{id}]` | Rules created by you, each with its approval. Upsert can attach a new rule (`attach: true`) and copies a By Rerail rule on edit; a person's write is approved as it is saved, a coding agent's waits. |
+| `rule_approvals_list` | `GET /api/rule-approvals` | Every rule whose content waits for approval, with the content that runs meanwhile, if any. |
+| `rule_approvals_approve` | `POST /api/rule-approvals` | Approve the content read with `contentHash`. People only. |
 
 `rules_activity`, `sessions_list`, `violations_list`, `audits_list` and `repository_audits_list` take an optional `repository`; without it they cover the whole machine for a person, and the caller's own repository for a coding agent.
 
@@ -105,6 +119,6 @@ The same operation definitions drive HTTP/OpenAPI and MCP. Every operation names
 
 ## Export and import
 
-`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
+`rerail rules export` writes a version 1 dump: the library, and each repository's key, name, aliases, set-up time, attachments and repository settings. A setting's `suppressions` and `config` are written only when set, so a dump without them still imports into a Rerail that predates them. Checkout settings and start state belong to this machine and are not exported. `rerail rules import` accepts only that format and is all-or-nothing after every code rule compiles; an imported rule whose content was not approved on this machine waits for a person's approval, and the command says how many do. `rerail reset`, and Clear history in the dashboard's Settings (`repository_reset`), delete only that repository's execution history.
 
 Each audit records, per rule, its revision, payload hash, source (pack, By Rerail rule or library rule), repository key, checkout, and a `placement` array with `on`, `mode`, `suppressions`, `onFrom`, `modeFrom` and `suppressionsFrom` for each folder (audits recorded before `suppressions` existed lack those two). Later edits don't rewrite past audits.

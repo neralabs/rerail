@@ -71,8 +71,8 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
   const database = openRerailDatabase(databasePath);
   try {
     const ruleCatalog = loadRuleCatalog();
-    upsertLibraryRule(database, ruleCatalog, rule, "code");
-    upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation");
+    upsertLibraryRule(database, ruleCatalog, rule, "code", { approve: true });
+    upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation", { approve: true });
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, {
       packs: [],

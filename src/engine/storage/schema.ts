@@ -276,6 +276,34 @@ export const libraryRules = sqliteTable(
   ],
 );
 
+export const RULE_APPROVAL_OWNERS = ["library", "pack"] as const;
+export type RuleApprovalOwner = (typeof RULE_APPROVAL_OWNERS)[number];
+
+/**
+ * The content a person last approved for a rule Nera did not ship (`rule-approval.ts`): a rule created by you
+ * (`library`) or a rule of a pack added from a folder or tarball (`pack`). Such a rule runs only with approved content.
+ * `content_hash` is the content digest of `document_json` (`ruleContentDigest`); a read recomputes it and ignores a row
+ * where it does not match.
+ */
+export const ruleApprovals = sqliteTable(
+  "rule_approvals",
+  {
+    owner: text("owner", { enum: RULE_APPROVAL_OWNERS }).notNull(),
+    ruleId: text("rule_id").notNull(),
+    kind: text("kind", { enum: RULE_KINDS }).notNull(),
+    document: text("document_json", { mode: "json" }).$type<RuleDocument>().notNull(),
+    revision: integer("revision").notNull(),
+    contentHash: text("content_hash").notNull(),
+    approvedAt: integer("approved_at").notNull(),
+  },
+  table => [
+    primaryKey({ columns: [table.owner, table.ruleId] }),
+    check("rule_approvals_owner", sql`${table.owner} IN (${sql.raw(inList(RULE_APPROVAL_OWNERS))})`),
+    check("rule_approvals_kind", sql`${table.kind} IN (${sql.raw(inList(RULE_KINDS))})`),
+    check("rule_approvals_revision", sql`${table.revision} > 0`),
+  ],
+);
+
 /**
  * `repository_id` is the stable identity of the checkout the session ran in; per-repository
  * views filter on it. Null when the recorder had no repository identity to attribute it to.

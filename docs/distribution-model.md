@@ -256,7 +256,13 @@ Nera release root
    `- Globex policy key
 ```
 
-A customer policy server cannot sign executable updates. A compromised customer policy key cannot sign another customer's policies. Executable updates always require a Nera software-update signature, including when downloaded through a dedicated customer instance.
+A customer policy server cannot sign executable updates. A compromised customer policy key cannot sign another customer's policies.
+
+The software update signing key is planned, not built: no Rerail code verifies a Nera signature on an update today.
+What `rerail update` verifies now is npm's: before it runs a staged version, it checks the registry signatures and
+provenance attestations of everything it installed with `npm audit signatures`, and it installs with no install scripts
+([installation.md](installation.md#registry-access)). Those attestations come from Nera's trusted-publisher release
+workflow, so they bind a version to that workflow, not to a key Nera holds offline.
 
 ## Local operation
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
@@ -9,6 +9,7 @@ import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } fr
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
+import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -68,37 +69,32 @@ function errno(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/** The steers held at `path`; a symlink on the way to it under `.rerail` is refused (`readLedgerFile`). */
 export async function readPending(path: string): Promise<AdapterDelivery[]> {
-  try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-    if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
-    return parsed
-      .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
-        if (value === null || typeof value !== "object") return false;
-        const delivery = value as Partial<AdapterDelivery>;
-        return typeof delivery.sessionId === "string"
-          && delivery.requested !== undefined
-          && RULE_MODES.includes(delivery.requested)
-          && steers(delivery.requested)
-          && typeof delivery.mechanism === "string"
-          && typeof delivery.content === "string"
-          && Array.isArray(delivery.ruleIds)
-          && delivery.ruleIds.every(id => typeof id === "string");
-      })
-      // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
-      .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
-  } catch (error) {
-    if (errno(error, "ENOENT")) return [];
-    throw error;
-  }
+  const text = await readLedgerFile(path, dirname(path));
+  if (text === undefined) return [];
+  const parsed = JSON.parse(text) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
+  return parsed
+    .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
+      if (value === null || typeof value !== "object") return false;
+      const delivery = value as Partial<AdapterDelivery>;
+      return typeof delivery.sessionId === "string"
+        && delivery.requested !== undefined
+        && RULE_MODES.includes(delivery.requested)
+        && steers(delivery.requested)
+        && typeof delivery.mechanism === "string"
+        && typeof delivery.content === "string"
+        && Array.isArray(delivery.ruleIds)
+        && delivery.ruleIds.every(id => typeof id === "string");
+    })
+    // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
+    .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
 }
 
 export async function persistPending(path: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
   if (deliveries.length === 0) return;
-  await mkdir(join(path, ".."), { recursive: true });
-  const temporary = `${path}.${process.pid}`;
-  await writeFile(temporary, JSON.stringify([...(await readPending(path)), ...deliveries]), { mode: 0o600 });
-  await rename(temporary, path);
+  await writeLedgerFile(path, dirname(path), JSON.stringify([...(await readPending(path)), ...deliveries]));
 }
 
 export async function takePending(path: string): Promise<AdapterDelivery[]> {
@@ -112,10 +108,7 @@ export async function replacePending(path: string, deliveries: readonly AdapterD
     await rm(path, { force: true });
     return;
   }
-  await mkdir(join(path, ".."), { recursive: true });
-  const temporary = `${path}.${process.pid}`;
-  await writeFile(temporary, JSON.stringify(deliveries), { mode: 0o600 });
-  await rename(temporary, path);
+  await writeLedgerFile(path, dirname(path), JSON.stringify(deliveries));
 }
 
 export async function routeDeliveries(
@@ -232,7 +225,7 @@ export async function withSessionLock<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const path = sessionFile(storageRoot, host, "locks", sessionId, "lock");
-  await mkdir(join(path, ".."), { recursive: true });
+  await makeLedgerFolder(dirname(path));
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
   const serializedOwner = JSON.stringify(owner);
   await acquireLock(path, serializedOwner, Date.now() + 30_000, sessionId);

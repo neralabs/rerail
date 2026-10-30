@@ -326,6 +326,19 @@ details[open] summary::before{transform:rotate(45deg)}
 details .in{padding:2px 12px 12px;border-top:1px solid var(--border)}
 pre{margin:8px 0 0;padding:10px;background:var(--subtle);border-radius:var(--radius-md);font-family:var(--font-mono);font-size:11.5px;overflow:auto;white-space:pre-wrap}
 
+/* ---- rules waiting for approval: a row's mark, a pack page's list, and the Waiting for approval page (#approvals),
+ * which lays out as Create a rule does (create.css) with room for a rule's content ---- */
+.badge.wait{background:var(--warning-subtle);color:var(--warning-foreground)}
+button.badge.wait:hover{background:var(--warning-subtle-hover)}
+section.waiting{margin-top:28px}
+.cpage.apage{max-width:880px}
+.apage .appr .note2{margin-top:4px}
+.apage .appr .acts{display:flex;gap:8px;margin-top:12px}
+pre.rdiff{max-height:70vh;padding:10px 0;overflow-wrap:anywhere}
+pre.rdiff .dl{display:block;padding:0 10px}
+pre.rdiff .dl-added{background:var(--success-subtle);color:var(--success-foreground)}
+pre.rdiff .dl-removed{background:var(--danger-subtle);color:var(--danger-foreground)}
+
 /* ---- toast: a success fades after a while; a failure (.error) carries a ✕ and stays until dismissed ---- */
 .toast{position:fixed;left:50%;bottom:calc(20px + var(--sab));transform:translate(-50%,20px);display:flex;align-items:center;gap:12px;background:var(--foreground);color:var(--background);padding:8px 14px;border-radius:6px;font-size:13px;line-height:1.4;opacity:0;transition:.2s;pointer-events:none;z-index:50;max-width:min(640px,calc(100% - 32px))}
 .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}

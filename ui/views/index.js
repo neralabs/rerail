@@ -20,11 +20,12 @@ import * as create from "./create.js";
 import * as history from "./history.js";
 import * as sessions from "./sessions.js";
 import * as settings from "./settings.js";
+import * as approvals from "./approvals.js";
 import * as noRepo from "./no-repo.js";
 import * as missing from "./missing.js";
 import * as notSetUp from "./not-set-up.js";
 
-export const VIEWS = { overview, pack, created: pack, packs, review: packs, create, history, sessions, settings };
+export const VIEWS = { overview, pack, created: pack, packs, review: packs, create, history, sessions, settings, approvals };
 
 const PAGES = { "no-repo": noRepo, missing, "not-set-up": notSetUp };
 
@@ -32,11 +33,11 @@ const PAGES = { "no-repo": noRepo, missing, "not-set-up": notSetUp };
 const NEED_SET_UP = new Set(["overview", "pack", "created"]);
 
 /**
- * What `#content` shows: the view, or the page in its place. Settings are the machine's and always show; every other
- * view needs a repository the daemon knows.
+ * What `#content` shows: the view, or the page in its place. Settings are the machine's, and so are the rules waiting
+ * for approval: both always show; every other view needs a repository the daemon knows.
  */
 export function pageKey() {
-  if (ui.view === "settings") return "settings";
+  if (ui.view === "settings" || ui.view === "approvals") return ui.view;
   if (ui.scope === null) return "no-repo";
   if (data.missing) return "missing";
   if (NEED_SET_UP.has(ui.view) && data.repository !== null && !data.repository.setUp) return "not-set-up";

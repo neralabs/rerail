@@ -4,14 +4,16 @@
  */
 import { and, asc, eq, notInArray, or } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
-import { readStoredCodeRule, unknownRuleKind, type QuarantinedRule } from "./rule-quarantine.js";
+import { readStoredDocument, type QuarantinedRule } from "./rule-quarantine.js";
 import { storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { RuleCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
+import { approveLibraryContent, storedContentDigest } from "./rule-approval.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
-import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
+import { parseConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 import {
   libraryRules,
+  ruleApprovals,
   ruleAttachments,
   ruleCatalogIdentities,
   ruleSettings,
@@ -37,6 +39,11 @@ export interface LibraryRuleWriteOptions {
    * bundled its id, and the library rule wins. Without it only a rule already in the library may keep such an id.
    */
   readonly shadowBundled?: boolean;
+  /**
+   * The write is a person's own (the dashboard), so its content is approved with it (`rule-approval.ts`). Otherwise it
+   * waits for approval, and the content approved before, if any, keeps running.
+   */
+  readonly approve?: boolean;
 }
 
 export interface LibraryRuleQuery {
@@ -45,7 +52,7 @@ export interface LibraryRuleQuery {
 
 export interface CopiedRule {
   readonly rule: LibraryRule;
-  /** Folders of the repository where the copy was added and the original switched off. */
+  /** Folders of the repository where the copy was added; the original is switched off there once the copy is approved. */
   readonly folders: readonly string[];
 }
 
@@ -98,6 +105,7 @@ export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document
       set: { kind: document.kind, document, revision, payloadHash, copiedFromRuleId, updatedAt: now },
     })
     .run();
+  if (options.approve === true) approveLibraryContent(db, { document, revision, copiedFromRuleId }, now);
 }
 
 /** Validate, then store a library rule. Throws on an invalid body, a By Rerail id, or a kind change. */
@@ -117,30 +125,17 @@ export function upsertLibraryRule(
 
 /** A stored row read and validated; a row that fails validation, or whose kind is unknown, is quarantined, never thrown. */
 export function readLibraryRow(row: LibraryRow): { ok: true; rule: LibraryRule } | { ok: false; quarantined: QuarantinedRule } {
-  const quarantine = (reason: string, kind: RuleKind = row.kind) => ({
-    ok: false as const,
-    quarantined: { ruleId: row.ruleId, kind, owner: LIBRARY_OWNER, reason },
-  });
-  const unknown = unknownRuleKind(row.kind, row.document);
-  if (unknown !== undefined) return quarantine(unknown.reason, unknown.kind);
-  let document: RuleDocument;
-  if (row.kind === "code") {
-    const read = readStoredCodeRule(row.document.rule);
-    if (!read.ok) return quarantine(read.reason);
-    document = { kind: "code", rule: read.rule };
-  } else {
-    try {
-      document = { kind: "conversation", rule: parseConversationRule(row.document.rule) };
-    } catch (error) {
-      return quarantine(error instanceof Error ? error.message : String(error));
-    }
-  }
+  const read = readStoredDocument(row.kind, row.document);
+  const contentHash = storedContentDigest(row.kind, row.document);
+  if (!read.ok) return { ok: false, quarantined: { ruleId: row.ruleId, kind: read.kind, owner: LIBRARY_OWNER, reason: read.reason } };
+  if (contentHash === undefined) return { ok: false, quarantined: { ruleId: row.ruleId, kind: row.kind, owner: LIBRARY_OWNER, reason: "the stored body is not JSON" } };
   return {
     ok: true,
     rule: {
-      document,
+      document: read.document,
       revision: row.revision,
       payloadHash: row.payloadHash,
+      contentHash,
       copiedFromRuleId: row.copiedFromRuleId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
@@ -180,13 +175,14 @@ export function quarantinedLibraryRules(db: RerailDatabase): QuarantinedRule[] {
   });
 }
 
-/** Remove a library rule with its attachments, the settings that target it, and its kind lock. */
+/** Remove a library rule with its attachments, the settings that target it, its approval and its kind lock. */
 export function removeLibraryRule(db: RerailDatabase, id: string): boolean {
   return db.transaction(tx => {
     const removed = tx.delete(libraryRules).where(eq(libraryRules.ruleId, id)).returning({ id: libraryRules.ruleId }).get() !== undefined;
     if (!removed) return false;
     tx.delete(ruleAttachments).where(and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, id))).run();
     tx.delete(ruleSettings).where(and(eq(ruleSettings.targetKind, "rule"), eq(ruleSettings.targetId, id))).run();
+    tx.delete(ruleApprovals).where(and(eq(ruleApprovals.owner, "library"), eq(ruleApprovals.ruleId, id))).run();
     tx.delete(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).run();
     return true;
   }, { behavior: "immediate" });
@@ -203,8 +199,10 @@ function freeCopyId(db: Queries, ruleCatalog: RuleCatalog, sourceId: string): st
 
 /**
  * Store an edited By Rerail rule as a library copy, in one transaction: wherever the original is present in the
- * repository (its pack or the rule itself is attached), the copy is added at the same folder and a repository
- * setting switches the original off there. The original stays a reference to the rule catalog.
+ * repository (its pack or the rule itself is attached), the copy is added at the same folder. Once the copy's content
+ * is approved (`approve`: at once, for a person's own edit), a repository setting switches the original off where the
+ * copy is added (`rule-approval.ts`); until then the original keeps running. The original stays a reference to the
+ * rule catalog.
  */
 export function copyRerailRuleToLibrary(
   db: RerailDatabase,
@@ -212,7 +210,7 @@ export function copyRerailRuleToLibrary(
   repositoryKey: RepositoryKey,
   sourceId: string,
   edited: unknown,
-  options: { readonly id?: string; readonly now?: number } = {},
+  options: { readonly id?: string; readonly now?: number; readonly approve?: boolean } = {},
 ): CopiedRule {
   const original = ruleCatalog.documents.get(sourceId);
   if (original === undefined) throw new Error(`${sourceId} is not a By Rerail rule`);
@@ -237,13 +235,9 @@ export function copyRerailRuleToLibrary(
       tx.insert(ruleAttachments)
         .values({ repositoryKey, folder, sourceKind: "library_rule", sourceId: id, createdAt: now })
         .onConflictDoNothing().run();
-      tx.insert(ruleSettings)
-        .values({ ownerKind: "repository", ownerId: repositoryKey, folder, targetKind: "rule", targetId: sourceId, on: false, mode: null, updatedAt: now })
-        .onConflictDoUpdate({
-          target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
-          set: { on: false, updatedAt: now },
-        }).run();
     }
-    return { rule: readRequired(tx, id), folders };
+    const rule = readRequired(tx, id);
+    if (options.approve === true) approveLibraryContent(tx, { document, revision: rule.revision, copiedFromRuleId: sourceId }, now);
+    return { rule, folders };
   }, { behavior: "immediate" });
 }

@@ -64,3 +64,17 @@ export function ruleDocumentDigest(document: RuleDocument): string {
   if (canonical === undefined) throw new TypeError(`rule ${document.rule.id} is not JSON representable`);
   return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
+
+/**
+ * Digest of what a rule says and matches: its body as stored, valid or not, without its `mode` and `revision`, which
+ * are settings. A person's approval binds to it (`rule-approval.ts`), so changing either field needs no new approval
+ * and changing anything else does.
+ */
+export function ruleContentDigest(kind: string, rule: unknown): string {
+  const content = typeof rule === "object" && rule !== null && !Array.isArray(rule)
+    ? Object.fromEntries(Object.entries(rule).filter(([key]) => key !== "mode" && key !== "revision"))
+    : rule;
+  const canonical = stableJsonText({ kind, rule: content });
+  if (canonical === undefined) throw new TypeError("the rule is not JSON representable");
+  return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
+}

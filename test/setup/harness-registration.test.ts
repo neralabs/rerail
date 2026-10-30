@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symli
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import ignore from "ignore";
 import { sql } from "drizzle-orm";
 import { openSqliteDatabase } from "../../src/engine/index.js";
 import {
@@ -230,7 +231,7 @@ describe("Claude Code settings.json", () => {
     expect(await backups(path)).toHaveLength(1);
 
     const settings = await readJson(path);
-    expect(settings.permissions).toEqual(foreign.permissions);
+    expect(settings.permissions).toMatchObject(foreign.permissions);
     expect(settings.theme).toBe("dark");
     const hooks = settings.hooks as Record<string, unknown[]>;
     expect(Object.keys(hooks).sort()).toEqual(
@@ -340,6 +341,136 @@ describe("Claude Code settings.json", () => {
     const path = join(home, ".claude", "settings.json");
     const original = await seed(path, { hooks: { Stop: { command: "x" } } });
     await expect(registerHarnesses({ root, home, nodePath, harnesses: ["claude-code"] })).rejects.toThrow("hooks.Stop");
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+});
+
+interface IsolationSettings {
+  permissions?: { allow?: string[]; deny?: string[] };
+  sandbox?: {
+    enabled?: boolean;
+    excludedCommands?: string[];
+    filesystem?: { denyRead?: string[]; denyWrite?: string[]; allowRead?: string[] };
+  };
+}
+
+async function readIsolation(path: string): Promise<IsolationSettings> {
+  return await readJson(path) as IsolationSettings;
+}
+
+/**
+ * Whether the absolute Read rules (`Read(//path)`) in `deny` keep the agent's file tools from `relativePath` below
+ * `directory`, matched as gitignore patterns from the filesystem root.
+ */
+function readDenied(deny: readonly string[], directory: string, relativePath: string): boolean {
+  const patterns = deny.filter(rule => rule.startsWith("Read(//")).map(rule => rule.slice("Read(//".length, -1));
+  return ignore().add(patterns).ignores(join(directory, relativePath).slice(1));
+}
+
+describe("Claude Code data isolation", () => {
+  async function isolationFixture(settings: unknown) {
+    const { options, path, original } = await claudeFixture(settings);
+    const rerailHome = join(dirname(options.home), "rerail-home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    return { options, path, original: original!, rerailHome, cache: join(options.home, ".cache", "rerail") };
+  }
+
+  const userSettings = {
+    permissions: { allow: ["Bash(git:*)"], deny: ["Read(./.env)"] },
+    sandbox: { enabled: true, filesystem: { denyRead: ["~/.aws"] }, excludedCommands: ["docker *"] },
+  };
+
+  it("denies the agent the Rerail home and the cache, lets Rerail's CLI out of the sandbox, and removal restores the file", async () => {
+    const { options, path, original, rerailHome, cache } = await isolationFixture(userSettings);
+    await registerHarnesses(options);
+    const settings = await readIsolation(path);
+
+    expect(settings.sandbox?.enabled).toBe(true);
+    expect(settings.sandbox?.filesystem?.denyRead).toEqual(["~/.aws", rerailHome, cache]);
+    expect(settings.sandbox?.filesystem?.denyWrite).toEqual([rerailHome, cache]);
+    // Sandboxed commands may still read the installed package inside the denied home, and nothing else there.
+    expect(settings.sandbox?.filesystem?.allowRead).toEqual([join(rerailHome, "current"), join(rerailHome, "versions")]);
+    expect(settings.sandbox?.excludedCommands).toEqual([
+      "docker *", `${options.nodePath} ${join(options.root, "dist", "cli", "cli.js")} *`, `${join(rerailHome, "bin", "rerail")} *`, "rerail *",
+    ]);
+    const deny = settings.permissions?.deny ?? [];
+    expect(deny).toEqual(expect.arrayContaining(["Read(./.env)", `Edit(/${rerailHome}/**)`, `Edit(/${cache}/**)`, `Read(/${cache}/**)`]));
+    expect(settings.permissions?.allow).toEqual(userSettings.permissions.allow);
+    for (const data of ["access-token", "daemon.json", "rerail.sqlite", "rerail.sqlite-wal", "rerail.sqlite.pre-update", "daemon.log", "device-secrets/key", "profiles/work/rerail.sqlite"]) {
+      expect(readDenied(deny, rerailHome, data)).toBe(true);
+    }
+    // `/rerail-create` has the agent read its skill, and files its references name, in the installed package.
+    for (const code of ["current/skills/rerail-create/SKILL.md", "current/package.json", "versions/1.0.0/native/src/code_rule_dsl/capabilities.json"]) {
+      expect(readDenied(deny, rerailHome, code)).toBe(false);
+    }
+    expect(readDenied(deny, cache, "content-v1.sqlite")).toBe(true);
+
+    expect(change((await registerHarnesses(options)).changes, "claude-code", "settings.json").action).toBe("unchanged");
+    expect(await readIsolation(path)).toEqual(settings);
+
+    await unregisterHarnesses(options);
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("keeps an entry the person already had when Rerail's go, and removes the objects it created", async () => {
+    const cacheRule = (home: string) => `Read(/${join(home, ".cache", "rerail")}/**)`;
+    const { options, path } = await claudeFixture();
+    const own = { theme: "dark", permissions: { deny: [cacheRule(options.home)] } };
+    const original = await seed(path, own);
+    vi.stubEnv("RERAIL_HOME", join(dirname(options.home), "rerail-home"));
+    await registerHarnesses(options);
+    expect((await readIsolation(path)).permissions?.deny?.filter(rule => rule === cacheRule(options.home))).toHaveLength(1);
+    await unregisterHarnesses(options);
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("moves the denies to a new RERAIL_HOME when set-up runs again", async () => {
+    const { options, path, original, rerailHome } = await isolationFixture(userSettings);
+    await registerHarnesses(options);
+    const moved = join(dirname(options.home), "moved-home");
+    vi.stubEnv("RERAIL_HOME", moved);
+    await registerHarnesses(options);
+    const text = await readFile(path, "utf8");
+    expect(text).not.toContain(rerailHome);
+    const settings = await readIsolation(path);
+    expect(settings.sandbox?.filesystem?.denyRead).toContain(moved);
+    expect(settings.permissions?.deny).toContain(`Edit(/${moved}/**)`);
+    await unregisterHarnesses(options);
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("leaves a Rerail home that holds the home directory open, and still denies the cache", async () => {
+    const { options, path } = await claudeFixture();
+    vi.stubEnv("RERAIL_HOME", options.home);
+    await registerHarnesses(options);
+    const settings = await readIsolation(path);
+    const cache = join(options.home, ".cache", "rerail");
+    expect(settings.sandbox?.filesystem?.denyRead).toEqual([cache]);
+    expect(settings.sandbox?.filesystem?.denyWrite).toEqual([cache]);
+    expect(settings.sandbox?.filesystem?.allowRead).toBeUndefined();
+    expect(settings.permissions?.deny).toEqual([`Edit(/${cache}/**)`, `Read(/${cache}/**)`]);
+  });
+
+  it("writes only the file tools' rules on native Windows, where commands run unsandboxed", async () => {
+    const { options, path, rerailHome } = await isolationFixture(undefined);
+    await registerHarnesses({ ...options, platform: "win32" });
+    const settings = await readIsolation(path);
+    expect(settings.sandbox).toBeUndefined();
+    expect(settings.permissions?.deny).toContain(`Edit(/${rerailHome}/**)`);
+  });
+
+  it("keeps entries another root registered when removing this one", async () => {
+    const { options, path } = await isolationFixture(userSettings);
+    await registerHarnesses(options);
+    const registered = await readFile(path, "utf8");
+    const other = await packageInstall(options, "other");
+    await unregisterHarnesses({ ...options, root: other });
+    expect(await readIsolation(path)).toMatchObject(JSON.parse(registered) as object);
+  });
+
+  it("refuses a sandbox setting that is not an object without writing", async () => {
+    const { options, path, original } = await isolationFixture({ sandbox: true });
+    await expect(registerHarnesses(options)).rejects.toThrow(`"sandbox" in ${path}`);
     expect(await readFile(path, "utf8")).toBe(original);
   });
 });
@@ -659,7 +790,9 @@ describe("Claude Code status-line ownership", () => {
     const project = readClaudeStatusRegistration(options.home, path)!;
     const database = openSqliteDatabase(claudeStatusDatabasePath(options.home));
     try {
-      expect(database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table'`)).toEqual([{ name: "harness_status_lines" }]);
+      expect(database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)).toEqual([
+        { name: "harness_added_settings_entries" }, { name: "harness_status_lines" },
+      ]);
       // Former installations used project-version stamps; recovery must ignore those versions.
       database.run(sql`PRAGMA user_version = 999`);
     } finally { database.$client.close(); }
@@ -759,8 +892,10 @@ describe("Claude Code commands", () => {
     expect(manage).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} manage\`.`);
     const create = await read("rerail-create");
     expect(create).toContain(
-      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
+      `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules test *), Bash(${command} rules add *), Bash(${command} rules list *)\n`,
     );
+    // Approving a rule is the person's: Claude Code asks them before the agent runs it.
+    expect(create).not.toMatch(/allowed-tools:.*rules approve/u);
     expect(create).toContain("\"$ARGUMENTS\"");
     expect(create).toContain(`Read ${root}/skills/rerail-create/SKILL.md and follow it.`);
     // The removal is never pre-approved: Claude Code asks the person before it runs.
@@ -1272,6 +1407,34 @@ describe("Cursor hooks.json", () => {
     const report = await unregisterHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     expect(change(report.changes, "cursor", "hooks.json").action).toBe("unchanged");
     expect(await readdir(join(home, ".cursor"))).toEqual([]);
+  });
+
+  it("denies the Cursor CLI's file tools Rerail's data in an existing cli-config.json, and removal restores it", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(dirname(home), "rerail-home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    const path = join(home, ".cursor", "cli-config.json");
+    const original = await seed(path, { version: 1, permissions: { allow: ["Shell(ls)"], deny: ["Read(.env*)"] } });
+    const options = { root, home, nodePath, harnesses: ["cursor"] as const };
+
+    await registerHarnesses(options);
+    const cache = join(home, ".cache", "rerail");
+    const { permissions } = await readIsolation(path);
+    expect(permissions?.allow).toEqual(["Shell(ls)"]);
+    expect(permissions?.deny).toEqual(expect.arrayContaining([
+      "Read(.env*)", `Write(${rerailHome}/**)`, `Write(${cache}/**)`, `Read(${cache}/**)`, `Read(${rerailHome}/access-token*)`,
+    ]));
+    expect(permissions?.deny).not.toContain(`Read(${rerailHome}/**)`);
+    expect(change((await registerHarnesses(options)).changes, "cursor", "cli-config.json").action).toBe("unchanged");
+
+    await unregisterHarnesses(options);
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("does not create cli-config.json for a Cursor without the CLI", async () => {
+    const { home, root, nodePath } = await fixture();
+    await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
+    await expect(lstat(join(home, ".cursor", "cli-config.json"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

@@ -18,6 +18,7 @@ import { readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath } from "./code-rule-languages.js";
+import { sensitiveByName } from "../path-boundary.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
@@ -30,9 +31,15 @@ const IGNORED_DIRECTORIES = new Set([
   ".turbo", "coverage", "target", "vendor",
 ]);
 
-interface Preimage {
+/**
+ * A source as a tool call found it: its text, why it could not be read, or neither when it did not exist. A file named
+ * like one holding secrets (`sensitiveByName`) keeps only its SHA-256 and size (`withheld`): preimages go into the
+ * session ledger in the checkout, so its text is never captured, and `rewind` refuses to put it back.
+ */
+export interface Preimage {
   readonly text?: string;
   readonly readError?: string;
+  readonly withheld?: { readonly sha256: string; readonly bytes: number };
 }
 interface Source {
   readonly path: string;
@@ -374,6 +381,9 @@ export class CodeRuleBridge {
     const { preimages, after } = rewindable;
     if (scope.length === 0 || scope.some(path => !preimages.has(path))) return undefined;
     if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return undefined;
+    const secret = [...preimages].find(([, preimage]) => preimage.withheld !== undefined);
+    if (secret !== undefined)
+      throw new Error(`${secret[0]} is named like a file holding secrets, so Rerail kept no copy of it to put back; the edit stays as it is`);
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return undefined;
     return await this.#enqueue(async () => {
@@ -573,7 +583,9 @@ export class CodeRuleBridge {
         if (source.deleted) this.#observed.delete(source.path);
         else this.#observed.set(source.path, observation(source));
       }
-      if (source.text !== undefined) preimages.set(source.path, { text: source.text });
+      if (source.text !== undefined && sensitiveByName(source.path))
+        preimages.set(source.path, { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } });
+      else if (source.text !== undefined) preimages.set(source.path, { text: source.text });
       else if (source.readError !== undefined) preimages.set(source.path, { readError: source.readError });
       else if (source.deleted) preimages.set(source.path, {});
     }
@@ -598,7 +610,9 @@ export class CodeRuleBridge {
       const edit = this.#readEdit(source, preimage);
       if (edit === undefined) continue;
       edits.push(edit);
-      if (preimage === undefined && before !== undefined && edit.generatedText !== undefined) uncaptured.set(edit.path, before);
+      // A secret-like file's text was not captured: its digest finds it again where this session or Git holds it.
+      const prior = preimage === undefined ? before : preimage.withheld?.sha256;
+      if (prior !== undefined && edit.generatedText !== undefined) uncaptured.set(edit.path, prior);
     }
     return { edits, uncaptured };
   }
@@ -847,7 +861,8 @@ export class CodeRuleBridge {
   }
 
   #readEdit(source: Source, preimage: Preimage | undefined): CodeRuleEdit | undefined {
-    if (source.text !== undefined && preimage?.text === source.text) {
+    const unchanged = preimage?.withheld === undefined ? preimage?.text === source.text : preimage.withheld.sha256 === source.digest;
+    if (source.text !== undefined && unchanged) {
       this.#observed.set(source.path, observation(source));
       return undefined;
     }
@@ -859,7 +874,9 @@ export class CodeRuleBridge {
   #editFromToolSource(source: Source, preimage: Preimage | undefined): CodeRuleEdit | undefined {
     const previous = preimage === undefined
       ? { previousReadError: "Original source was not captured for this tool call" }
-      : { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
+      : preimage.withheld !== undefined
+        ? { previousReadError: "Rerail keeps no copy of a file named like one holding secrets" }
+        : { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
     if (source.text !== undefined) return { path: source.path, language: source.language, ...previous, generatedText: source.text };
     if (source.deleted) return { path: source.path, language: source.language, ...previous, deleted: true };
     if (source.readError !== undefined) return { path: source.path, language: source.language, ...previous, readError: source.readError };

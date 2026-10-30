@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { appendFile, chmod, mkdir, readFile, truncate, writeFile } from "node:fs/promises";
+import { constants, realpathSync } from "node:fs";
+import { lstat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
@@ -17,7 +18,7 @@ import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState }
 import { autostartDaemon } from "./daemon-control.js";
 import { SteerRuleSchema } from "./event-protocol.js";
 import {
-  CodeRuleBridge, generatedEditPaths, type RewoundEdit, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
@@ -30,10 +31,12 @@ import { SqliteAuditStore } from "../engine/audit/audit-store.js";
 import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/audit-control.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../engine/audit/audit-control-schema.js";
 import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { realpathSync } from "node:fs";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { keepPrivate } from "../engine/storage/private-files.js";
+import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
@@ -45,6 +48,7 @@ import { restorableRule, type DroppedEvents, type RuleMutation } from "./session
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
+import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
 import type {
   ContentItem,
@@ -219,7 +223,11 @@ const LedgerEntrySchema = z.union([
   z.object({ type: z.literal("rule-match"), ruleId: z.string(), turn: z.number().int().nonnegative() }),
   z.object({
     type: z.literal("policy-call"), toolCallId: z.string(), toolName: z.string(), paths: z.array(z.string()),
-    preimages: z.record(z.string(), z.object({ text: z.string().optional(), readError: z.string().optional() })).optional(),
+    preimages: z.record(z.string(), z.object({
+      text: z.string().optional(),
+      readError: z.string().optional(),
+      withheld: z.object({ sha256: z.string(), bytes: z.number().int().nonnegative() }).optional(),
+    })).optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
 ]);
@@ -232,7 +240,7 @@ type LedgerEntry =
   | { type: "delivery"; delivery: AdapterDelivery }
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
-  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, { text?: string; readError?: string }>> }
+  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>> }
   | { type: "policy-result"; toolCallId: string };
 
 export function compactValidated<T>(value: unknown): T {
@@ -432,19 +440,16 @@ interface RuntimeSessionState {
   yieldWaits: number;
   /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
   missedFindings: MissedFinding[];
+  /** The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored. */
+  secretCalls: Set<string>;
+  /** The results stored without their output (`withheldOutput`): their samples are recorded without text too. */
+  withheldResults: Set<string>;
   closed: boolean;
 }
 
 async function readLines(path: string): Promise<JsonlReadResult> {
-  let content: string;
-  try {
-    content = await readFile(path, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return { values: [], appendState: { prefix: "", truncateTo: null } };
-    }
-    throw error;
-  }
+  let content = await readLedgerFile(path, dirname(path));
+  if (content === undefined) return { values: [], appendState: { prefix: "", truncateTo: null } };
 
   const appendState: JsonlAppendState = { prefix: "", truncateTo: null };
   if (content.length > 0 && !content.endsWith("\n")) {
@@ -467,10 +472,16 @@ async function readLines(path: string): Promise<JsonlReadResult> {
   };
 }
 
+/** Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it. */
 async function appendJsonLine(path: string, value: unknown, state: JsonlAppendState): Promise<void> {
-  await mkdir(join(path, ".."), { recursive: true, mode: 0o700 });
-  if (state.truncateTo !== null) await truncate(path, state.truncateTo);
-  await appendFile(path, `${state.prefix}${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
+  await makeLedgerFolder(dirname(path));
+  const handle = await openLedgerFile(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
+  try {
+    if (state.truncateTo !== null) await handle.truncate(state.truncateTo);
+    await handle.appendFile(`${state.prefix}${JSON.stringify(value)}\n`, "utf8");
+  } finally {
+    await handle.close();
+  }
   state.prefix = "";
   state.truncateTo = null;
 }
@@ -480,18 +491,43 @@ function sessionDirectory(root: string, sessionId: string): string {
 }
 
 /**
+ * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
+ * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
+ * written down; the call itself is kept.
+ */
+function withheldOutput(output: unknown): Withheld & { bytes?: number } {
+  let text: string | undefined;
+  try {
+    text = typeof output === "string" ? output : JSON.stringify(output);
+  } catch {
+    // An output JSON cannot hold (the session store encodes those another way) is left without a size.
+  }
+  return {
+    ...WITHHELD_OUTPUT,
+    reason: "the call names a secret-like path, so Rerail does not store what it returned",
+    ...(text === undefined ? {} : { bytes: Buffer.byteLength(text) }),
+  };
+}
+
+const SESSION_RECORDS_GITIGNORE = "# Created by Rerail: session records stay out of Git.\n*\n";
+
+/**
  * Session records hold what the person typed, and the storage root defaults to `<checkout>/.rerail/sessions`. A
  * `.gitignore` of `*` keeps them out of `git status` and `git add -A`, as `.pytest_cache` does, without touching the
  * repository's own ignores. Only a root inside a `.rerail` folder is Rerail's alone: a custom one
- * (`RERAIL_STORAGE_ROOT`) may hold the person's own files, so it is left as it is, as is an existing `.gitignore`.
+ * (`RERAIL_STORAGE_ROOT`) may hold the person's own files, so it is left as it is. In Rerail's own folder the file is
+ * rewritten whenever it holds anything else, or is no regular file: a repository that commits one with `!*` would
+ * otherwise have the person's next `git add -A` commit their prompts and pre-edit source.
  */
 async function ignoreInGit(storageRoot: string): Promise<void> {
   if (basename(dirname(storageRoot)) !== ".rerail") return;
-  try {
-    await writeFile(join(storageRoot, ".gitignore"), "# Created by Rerail: session records stay out of Git.\n*\n", { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
+  const path = join(storageRoot, ".gitignore");
+  const stats = await lstat(path).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (stats?.isFile() === true && await readLedgerFile(path, storageRoot) === SESSION_RECORDS_GITIGNORE) return;
+  await writeLedgerFile(path, storageRoot, SESSION_RECORDS_GITIGNORE);
 }
 
 /** Replays a session ledger into its registry and returns the turn the session had reached. */
@@ -895,8 +931,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (!sources.has(violation.ruleId)) sources.set(violation.ruleId, sourceOf);
     }
     if (violations.length === 0) return undefined;
-    // Its lead says the findings belong to steps the agent has already moved past.
-    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId));
+    // Its lead says the findings belong to steps the agent has already moved past. Their paths are the session
+    // folder's, so a file there that links to a secret is judged as one.
+    const sensitive = checkoutPathBoundary(state.checkout.cwd).sensitive;
+    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId), sensitive);
     const digest: AdapterDelivery = {
       sessionId: state.descriptor.sessionId,
       requested: "steer",
@@ -1094,8 +1132,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await chmod(directory, 0o700);
+    await makeLedgerFolder(directory);
+    keepPrivate(directory);
     await ignoreInGit(this.#storageRoot);
     const ledgerPath = join(directory, "events.jsonl");
     const { values, appendState } = await readLines(ledgerPath);
@@ -1148,6 +1186,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
+      secretCalls: new Set(),
+      withheldResults: new Set(),
       closed: false,
     };
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
@@ -1502,11 +1542,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
+    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) state.secretCalls.add(event.toolCallId);
+    const withheld = event.kind === "result" && state.secretCalls.delete(event.toolCallId);
+    if (withheld) state.withheldResults.add(event.eventId);
     this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
       kind: event.kind,
-      payload: event,
+      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : event,
     }, state.descriptor);
     await this.#append(state, { type: "event", eventId: event.eventId });
     state.processed.add(event.eventId);
@@ -1538,7 +1581,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       },
     };
     state.source.append(item);
-    await this.#append(state, { type: "sample", item });
+    // A result stored without its output leaves its text out of the ledger as well; matching still reads it.
+    await this.#append(state, { type: "sample", item: state.withheldResults.has(sample.eventId) ? { ...item, text: "" } : item });
     const registry = state.registry;
     if (registry === undefined) return;
     const matches = registry.match(sample, { turn: state.turn });

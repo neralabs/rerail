@@ -153,6 +153,8 @@ function usage(): string {
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json>",
+    "  rerail rules list [--json]",
+    "  rerail rules approve <id>",
     "  rerail rules test <draft.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
@@ -369,11 +371,12 @@ async function runUpdateCommand(
 }
 
 /**
- * Rules on in `workspace`'s checkout, from its repository's configuration, for `/rerail` where the coding agent
- * cannot name its session. A status read: it never writes, and where the configuration cannot be read (busy, or
- * the checkout not recorded) the summary drops the count line rather than failing.
+ * Rules on in `workspace`'s checkout, and rules of its repository waiting for approval, from its repository's
+ * configuration, for `/rerail` where the coding agent cannot name its session. A status read: it never writes, and
+ * where the configuration cannot be read (busy, or the checkout not recorded) the summary drops the count lines
+ * rather than failing.
  */
-function enabledRuleCount(workspace: string): number | null {
+function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval: number } | null {
   const databasePath = defaultRerailDatabasePath();
   if (!existsSync(databasePath)) return null;
   let database;
@@ -382,8 +385,8 @@ function enabledRuleCount(workspace: string): number | null {
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
     const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-    return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
-      .rules.filter(rule => rule.on).length;
+    const view = listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths });
+    return { on: view.rules.filter(rule => rule.on).length, awaitingApproval: view.awaitingApproval };
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
@@ -415,10 +418,12 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
   const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
   const rulesUrl = (await readRulesDashboard({ cwd })).url;
+  const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
   process.stdout.write(`${renderRerailSummary({
     presentation,
     repositoryState,
-    ruleCount: presentation === null && repositoryState === "started" ? enabledRuleCount(cwd) : null,
+    ruleCount: counts?.on ?? null,
+    awaitingApproval: counts?.awaitingApproval ?? null,
     rulesUrl,
     repositoryName: repositoryName(cwd),
     sigil: host === "codex" ? "$" : "/",

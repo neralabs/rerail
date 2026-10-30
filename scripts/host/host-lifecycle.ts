@@ -245,7 +245,7 @@ async function project(): Promise<Workspace> {
   const database = openRerailDatabase(databasePath);
   try {
     const ruleCatalog = loadRuleCatalog();
-    upsertLibraryRule(database, ruleCatalog, CODE_RULE, "code");
+    upsertLibraryRule(database, ruleCatalog, CODE_RULE, "code", { approve: true });
     const { repositoryKey } = recordCheckout(database, root);
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: CODE_RULE.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);

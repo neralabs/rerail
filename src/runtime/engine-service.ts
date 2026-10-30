@@ -1,4 +1,4 @@
-import { chmod, mkdir } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
@@ -53,6 +53,26 @@ function parseEngineRequest(value: unknown): EngineRequest {
 
 function isWindowsNamedPipe(endpoint: string): boolean {
   return endpoint.startsWith("\\\\.\\pipe\\");
+}
+
+/**
+ * Makes `directory` (mode 0700, with any missing parents) and refuses it unless it is this user's alone: a real
+ * directory, not a link, owned by `uid`, with no group or other permission bits. The socket inside then takes no
+ * permission change after `listen`: nobody else can reach, replace or pre-create it. A directory another user made
+ * first at a predictable path in a shared temp directory is refused rather than used. Windows has no POSIX owner or
+ * mode to check (`uid` undefined).
+ */
+export async function preparePrivateDirectory(directory: string, uid: number | undefined = process.getuid?.()): Promise<void> {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  if (uid === undefined) return;
+  const info = await lstat(directory);
+  const problem = !info.isDirectory() ? "is a link or not a directory"
+    : info.uid !== uid ? `is owned by uid ${info.uid}, not ${uid}`
+      : (info.mode & 0o077) !== 0 ? `has mode ${(info.mode & 0o777).toString(8)}, not 700`
+        : undefined;
+  if (problem !== undefined) {
+    throw new Error(`Rerail will not put its engine socket in ${directory}: it ${problem}. The socket needs a directory only this user can open (mode 700).`);
+  }
 }
 
 type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
@@ -163,9 +183,7 @@ async function routeEngineEvent(
 }
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
-  if (!isWindowsNamedPipe(options.socketPath)) {
-    await mkdir(dirname(options.socketPath), { recursive: true, mode: 0o700 });
-  }
+  if (!isWindowsNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
@@ -214,7 +232,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       listening.resolve();
     });
     await listening.promise;
-    if (!isWindowsNamedPipe(options.socketPath)) await chmod(options.socketPath, 0o600);
   } catch (error) {
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));

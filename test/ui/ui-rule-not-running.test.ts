@@ -11,9 +11,9 @@ import { isRunning } from "../../ui/derive.js";
 import { data, matches, runningCount, ui } from "../../ui/state.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
-const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
+const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")], { shipped: () => true });
 
-/** The API over a machine whose rule catalog is the TypeScript pack, whose rules declare options. */
+/** The API over a machine whose rule catalog is the TypeScript pack, installed from the registry, whose rules declare options. */
 class TypeScriptPackStores extends DatabaseApiStores {
   override ruleCatalog(): RuleCatalog {
     return typescriptPack;

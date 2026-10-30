@@ -99,14 +99,14 @@ describe("library rules", () => {
 });
 
 describe("copyRerailRuleToLibrary", () => {
-  it("adds the copy wherever the original is present and switches the original off there", async () => {
+  it("adds the approved copy wherever the original is present and switches the original off there", async () => {
     const db = await repositoryWithLintPack(["web", "api"]);
     const edited = codeRule("ignored", { message: "No print, ever" });
 
-    const copied = copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited);
+    const copied = copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited, { approve: true });
     expect(copied.rule).toMatchObject({ copiedFromRuleId: "no-console", document: { rule: { id: "no-console-copy" } } });
     expect(copied.folders).toEqual(["api", "web"]);
-    expect(copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited).rule.document.rule.id).toBe("no-console-copy-2");
+    expect(copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", edited, { approve: true }).rule.document.rule.id).toBe("no-console-copy-2");
 
     const rules = loadCheckoutRuleSet(db, ruleCatalog, checkout(CHECKOUT), RUNNING, []).rulesFor("web/a.ts");
     expect(rules.map(rule => [rule.document.rule.id, rule.source.kind, rule.on])).toEqual([
@@ -119,7 +119,7 @@ describe("copyRerailRuleToLibrary", () => {
 
   it("leaves the original following the rule catalog", async () => {
     const db = await repositoryWithLintPack([""]);
-    copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }));
+    copyRerailRuleToLibrary(db, ruleCatalog, REPOSITORY, "no-console", codeRule("x", { message: "edited" }), { approve: true });
 
     const updated = testBundle({ noConsoleRevision: 2 });
     const original = loadCheckoutRuleSet(db, updated, checkout(CHECKOUT), RUNNING, []).rulesFor("a.ts")
@@ -129,7 +129,7 @@ describe("copyRerailRuleToLibrary", () => {
 
   it("lets a library rule win over a later bundled rule with its id", async () => {
     const db = await repositoryWithLintPack([]);
-    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) });
+    writeLibraryRule(db, testBundle(), { kind: "code", rule: codeRule("shared", { mode: "log" }) }, { approve: true });
     const later = testBundle();
     const withShared = { ...later, documents: new Map([...later.documents, ["shared", { kind: "code" as const, rule: codeRule("shared") }]]) };
     addAttachment(db, { repositoryKey: REPOSITORY, folder: "", sourceKind: "rerail_rule", sourceId: "shared" });

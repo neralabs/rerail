@@ -6,7 +6,7 @@
  * receipts) are given the seed clock there.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -110,8 +110,9 @@ function createCheckout(reposRoot: string, spec: CheckoutSpec, gitEnvironment: N
 }
 
 /**
- * Installs this repository's `packs/<id>` into the scenario home the way `rerail packs add <folder>` does: npm links the
- * folder into the prefix's `node_modules` and records it as `file:<folder>` in the prefix's `package.json`.
+ * Installs this repository's `packs/<id>` into the scenario home as npm installs a pack from the registry: npm puts the
+ * package in the prefix's `node_modules` (here a link to the folder) and records its version in the prefix's
+ * `package.json`, so its rules run as Nera shipped them.
  */
 function installPacks(home: string, packIds: readonly string[]): void {
   const prefix = installedPacksPrefix(home);
@@ -121,7 +122,8 @@ function installPacks(home: string, packIds: readonly string[]): void {
   for (const id of packIds) {
     const folder = join(REPOSITORY_ROOT, "packs", id);
     symlinkSync(folder, join(scope, `rerail-pack-${id}`), process.platform === "win32" ? "junction" : "dir");
-    dependencies[rulePackPackageName(id)] = `file:${folder}`;
+    const manifest: { version: string } = JSON.parse(readFileSync(join(folder, "package.json"), "utf8"));
+    dependencies[rulePackPackageName(id)] = manifest.version;
   }
   writeFileSync(join(prefix, "package.json"), `${JSON.stringify({ dependencies }, null, 2)}\n`);
 }
@@ -373,10 +375,10 @@ function setUpAndStart(packIds: readonly string[], settings: readonly [string, b
   };
 }
 
-/** A rule created by you, stored in the library and added to the whole repository. */
+/** A rule created by you, approved, stored in the library and added to the whole repository. */
 function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog): Change["apply"] {
   return (db, repositoryKey, at) => {
-    upsertLibraryRule(db, catalog(), rule, "code", { now: at, createdAt: at });
+    upsertLibraryRule(db, catalog(), rule, "code", { now: at, createdAt: at, approve: true });
     addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: rule.id }, at);
   };
 }

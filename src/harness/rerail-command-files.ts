@@ -147,8 +147,9 @@ function createBody(agent: CommandFileAgent, { cli, packageRoot }: CommandFileCo
     : `the words the person typed after ${sigilFor(agent)}rerail-create`;
   return {
     text: createRuleInstructions({ cli, packageRoot, request }),
-    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or add a rule.
-    allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
+    // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or propose a
+    // rule. `rules approve` is never pre-approved: the host asks the person, whose approval it is, before it runs.
+    allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`, `${cli} rules list *`],
   };
 }
 

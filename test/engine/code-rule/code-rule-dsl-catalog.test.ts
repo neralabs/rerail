@@ -129,7 +129,7 @@ describe("checkout code-rule catalog", () => {
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code", { approve: true });
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });

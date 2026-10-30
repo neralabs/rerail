@@ -632,8 +632,10 @@ export const operations: readonly Operation[] = [
         ...(input.limit === undefined ? {} : { limit: input.limit }),
       });
       const last = page.at(-1);
+      // A call's paths are judged in the session's folder too, where a file that links to a secret counts as one.
+      const cwd = caller.kind === "person" ? undefined : stores.reader.session(input.sessionId)?.cwd;
       return {
-        events: caller.kind === "person" ? [...page] : page.map(event => ({ ...event, payload: agentTranscriptPayload(event.kind, event.payload) })),
+        events: caller.kind === "person" ? [...page] : page.map(event => ({ ...event, payload: agentTranscriptPayload(event.kind, event.payload, cwd) })),
         nextAfter: last === undefined ? input.after ?? 0 : last.sequence,
         pageLimit: SESSION_EVENT_PAGE_LIMIT as typeof SESSION_EVENT_PAGE_LIMIT,
       };

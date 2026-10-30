@@ -14,7 +14,8 @@ import { startEngineService, type EngineService } from "../runtime/engine-servic
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
-import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, sameSecret } from "../api/http.js";
+import { HTTPException } from "hono/http-exception";
+import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit, sameSecret } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
@@ -29,6 +30,27 @@ export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
 /** In the Rerail home: the port the daemon last listened on, which the next start without `--port` prefers. */
 export const DAEMON_PORT_FILE = "daemon-port.json";
+
+/**
+ * The largest body `/api` and `/mcp` take. Their largest legitimate request is a rule document (a library rule
+ * upsert, or the MCP tool call carrying one): conversation rule text is capped at 32 KiB a field and a code rule is a
+ * query, not source, so real documents are tens of KiB. 4 MiB leaves room for any of them.
+ */
+const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
+/**
+ * The largest body `/native/session` takes. Its `initialize`, `semantic` and `cosine` requests carry the host
+ * session's whole branch (every entry, tool output included), which reaches tens of MiB in a long session; 256 MiB
+ * stays below the size V8 can hold as one string to parse.
+ */
+const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
+/**
+ * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
+ * long a handler takes to answer, and `/mcp` answers each POST with one JSON body (no SSE stream: `mcp.ts`), so no
+ * response is cut short. Dashboard polls are small GETs; between them a kept-alive connection is closed by Node's
+ * `keepAliveTimeout`, not these. Loopback carries the largest native body in well under 60 seconds.
+ */
+const HTTP_TIMEOUTS = { headersTimeout: 10_000, requestTimeout: 60_000 } as const;
+const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request; daemon.log in the Rerail home has the cause.";
 
 export interface RerailDaemonOptions {
   version: string;
@@ -99,13 +121,19 @@ export function sourceUiRoot(): string {
   return join(PACKAGE_ROOT, "ui");
 }
 
-/** A short, database-derived local IPC endpoint isolates each Rerail home's engine service. */
+/**
+ * A short, database-derived local IPC endpoint isolates each Rerail home's engine service. On POSIX it lives in this
+ * user's own directory in the temp directory, `rerail-<uid>`, which the engine service makes 0700 and checks before
+ * listening. Names stay short: a socket path must fit 104 bytes on macOS and 108 on Linux.
+ */
 export function defaultEngineSocketPath(
   databasePath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
   const identity = createHash("sha256").update(resolve(databasePath)).digest("hex").slice(0, 24);
-  return platform === "win32" ? String.raw`\\.\pipe\rerail-${identity}` : join(tmpdir(), `rerail-${identity}.sock`);
+  return platform === "win32"
+    ? String.raw`\\.\pipe\rerail-${identity}`
+    : join(tmpdir(), `rerail-${process.getuid!()}`, `${identity}.sock`);
 }
 
 async function listen(server: Server, port: number, host: string): Promise<void> {
@@ -313,6 +341,9 @@ export class RerailDaemon {
       const app = new Hono();
       app.use("*", hostAllowlist(publicHosts));
       app.use("*", accessCapability(accessToken));
+      app.use("/api/*", requestBodyLimit(API_BODY_LIMIT_BYTES));
+      app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
+      app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
       app.get("/healthz", context => context.json(daemon!.health()));
 
       app.post("/native/session", async (context) => {
@@ -352,9 +383,16 @@ export class RerailDaemon {
         if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
         return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
       });
-      app.onError((error, context) => context.json({ error: "internal", message: error.message }, 500));
+      // A client hears that something failed, never why: an error's text can name paths, rule text or SQL. The daemon
+      // log (`daemon.log` in the Rerail home, which only this user can read) keeps the whole error. An `HTTPException`
+      // is the framework's own answer to a malformed request (a body that is not JSON) and goes out as it is.
+      app.onError((error, context) => {
+        if (error instanceof HTTPException) return error.getResponse();
+        process.stderr.write(`rerail daemon: ${context.req.method} ${context.req.path} failed: ${error.stack ?? error.message}\n`);
+        return context.json({ error: "internal", message: INTERNAL_ERROR_MESSAGE }, 500);
+      });
       const listener = getRequestListener(app.fetch);
-      server = createServer((request, response) => void listener(request, response));
+      server = createServer(HTTP_TIMEOUTS, (request, response) => void listener(request, response));
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({

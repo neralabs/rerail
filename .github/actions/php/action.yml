@@ -49,7 +49,7 @@ runs:
     # Restore only. actions/cache would save in its post-job step, after the derivation's untrusted code has run.
     - id: restored
       name: Restore the PHP build
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pin.outputs.prefix }}
         key: ${{ steps.pin.outputs.key }}
@@ -66,7 +66,7 @@ runs:
     # Saved here, before any later step of the job runs the derivation, so what lands in the cache is build.sh's output.
     - name: Save the PHP build
       if: steps.restored.outputs.cache-hit != 'true' && inputs.save == 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.pin.outputs.prefix }}
         key: ${{ steps.pin.outputs.key }}

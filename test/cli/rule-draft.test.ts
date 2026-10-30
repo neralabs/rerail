@@ -6,8 +6,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  approveRule,
   loadRuleCatalog,
   defaultRerailDatabasePath,
+  getLibraryRule,
   openRerailDatabase,
   recordCheckout,
   listRepositoryRules,
@@ -40,10 +42,11 @@ async function repository(files: Record<string, string> = {}): Promise<string> {
   return root;
 }
 
-function noConsolePolicy(pattern = String.raw`console\.log`) {
+/** Approvals are machine-wide and the file's tests share one home, so a test that expects a rule to wait names its own id. */
+function noConsolePolicy(pattern = String.raw`console\.log`, id = "acme:no-console-log") {
   return {
     format: "rerail.policy/v1",
-    id: "acme:no-console-log",
+    id,
     revision: 1,
     mode: "steer",
     description: "Use the logger, not console.log.",
@@ -84,17 +87,32 @@ async function testReportText(file: string, repo: string): Promise<{ exit: numbe
   return { exit, report, stdout };
 }
 
-/** Your library, and `repo`'s repository: whether it is set up and the rules added to it, by id and folder. */
+/**
+ * Your library, and `repo`'s repository: whether it is set up, the rules that run there, and the rules added to it that
+ * wait for a person's approval, by id and folder.
+ */
 function rulesOf(repo: string) {
   const database = openRerailDatabase(defaultRerailDatabasePath());
   try {
     const checkout = recordCheckout(database, repo);
+    const view = listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey);
     return {
       library: listLibraryRules(database).map(rule => rule.document.rule.id),
       setUp: checkoutStatus(database, checkout).setUp,
-      repository: listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey).rules
-        .map(rule => ({ id: rule.source.id, kind: rule.source.kind, folder: rule.attachmentFolder, on: rule.on })),
+      repository: view.rules.map(rule => ({ id: rule.source.id, kind: rule.source.kind, folder: rule.attachmentFolder, on: rule.on })),
+      waiting: view.unavailable.filter(reference => reference.reason === "awaiting-approval")
+        .map(reference => ({ id: reference.sourceId, kind: reference.sourceKind, folder: reference.folder })),
     };
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** A person approves library rule `id` as it is stored, as the dashboard or `rerail rules approve` does. */
+function approve(id: string): void {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    approveRule(database, loadRuleCatalog(), "library", id, getLibraryRule(database, id)!.contentHash);
   } finally {
     database.$client.close();
   }
@@ -416,7 +434,7 @@ describe("rerail rules test", () => {
 });
 
 describe("rerail rules add", () => {
-  it("stores the rule in the library and adds it, on, to the whole of a set-up repository", async () => {
+  it("stores the rule in the library and adds it to the whole of a set-up repository, where it runs, on, once approved", async () => {
     const repo = await repository();
     setUpEmpty(repo);
     const file = writeDraft(repo, {
@@ -428,31 +446,40 @@ describe("rerail rules add", () => {
     const { exit, stdout } = await run("add", [file, "--repo", repo]);
 
     expect(exit).toBe(0);
-    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n$/);
+    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\./u);
+    // The CLI only proposes: the new rule waits for a person, and says how to approve it.
+    expect(stdout).toContain("rerail rules approve acme:no-console-log");
     const after = rulesOf(repo);
     expect(after.library).toContain("acme:no-console-log");
     expect(after).toMatchObject({
       setUp: true,
+      repository: [],
+      waiting: [{ id: "acme:no-console-log", kind: "library_rule", folder: "" }],
+    });
+
+    approve("acme:no-console-log");
+    expect(rulesOf(repo)).toMatchObject({
       repository: [{ id: "acme:no-console-log", kind: "library_rule", folder: "", on: true }],
+      waiting: [],
     });
   });
 
   it("adds the rule at the folder the draft names", async () => {
     const repo = await repository();
     setUpEmpty(repo);
-    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy(), folder: "web" });
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy(undefined, "acme:no-console-web"), folder: "web" });
 
     const { exit, stdout } = await run("add", [file, "--repo", repo]);
 
     expect(exit).toBe(0);
-    expect(stdout).toContain("● Added acme:no-console-log to rerail-rule-draft-");
-    expect(stdout).toContain("/web.\n");
-    expect(rulesOf(repo).repository).toEqual([{ id: "acme:no-console-log", kind: "library_rule", folder: "web", on: true }]);
+    expect(stdout).toContain("● Added acme:no-console-web to rerail-rule-draft-");
+    expect(stdout).toContain("/web.");
+    expect(rulesOf(repo).waiting).toEqual([{ id: "acme:no-console-web", kind: "library_rule", folder: "web" }]);
   });
 
   it("sets a repository that is not set up up with only the new rule", async () => {
     const repo = await repository();
-    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy(undefined, "acme:no-console-new") });
 
     const { exit, stdout } = await run("add", [file, "--repo", repo]);
 
@@ -460,7 +487,8 @@ describe("rerail rules add", () => {
     expect(stdout).toContain("was not set up, so it is now set up with this rule.");
     expect(rulesOf(repo)).toMatchObject({
       setUp: true,
-      repository: [{ id: "acme:no-console-log", kind: "library_rule", folder: "", on: true }],
+      repository: [],
+      waiting: [{ id: "acme:no-console-new", kind: "library_rule", folder: "" }],
     });
   });
 

@@ -173,7 +173,8 @@ describe("MCP callers and the agent guard", () => {
       .toMatch(/^agent-not-permitted/u);
     expect((await call("library_rules_remove", { id: created.id }, caller)).result).toMatch(/^agent-not-permitted/u);
 
-    // Editing a By Rerail rule stores a copy, added where the original is, and switches the original off there.
+    // Editing a By Rerail rule stores a copy, added where the original is; it waits for a person's approval, and the
+    // original keeps running there until then.
     const ruleCatalog = loadRuleCatalog();
     const [ruleId, packId] = [...ruleCatalog.packOf].find(([id]) => ruleCatalog.documents.get(id)?.kind === "code")!;
     addAttachment(stores.database(), { repositoryKey: parentKey, folder: "web", sourceKind: "pack", sourceId: packId });
@@ -361,7 +362,7 @@ describe("MCP callers and the agent guard", () => {
     expect((await call("rules_activity", { since: 0 }, caller)).result).toMatchObject({ sessions: { started: 1 } });
     // Its rules are its own repository's too: a library rule only the nested repository runs is the person's to see.
     const elsewhere = MOCK_CODE_RULES[1]!;
-    upsertLibraryRule(stores.database(), loadRuleCatalog(), elsewhere, "code");
+    upsertLibraryRule(stores.database(), loadRuleCatalog(), elsewhere, "code", { approve: true });
     addAttachment(stores.database(), { repositoryKey: nestedKey, folder: "", sourceKind: "library_rule", sourceId: elsewhere.id });
     const agentActivity = (await call("rules_activity", { since: 0 }, caller)).result;
     expect(agentActivity).toHaveProperty("rules");

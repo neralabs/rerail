@@ -96,10 +96,10 @@ describe("installed OMP extension in standalone host", () => {
 
   test("steers on a conversation rule added to the repository after the session started", async () => {
     const cwd = await isolate();
-    // In the library and the repository is set up, but the rule is not added anywhere yet.
+    // In the library, approved, and the repository is set up, but the rule is not added anywhere yet.
     const repositoryKey = setUpTestRepository(cwd);
     const store = openRerailDatabase(defaultRerailDatabasePath());
-    upsertLibraryRule(store, loadRuleCatalog(), checkoutRule("db:checkout"), "conversation");
+    upsertLibraryRule(store, loadRuleCatalog(), checkoutRule("db:checkout"), "conversation", { approve: true });
     let host: OmpHost | undefined;
     try {
       host = await OmpHost.start(cwd, [

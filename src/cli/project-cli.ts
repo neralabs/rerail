@@ -2,6 +2,8 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, r
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { approveRule, pendingRules, RuleApprovalError, type PendingRule } from "../engine/catalog/rule-approval.js";
+import { pendingRuleRecord } from "../api/repository-operations.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
@@ -104,8 +106,9 @@ export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath:
   return result;
 }
 
-/** `rerail rules export|import`: the library and every repository's configuration, as a rules dump. */
-export function runRulesCommand(args: readonly string[], usage: () => string): number {
+/** `rerail rules export|import|list|approve`: the library and every repository's configuration, and rule approval. */
+export function runRulesCommand(args: readonly string[], usage: () => string, io: { stdout?: { write(text: string): unknown } } = {}): number {
+  const stdout = io.stdout ?? process.stdout;
   const action = args[0];
   const database = defaultRerailDatabasePath();
   if (action === "export") {
@@ -131,7 +134,7 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
     } finally {
       rmSync(staging, { force: true });
     }
-    process.stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
+    stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
     return 0;
   }
   if (action === "import") {
@@ -142,14 +145,100 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
     const value = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), source);
     const db = openRerailDatabase(database);
     try {
-      const report = importRulesDump(db, loadRuleCatalog(), value);
-      process.stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      const ruleCatalog = loadRuleCatalog();
+      const report = importRulesDump(db, ruleCatalog, value);
+      stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      const waiting = pendingRules(db, ruleCatalog).filter(pending => pending.owner === "library").length;
+      if (waiting > 0) stdout.write(`${waiting} ${plural(waiting, "rule")} created by you ${waiting === 1 ? "waits" : "wait"} for your approval: rerail rules list\n`);
+    } finally {
+      db.$client.close();
+    }
+    return 0;
+  }
+  if (action === "list") {
+    const { flags } = parseArguments(args.slice(1), { flags: ["--json"], options: [] }, argument => `Unknown rules list option: ${argument}\n\n${usage()}`);
+    const db = openRerailDatabase(database);
+    let waiting: PendingRule[];
+    try {
+      waiting = pendingRules(db, loadRuleCatalog());
+    } finally {
+      db.$client.close();
+    }
+    if (flags.has("--json")) {
+      stdout.write(`${JSON.stringify({ rules: waiting.map(pendingRuleRecord) })}\n`);
+      return 0;
+    }
+    if (waiting.length === 0) {
+      stdout.write("No rules wait for approval.\n");
+      return 0;
+    }
+    stdout.write(`${waiting.length} ${plural(waiting.length, "rule")} ${waiting.length === 1 ? "waits" : "wait"} for approval:\n`);
+    for (const pending of waiting) {
+      const state = pending.approved === undefined ? "new: runs nowhere until approved" : "edited: the approved content runs meanwhile";
+      stdout.write(`  ${pending.document.rule.id}  (${ownerText(pending)})  ${state}\n`);
+    }
+    stdout.write("Approve one with: rerail rules approve <id>\n");
+    return 0;
+  }
+  if (action === "approve") {
+    const id = args[1];
+    if (id === undefined || id.startsWith("--")) throw new Error(`rules approve needs a rule id\n\n${usage()}`);
+    parseArguments(args.slice(2), { flags: [], options: [] }, argument => `Unknown rules approve option: ${argument}\n\n${usage()}`);
+    const db = openRerailDatabase(database);
+    try {
+      const ruleCatalog = loadRuleCatalog();
+      const waiting = pendingRules(db, ruleCatalog).filter(pending => pending.document.rule.id === id);
+      if (waiting.length === 0) throw new Error(`nothing of rule ${id} waits for approval; rerail rules list shows what does`);
+      for (const pending of waiting) {
+        stdout.write(approvalText(pending));
+        try {
+          approveRule(db, ruleCatalog, pending.owner, id, pending.contentHash);
+        } catch (error) {
+          if (error instanceof RuleApprovalError) throw new Error(`${id} was not approved: ${error.message}`);
+          throw error;
+        }
+        stdout.write(`● Approved ${id}. It runs with this content from now on.\n`);
+      }
     } finally {
       db.$client.close();
     }
     return 0;
   }
   throw new Error(`Unknown rules action: ${action ?? "(none)"}\n\n${usage()}`);
+}
+
+function ownerText(pending: PendingRule): string {
+  return pending.owner === "library" ? "created by you" : `pack ${pending.packId ?? "(none)"}, added from a folder or tarball`;
+}
+
+/**
+ * `value` as indented JSON, with every invisible character (format, private-use and unassigned code points: zero-width
+ * spaces, bidi controls, tag characters) written as its escape, so the person reads exactly what the agent will.
+ */
+function visibleJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(/[\p{Cf}\p{Co}\p{Cn}]/gu, character => {
+    const code = character.codePointAt(0)!;
+    return code > 0xffff ? `\\u{${code.toString(16)}}` : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
+
+/** What `rerail rules approve` shows before it approves: the content in full, and what it replaces. */
+function approvalText(pending: PendingRule): string {
+  const id = pending.document.rule.id;
+  const lines = [`● ${id} (${ownerText(pending)}, ${pending.document.kind} rule) waits for approval with this content:`, visibleJson(pending.document.rule)];
+  const approved = pending.approved;
+  if (approved === undefined) {
+    lines.push("  It is new: it runs nowhere until it is approved.");
+    if (pending.copiedFromRuleId !== null) lines.push(`  It is an edited copy of ${pending.copiedFromRuleId}; approving it switches the original off where the copy is added.`);
+  } else {
+    const before: Record<string, unknown> = { ...approved.document.rule };
+    const after: Record<string, unknown> = { ...pending.document.rule };
+    const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter(key => key !== "mode" && key !== "revision" && JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+      .sort();
+    lines.push(`  It replaces the content approved ${new Date(approved.approvedAt).toISOString()}, changing: ${changed.join(", ") || "key order only"}.`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function plural(count: number, noun: string): string {

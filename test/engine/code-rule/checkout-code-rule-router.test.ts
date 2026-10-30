@@ -363,7 +363,7 @@ describe("CheckoutCodeRuleRouter", () => {
 describe("repository settings that reach evaluation", () => {
   const RULE = "typescript-eslint-consistent-type-definitions";
   const CODE = "@typescript-eslint/consistent-type-definitions";
-  const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
+  const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")], { shipped: () => true });
 
   async function editTypeScript(auditor: CheckoutCodeRuleRouter, sessionId: string, revision: number, files: Record<string, string>): Promise<void> {
     await auditor.auditGeneratedEdits(sessionId, {

@@ -3,6 +3,10 @@
  * relative `.js` import is an implicit `any` under `strict`; wildcard ambient modules are the
  * one form TypeScript matches against a relative specifier. Only the surface the tests use.
  */
+declare module "*/ui/api.js" {
+  export function send(method: string, path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<{ status: number; etag?: string; body: unknown }>;
+}
+
 declare module "*/ui/sessions-model.js" {
   export interface Correction {
     key: string;
@@ -100,6 +104,8 @@ declare module "*/ui/poll.js" {
     configSource: Record<string, object>;
     /** Why the configured options don't apply; the rule then runs nowhere. */
     configError: string | null;
+    /** Whose content runs: Nera's, approved, or approved while an edit waits for approval. */
+    approval: { state: "shipped" | "approved" | "pending"; approvedAt: number | null };
   }
   export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
@@ -130,6 +136,11 @@ declare module "*/ui/state.js" {
     activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
+    /** Every rule waiting for approval (`GET /api/rule-approvals`); `null` until read. */
+    approvals: unknown[] | null;
+    /** The repository's rules that run nowhere until approved. */
+    awaiting: Array<{ sourceKind: string; id: string; folders: string[] }>;
+    awaitingApproval: number;
     repository: { setUp: boolean; repositoryKey?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
@@ -188,7 +199,7 @@ declare module "*/ui/pack-model.js" {
 }
 
 declare module "*/ui/routes.js" {
-  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings";
+  export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "approvals";
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
     sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean;
@@ -203,6 +214,8 @@ declare module "*/ui/routes.js" {
 declare module "*/ui/views/index.js" {
   /** The need names a poll loads for the page now: the sidebar's, the open view's and an open sheet's. */
   export function currentNeeds(): string[];
+  /** What `#content` shows: the view's name, or the page shown in its place. */
+  export function pageKey(): string;
 }
 
 declare module "*/ui/history-model.js" {
@@ -217,8 +230,8 @@ declare module "*/ui/history-model.js" {
 }
 
 declare module "*/ui/repo-rules.js" {
-  export interface RuleCounts { total: number; on: number }
-  export function ruleCountsOf(entries: ReadonlyArray<object>): RuleCounts;
+  export interface RuleCounts { total: number; on: number; awaiting: number }
+  export function ruleCountsOf(entries: ReadonlyArray<object>, awaitingApproval?: number): RuleCounts;
   export function repoTag(counts: RuleCounts | null): string | null;
   export function repoLine(repo: { setUp: boolean; started: boolean; checkoutCount: number }, counts: RuleCounts | null): string;
   export function repoRuleCounts(key: string): RuleCounts | null;
@@ -272,4 +285,35 @@ declare module "*/ui/first-open.js" {
   export function rulesOnSource(packCount: number, mineCount: number): string;
   export const LIVE_MINUTES: number;
   export function liveState(session: { endedAt: number | null; startedAt: number; lastEventAt: number | null }, now: number): "live" | "stale" | null;
+}
+
+declare module "*/ui/rule-diff.js" {
+  export function escapeInvisible(text: string): string;
+  export function visibleJson(value: unknown): string;
+  export interface DiffLine { op: "same" | "added" | "removed"; text: string }
+  export function lineDiff(before: string, after: string): DiffLine[];
+}
+
+declare module "*/ui/approval-model.js" {
+  export interface DiffLine { op: "same" | "added" | "removed"; text: string }
+  export const APPROVALS_HASH: string;
+  export interface PendingRule {
+    kind: "code" | "conversation"; owner: "library" | "pack"; id: string; packId: string | null; rule: { id: string };
+    revision: number; contentHash: string; copiedFromRuleId: string | null; approved: { rule: object; approvedAt: number } | null;
+  }
+  export interface ApprovalView {
+    key: string; id: string; kind: string; title: string; owner: string; runs: "approved" | "nowhere"; approvedAt: number | null;
+    copiedFrom: string | null; lines: DiffLine[]; changed: number; body: { owner: string; id: string; contentHash: string };
+  }
+  export interface AwaitingReference { sourceKind: string; id: string; folders: string[] }
+  export function awaitingCount(approvals: readonly PendingRule[] | null): number;
+  export function awaitingText(n: number): string;
+  export function ownerText(pending: PendingRule, packName?: (id: string) => string): string;
+  export function pendingTitle(pending: PendingRule): string;
+  export function waitingTitle(reference: AwaitingReference, approvals: readonly PendingRule[] | null, fallback?: (id: string) => string | undefined): string;
+  export function approvalView(pending: PendingRule, packName?: (id: string) => string): ApprovalView;
+  export function pendingNote(approval: { state: string; approvedAt: number | null } | null | undefined): { runs: "approved" | "nowhere"; label: string; tip: string } | null;
+  export function awaitingReferences(unavailable: ReadonlyArray<{ sourceKind: string; sourceId: string; folder: string; reason: string }> | undefined): AwaitingReference[];
+  export function awaitingOnPage(references: readonly AwaitingReference[], key: string, approvals: readonly PendingRule[] | null, packIdOf?: (id: string) => string | undefined): AwaitingReference[];
+  export function isRuleChanged(error: unknown): boolean;
 }
