@@ -545,6 +545,20 @@ existing dispatch. GPU waves cost about 1.2–1.6 µs each, against 386–890 µ
 (metal-enqueue notes), so no pass may need the host between passes. Check: the S1 gate's root sets
 are equal on CPU and Metal (Bend's rule that every binding must give the same keys).
 
+**2026-10-30, S2 progress:**
+- *Done:*
+  - the labels travel to Metal in the class table (`transducer_supertypes`);
+  - the program passes run on the Metal interpreter, one dispatch per pass over the whole
+    batch;
+  - the parity gate passes for 87 of 87 clauses.
+- *Still open:*
+  - the passes between programs (complement, constraints, count tallies) and pattern leaves run
+    on the host;
+  - each pass is a host round trip, which makes Metal about 10× the CPU interpreter on a small
+    batch.
+- *Next:* encode all passes in one command buffer, with complement and tally kernels (a
+  word-parallel not, a segmented count).
+
 ## O24. Semantic predicates as labels from fact producers
 
 **Requirement.** 209 of the 286 Python `ast` clauses are refused by S1's lowering. Most of them
@@ -561,7 +575,7 @@ read semantic predicates:
 | `binds` | 5 |
 | `layout` | 2 |
 
-The rest are refused for `count` (25, S2), shared bindings (18), constraints below the top level
+The rest are refused for `count` (25; since S2, 10 lower and 15 are refused for the semantic leaves inside them), shared bindings (18), constraints below the top level
 (12), parameterized utilities (3) and comparisons (1).
 
 **Direction.** A semantic leaf is a node label produced by its fact producer

@@ -60,6 +60,29 @@ fn clauses() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .collect()
 }
 
+/// The fixtures a gate reads: every eighth by default, all with `RERAIL_S1_ALL=1`, the first n
+/// of those with `RERAIL_S1_FILES=n` for a targeted check.
+fn fixtures() -> Vec<TapeDoc> {
+    let mut sources = Vec::new();
+    files(&pack().join("upstream"), "py", &mut sources);
+    sources.sort();
+    let step = if std::env::var_os("RERAIL_S1_ALL").is_some() { 1 } else { 8 };
+    let most = std::env::var("RERAIL_S1_FILES").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    sources
+        .iter()
+        .step_by(step)
+        .take(most)
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .map(|source| python_tape(&source))
+        .collect()
+}
+
+/// Whether a gate checks this clause: all, or those whose `policy/clause` contains
+/// `RERAIL_S1_CLAUSE`.
+fn selected(policy: &str, clause: &str) -> bool {
+    std::env::var("RERAIL_S1_CLAUSE").map_or(true, |part| format!("{policy}/{clause}").contains(&part))
+}
+
 fn python_matchers(
     compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl,
 ) -> impl Iterator<Item = (&str, &GrammarMatcher)> {
@@ -77,18 +100,8 @@ fn python_matchers(
 
 #[test]
 fn lowered_python_clauses_match_where_ws_matcher_does() {
-    let mut sources = Vec::new();
-    files(&pack().join("upstream"), "py", &mut sources);
-    sources.sort();
-    // Every fourth fixture keeps the gate in seconds; RERAIL_S1_ALL=1 runs them all.
-    let step = if std::env::var_os("RERAIL_S1_ALL").is_some() { 1 } else { 4 };
-    let tapes = sources
-        .iter()
-        .step_by(step)
-        .filter_map(|path| std::fs::read_to_string(path).ok())
-        .map(|source| python_tape(&source))
-        .collect::<Vec<_>>();
-    assert!(tapes.len() > 50, "the fixtures are in git: {}", tapes.len());
+    let tapes = fixtures();
+    assert!(!tapes.is_empty(), "the fixtures are in git");
     let compiled = clauses();
     let mut total = 0;
     let mut lowered = 0;
@@ -99,6 +112,9 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
     let mut slowest = Vec::new();
     for (policy, compiled) in &compiled {
         for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
             total += 1;
             let program = match match_tree(grammar) {
                 Ok(tree) => LoweredMatcher::lower(&tree)
@@ -191,6 +207,7 @@ fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
         }
         MatchTree::All(trees) | MatchTree::Any(trees) => trees.iter_mut().any(widen_first_neighbor),
         MatchTree::Not(tree) | MatchTree::Recursive(_, tree) => widen_first_neighbor(tree),
+        MatchTree::Count { rule, .. } => widen_first_neighbor(rule),
         MatchTree::Constrained(_, constraints) => {
             constraints.iter_mut().any(|(_, tree)| widen_first_neighbor(tree))
         }
@@ -235,4 +252,58 @@ fn the_gate_catches_a_widened_walk() {
         }
     }
     panic!("only {caught} widened clauses differ from W's matcher");
+}
+
+/// S2's parity gate (O23, F1): every lowered clause's passes run on the Metal interpreter over the
+/// whole batch of fixtures at once, the labels uploaded as derived classes in the tape's class
+/// table, and give the CPU interpreter's root sets on every fixture.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn lowered_clauses_find_the_same_roots_on_metal() {
+    use super::compile_matcher::Backend;
+    let tapes = fixtures();
+    let compiled = clauses();
+    let (mut lowered, mut matched_nodes) = (0, 0);
+    let mut differ = Vec::new();
+    let (mut cpu_time, mut metal_time) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
+            lowered += 1;
+            let started = std::time::Instant::now();
+            let cpu = program.roots_batch(Backend::Cpu, &tapes);
+            cpu_time += started.elapsed();
+            let started = std::time::Instant::now();
+            let metal = program.roots_batch(Backend::MetalInterpreter, &tapes);
+            metal_time += started.elapsed();
+            match (cpu, metal) {
+                (Ok(cpu), Ok(metal)) if cpu == metal => {
+                    matched_nodes += cpu.iter().map(BTreeSet::len).sum::<usize>();
+                }
+                (Ok(cpu), Ok(metal)) => {
+                    let at = cpu.iter().zip(&metal).position(|(cpu, metal)| cpu != metal);
+                    differ.push(format!("{policy}/{clause}: fixture {at:?} differs"));
+                }
+                (cpu, metal) => differ.push(format!(
+                    "{policy}/{clause}: cpu {:?}, metal {:?}",
+                    cpu.err(),
+                    metal.err()
+                )),
+            }
+        }
+    }
+    eprintln!(
+        "S2 Metal parity: {} of {lowered} lowered clauses equal on {} fixtures ({matched_nodes} \
+         matched nodes); CPU {cpu_time:?}, Metal {metal_time:?}",
+        lowered - differ.len(),
+        tapes.len(),
+    );
+    for differ in &differ {
+        eprintln!("  {differ}");
+    }
+    assert!(differ.is_empty(), "{} lowered clauses differ between CPU and Metal", differ.len());
 }

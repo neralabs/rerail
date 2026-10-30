@@ -549,6 +549,18 @@ pub(super) fn program_buffer_key(programs: &[Program]) -> Result<ProgramBufferKe
     )?))
 }
 
+/// The interpreter, compiled once per process: a lowered matcher dispatches it once per pass.
+pub(super) fn compile_interpreter_cached() -> Result<Engine, Error> {
+    static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
+    let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(engine) = &*cached {
+        return Ok(engine.clone());
+    }
+    let engine = compile_interpreter()?;
+    *cached = Some(engine.clone());
+    Ok(engine)
+}
+
 pub(super) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
     let key = jit_cache_key(programs)?;
     if let Some(engine) = JIT_CACHE

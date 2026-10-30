@@ -55,6 +55,21 @@ impl Domain {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Tally {
+    Start,
+    Capture,
+}
+
+/// Where a clause's program passes run. Pattern leaves and the passes between programs
+/// (complement, constraints, counts) run on the host either way, as `demand`'s pattern producers do.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::code_rule_dsl) enum Backend {
+    Cpu,
+    #[cfg(target_os = "macos")]
+    MetalInterpreter,
+}
+
 enum Label {
     /// The roots an ast-grep pattern matches.
     Pattern(Program, Domain),
@@ -65,6 +80,15 @@ enum Label {
     Roots(Program, Domain),
     /// The nodes a program captures: where its walk ends.
     Targets(Program, Domain),
+    /// The nodes with between `min` and `max` outputs of a counting program: by each output's
+    /// root, or by the node it captured (a backward walk counted from its other end).
+    Count {
+        program: Program,
+        domain: Domain,
+        by: Tally,
+        min: usize,
+        max: Option<usize>,
+    },
     /// The nodes without another label.
     Complement(u16),
     /// No node (`Never`).
@@ -107,7 +131,9 @@ impl Labels {
         match self.def(id) {
             Label::Pattern(_, _) | Label::Empty => Vec::new(),
             Label::Constrained(_, _, constraints) => constraints.iter().map(|(_, label)| *label).collect(),
-            Label::Roots(program, domain) | Label::Targets(program, domain) => {
+            Label::Roots(program, domain)
+            | Label::Targets(program, domain)
+            | Label::Count { program, domain, .. } => {
                 tests(program).into_iter().chain(starts(domain)).collect()
             }
             Label::Complement(of) => vec![*of],
@@ -136,23 +162,44 @@ impl LoweredMatcher {
 
     /// The nodes of `tape` the clause's matcher matches at, in preorder.
     pub(in crate::code_rule_dsl) fn roots(&self, tape: &TapeDoc) -> Result<BTreeSet<u32>, Error> {
-        let nodes = tape.transducer_len();
-        let mut sets = Arc::new(vec![vec![0_u64; nodes.div_ceil(64)]; self.labels.defs.len()]);
+        let mut roots = self.roots_batch(Backend::Cpu, std::slice::from_ref(tape))?;
+        Ok(roots.pop().expect("one tape"))
+    }
+
+    /// The nodes of each tape the clause's matcher matches at: each pass runs once over the batch.
+    pub(in crate::code_rule_dsl) fn roots_batch(
+        &self,
+        backend: Backend,
+        tapes: &[TapeDoc],
+    ) -> Result<Vec<BTreeSet<u32>>, Error> {
+        let mut sets = tapes
+            .iter()
+            .map(|tape| {
+                Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; self.labels.defs.len()])
+            })
+            .collect::<Vec<_>>();
+        let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
         for step in &self.labels.steps {
             let recursive = self.labels.recursive.values().any(|id| step.contains(id));
             // A group without complements of its own labels only grows; one with them reads only
             // later nodes' verdicts (`matcher::lower`), settled a node depth per round. Either way
             // the rounds end within the tape.
             let mut settled = false;
-            for _round in 0..=nodes + 1 {
+            for _round in 0..=most + 1 {
                 let mut changed = false;
                 for &id in step {
-                    let view = tape.with_labels(Arc::clone(&sets));
-                    let set = self.evaluate(self.labels.def(id), &view, &sets)?;
-                    let slot = &mut Arc::make_mut(&mut sets)[usize::from(id - LABEL_BASE)];
-                    if *slot != set {
-                        *slot = set;
-                        changed = true;
+                    let views = tapes
+                        .iter()
+                        .zip(&sets)
+                        .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
+                        .collect::<Vec<_>>();
+                    let found = self.evaluate(backend, self.labels.def(id), &views, &sets)?;
+                    for (sets, set) in sets.iter_mut().zip(found) {
+                        let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
+                        if *slot != set {
+                            *slot = set;
+                            changed = true;
+                        }
                     }
                 }
                 if !changed || !recursive {
@@ -164,69 +211,154 @@ impl LoweredMatcher {
                 return Err(Error::WorkLimit);
             }
         }
-        let view = tape.with_labels(Arc::clone(&sets));
-        Ok(self
-            .program
-            .execute_roots(&view, domain(&self.domain, &view, &sets))?
+        let views = tapes
+            .iter()
+            .zip(&sets)
+            .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
+            .collect::<Vec<_>>();
+        let outputs = run(backend, &self.program, &views, &self.domain, &sets)?;
+        Ok(outputs
             .into_iter()
-            .map(|output| output.start)
+            .map(|outputs| outputs.into_iter().map(|output| output.start).collect())
             .collect())
     }
 
-    fn evaluate(&self, label: &Label, view: &TapeDoc, sets: &[Vec<u64>]) -> Result<Vec<u64>, Error> {
-        let nodes = view.transducer_len();
-        let mut bits = vec![0_u64; nodes.div_ceil(64)];
-        let mut set = |node: u32| bits[node as usize / 64] |= 1 << (node % 64);
-        let has = |label: u16, node: u32| {
-            sets[usize::from(label - LABEL_BASE)][node as usize / 64] >> (node % 64) & 1 != 0
-        };
+    /// A label's set on each tape of the batch.
+    fn evaluate(
+        &self,
+        backend: Backend,
+        label: &Label,
+        views: &[TapeDoc],
+        sets: &[Arc<Vec<Vec<u64>>>],
+    ) -> Result<Vec<Vec<u64>>, Error> {
+        let empty = |view: &TapeDoc| vec![0_u64; view.transducer_len().div_ceil(64)];
+        let set = |bits: &mut Vec<u64>, node: u32| bits[node as usize / 64] |= 1 << (node % 64);
         match label {
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match label {
                     Label::Constrained(_, _, constraints) => &constraints[..],
                     _ => &[],
                 };
-                for node in domain(starts, view, sets) {
-                    let Some(captures) = pattern.execute_ast_pattern(view, node)? else {
-                        continue;
-                    };
-                    // As W's `Constrained`: an unbound or multi-node capture is not checked.
-                    let holds = constraints.iter().all(|(name, label)| {
-                        captures
-                            .iter()
-                            .find(|capture| capture.label == *name)
-                            .filter(|capture| !capture.multi)
-                            .is_none_or(|capture| has(*label, capture.node))
-                    });
-                    if holds {
-                        set(node);
+                views
+                    .iter()
+                    .zip(sets)
+                    .map(|(view, sets)| {
+                        let mut bits = empty(view);
+                        for node in domain(starts, view, sets) {
+                            let Some(captures) = pattern.execute_ast_pattern(view, node)? else {
+                                continue;
+                            };
+                            // As W's `Constrained`: an unbound or multi-node capture is not checked.
+                            let holds = constraints.iter().all(|(name, label)| {
+                                captures
+                                    .iter()
+                                    .find(|capture| capture.label == *name)
+                                    .filter(|capture| !capture.multi)
+                                    .is_none_or(|capture| has(sets, *label, capture.node))
+                            });
+                            if holds {
+                                set(&mut bits, node);
+                            }
+                        }
+                        Ok(bits)
+                    })
+                    .collect()
+            }
+            Label::Roots(program, starts) | Label::Targets(program, starts) => {
+                let outputs = run(backend, program, views, starts, sets)?;
+                Ok(views
+                    .iter()
+                    .zip(outputs)
+                    .map(|(view, outputs)| {
+                        let mut bits = empty(view);
+                        for output in outputs {
+                            match label {
+                                Label::Roots(..) => set(&mut bits, output.start),
+                                _ => output.captures.iter().for_each(|capture| set(&mut bits, capture.node)),
+                            }
+                        }
+                        bits
+                    })
+                    .collect())
+            }
+            Label::Count {
+                program,
+                domain: starts,
+                by,
+                min,
+                max,
+            } => {
+                let outputs = run(backend, program, views, starts, sets)?;
+                Ok(views
+                    .iter()
+                    .zip(outputs)
+                    .map(|(view, outputs)| {
+                        let mut counts = vec![0_usize; view.transducer_len()];
+                        for output in outputs {
+                            match by {
+                                Tally::Start => counts[output.start as usize] += 1,
+                                Tally::Capture => {
+                                    output.captures.iter().for_each(|capture| counts[capture.node as usize] += 1);
+                                }
+                            }
+                        }
+                        let mut bits = empty(view);
+                        for (node, &count) in counts.iter().enumerate() {
+                            if count >= *min && max.is_none_or(|max| count <= max) {
+                                set(&mut bits, node as u32);
+                            }
+                        }
+                        bits
+                    })
+                    .collect())
+            }
+            Label::Complement(of) => Ok(views
+                .iter()
+                .zip(sets)
+                .map(|(view, sets)| {
+                    let nodes = view.transducer_len();
+                    let mut bits = sets[usize::from(of - LABEL_BASE)].iter().map(|word| !word).collect::<Vec<_>>();
+                    if nodes % 64 != 0
+                        && let Some(last) = bits.last_mut()
+                    {
+                        *last &= (1 << (nodes % 64)) - 1;
                     }
-                }
-            }
-            Label::Roots(program, starts) => {
-                for output in program.execute_roots(view, domain(starts, view, sets))? {
-                    set(output.start);
-                }
-            }
-            Label::Targets(program, starts) => {
-                let outputs = program.execute_roots(view, domain(starts, view, sets))?;
-                for capture in outputs.into_iter().flat_map(|output| output.captures) {
-                    set(capture.node);
-                }
-            }
-            Label::Complement(of) => {
-                for (word, of) in bits.iter_mut().zip(&sets[usize::from(of - LABEL_BASE)]) {
-                    *word = !of;
-                }
-                if nodes % 64 != 0
-                    && let Some(last) = bits.last_mut()
-                {
-                    *last &= (1 << (nodes % 64)) - 1;
-                }
-            }
-            Label::Empty => {}
+                    bits
+                })
+                .collect()),
+            Label::Empty => Ok(views.iter().map(empty).collect()),
         }
-        Ok(bits)
+    }
+}
+
+fn has(sets: &[Vec<u64>], label: u16, node: u32) -> bool {
+    sets[usize::from(label - LABEL_BASE)][node as usize / 64] >> (node % 64) & 1 != 0
+}
+
+/// `program`'s outputs from each tape's `starts`, one dispatch over the batch.
+fn run(
+    backend: Backend,
+    program: &Program,
+    views: &[TapeDoc],
+    starts: &Domain,
+    sets: &[Arc<Vec<Vec<u64>>>],
+) -> Result<Vec<Vec<Output>>, Error> {
+    let roots = views
+        .iter()
+        .zip(sets)
+        .map(|(view, sets)| domain(starts, view, sets).collect::<Vec<_>>());
+    match backend {
+        Backend::Cpu => roots
+            .zip(views)
+            .map(|(roots, view)| program.execute_roots(view, roots))
+            .collect(),
+        #[cfg(target_os = "macos")]
+        Backend::MetalInterpreter => {
+            let anchors = roots.map(|roots| vec![roots]).collect::<Vec<_>>();
+            let engine = metal_program_backend::compile_interpreter_cached()?;
+            let outputs = metal_program_backend::execute(&engine, std::slice::from_ref(program), views, &anchors)?;
+            Ok(outputs.into_iter().map(|mut file| file.pop().unwrap_or_default()).collect())
+        }
     }
 }
 
@@ -235,9 +367,7 @@ fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vec<u64>]) -> im
     (0..tape.transducer_len() as u32).filter(move |&node| match domain {
         Domain::All => true,
         Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
-        Domain::Label(label) => {
-            sets[usize::from(label - LABEL_BASE)][node as usize / 64] >> (node % 64) & 1 != 0
-        }
+        Domain::Label(label) => has(sets, *label, node),
     })
 }
 
@@ -409,8 +539,68 @@ impl<'a> Builder<'a> {
                 rule,
                 stop,
             } => self.walk(*axis, *field, rule, stop)?,
+            MatchTree::Count {
+                axis,
+                rule,
+                stop,
+                min,
+                max,
+            } => {
+                let label = self.count(*axis, rule, stop, *min, *max)?;
+                self.push(SUPERTYPE, 0, label);
+            }
         }
         Ok(())
+    }
+
+    /// `count`'s label: a program with one path per node the walk reaches that `rule`'s label
+    /// has, tallied per node. A forward walk runs from every node and is tallied by its root. A
+    /// backward one (`inside` past the parent, `follows`) runs forward from each node `rule`
+    /// matches and is tallied by the node it reaches, as `reaches` does. The rule is a label, so
+    /// no `any` forks a node into two paths.
+    fn count(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>) -> Result<u16, Error> {
+        let rule = self.label_of(rule)?;
+        let bound = match stop {
+            Stop::Rule(stop) => Some(self.complement_of(stop)?),
+            Stop::Neighbor | Stop::End => None,
+        };
+        let backward = axis == Axis::Follows || axis == Axis::Inside && !matches!(stop, Stop::Neighbor);
+        let mut builder = Builder::new(self.labels);
+        if backward {
+            builder.push(SUPERTYPE, 0, rule);
+        }
+        let (once, all) = match axis {
+            Axis::Has | Axis::Inside => (CHILD, DESCEND),
+            Axis::Precedes | Axis::Follows => (NEXT, FOLLOWING),
+        };
+        match (axis, stop, bound) {
+            (Axis::Inside, Stop::Neighbor, _) => {
+                builder.push(PARENT, 0, 0);
+            }
+            (_, Stop::Neighbor, _) => {
+                builder.push(once, 0, 0);
+            }
+            (_, _, None) => {
+                builder.push(all, 0, 0);
+            }
+            (_, _, Some(bound)) => builder.bounded(once, bound)?,
+        }
+        if !backward {
+            builder.push(SUPERTYPE, 0, rule);
+        }
+        let program = builder.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?;
+        let (domain, by) = if backward {
+            (Domain::Label(rule), Tally::Capture)
+        } else {
+            (Domain::All, Tally::Start)
+        };
+        Ok(self.label(Label::Count {
+            program,
+            domain,
+            by,
+            min,
+            max,
+        }))
     }
 
     /// The test of `rule` a walk starts with, and the nodes it can start from.

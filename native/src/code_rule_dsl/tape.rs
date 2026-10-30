@@ -2248,8 +2248,25 @@ impl TapeDoc {
     }
 
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
-    pub(super) fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
-        self.supertypes.iter().copied()
+    /// With labels (`with_labels`), each label's nodes are members of its derived class, so a
+    /// backend that uploads the class table (Metal's batch) tests labels as it tests classes.
+    pub(super) fn transducer_supertypes(&self) -> Box<dyn Iterator<Item = (u32, u16)> + '_> {
+        if self.labels.is_empty() {
+            return Box::new(self.supertypes.iter().copied());
+        }
+        let mut pairs = self.supertypes.to_vec();
+        for (index, bits) in self.labels.iter().enumerate() {
+            let class = DERIVED_CLASS_BASE + index as u16;
+            for (at, &word) in bits.iter().enumerate() {
+                let mut word = word;
+                while word != 0 {
+                    pairs.push(((at * 64) as u32 + word.trailing_zeros(), class));
+                    word &= word - 1;
+                }
+            }
+        }
+        pairs.sort_unstable();
+        Box::new(pairs.into_iter())
     }
 
     // The packed runtime's class test (Phase 4).

@@ -35,6 +35,15 @@ pub(in crate::code_rule_dsl) enum MatchTree {
     /// `Recur(id)` stands for them.
     Recursive(usize, Box<MatchTree>),
     Recur(usize),
+    /// `count`: how many nodes along the relation's walk `rule` matches lies in `min..=max`.
+    /// Along `has` to the end, every matching descendant counts.
+    Count {
+        axis: Axis,
+        rule: Box<MatchTree>,
+        stop: Stop,
+        min: usize,
+        max: Option<usize>,
+    },
     Never,
 }
 
@@ -63,6 +72,7 @@ impl MatchTree {
             | Self::Regex(_)
             | Self::Recursive(..)
             | Self::Recur(_)
+            | Self::Count { .. }
             | Self::Never => false,
             Self::All(trees) | Self::Any(trees) => trees.iter().any(Self::walks),
             Self::Not(tree) => tree.walks(),
@@ -90,7 +100,9 @@ impl MatchTree {
                 .unwrap_or_else(|| Some(BTreeSet::new())),
             Self::Recursive(_, tree) => tree.kinds(),
             Self::Never => Some(BTreeSet::new()),
-            Self::Regex(_) | Self::Not(_) | Self::Walk { .. } | Self::Recur(_) => None,
+            Self::Regex(_) | Self::Not(_) | Self::Walk { .. } | Self::Recur(_) | Self::Count { .. } => {
+                None
+            }
         }
     }
 }
@@ -206,7 +218,7 @@ impl Lowering {
             AstMatcher::Call(_) => return Err(Unsupported("utility call")),
             AstMatcher::Constrained(constrained) => self.constrained(constrained, shares)?,
             AstMatcher::Compare(_) => return Err(Unsupported("compare")),
-            AstMatcher::Count(_) => return Err(Unsupported("count")),
+            AstMatcher::Count(count) => self.count(count, shares)?,
             AstMatcher::Semantic(semantic) => {
                 use super::Semantic;
                 return Err(Unsupported(match semantic {
@@ -255,6 +267,34 @@ impl Lowering {
         } else {
             Err(Unsupported("recursion through not"))
         }
+    }
+
+    /// `count` without `as`: the relation's walk, its rule and stop as a `Walk`'s. A bound count
+    /// fails where more nodes match, so recursion through it is treated as through `not`.
+    fn count(&mut self, count: &super::count::Count, shares: bool) -> Result<MatchTree, Unsupported> {
+        if count.binding.is_some() {
+            return Err(Unsupported("count as"));
+        }
+        let (axis, related, stop) = match &count.relation {
+            AstMatcher::Inside(related, stop) => (Axis::Inside, related, stop),
+            AstMatcher::Has(related, stop) => (Axis::Has, related, stop),
+            AstMatcher::Precedes(related, stop) => (Axis::Precedes, related, stop),
+            AstMatcher::Follows(related, stop) => (Axis::Follows, related, stop),
+            _ => return Err(Unsupported("count relation")),
+        };
+        self.path.push(Step::Not);
+        let walk = self.walk(axis, None, related.rule(), stop, shares);
+        self.path.pop();
+        let MatchTree::Walk { rule, stop, .. } = walk? else {
+            unreachable!("a walk")
+        };
+        Ok(MatchTree::Count {
+            axis,
+            rule,
+            stop,
+            min: count.min,
+            max: count.max,
+        })
     }
 
     /// `constraints`: each constrained metavariable must be bound by a pattern that is the rule or

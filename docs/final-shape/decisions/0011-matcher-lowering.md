@@ -46,7 +46,7 @@ A clause becomes a sequence of **node-label passes**, then one root program
 - **Refused by name, counted by the S1 gate:**
   - bindings shared between leaves;
   - semantic predicates;
-  - `count`, `nthChild`, parameterized utilities, comparisons;
+  - `count … as`, `nthChild`, parameterized utilities, comparisons;
   - constraints on variables bound below the top level;
   - non-`smart` patterns.
 
@@ -93,4 +93,8 @@ A clause becomes a sequence of **node-label passes**, then one root program
 - **Semantic predicates** (`resolves` 94, `parse` 13, `arguments` 13, `resolves.binding` 11 and
   others) become labels from fact producers (`transducer::semantic_facts`). That is outside the
   operator lowering, recorded as O24.
-- **`count`** (25) needs a counting pass (a per-node count label compared with a bound): S2.
+- **`count`** (S2): a counting label. Each path of its program is one counted node, tallied by its
+  root, or for a backward walk by the node it reaches.
+- **Metal** (S2): labels are class-table members (`transducer_supertypes`), and program passes run
+  on the Metal interpreter. The parity gate passes for 87 of 87 clauses. Host passes and one
+  command buffer stay in O23.

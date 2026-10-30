@@ -95,7 +95,7 @@ Each step is one or a few commits. Each is checked with `cargo check` and the to
 **Gate.** `lowered_python_clauses_match_where_ws_matcher_does`:
 - For every Python pack clause that lowers, and every fixture, the set of root nodes equals
   `GrammarMatcher::match_root` at each node of the same tape.
-- It runs every fourth fixture by default (19 s); `RERAIL_S1_ALL=1` runs all of them.
+- It runs every eighth fixture by default; `RERAIL_S1_ALL=1` runs all of them.
 - `the_gate_catches_a_widened_walk` is the mutation check: widening a `neighbor` walk to `end` must
   fail the gate.
 
@@ -104,7 +104,7 @@ Each step is one or a few commits. Each is checked with `cargo check` and the to
 | Refusal | Clauses | Where it goes |
 |---|---|---|
 | `resolves` | 94 | O24 (semantic labels) |
-| `count` | 25 | S2 |
+| `count` | 25 | S2 (10 lower; 15 refused for semantic leaves inside) |
 | shared binding | 18 | O24 (joins on captures) |
 | `parse` | 13 | O24 |
 | `arguments` | 13 | O24 |
@@ -123,14 +123,34 @@ of user CPU at load average 27). That is generic interpretation (spike 2.23) wit
 anchors. S4's prefilter gives the root program its candidates, and the JIT (Phase 4d) replaces the
 interpreter.
 
-### S2. COUNT, and the labels on Metal (revised by S1)
+### S2. COUNT, and the labels on Metal — done (2026-10-30)
 
-- `not` is already lowered in S1 as a complement label, so no NOT_EXISTS operation is needed.
-- `count` (25 clauses) becomes a counting pass: a per-node count of the nodes its rule matches
-  along its relation, compared with the bound, as a label.
-- The labels must run on Metal too (O23, F1): upload the label bitsets beside the class table, run
-  the passes as kernels in one command buffer, and check that the S1 gate's root sets are equal on
-  CPU and Metal.
+- **`count`** (without `as`) is a counting label (`Label::Count`, `Builder::count`). The counting
+  program has one path per node the walk reaches that the rule's label has. A forward walk runs
+  from every node and is tallied by its root. A backward walk (`inside` past the parent,
+  `follows`) runs forward from each match and is tallied by the node it reaches. The tally,
+  compared with `min..=max`, is the label. The rule is always a label, so an `any` cannot fork one
+  node into two paths.
+- **Labels on Metal.** `TapeDoc::transducer_supertypes` lists each label's nodes as members of its
+  derived class, so Metal's batch uploads them in the class table it already has (no new buffer,
+  no new operation). `LoweredMatcher::roots_batch(backend, tapes)` runs each pass once over the
+  whole batch: one Metal interpreter dispatch per program pass, with the interpreter compiled once
+  per process (`compile_interpreter_cached`).
+- **Gates:**
+  - `lowered_python_clauses_match_where_ws_matcher_does` (CPU against W): 87 of 286 clauses
+    lower, all exact. That is 10 more; the other 15 `count` clauses are refused for semantic
+    leaves inside them.
+  - `lowered_clauses_find_the_same_roots_on_metal` (`metal-tests`): 87 of 87 clauses give the
+    same root sets on CPU and Metal (4 fixtures, 85 matched nodes).
+  - Both take `RERAIL_S1_CLAUSE` (a clause-name filter) and `RERAIL_S1_FILES` (the first n
+    fixtures) for targeted checks. The default sample is every eighth fixture.
+- **Left in O23:**
+  - Pattern leaves and the host passes (complement, constraints, count tallies) run on the
+    host, as `demand`'s pattern producers already do.
+  - Each program pass is its own dispatch with a host round trip. Metal took 77 s against the
+    CPU's 7.7 s for 87 clauses on 4 fixtures, debug build, load 12.
+  - One command buffer for all of a batch's passes, with the host passes as kernels, is the
+    remaining work. It is measured at S8.
 
 ### S3. Ingest through the push path (closes O2's ingest side)
 
