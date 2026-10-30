@@ -1032,13 +1032,6 @@
       "on": false
     },
     {
-      "id": "ruff-c419-unnecessary-comprehension-in-call",
-      "document": "rules/ruff-c419-unnecessary-comprehension-in-call.json",
-      "title": "Ruff C419: Unnecessary comprehension in call",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-c420-unnecessary-dict-comprehension-for-iterable",
       "document": "rules/ruff-c420-unnecessary-dict-comprehension-for-iterable.json",
       "title": "Ruff C420: Unnecessary dict comprehension for iterable",
@@ -1112,34 +1105,6 @@
       "id": "ruff-g004-logging-f-string",
       "document": "rules/ruff-g004-logging-f-string.json",
       "title": "Ruff G004: Logging f string",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-g010-logging-warn",
-      "document": "rules/ruff-g010-logging-warn.json",
-      "title": "Ruff G010: Logging warn",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-g101-logging-extra-attr-clash",
-      "document": "rules/ruff-g101-logging-extra-attr-clash.json",
-      "title": "Ruff G101: Logging extra attr clash",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-g201-logging-exc-info",
-      "document": "rules/ruff-g201-logging-exc-info.json",
-      "title": "Ruff G201: Logging exc info",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-g202-logging-redundant-exc-info",
-      "document": "rules/ruff-g202-logging-redundant-exc-info.json",
-      "title": "Ruff G202: Logging redundant exc info",
       "group": "Ruff",
       "on": false
     },
@@ -1319,79 +1284,9 @@
       "on": false
     },
     {
-      "id": "ruff-pyi001-unprefixed-type-param",
-      "document": "rules/ruff-pyi001-unprefixed-type-param.json",
-      "title": "Ruff PYI001: Unprefixed type param",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi002-complex-if-statement-in-stub",
-      "document": "rules/ruff-pyi002-complex-if-statement-in-stub.json",
-      "title": "Ruff PYI002: Complex if statement in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi003-unrecognized-version-info-check",
-      "document": "rules/ruff-pyi003-unrecognized-version-info-check.json",
-      "title": "Ruff PYI003: Unrecognized version info check",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi004-patch-version-comparison",
-      "document": "rules/ruff-pyi004-patch-version-comparison.json",
-      "title": "Ruff PYI004: Patch version comparison",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi005-wrong-tuple-length-version-comparison",
-      "document": "rules/ruff-pyi005-wrong-tuple-length-version-comparison.json",
-      "title": "Ruff PYI005: Wrong tuple length version comparison",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi007-unrecognized-platform-check",
-      "document": "rules/ruff-pyi007-unrecognized-platform-check.json",
-      "title": "Ruff PYI007: Unrecognized platform check",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi008-unrecognized-platform-name",
-      "document": "rules/ruff-pyi008-unrecognized-platform-name.json",
-      "title": "Ruff PYI008: Unrecognized platform name",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi009-pass-statement-stub-body",
-      "document": "rules/ruff-pyi009-pass-statement-stub-body.json",
-      "title": "Ruff PYI009: Pass statement stub body",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi010-non-empty-stub-body",
-      "document": "rules/ruff-pyi010-non-empty-stub-body.json",
-      "title": "Ruff PYI010: Non empty stub body",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-pyi011-typed-argument-default-in-stub",
       "document": "rules/ruff-pyi011-typed-argument-default-in-stub.json",
       "title": "Ruff PYI011: Typed argument default in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi012-pass-in-class-body",
-      "document": "rules/ruff-pyi012-pass-in-class-body.json",
-      "title": "Ruff PYI012: Pass in class body",
       "group": "Ruff",
       "on": false
     },
@@ -1403,93 +1298,9 @@
       "on": false
     },
     {
-      "id": "ruff-pyi015-assignment-default-in-stub",
-      "document": "rules/ruff-pyi015-assignment-default-in-stub.json",
-      "title": "Ruff PYI015: Assignment default in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi017-complex-assignment-in-stub",
-      "document": "rules/ruff-pyi017-complex-assignment-in-stub.json",
-      "title": "Ruff PYI017: Complex assignment in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi020-quoted-annotation-in-stub",
-      "document": "rules/ruff-pyi020-quoted-annotation-in-stub.json",
-      "title": "Ruff PYI020: Quoted annotation in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-pyi021-docstring-in-stub",
       "document": "rules/ruff-pyi021-docstring-in-stub.json",
       "title": "Ruff PYI021: Docstring in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi026-type-alias-without-annotation",
-      "document": "rules/ruff-pyi026-type-alias-without-annotation.json",
-      "title": "Ruff PYI026: Type alias without annotation",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi029-str-or-repr-defined-in-stub",
-      "document": "rules/ruff-pyi029-str-or-repr-defined-in-stub.json",
-      "title": "Ruff PYI029: Str or repr defined in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi033-legacy-type-comment",
-      "document": "rules/ruff-pyi033-legacy-type-comment.json",
-      "title": "Ruff PYI033: Legacy type comment",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi035-unassigned-special-variable-in-stub",
-      "document": "rules/ruff-pyi035-unassigned-special-variable-in-stub.json",
-      "title": "Ruff PYI035: Unassigned special variable in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi041-redundant-numeric-union",
-      "document": "rules/ruff-pyi041-redundant-numeric-union.json",
-      "title": "Ruff PYI041: Redundant numeric union",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi044-future-annotations-in-stub",
-      "document": "rules/ruff-pyi044-future-annotations-in-stub.json",
-      "title": "Ruff PYI044: Future annotations in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi048-stub-body-multiple-statements",
-      "document": "rules/ruff-pyi048-stub-body-multiple-statements.json",
-      "title": "Ruff PYI048: Stub body multiple statements",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi050-no-return-argument-annotation-in-stub",
-      "document": "rules/ruff-pyi050-no-return-argument-annotation-in-stub.json",
-      "title": "Ruff PYI050: No return argument annotation in stub",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-pyi052-unannotated-assignment-in-stub",
-      "document": "rules/ruff-pyi052-unannotated-assignment-in-stub.json",
-      "title": "Ruff PYI052: Unannotated assignment in stub",
       "group": "Ruff",
       "on": false
     },
@@ -1501,93 +1312,9 @@
       "on": false
     },
     {
-      "id": "ruff-pyi066-bad-version-info-order",
-      "document": "rules/ruff-pyi066-bad-version-info-order.json",
-      "title": "Ruff PYI066: Bad version info order",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-ruf008-mutable-dataclass-default",
-      "document": "rules/ruff-ruf008-mutable-dataclass-default.json",
-      "title": "Ruff RUF008: Mutable dataclass default",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-ruf009-function-call-in-dataclass-default-argument",
-      "document": "rules/ruff-ruf009-function-call-in-dataclass-default-argument.json",
-      "title": "Ruff RUF009: Function call in dataclass default argument",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-ruf012-mutable-class-default",
-      "document": "rules/ruff-ruf012-mutable-class-default.json",
-      "title": "Ruff RUF012: Mutable class default",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-ruf013-implicit-optional",
-      "document": "rules/ruff-ruf013-implicit-optional.json",
-      "title": "Ruff RUF013: Implicit optional",
-      "group": "Ruff",
-      "on": false
-    },
-    {
       "id": "ruff-slf001-private-member-access",
       "document": "rules/ruff-slf001-private-member-access.json",
       "title": "Ruff SLF001: Private member access",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up007-non-pep604-annotation-union",
-      "document": "rules/ruff-up007-non-pep604-annotation-union.json",
-      "title": "Ruff UP007: Non pep604 annotation union",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up024-os-error-alias",
-      "document": "rules/ruff-up024-os-error-alias.json",
-      "title": "Ruff UP024: Os error alias",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up028-yield-in-for-loop",
-      "document": "rules/ruff-up028-yield-in-for-loop.json",
-      "title": "Ruff UP028: Yield in for loop",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up029-unnecessary-builtin-import",
-      "document": "rules/ruff-up029-unnecessary-builtin-import.json",
-      "title": "Ruff UP029: Unnecessary builtin import",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up030-format-literals",
-      "document": "rules/ruff-up030-format-literals.json",
-      "title": "Ruff UP030: Format literals",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up032-f-string",
-      "document": "rules/ruff-up032-f-string.json",
-      "title": "Ruff UP032: F string",
-      "group": "Ruff",
-      "on": false
-    },
-    {
-      "id": "ruff-up043-unnecessary-default-type-args",
-      "document": "rules/ruff-up043-unnecessary-default-type-args.json",
-      "title": "Ruff UP043: Unnecessary default type args",
       "group": "Ruff",
       "on": false
     },

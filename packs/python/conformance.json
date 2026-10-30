@@ -3262,7 +3262,7 @@
         "tool": "ruff",
         "rule": "C419"
       },
-      "policy": "rules/ruff-c419-unnecessary-comprehension-in-call.json",
+      "policy": "candidates/rules/ruff-c419-unnecessary-comprehension-in-call.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -4236,7 +4236,7 @@
         "tool": "ruff",
         "rule": "G010"
       },
-      "policy": "rules/ruff-g010-logging-warn.json",
+      "policy": "candidates/rules/ruff-g010-logging-warn.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -4250,7 +4250,7 @@
         "tool": "ruff",
         "rule": "G101"
       },
-      "policy": "rules/ruff-g101-logging-extra-attr-clash.json",
+      "policy": "candidates/rules/ruff-g101-logging-extra-attr-clash.json",
       "capabilities": [
         "syntax",
         "value",
@@ -4265,7 +4265,7 @@
         "tool": "ruff",
         "rule": "G201"
       },
-      "policy": "rules/ruff-g201-logging-exc-info.json",
+      "policy": "candidates/rules/ruff-g201-logging-exc-info.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -4279,7 +4279,7 @@
         "tool": "ruff",
         "rule": "G202"
       },
-      "policy": "rules/ruff-g202-logging-redundant-exc-info.json",
+      "policy": "candidates/rules/ruff-g202-logging-redundant-exc-info.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -5831,7 +5831,7 @@
         "tool": "ruff",
         "rule": "PYI001"
       },
-      "policy": "rules/ruff-pyi001-unprefixed-type-param.json",
+      "policy": "candidates/rules/ruff-pyi001-unprefixed-type-param.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -5845,7 +5845,7 @@
         "tool": "ruff",
         "rule": "PYI002"
       },
-      "policy": "rules/ruff-pyi002-complex-if-statement-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi002-complex-if-statement-in-stub.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -5859,7 +5859,7 @@
         "tool": "ruff",
         "rule": "PYI003"
       },
-      "policy": "rules/ruff-pyi003-unrecognized-version-info-check.json",
+      "policy": "candidates/rules/ruff-pyi003-unrecognized-version-info-check.json",
       "capabilities": [
         "syntax",
         "value",
@@ -5874,7 +5874,7 @@
         "tool": "ruff",
         "rule": "PYI004"
       },
-      "policy": "rules/ruff-pyi004-patch-version-comparison.json",
+      "policy": "candidates/rules/ruff-pyi004-patch-version-comparison.json",
       "capabilities": [
         "syntax",
         "value",
@@ -5889,7 +5889,7 @@
         "tool": "ruff",
         "rule": "PYI005"
       },
-      "policy": "rules/ruff-pyi005-wrong-tuple-length-version-comparison.json",
+      "policy": "candidates/rules/ruff-pyi005-wrong-tuple-length-version-comparison.json",
       "capabilities": [
         "syntax",
         "value",
@@ -5918,7 +5918,7 @@
         "tool": "ruff",
         "rule": "PYI007"
       },
-      "policy": "rules/ruff-pyi007-unrecognized-platform-check.json",
+      "policy": "candidates/rules/ruff-pyi007-unrecognized-platform-check.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -5932,7 +5932,7 @@
         "tool": "ruff",
         "rule": "PYI008"
       },
-      "policy": "rules/ruff-pyi008-unrecognized-platform-name.json",
+      "policy": "candidates/rules/ruff-pyi008-unrecognized-platform-name.json",
       "capabilities": [
         "syntax",
         "value",
@@ -5947,7 +5947,7 @@
         "tool": "ruff",
         "rule": "PYI009"
       },
-      "policy": "rules/ruff-pyi009-pass-statement-stub-body.json",
+      "policy": "candidates/rules/ruff-pyi009-pass-statement-stub-body.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5960,7 +5960,7 @@
         "tool": "ruff",
         "rule": "PYI010"
       },
-      "policy": "rules/ruff-pyi010-non-empty-stub-body.json",
+      "policy": "candidates/rules/ruff-pyi010-non-empty-stub-body.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -5987,7 +5987,7 @@
         "tool": "ruff",
         "rule": "PYI012"
       },
-      "policy": "rules/ruff-pyi012-pass-in-class-body.json",
+      "policy": "candidates/rules/ruff-pyi012-pass-in-class-body.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6029,7 +6029,7 @@
         "tool": "ruff",
         "rule": "PYI015"
       },
-      "policy": "rules/ruff-pyi015-assignment-default-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi015-assignment-default-in-stub.json",
       "capabilities": [
         "syntax",
         "value",
@@ -6060,7 +6060,7 @@
         "tool": "ruff",
         "rule": "PYI017"
       },
-      "policy": "rules/ruff-pyi017-complex-assignment-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi017-complex-assignment-in-stub.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -6105,7 +6105,7 @@
         "tool": "ruff",
         "rule": "PYI020"
       },
-      "policy": "rules/ruff-pyi020-quoted-annotation-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi020-quoted-annotation-in-stub.json",
       "capabilities": [
         "syntax",
         "annotation",
@@ -6161,7 +6161,7 @@
         "tool": "ruff",
         "rule": "PYI026"
       },
-      "policy": "rules/ruff-pyi026-type-alias-without-annotation.json",
+      "policy": "candidates/rules/ruff-pyi026-type-alias-without-annotation.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -6175,7 +6175,7 @@
         "tool": "ruff",
         "rule": "PYI029"
       },
-      "policy": "rules/ruff-pyi029-str-or-repr-defined-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi029-str-or-repr-defined-in-stub.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -6220,7 +6220,7 @@
         "tool": "ruff",
         "rule": "PYI033"
       },
-      "policy": "rules/ruff-pyi033-legacy-type-comment.json",
+      "policy": "candidates/rules/ruff-pyi033-legacy-type-comment.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6249,7 +6249,7 @@
         "tool": "ruff",
         "rule": "PYI035"
       },
-      "policy": "rules/ruff-pyi035-unassigned-special-variable-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi035-unassigned-special-variable-in-stub.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -6277,7 +6277,7 @@
         "tool": "ruff",
         "rule": "PYI041"
       },
-      "policy": "rules/ruff-pyi041-redundant-numeric-union.json",
+      "policy": "candidates/rules/ruff-pyi041-redundant-numeric-union.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -6317,7 +6317,7 @@
         "tool": "ruff",
         "rule": "PYI044"
       },
-      "policy": "rules/ruff-pyi044-future-annotations-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi044-future-annotations-in-stub.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6371,7 +6371,7 @@
         "tool": "ruff",
         "rule": "PYI048"
       },
-      "policy": "rules/ruff-pyi048-stub-body-multiple-statements.json",
+      "policy": "candidates/rules/ruff-pyi048-stub-body-multiple-statements.json",
       "capabilities": [
         "syntax",
         "suppression"
@@ -6398,7 +6398,7 @@
         "tool": "ruff",
         "rule": "PYI050"
       },
-      "policy": "rules/ruff-pyi050-no-return-argument-annotation-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi050-no-return-argument-annotation-in-stub.json",
       "capabilities": [
         "syntax",
         "value",
@@ -6431,7 +6431,7 @@
         "tool": "ruff",
         "rule": "PYI052"
       },
-      "policy": "rules/ruff-pyi052-unannotated-assignment-in-stub.json",
+      "policy": "candidates/rules/ruff-pyi052-unannotated-assignment-in-stub.json",
       "capabilities": [
         "syntax",
         "value",
@@ -6620,7 +6620,7 @@
         "tool": "ruff",
         "rule": "PYI066"
       },
-      "policy": "rules/ruff-pyi066-bad-version-info-order.json",
+      "policy": "candidates/rules/ruff-pyi066-bad-version-info-order.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -6731,7 +6731,7 @@
         "tool": "ruff",
         "rule": "RUF008"
       },
-      "policy": "rules/ruff-ruf008-mutable-dataclass-default.json",
+      "policy": "candidates/rules/ruff-ruf008-mutable-dataclass-default.json",
       "capabilities": [
         "scope",
         "suppression"
@@ -6744,7 +6744,7 @@
         "tool": "ruff",
         "rule": "RUF009"
       },
-      "policy": "rules/ruff-ruf009-function-call-in-dataclass-default-argument.json",
+      "policy": "candidates/rules/ruff-ruf009-function-call-in-dataclass-default-argument.json",
       "capabilities": [
         "value",
         "compare",
@@ -6773,7 +6773,7 @@
         "tool": "ruff",
         "rule": "RUF012"
       },
-      "policy": "rules/ruff-ruf012-mutable-class-default.json",
+      "policy": "candidates/rules/ruff-ruf012-mutable-class-default.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -6788,7 +6788,7 @@
         "tool": "ruff",
         "rule": "RUF013"
       },
-      "policy": "rules/ruff-ruf013-implicit-optional.json",
+      "policy": "candidates/rules/ruff-ruf013-implicit-optional.json",
       "capabilities": [
         "syntax",
         "value",
@@ -7868,7 +7868,7 @@
         "tool": "ruff",
         "rule": "UP007"
       },
-      "policy": "rules/ruff-up007-non-pep604-annotation-union.json",
+      "policy": "candidates/rules/ruff-up007-non-pep604-annotation-union.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -8112,7 +8112,7 @@
         "tool": "ruff",
         "rule": "UP024"
       },
-      "policy": "rules/ruff-up024-os-error-alias.json",
+      "policy": "candidates/rules/ruff-up024-os-error-alias.json",
       "capabilities": [
         "syntax",
         "scope",
@@ -8153,7 +8153,7 @@
         "tool": "ruff",
         "rule": "UP028"
       },
-      "policy": "rules/ruff-up028-yield-in-for-loop.json",
+      "policy": "candidates/rules/ruff-up028-yield-in-for-loop.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -8168,7 +8168,7 @@
         "tool": "ruff",
         "rule": "UP029"
       },
-      "policy": "rules/ruff-up029-unnecessary-builtin-import.json",
+      "policy": "candidates/rules/ruff-up029-unnecessary-builtin-import.json",
       "capabilities": [
         "syntax",
         "compare",
@@ -8183,7 +8183,7 @@
         "tool": "ruff",
         "rule": "UP030"
       },
-      "policy": "rules/ruff-up030-format-literals.json",
+      "policy": "candidates/rules/ruff-up030-format-literals.json",
       "capabilities": [
         "syntax",
         "value",
@@ -8216,7 +8216,7 @@
         "tool": "ruff",
         "rule": "UP032"
       },
-      "policy": "rules/ruff-up032-f-string.json",
+      "policy": "candidates/rules/ruff-up032-f-string.json",
       "capabilities": [
         "syntax",
         "value",
@@ -8358,7 +8358,7 @@
         "tool": "ruff",
         "rule": "UP043"
       },
-      "policy": "rules/ruff-up043-unnecessary-default-type-args.json",
+      "policy": "candidates/rules/ruff-up043-unnecessary-default-type-args.json",
       "capabilities": [
         "syntax",
         "scope",
