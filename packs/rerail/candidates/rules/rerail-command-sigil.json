@@ -1,0 +1,313 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-command-sigil",
+  "revision": 1,
+  "mode": "log",
+  "description": "Take the command sigil a coding agent types from its adapter capabilities, not from a Codex test or a slash hard-coded before a Rerail command in text a Codex user can read.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/hosts/omp/**",
+      "src/hosts/pi/**",
+      "src/hosts/claude/**",
+      "src/hosts/cursor/**",
+      "src/engine/adapter-contract.ts",
+      "src/harness/host-commands.ts",
+      "src/harness/setup-picker.ts",
+      "src/harness/native-session-client.ts",
+      "src/harness/native-semantic-tools.ts",
+      "src/presentation/omp-presentation.ts",
+      "src/cli/show-me.ts",
+      "**/*.test.ts",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "sigil-decided-here",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "ternary_expression",
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "condition",
+                          "regex": "(?i)codex|host|agent|harness"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "consequence",
+                          "regex": "\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "alternative",
+                          "regex": "/\\$\\{|[\\\"'`]/[\\\"'`]|/rerail"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "condition",
+                          "regex": "(?i)codex|host|agent|harness"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "consequence",
+                          "regex": "/\\$\\{|[\\\"'`]/[\\\"'`]|/rerail"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "alternative",
+                          "regex": "\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "condition",
+                          "regex": "(?i)codex"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "field": "consequence",
+                              "regex": "\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "alternative",
+                              "regex": "\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "pair",
+                "all": [
+                  {
+                    "has": {
+                      "field": "key",
+                      "regex": "^(?:codex|[\\\"']codex[\\\"']|\\[\\s*CODEX_ID\\s*\\])$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "value",
+                      "regex": "^[\\\"'`][$/][\\\"'`]$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "array",
+                "regex": "^\\[\\s*(?:[\\\"']codex[\\\"']|CODEX_ID)\\s*,\\s*[\\\"'`]\\$[\\\"'`]\\s*\\]$"
+              },
+              {
+                "kind": "switch_case",
+                "all": [
+                  {
+                    "has": {
+                      "field": "value",
+                      "regex": "^(?:[\\\"']codex[\\\"']|CODEX_ID)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string"
+                        }
+                      ],
+                      "regex": "^[\\\"'`]\\$[\\\"'`]$",
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string"
+                  }
+                ],
+                "regex": "^[\\\"'`][$/][\\\"'`]$",
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "pair",
+                      "has": {
+                        "field": "key",
+                        "regex": "(?i)sigil$"
+                      }
+                    },
+                    {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "name",
+                        "regex": "(?i)sigil$"
+                      }
+                    },
+                    {
+                      "kind": "assignment_expression",
+                      "has": {
+                        "field": "left",
+                        "regex": "(?i)sigil$"
+                      }
+                    },
+                    {
+                      "kind": "required_parameter",
+                      "has": {
+                        "field": "pattern",
+                        "regex": "(?i)sigil$"
+                      }
+                    },
+                    {
+                      "kind": "optional_parameter",
+                      "has": {
+                        "field": "pattern",
+                        "regex": "(?i)sigil$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "if_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "condition",
+                      "regex": "(?i)codex"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "consequence",
+                      "regex": "^(?:\\{\\s*)?return\\s+(?:[\\\"'`]\\$[\\\"'`]|`\\$\\$\\{|[\\\"'`]\\$rerail)"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SIGIL_DECIDED_HERE",
+        "anchor": "witness.span",
+        "message": "Read the sigil from ADAPTER_CAPABILITIES[host].commandSigil (src/engine/adapter-contract.ts), passing the host in if missing, instead of choosing $ or / here; keep only logic over several agents."
+      }
+    },
+    {
+      "id": "slash-command-in-text",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string_fragment",
+            "any": [
+              {
+                "regex": "[\\s(\\[\\\"'`*\\u201c\\u2018]/rerail(?:-[a-z]+)*(?:$|[^\\w/.-]|\\.(?:\\s|$))"
+              },
+              {
+                "regex": "^/rerail(?:-[a-z]+)*(?:$|[^\\w/.-]|\\.(?:\\s|$))",
+                "not": {
+                  "follows": {
+                    "kind": "template_substitution"
+                  }
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "regex": "\\$rerail"
+                },
+                {
+                  "inside": {
+                    "kind": "arguments",
+                    "stopBy": "end",
+                    "inside": {
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "kind": "member_expression",
+                        "regex": "\\.describe$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "template_string"
+                      }
+                    ],
+                    "inside": {
+                      "kind": "ternary_expression",
+                      "regex": "\\$\\$\\{|[\\\"'`]\\$[\\\"'`]|\\$rerail"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "arguments",
+                    "stopBy": "end",
+                    "inside": {
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "(?:^|\\.)(?:get|post|put|patch|delete|all|use|route|fetch)$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "SLASH_COMMAND_IN_TEXT",
+        "anchor": "witness.span",
+        "message": "Codex types this as $…, not /…: build it from ADAPTER_CAPABILITIES[host].commandSigil, or commandIn for several agents, passing them in if missing. Leave it where only OMP or Pi shows it."
+      }
+    }
+  ]
+}

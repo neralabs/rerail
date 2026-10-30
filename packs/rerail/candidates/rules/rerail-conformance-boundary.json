@@ -1,0 +1,185 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-conformance-boundary",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep conformance independent of the authoring path: run programs through its command runner, import nothing from the pack-data or upstream scripts or pack generators, and hold no recorders.",
+  "scope": {
+    "include": [
+      "conformance/**/*.ts",
+      "conformance/**/*.mts",
+      "conformance/**/*.cts",
+      "conformance/**/*.tsx",
+      "conformance/**/*.js",
+      "conformance/**/*.mjs",
+      "conformance/**/*.cjs",
+      "conformance/**/*.jsx",
+      "conformance/**/recorders/**"
+    ],
+    "exclude": [
+      "conformance/process.ts",
+      "conformance/**/*.generated.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "child-process",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\\\"'](?:node:)?child_process(?:/promises)?[\\\"']$",
+                  "stopBy": "end"
+                }
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\\\"'](?:node:)?child_process(?:/promises)?[\\\"']$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^(?:require|import|module\\.require|process\\.getBuiltinModule)\\s*\\(",
+                "has": {
+                  "kind": "arguments",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "string",
+                        "regex": "^[\\\"'](?:node:)?child_process(?:/promises)?[\\\"']$"
+                      },
+                      {
+                        "kind": "template_string",
+                        "regex": "^`(?:node:)?child_process(?:/promises)?`$"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "regex": "^(?:import|export)\\s+type\\b"
+                },
+                {
+                  "inside": {
+                    "kind": "type_query",
+                    "stopBy": "end"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "CHILD_PROCESS_IN_CONFORMANCE",
+        "anchor": "witness.span",
+        "message": "Run programs through the CommandRunner in conformance/process.ts (runner.run, runChecked), taking the runner as a parameter; if it lacks an option you need, add it there."
+      }
+    },
+    {
+      "id": "authoring-import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "import_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\\\"'](?:(?:\\.{1,2}/)+(?:[^\\\"'`\\s]*/)?(?:scripts/(?:pack-data|upstream)|packs/[^\\\"'`/\\s]+/upstream|(?:[^\\\"'`\\s]*/)?recorders)|@neralabs/rerail-pack-[^/\\\"'`\\s]+/upstream)(?:/[^\\\"'`\\s]*)?[\\\"']$",
+                  "stopBy": "end"
+                }
+              },
+              {
+                "kind": "export_statement",
+                "has": {
+                  "kind": "string",
+                  "regex": "^[\\\"'](?:(?:\\.{1,2}/)+(?:[^\\\"'`\\s]*/)?(?:scripts/(?:pack-data|upstream)|packs/[^\\\"'`/\\s]+/upstream|(?:[^\\\"'`\\s]*/)?recorders)|@neralabs/rerail-pack-[^/\\\"'`\\s]+/upstream)(?:/[^\\\"'`\\s]*)?[\\\"']$",
+                  "field": "source"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "regex": "^(?:require|import|module\\.require|process\\.getBuiltinModule)\\s*\\(",
+                "has": {
+                  "kind": "arguments",
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "string",
+                        "regex": "^[\\\"'](?:(?:\\.{1,2}/)+(?:[^\\\"'`\\s]*/)?(?:scripts/(?:pack-data|upstream)|packs/[^\\\"'`/\\s]+/upstream|(?:[^\\\"'`\\s]*/)?recorders)|@neralabs/rerail-pack-[^/\\\"'`\\s]+/upstream)(?:/[^\\\"'`\\s]*)?[\\\"']$"
+                      },
+                      {
+                        "kind": "template_string",
+                        "regex": "^`(?:(?:\\.{1,2}/)+(?:[^\\\"'`\\s]*/)?(?:scripts/(?:pack-data|upstream)|packs/[^\\\"'`/\\s]+/upstream|(?:[^\\\"'`\\s]*/)?recorders)|@neralabs/rerail-pack-[^/\\\"'`\\s]+/upstream)(?:/[^\\\"'`\\s]*)?`$"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "regex": "\\.(?:json|ya?ml)[\\\"'`]"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "AUTHORING_IMPORT_IN_CONFORMANCE",
+        "anchor": "witness.span",
+        "message": "Conformance doesn't import the authoring path. Shared code goes in conformance/ for scripts/ to import; code that records findings or fetches upstream goes in scripts/pack-data/ or scripts/upstream/."
+      }
+    },
+    {
+      "id": "recorder-in-conformance",
+      "forbid": {
+        "regex": {
+          "pattern": "^conformance/(?:.*/)?recorders/",
+          "source": "file.path"
+        }
+      },
+      "violation": {
+        "code": "RECORDER_IN_CONFORMANCE",
+        "anchor": "witness.span",
+        "message": "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+      }
+    },
+    {
+      "id": "expected-findings-write",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "regex": "^(?:[\\w$]+\\.)*(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream)\\s*\\(",
+            "has": {
+              "kind": "arguments",
+              "regex": "fixturesExpectedPath\\s*\\(|fixtures\\.expected\\.json"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "EXPECTED_FINDINGS_WRITTEN_IN_CONFORMANCE",
+        "anchor": "witness.span",
+        "message": "Recorders and expected-findings generators live on the authoring path: put this in scripts/pack-data/ or the pack's upstream/<tool>/ folder, not under conformance/."
+      }
+    }
+  ]
+}

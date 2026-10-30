@@ -1,0 +1,641 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-provenance-writers",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Leave licence records to their owners: write per-file provenance only through the shared writer, never write a project's licence record, and keep no second Not copied parser or copyleft list.",
+  "scope": {
+    "include": [
+      "scripts/**/*.ts",
+      "scripts/**/*.mts",
+      "scripts/**/*.mjs",
+      "scripts/**/*.js",
+      "scripts/**/*.py",
+      "conformance/**/*.ts",
+      "conformance/**/*.mts",
+      "conformance/**/*.mjs",
+      "conformance/**/*.js",
+      "conformance/**/*.py",
+      "packs/*/upstream/**/*.mjs",
+      "packs/*/upstream/**/*.js",
+      "packs/*/upstream/**/*.ts",
+      "packs/*/upstream/**/*.py"
+    ],
+    "exclude": [
+      "**/test/**",
+      "**/tests/**",
+      "**/*.test.*",
+      "**/__tests__/**",
+      "**/fixtures/**",
+      "**/publish/**",
+      "**/node_modules/**",
+      "scripts/pack-data/provenance.mjs",
+      "scripts/s3/pack-fixtures.mjs",
+      "scripts/samples/licences.ts",
+      "scripts/upstream/bump.ts",
+      "scripts/check/check-licenses.mjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "provenance-write",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^[ \\t]*(?:[^*/#\\s][^\\n]*?)?(?:(?:\\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\\s*\\(\\s*|\\b(?:renameSync|rename|copyFileSync|copyFile|cpSync)\\s*\\((?:[^,()\\n]|\\([^()\\n]*\\))*,\\s*)(?:(?:path\\.)?(?:join|resolve)\\((?:[^()\\n]|\\([^()\\n]*\\))*?|[^,()\\n]*?)[\"'`](?:[^\"'`\\n]*/)?(?:provenance\\.json|LICENSES\\.md)[\"'`]|\\b(?:writeFileSync|writeFile)\\s*\\(\\s*(?:path\\.)?(?:join|resolve)\\((?:[^()\\n]|\\([^()\\n]*\\))*?,\\s*(?:PROVENANCE\\w*|LICENSES)\\s*\\)|[\"'](?:[^\"'\\n]*/)?(?:provenance\\.json|LICENSES\\.md)[\"']\\s*\\)\\s*\\.(?:write_(?:text|bytes)\\s*\\(|open\\s*\\(\\s*(?:mode\\s*=\\s*)?[\"'][wax])|\\bopen\\s*\\([^\\n]*?[\"'](?:provenance\\.json|LICENSES\\.md)[\"']\\s*\\)?\\s*,\\s*(?:mode\\s*=\\s*)?[\"'][wax][bt+]*[\"'])",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "PROVENANCE_WRITE",
+        "anchor": "witness.span",
+        "message": "Describe these files in writeProvenance's entries (scripts/pack-data/provenance.mjs; Python: write_provenance) instead; a provenance.json or LICENSES.md outside packs/<pack>/upstream/<tool>/ may stay."
+      }
+    },
+    {
+      "id": "licence-record-write",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "regex": "^(?:[\\w$]+\\.)*(?:write|append|update|save|put|patch|rewrite)\\w*$"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": 1,
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "kind": "string",
+                                "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                              },
+                              {
+                                "kind": "template_string",
+                                "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                              }
+                            ]
+                          },
+                          {
+                            "kind": "call_expression",
+                            "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                            "has": {
+                              "field": "arguments",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "string",
+                                    "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                  },
+                                  {
+                                    "kind": "template_string",
+                                    "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "kind": "call_expression",
+                            "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                            "has": {
+                              "field": "arguments",
+                              "all": [
+                                {
+                                  "has": {
+                                    "kind": "string",
+                                    "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "any": [
+                                      {
+                                        "kind": "string",
+                                        "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                      },
+                                      {
+                                        "kind": "template_string",
+                                        "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "kind": "call_expression",
+                            "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                            "has": {
+                              "field": "arguments",
+                              "all": [
+                                {
+                                  "has": {
+                                    "kind": "string",
+                                    "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "nthChild": 1,
+                                    "kind": "identifier",
+                                    "regex": "(?i)licen[cs]"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": 1,
+                        "kind": "call_expression",
+                        "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                        "has": {
+                          "field": "arguments",
+                          "all": [
+                            {
+                              "has": {
+                                "kind": "string",
+                                "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "nthChild": 1,
+                                "kind": "identifier",
+                                "pattern": "$D"
+                              }
+                            }
+                          ]
+                        },
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                },
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "method_definition"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "variable_declarator",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "name",
+                                      "pattern": "$D"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "value",
+                                      "any": [
+                                        {
+                                          "any": [
+                                            {
+                                              "kind": "string",
+                                              "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                            },
+                                            {
+                                              "kind": "template_string",
+                                              "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "has": {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                              }
+                                            ],
+                                            "stopBy": "end"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "program",
+                              "has": {
+                                "kind": "lexical_declaration",
+                                "has": {
+                                  "kind": "variable_declarator",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$D"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "value",
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "kind": "string",
+                                                "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                              },
+                                              {
+                                                "kind": "template_string",
+                                                "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "has": {
+                                              "any": [
+                                                {
+                                                  "kind": "string",
+                                                  "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                                },
+                                                {
+                                                  "kind": "template_string",
+                                                  "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                                }
+                                              ],
+                                              "stopBy": "end"
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "all": [
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": 1,
+                            "kind": "identifier",
+                            "pattern": "$P"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                },
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "method_definition"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                }
+                              ],
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "variable_declarator",
+                                "all": [
+                                  {
+                                    "has": {
+                                      "field": "name",
+                                      "pattern": "$P"
+                                    }
+                                  },
+                                  {
+                                    "has": {
+                                      "field": "value",
+                                      "any": [
+                                        {
+                                          "any": [
+                                            {
+                                              "any": [
+                                                {
+                                                  "kind": "string",
+                                                  "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                },
+                                                {
+                                                  "kind": "template_string",
+                                                  "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "kind": "call_expression",
+                                              "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                                              "has": {
+                                                "field": "arguments",
+                                                "has": {
+                                                  "any": [
+                                                    {
+                                                      "kind": "string",
+                                                      "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                    },
+                                                    {
+                                                      "kind": "template_string",
+                                                      "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                    }
+                                                  ]
+                                                }
+                                              }
+                                            },
+                                            {
+                                              "kind": "call_expression",
+                                              "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                                              "has": {
+                                                "field": "arguments",
+                                                "all": [
+                                                  {
+                                                    "has": {
+                                                      "kind": "string",
+                                                      "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                                                    }
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "any": [
+                                                        {
+                                                          "kind": "string",
+                                                          "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                                        },
+                                                        {
+                                                          "kind": "template_string",
+                                                          "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            {
+                                              "kind": "call_expression",
+                                              "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                                              "has": {
+                                                "field": "arguments",
+                                                "all": [
+                                                  {
+                                                    "has": {
+                                                      "kind": "string",
+                                                      "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                                                    }
+                                                  },
+                                                  {
+                                                    "has": {
+                                                      "nthChild": 1,
+                                                      "kind": "identifier",
+                                                      "regex": "(?i)licen[cs]"
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "program",
+                              "has": {
+                                "kind": "lexical_declaration",
+                                "has": {
+                                  "kind": "variable_declarator",
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "name",
+                                        "pattern": "$P"
+                                      }
+                                    },
+                                    {
+                                      "has": {
+                                        "field": "value",
+                                        "any": [
+                                          {
+                                            "any": [
+                                              {
+                                                "any": [
+                                                  {
+                                                    "kind": "string",
+                                                    "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                  },
+                                                  {
+                                                    "kind": "template_string",
+                                                    "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                  }
+                                                ]
+                                              },
+                                              {
+                                                "kind": "call_expression",
+                                                "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                                                "has": {
+                                                  "field": "arguments",
+                                                  "has": {
+                                                    "any": [
+                                                      {
+                                                        "kind": "string",
+                                                        "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                      },
+                                                      {
+                                                        "kind": "template_string",
+                                                        "regex": "(?:^[\"'`]|/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]$"
+                                                      }
+                                                    ]
+                                                  }
+                                                }
+                                              },
+                                              {
+                                                "kind": "call_expression",
+                                                "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                                                "has": {
+                                                  "field": "arguments",
+                                                  "all": [
+                                                    {
+                                                      "has": {
+                                                        "kind": "string",
+                                                        "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                                                      }
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "any": [
+                                                          {
+                                                            "kind": "string",
+                                                            "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                                          },
+                                                          {
+                                                            "kind": "template_string",
+                                                            "regex": "^[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]$"
+                                                          }
+                                                        ]
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              },
+                                              {
+                                                "kind": "call_expression",
+                                                "regex": "^(?:path\\.)?(?:join|resolve)\\s*\\(",
+                                                "has": {
+                                                  "field": "arguments",
+                                                  "all": [
+                                                    {
+                                                      "has": {
+                                                        "kind": "string",
+                                                        "regex": "^[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]$"
+                                                      }
+                                                    },
+                                                    {
+                                                      "has": {
+                                                        "nthChild": 1,
+                                                        "kind": "identifier",
+                                                        "regex": "(?i)licen[cs]"
+                                                      }
+                                                    }
+                                                  ]
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "LICENCE_RECORD_WRITE",
+        "anchor": "witness.span",
+        "message": "Leave licenses/<project>/UPSTREAM.md hand-kept and describe copies through writeProvenance (Python: write_provenance); reading it, or writing the tool's own upstream/<tool>/UPSTREAM.md, is fine."
+      }
+    },
+    {
+      "id": "licence-record-write-py",
+      "forbid": {
+        "regex": {
+          "pattern": "(?im)^[ \\t]*(?:[^#\\s][^\\n]*?)?(?:(?:\\b\\w*licen[cs]\\w*|[\"']licenses[\"'])\\s*/[^\\n]*[\"']UPSTREAM\\.md[\"']\\s*\\)\\s*\\.(?:write_(?:text|bytes)\\s*\\(|open\\s*\\(\\s*(?:mode\\s*=\\s*)?[\"'][wa])|\\bopen\\s*\\(\\s*(?:\\w*licen[cs]\\w*|[^\\n]*[\"']licenses[\"'])[^\\n]*?[\"']UPSTREAM\\.md[\"']\\s*\\)?\\s*,\\s*(?:mode\\s*=\\s*)?[\"'][wa])",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "LICENCE_RECORD_WRITE",
+        "anchor": "witness.span",
+        "message": "Leave licenses/<project>/UPSTREAM.md hand-kept and describe copies through writeProvenance (Python: write_provenance); reading it, or writing the tool's own upstream/<tool>/UPSTREAM.md, is fine."
+      }
+    },
+    {
+      "id": "not-copied-parser",
+      "forbid": {
+        "regex": {
+          "pattern": "(?im)^[ \\t]*(?:[^*/#\\s][^\\n]*?)?(?:(?:[=(,:!&|?>\\[{;]|\\breturn)\\s*/(?:\\^|[^/\\n]{0,4}-)[^/\\n]{0,12}(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied|(?:\\bre\\.\\w+|\\bRegExp)\\s*\\(\\s*r?(?:\"\"\"|'''|[\"'`])(?:\\(\\?\\w+\\))?(?:\\^|[^\"'`\\n]{0,4}-)[^\"'`\\n]{0,12}(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied|(?:[=(,:?!&|\\[]|\\b(?:if|in|return|and|or|not))\\s*(?:\"(?:-\\s*(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:?|(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:)\\s*\"|'(?:-\\s*(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:?|(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:)\\s*'|`(?:-\\s*(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:?|(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:)\\s*`))",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "NOT_COPIED_PARSER",
+        "anchor": "witness.span",
+        "message": "Let writeProvenance (Python: write_provenance) refuse Not copied paths, or read them with readUpstreamSources in scripts/s3/pack-fixtures.mjs, instead of matching the record's lines here."
+      }
+    },
+    {
+      "id": "not-copied-list",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^[ \\t]*(?:(?:export|static|readonly|private|public|protected)[ \\t]+)*(?:(?:const|let|var)[ \\t]+)?\\w*(?:NOT_COPIED|[Nn]ot_copied|[Nn]otCopied)\\w*[ \\t]*(?::[^=\\n]*)?=[ \\t]*(?:Object\\.freeze\\(\\s*)?(?:[\\[{]\\s*[\\\"'`]|\\(\\s*[\\\"'][^\\\"'\\n]*[\\\"']\\s*,|new Set(?:<[^>\\n]*>)?\\(\\s*\\[\\s*[\\\"'`]|(?:frozenset|set|tuple|list)\\(\\s*[\\[{(]?\\s*[\\\"'])",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "NOT_COPIED_LIST",
+        "anchor": "witness.span",
+        "message": "Read Not copied paths with readUpstreamSources (scripts/s3/pack-fixtures.mjs), or let writeProvenance refuse them, instead of listing them here."
+      }
+    },
+    {
+      "id": "copyleft-list",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^[ \\t]*(?:(?:export|static|readonly|private|public|protected)[ \\t]+)*(?:(?:const|let|var)[ \\t]+)?\\w*(?:COPYLEFT|[Cc]opyleft|GPL)\\w*[ \\t]*(?::[^=\\n]*)?=[ \\t]*(?:(?:Object\\.freeze\\(\\s*)?(?:[\\[{]\\s*[\\\"'`]|\\(\\s*[\\\"'][^\\\"'\\n]*[\\\"']\\s*,|new Set(?:<[^>\\n]*>)?\\(\\s*\\[\\s*[\\\"'`]|(?:frozenset|set|tuple|list)\\(\\s*[\\[{(]?\\s*[\\\"'])|/[^\\n]*\\\\/|(?:re\\.compile|new RegExp)\\(\\s*r?[\\\"'][^\\\"'\\n]*/)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "COPYLEFT_LIST",
+        "anchor": "witness.span",
+        "message": "Record copyleft upstream paths as Not copied lines in licenses/<project>/UPSTREAM.md, and copyleft sample repositories in scripts/samples/licences.ts; a dependency-licence check may keep its own."
+      }
+    }
+  ]
+}

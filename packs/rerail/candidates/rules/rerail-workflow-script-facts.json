@@ -1,0 +1,88 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-workflow-script-facts",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Take hook paths, what core ships, tool-pack lists and per-pack needs in workflows from the code and data that own them, not hand-kept copies or name tests; copies go stale.",
+  "scope": {
+    "include": [
+      ".github/workflows/**/*.yml",
+      ".github/workflows/**/*.yaml",
+      ".github/actions/**/*.yml",
+      ".github/actions/**/*.yaml"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "hook-path",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)^[^#\\n]*?(?P<lit>\\bdist(?:/|[\\\"'][ \\t]*,[ \\t]*[\\\"'])(?:hosts|harness|runtime)\\b|\\bdist/cli/daemon-entry\\.js|-hook\\.js\\b)"
+        }
+      },
+      "violation": {
+        "code": "HOOK_PATH_LITERAL",
+        "anchor": "capture.lit",
+        "message": "Check built files through ENTRY_POINTS from dist/engine/package-root.js, as package.yml's smoke does, instead of naming entry paths here; they move when the build layout changes."
+      }
+    },
+    {
+      "id": "paths-ignore",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)(?:^ {0,6}(?P<key>paths-ignore)[ \\t]*:|^ {0,6}paths[ \\t]*:(?:[ \\t]*\\[[^\\]]*?|[ \\t]*(?:#[^\\n]*)?\\n(?:[ \\t]*(?:-[^\\n]*|#[^\\n]*)?\\n)*?[ \\t]*-[ \\t]*)[\\\"']?(?P<neg>!))"
+        }
+      },
+      "violation": {
+        "code": "TRIGGER_PATHS_IGNORE",
+        "anchor": "witness.span",
+        "message": "If this skips changes that leave core as shipped, import coreChanges from scripts/release/core-paths.mjs in a changes job, as env-matrix.yml does; else list this workflow's own inputs."
+      }
+    },
+    {
+      "id": "core-paths-list",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)^ {0,6}paths[ \\t]*:(?:[ \\t]*\\[[^\\]]*?|[ \\t]*(?:#[^\\n]*)?\\n(?:[ \\t]*(?:-[^\\n]*|#[^\\n]*)?\\n)*?[ \\t]*-[ \\t]*)[\\\"']?(?:src|native)(?:/[\\w.-]+)*/\\*(?:[^\\]]*?|[^\\n]*\\n(?:[ \\t]*(?:-[^\\n]*|#[^\\n]*)?\\n)*?[ \\t]*-[ \\t]*[\\\"']?)(?P<entry>(?:src|native)(?:/[\\w.-]+)*/\\*)"
+        }
+      },
+      "violation": {
+        "code": "TRIGGER_PATHS_CORE",
+        "anchor": "capture.entry",
+        "message": "If this runs when what core ships changes, import coreChanges from scripts/release/core-paths.mjs in a changes job, as env-matrix.yml does; else list only this workflow's own inputs."
+      }
+    },
+    {
+      "id": "pack-list",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?m)(?:^[ \\t]*-[ \\t]+(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*[\\\"']?(?P<item>[a-z])|^[ \\t]*-[ \\t]+[\\w-]+[ \\t]*:[ \\t]*[^\\s#][^\\n]*\\n(?:[ \\t]+[\\w-]+[ \\t]*:[ \\t]*[^\\s#][^\\n]*\\n)*?[ \\t]+(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*[\\\"']?(?P<later>[a-z])|^[ \\t]*(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*\\[[ \\t]*[\\\"']?(?P<flow>[a-z])|^[ \\t]*(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*\\n[ \\t]*-[ \\t]*[\\\"']?(?P<block>[a-z])|^[ \\t]*(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*\\$\\{\\{[ \\t]*fromJSON\\([ \\t]*'\\[[ \\t]*\\\"(?P<fj>[a-z])|^[^\\n:'\\\"]*[\\[{(,=][ \\t\\[{]*[\\\"']?pack[\\\"']?[ \\t]*:[ \\t]*[\\\"'](?P<obj>[a-z])|\\bfor[ \\t]+(?:pack|tool|toolpack|tool_pack)[ \\t]+in[ \\t]+[\\\"']?(?P<loop>[a-z]))"
+        }
+      },
+      "violation": {
+        "code": "HAND_LISTED_TOOL_PACKS",
+        "anchor": "witness.span",
+        "message": "Plan these legs in a job step from the tree or the run's input and read them with fromJSON, as upstream-bump.yml does. Keep a fixed set another file needs, as ci.yml's test-data job does."
+      }
+    },
+    {
+      "id": "pack-name-test",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?:\\b(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)[ \\t]*[!=]=[ \\t]*'(?:[b-z][^'\\n]*|a|a[^l'\\n][^'\\n]*|al|al[^l'\\n][^'\\n]*|all[^'\\n]+)'|'(?:[b-z][^'\\n]*|a|a[^l'\\n][^'\\n]*|al|al[^l'\\n][^'\\n]*|all[^'\\n]+)'[ \\t]*[!=]=[ \\t]*(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)\\b|\\bcontains\\([^\\n]*,[ \\t]*(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)[ \\t]*\\)|\\b(?:contains|startsWith|endsWith)\\([ \\t]*(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)[ \\t]*,[ \\t]*'[a-z]|\\\"?\\$\\{?(?i:pack|tool)\\}?\\\"?[ \\t]*!?==?[ \\t]*[\\\"']?[a-z]|\\bcase[ \\t]+\\\"?\\$\\{?(?i:pack|tool)\\}?\\\"?[ \\t]+in[ \\t]*\\n[ \\t]*\\(?[\\\"']?[a-z]|\\.(?:pack|tool|toolPack)[ \\t]*[!=]=[ \\t]*\\\"[a-z])"
+        }
+      },
+      "violation": {
+        "code": "TOOL_PACK_BY_NAME",
+        "anchor": "witness.span",
+        "message": "Decide this from the pack's own data (a tool-pack's gates.yaml runtime) through a planning step's output, not its name, so a new pack that needs it is covered. Leave placeholders like 'all'."
+      }
+    }
+  ]
+}

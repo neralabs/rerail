@@ -1,0 +1,104 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-fixtures-root",
+  "revision": 1,
+  "mode": "log",
+  "description": "Use the fixtures_dir and oracle macros to reach the fixtures directory from Rust code in native, not relative paths or the oracles variable; only they follow its override.",
+  "scope": {
+    "include": [
+      "native/**/*.rs"
+    ],
+    "exclude": [
+      "native/build.rs",
+      "native/src/code_rule_dsl/mod.rs",
+      "native/target/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "relative-fixtures-path",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "any": [
+              {
+                "kind": "string_literal",
+                "regex": "^\"(?:[^\"\\\\]*/)?\\.\\./fixtures(?:/|\")"
+              },
+              {
+                "kind": "raw_string_literal",
+                "regex": "^r#*\"(?:[^\"\\\\]*/)?\\.\\./fixtures(?:/|\")"
+              },
+              {
+                "kind": "string_literal",
+                "regex": "^\"fixtures(?:/[^\"\\\\]*)?\"$",
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "all": [
+                      {
+                        "regex": "CARGO_MANIFEST_DIR"
+                      },
+                      {
+                        "regex": "(?:\\.parent\\(\\)(?:\\s*\\.(?:unwrap\\(\\)|expect\\(\"[^\"]*\"\\)))?|\\.join\\(\\s*\"\\.\\.\"\\s*\\))\\s*\\.join\\(\\s*\"fixtures(?:/[^\"]*)?\"\\s*\\)$"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RELATIVE_FIXTURES_PATH",
+        "anchor": "witness.span",
+        "message": "Read this with `crate::code_rule_dsl::oracle!(\"<path under fixtures/>\")`, or build the path from `fixtures_dir!()`, not relative to this file or crate; only those follow RERAIL_ORACLES_DIR."
+      }
+    },
+    {
+      "id": "oracles-variable",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "kind": "string_literal",
+            "regex": "^\"RERAIL_(?:ORACLES|FIXTURES)_DIR\"$",
+            "any": [
+              {
+                "inside": {
+                  "kind": "macro_invocation",
+                  "regex": "(?:^|[^\\w])(?:option_)?env!\\s*\\(\\s*\"RERAIL_(?:ORACLES|FIXTURES)_DIR\"",
+                  "stopBy": "end"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "macro_definition",
+                  "regex": "(?:^|[^\\w])(?:option_)?env!\\s*\\(\\s*\"RERAIL_(?:ORACLES|FIXTURES)_DIR\"",
+                  "stopBy": "end"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "regex": "^(?:::)?(?:std::)?(?:env::)?var(?:_os)?\\s*\\("
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "ORACLES_VARIABLE_READ",
+        "anchor": "witness.span",
+        "message": "Use `crate::code_rule_dsl::fixtures_dir!()`, or `oracle!(…)` for one file's text, instead of reading this variable; native/build.rs resolves it once for every test."
+      }
+    }
+  ]
+}

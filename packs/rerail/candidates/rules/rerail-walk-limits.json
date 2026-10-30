@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-walk-limits",
+  "revision": 1,
+  "mode": "log",
+  "description": "Take a TypeScript repository walk's skipped folders and file and byte limits from the code rule enforcer instead of restating them; budgets for other inputs may differ.",
+  "scope": {
+    "include": [
+      "src/**/*.ts",
+      "src/**/*.tsx"
+    ],
+    "exclude": [
+      "src/engine/code-rule/code-rule-enforcer.ts",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/test/**",
+      "**/*.generated.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "ignored-folders",
+      "forbid": {
+        "regex": {
+          "pattern": "\\[[^\\]\\[;()]{0,400}?[\"'`](?:node_modules|__pycache__)[\"'`][^\\]\\[;()]{0,400}?[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]|\\[[^\\]\\[;()]{0,400}?[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`][^\\]\\[;()]{0,400}?[\"'`](?:node_modules|__pycache__)[\"'`]|(?:(?:===?|!==?)\\s*[\"'`](?:node_modules|__pycache__)[\"'`]|[\"'`](?:node_modules|__pycache__)[\"'`]\\s*(?:===?|!==?))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:===?|!==?)\\s*[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]|[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*(?:===?|!==?)|\\.startsWith\\(\\s*[\"'`]\\.[\"'`]\\s*\\))|(?:(?:===?|!==?)\\s*[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]|[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*(?:===?|!==?)|\\.startsWith\\(\\s*[\"'`]\\.[\"'`]\\s*\\))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:===?|!==?)\\s*[\"'`](?:node_modules|__pycache__)[\"'`]|[\"'`](?:node_modules|__pycache__)[\"'`]\\s*(?:===?|!==?))|\\bcase\\s+[\"'`](?:node_modules|__pycache__)[\"'`]\\s*:[^;{}]{0,200}?\\bcase\\s+[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*:|\\bcase\\s+[\"'`](?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)[\"'`]\\s*:[^;{}]{0,200}?\\bcase\\s+[\"'`](?:node_modules|__pycache__)[\"'`]\\s*:|\\b(?:node_modules|__pycache__)\\|(?:[\\w\\\\.$-]+\\|){0,12}(?:\\\\?\\.)?(?:git|hg|svn|rerail|venv|__pycache__|node_modules|dist|build|next|turbo|coverage|target|vendor)\\b|\\b(?:git|hg|svn|rerail|venv|__pycache__|node_modules|dist|build|next|turbo|coverage|target|vendor)\\|(?:[\\w\\\\.$-]+\\|){0,12}(?:node_modules|__pycache__)\\b",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "WALK_FOLDERS_RESTATED",
+        "anchor": "witness.span",
+        "message": "Skip folders with IGNORED_DIRECTORIES from src/engine/code-rule/code-rule-enforcer.ts instead of naming them here (it also skips build output); leave names not about walking a user's repository."
+      }
+    },
+    {
+      "id": "walk-limits",
+      "forbid": {
+        "regex": {
+          "pattern": "(?i:\\b[\\w$]*(?:max|limit|budget|cap|bound|ceiling)[\\w$]*(?:files|entries|bytes)[\\w$]*|\\b[\\w$]*(?:files?|entr(?:y|ies)|bytes)[\\w$]*(?:max|limit|budget|cap|bound|ceiling)[\\w$]*)\\s*(?::\\s*[\\w$.<>\\[\\]| ]{1,40})?\\s*[=:]\\s*(?:100_?000|1e5|32_?000_?000|32e6|512\\s*\\*\\s*1024\\s*\\*\\s*1024|1024\\s*\\*\\s*1024\\s*\\*\\s*512|512\\s*\\*\\s*1024\\s*\\*\\*\\s*2|512\\s*<<\\s*20|1\\s*<<\\s*29|536_?870_?912|0x2000_?0000|2\\s*\\*\\*\\s*29)\\b",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "WALK_LIMIT_RESTATED",
+        "anchor": "witness.span",
+        "message": "Take this bound from src/engine/code-rule/code-rule-enforcer.ts, exporting it there if needed, instead of restating the repository walk's limit; leave a bound that is not the walk's alone."
+      }
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-pack-rule-test-placement",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep a test of one or a few code rules of a single pack in the code-rule tests' pack-rules folder; engine-feature, pack-wide and conversation-rule tests stay where they are.",
+  "scope": {
+    "include": [
+      "test/engine/**/*.test.ts"
+    ],
+    "exclude": [
+      "test/engine/code-rule/pack-rules/**",
+      "test/engine/code-rule/ecma/node-pack-module-system*.test.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "pack-rule-test-outside-pack-rules",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "call_expression",
+                    "regex": "^repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\'],\\s*(?:[\"\\']candidates[\"\\'],\\s*)?[\"\\']rules[\"\\'],\\s*(?:[\"\\'][^\"\\'\\n]+\\.json[\"\\']|`[^`\\n]*\\.json`)\\s*,?\\s*\\)$"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "regex": "^(?:path\\.)?join\\(\\s*repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\'],\\s*(?:[\"\\']candidates[\"\\'],\\s*)?[\"\\']rules[\"\\']\\s*\\)\\s*,\\s*(?:[\"\\'][^\"\\'\\n]+\\.json[\"\\']|`[^`\\n]*\\.json`)"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "regex": "^repositoryPath\\(\\s*(?:[\"\\']packs/[a-z0-9-]+/(?:candidates/)?rules/[^\"\\'\\n]+\\.json[\"\\']|`packs/[a-z0-9-]+/(?:candidates/)?rules/[^`\\n]+\\.json`)\\s*\\)$"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "regex": "^(?:loadPackRuleDocuments|loadBundledRules)\\(\\s*\\[\\s*repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\'][^\\]]*\\]\\s*\\)\\s*\\.find\\("
+                  },
+                  {
+                    "kind": "call_expression",
+                    "regex": "^(?:loadPackRuleDocuments|loadBundledRules)\\(\\s*\\[\\s*repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\']\\s*\\)\\s*,?\\s*\\]\\s*\\)$",
+                    "inside": {
+                      "kind": "variable_declarator"
+                    },
+                    "not": {
+                      "inside": {
+                        "kind": "program",
+                        "not": {
+                          "has": {
+                            "kind": "member_expression",
+                            "regex": "^[A-Za-z_$][\\w$]*\\.rule\\.id$",
+                            "inside": {
+                              "kind": "binary_expression",
+                              "regex": "\\.rule\\.id\\s*===",
+                              "stopBy": "end"
+                            },
+                            "stopBy": "end"
+                          }
+                        },
+                        "stopBy": "end"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "program",
+                    "has": {
+                      "kind": "identifier",
+                      "regex": "^(?:parseConversationRule|ConversationRuleRegistry|conversationRuleSchema)$",
+                      "stopBy": "end"
+                    },
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "PACK_RULE_TEST_OUTSIDE_PACK_RULES",
+        "anchor": "witness.span",
+        "message": "Move this test into test/engine/code-rule/pack-rules/, fixing its relative paths for the new depth; merge into a same-named file there. Leave engine-feature, pack-wide and conversation-rule tests."
+      }
+    }
+  ]
+}
