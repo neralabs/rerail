@@ -872,6 +872,12 @@ export interface CodeRuleDslValueTest {
    * by default. Rules that follow are not evaluated in files with syntax errors (`source-incomplete`).
    */
   follow?: boolean;
+  /**
+   * `true`: `eq`, `startsWith` and `regex` test what the node names rather than its value: ESTree's name (an identifier's,
+   * `\u` escapes decoded; a private name's without `#`) or a string literal's value; PHP's symbol name. A node without a
+   * name fails. Only those three predicates stand beside it; Python and Rust refuse it.
+   */
+  name?: boolean;
 }
 
 /**

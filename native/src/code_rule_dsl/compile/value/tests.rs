@@ -507,3 +507,68 @@ fn builtin_folding_reads_lib_globals() {
         Vec::<String>::new()
     );
 }
+
+#[test]
+fn name_tests_what_a_node_names_escapes_decoded() {
+    // ESLint's id-length counts the graphemes of `Identifier.name`: `\u{61}` is the one-letter
+    // `a`, which the raw text (six characters) is not. A binding, a property and a private name
+    // have names but no value.
+    let short = json!({ "name": true, "regex": "^(?:\\P{M}\\p{M}*){1,2}$" });
+    let rule = |kind: &str| json!({ "rule": { "kind": kind, "value": short.clone() } });
+    let source =
+        "const \\u{61} = 1, abc = 2, \\u0062c = 3;\nclass K { #x = 1; yy() {} }\nlet 𠮷 = 4;\n";
+    assert_eq!(
+        typescript_found(rule("identifier"), source),
+        ["1:\\u{61}", "1:\\u0062c", "3:𠮷"]
+    );
+    assert_eq!(
+        typescript_found(rule("property_identifier"), source),
+        ["2:yy"]
+    );
+    assert_eq!(
+        typescript_found(rule("private_property_identifier"), source),
+        ["2:#x"]
+    );
+    // eq and startsWith read the name too; a string literal names its value; other nodes none.
+    let eq = json!({ "rule": { "any": [{ "kind": "identifier" }, { "kind": "string" }, { "kind": "number" }],
+        "value": { "name": true, "eq": "ab" } } });
+    assert_eq!(
+        typescript_found(eq, "a\\u0062; 'a\\x62'; ab; abc; 1;\n"),
+        ["1:a\\u0062", "1:'a\\x62'", "1:ab"]
+    );
+    let prefix =
+        json!({ "rule": { "kind": "identifier", "value": { "name": true, "startsWith": "é" } } });
+    assert_eq!(
+        typescript_found(prefix, "\\u00e9t\\u00e9; et;\n"),
+        ["1:\\u00e9t\\u00e9"]
+    );
+    for (value, expected) in [
+        (
+            json!({ "name": true, "truthy": true }),
+            "/clauses/0/forbid/ast/rule/value/truthy: `name: true` reads a name, a string, which only eq, startsWith and regex test",
+        ),
+        (
+            json!({ "name": "yes", "eq": "a" }),
+            "/clauses/0/forbid/ast/rule/value/name must be true or false",
+        ),
+        (
+            json!({ "name": true }),
+            "/clauses/0/forbid/ast/rule/value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy",
+        ),
+    ] {
+        let error = compile(
+            "typescript",
+            json!({ "rule": { "kind": "identifier", "value": value } }),
+        )
+        .err()
+        .expect("refused");
+        assert_eq!(error.reason, expected);
+    }
+    let error = compile(
+        "python",
+        json!({ "rule": { "kind": "identifier", "value": { "name": true, "eq": "a" } } }),
+    )
+    .err()
+    .expect("refused");
+    assert!(error.reason.contains("/value/name"), "{}", error.reason);
+}

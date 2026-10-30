@@ -450,9 +450,14 @@ export const codeRuleValueTestSchema = z
     le: z.number().optional(),
     truthy: z.boolean().optional(),
     follow: z.boolean().optional(),
+    name: z.boolean().optional(),
   })
   .strict()
-  .refine(value => Object.keys(value).some(key => key !== "follow"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.") as unknown as z.ZodType<CodeRuleDslValueTest>;
+  .refine(value => Object.keys(value).some(key => key !== "follow" && key !== "name"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.")
+  .refine(
+    value => value.name !== true || Object.keys(value).every(key => ["eq", "startsWith", "regex", "name"].includes(key)),
+    "name: true reads a name, a string, which only eq, startsWith and regex test.",
+  ) as unknown as z.ZodType<CodeRuleDslValueTest>;
 
 /** A signature entry: a slot name (an identifier), `/` or `*`. */
 const signatureEntry = z.string().max(256).regex(/^(?:[A-Za-z_$][A-Za-z0-9_$]*|\/|\*)$/, "Must be a slot name (an identifier), / or *.");
