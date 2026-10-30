@@ -156,11 +156,17 @@ fn eslint_global_comments_count_only_with_the_opt_in() {
         json!({ "rule": { "kind": "identifier", "resolves": { "global": ["alert", "confirm"], "directives": "eslint" } } }),
     );
     let result = evaluate_file(&honored, "typescript", "a.ts", source);
-    assert_eq!(
-        found(&result, source),
-        ["2:jQuery", "4:confirm"],
-        "{result}"
+    // `off` removes `alert`; the comment makes `jQuery` a global named jQuery, not a listed one.
+    assert_eq!(found(&result, source), ["4:confirm"], "{result}");
+    // ESLint's no-new-func: `/* global foo */` never makes `foo` the global `Function`.
+    let function = typescript(
+        json!({ "rule": { "kind": "identifier", "resolves": { "global": ["Function"], "directives": "eslint" } } }),
     );
+    let source = "foo(); /* global foo */
+Function(); /* global Function */
+";
+    let result = evaluate_file(&function, "typescript", "a.ts", source);
+    assert_eq!(found(&result, source), ["2:Function"], "{result}");
     // A comment declares a global; a local binding still shadows it.
     let source = "/* global jQuery */\nfunction f(jQuery) { jQuery(1); }\n";
     let result = evaluate_file(&honored, "typescript", "a.ts", source);

@@ -294,12 +294,11 @@ impl Resolves {
         let chain = (!self.imports.is_empty() || self.import_any)
             && (S::IMPORT_PATHS || self.import_chain(node).is_some());
         let text = name_in(self.language, node.text());
-        // Without language options only a comment can make another name global; without the
-        // opt-in no table is needed.
-        let unlisted = self.directives && self.options.is_none();
-        let global = (!self.globals.is_empty() || unlisted || self.global_any)
+        // A `/* global */` comment makes a name a global variable of that name, never one of the
+        // listed names: the list decides, and an unlisted name needs no table.
+        let global = (!self.globals.is_empty() || self.global_any)
             && !self.attribute_kinds.contains(&kind)
-            && (unlisted || self.global_any || self.globals.contains(text.as_ref()))
+            && (self.global_any || self.globals.contains(text.as_ref()))
             && (!self.declared
                 || self
                     .python
@@ -578,12 +577,10 @@ impl Resolves {
                         .is_none_or(|binding| !binding.shadows())
             });
         }
-        let listed = if self.directives {
-            (self.globals.contains(name) || table.directives.declared.contains(name))
-                && !table.directives.off.contains(name)
-        } else {
-            true
-        };
+        // Without options the list alone names the globals (checked above); a comment declaring
+        // a name only makes it global under that name, and `off` removes it.
+        let listed = self.globals.contains(name)
+            && !(self.directives && table.directives.off.contains(name));
         listed
             && table.reference(&node.range()).is_some_and(|reference| {
                 table
