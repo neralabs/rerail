@@ -13,11 +13,13 @@
    "probes": 71444,
    "range_builds": 872,
    "range_rows": 22986,
+   "rounds_run": 1672,
    "rows_joined": 126976,
    "rows_out": 126974,
    "rows_scanned": 2057118,
    "stage_rows": 81822,
-   "subquery_runs": 22872
+   "subquery_runs": 22872,
+   "tree_fallbacks": 0
   },
   "impl_direct_execution/direct-execution-lines": {
    "bounds_unproven": 0,
@@ -32,11 +34,13 @@
    "probes": 1140,
    "range_builds": 67,
    "range_rows": 2,
+   "rounds_run": 0,
    "rows_joined": 1258,
    "rows_out": 1257,
    "rows_scanned": 1288,
    "stage_rows": 545,
-   "subquery_runs": 371
+   "subquery_runs": 371,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/graph-fallback-text": {
    "bounds_unproven": 0,
@@ -51,11 +55,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/inventory-export_cursor.py": {
    "bounds_unproven": 0,
@@ -70,11 +76,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/inventory-fts_searcher.py": {
    "bounds_unproven": 0,
@@ -89,11 +97,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/inventory-legacy_wrappers.py": {
    "bounds_unproven": 0,
@@ -108,11 +118,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/legacy-execution-graphs": {
    "bounds_unproven": 0,
@@ -127,11 +139,13 @@
    "probes": 4128278,
    "range_builds": 131,
    "range_rows": 6521,
+   "rounds_run": 262,
    "rows_joined": 2870189,
    "rows_out": 2515332,
-   "rows_scanned": 8347392,
+   "rows_scanned": 8011932,
    "stage_rows": 1696517,
-   "subquery_runs": 701423
+   "subquery_runs": 701423,
+   "tree_fallbacks": 52
   },
   "legacy_execution_surfaces/post-fetch-filter_query_results": {
    "bounds_unproven": 0,
@@ -146,11 +160,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/post-fetch-filter_query_results_async": {
    "bounds_unproven": 0,
@@ -165,11 +181,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "legacy_execution_surfaces/removed-read-leaves": {
    "bounds_unproven": 0,
@@ -184,11 +202,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/mixed-marker-0": {
    "bounds_unproven": 0,
@@ -203,11 +223,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/mixed-marker-1": {
    "bounds_unproven": 0,
@@ -222,11 +244,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/mixed-marker-2": {
    "bounds_unproven": 0,
@@ -241,11 +265,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/mixed-marker-3": {
    "bounds_unproven": 0,
@@ -260,11 +286,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/mixed-marker-4": {
    "bounds_unproven": 0,
@@ -279,11 +307,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/removed-calls": {
    "bounds_unproven": 0,
@@ -298,11 +328,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "raw_execute_regression/removed-definitions": {
    "bounds_unproven": 0,
@@ -317,11 +349,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_bypass/bypass-_execute_raw_sql": {
    "bounds_unproven": 0,
@@ -336,11 +370,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_bypass/bypass-_execute_raw_sql_async": {
    "bounds_unproven": 0,
@@ -355,11 +391,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_bypass/bypass-_query_raw_sql_async": {
    "bounds_unproven": 0,
@@ -374,11 +412,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/backend-family": {
    "bounds_unproven": 0,
@@ -393,11 +433,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/backend-identity": {
    "bounds_unproven": 0,
@@ -412,11 +454,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/dialect-compare": {
    "bounds_unproven": 0,
@@ -431,11 +475,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/dialect-truth": {
    "bounds_unproven": 0,
@@ -450,11 +496,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/executor-provenance": {
    "bounds_unproven": 0,
@@ -469,11 +517,13 @@
    "probes": 1488,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/step-class-match": {
    "bounds_unproven": 0,
@@ -488,11 +538,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/step-isinstance": {
    "bounds_unproven": 0,
@@ -507,11 +559,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/step-name-compare": {
    "bounds_unproven": 0,
@@ -526,11 +580,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_dispatch_architecture/step-type-compare": {
    "bounds_unproven": 0,
@@ -545,11 +601,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_quality/quality-conditional-1": {
    "bounds_unproven": 0,
@@ -564,11 +622,13 @@
    "probes": 1329245,
    "range_builds": 5,
    "range_rows": 229955,
+   "rounds_run": 13,
    "rows_joined": 1734966,
    "rows_out": 1540017,
-   "rows_scanned": 4680686,
+   "rows_scanned": 4485671,
    "stage_rows": 1105379,
-   "subquery_runs": 7124
+   "subquery_runs": 7124,
+   "tree_fallbacks": 1
   },
   "serverplan_quality/quality-contracts-1": {
    "bounds_unproven": 0,
@@ -583,11 +643,13 @@
    "probes": 10036516,
    "range_builds": 12095,
    "range_rows": 2662949,
+   "rounds_run": 893,
    "rows_joined": 3652578,
    "rows_out": 3299131,
-   "rows_scanned": 23207142,
+   "rows_scanned": 22872295,
    "stage_rows": 3528590,
-   "subquery_runs": 444219
+   "subquery_runs": 444219,
+   "tree_fallbacks": 0
   },
   "serverplan_quality/quality-contracts-2": {
    "bounds_unproven": 0,
@@ -602,11 +664,13 @@
    "probes": 457979,
    "range_builds": 1160,
    "range_rows": 421977,
+   "rounds_run": 0,
    "rows_joined": 431789,
    "rows_out": 418064,
    "rows_scanned": 1338708,
    "stage_rows": 209032,
-   "subquery_runs": 126901
+   "subquery_runs": 126901,
+   "tree_fallbacks": 0
   },
   "serverplan_quality/quality-contracts-3": {
    "bounds_unproven": 0,
@@ -621,11 +685,13 @@
    "probes": 19185,
    "range_builds": 14,
    "range_rows": 1665,
+   "rounds_run": 0,
    "rows_joined": 139741,
    "rows_out": 139741,
    "rows_scanned": 166281,
    "stage_rows": 69845,
-   "subquery_runs": 46
+   "subquery_runs": 46,
+   "tree_fallbacks": 0
   },
   "serverplan_quality/quality-local-taxonomy": {
    "bounds_unproven": 0,
@@ -640,11 +706,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_quality/quality-project-taxonomy": {
    "bounds_unproven": 0,
@@ -659,11 +727,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_quality/strategy-file-size": {
    "bounds_unproven": 0,
@@ -678,11 +748,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/compiled-ir-value": {
    "bounds_unproven": 0,
@@ -697,11 +769,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/context-authority": {
    "bounds_unproven": 0,
@@ -716,11 +790,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/direct-planning-io": {
    "bounds_unproven": 0,
@@ -735,11 +811,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/executor-ir-dispatch": {
    "bounds_unproven": 0,
@@ -754,11 +832,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/executor-plan-execution": {
    "bounds_unproven": 0,
@@ -773,11 +853,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/graph-id-config": {
    "bounds_unproven": 0,
@@ -792,11 +874,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/graph-terminal-chain": {
    "bounds_unproven": 0,
@@ -811,11 +895,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/large-column-hydration": {
    "bounds_unproven": 0,
@@ -830,11 +916,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/large-column-reentry": {
    "bounds_unproven": 0,
@@ -849,11 +937,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/lazy-callback-terminal": {
    "bounds_unproven": 0,
@@ -868,11 +958,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/legacy-preop": {
    "bounds_unproven": 0,
@@ -887,11 +979,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/materialized-pipeline": {
    "bounds_unproven": 0,
@@ -906,11 +1000,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/mcp-default-graph": {
    "bounds_unproven": 0,
@@ -925,11 +1021,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/nested-plan-execution": {
    "bounds_unproven": 0,
@@ -944,11 +1042,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/preprocess-io": {
    "bounds_unproven": 0,
@@ -963,11 +1063,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/private-lazy-ref": {
    "bounds_unproven": 0,
@@ -982,11 +1084,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/production-ir-class": {
    "bounds_unproven": 0,
@@ -1001,11 +1105,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/production-ir-construction": {
    "bounds_unproven": 0,
@@ -1020,11 +1126,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/provider-io": {
    "bounds_unproven": 0,
@@ -1039,11 +1147,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/query-planning-io": {
    "bounds_unproven": 0,
@@ -1058,11 +1168,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/queue-auth-calls": {
    "bounds_unproven": 0,
@@ -1077,11 +1189,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/queue-auth-definitions": {
    "bounds_unproven": 0,
@@ -1096,11 +1210,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/queue-udf-symbols": {
    "bounds_unproven": 0,
@@ -1115,11 +1231,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/resolved-ref-access": {
    "bounds_unproven": 0,
@@ -1134,11 +1252,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/serverplan-ddl": {
    "bounds_unproven": 0,
@@ -1153,11 +1273,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/state-flow-1": {
    "bounds_unproven": 68,
@@ -1172,11 +1294,13 @@
    "probes": 11435463,
    "range_builds": 808,
    "range_rows": 50403,
+   "rounds_run": 596,
    "rows_joined": 9660211,
    "rows_out": 9030721,
-   "rows_scanned": 24756039,
+   "rows_scanned": 24132493,
    "stage_rows": 6799759,
-   "subquery_runs": 214578
+   "subquery_runs": 214578,
+   "tree_fallbacks": 80
   },
   "serverplan_state_tripwires/state-flow-project-1": {
    "bounds_unproven": 0,
@@ -1191,11 +1315,13 @@
    "probes": 23,
    "range_builds": 2,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/state-projection-recovery-2": {
    "bounds_unproven": 0,
@@ -1210,11 +1336,13 @@
    "probes": 106115,
    "range_builds": 7,
    "range_rows": 54805,
+   "rounds_run": 0,
    "rows_joined": 258928,
    "rows_out": 238668,
-   "rows_scanned": 2143137,
+   "rows_scanned": 2123098,
    "stage_rows": 198582,
-   "subquery_runs": 1589
+   "subquery_runs": 1589,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/state-signatures-1": {
    "bounds_unproven": 0,
@@ -1229,11 +1357,13 @@
    "probes": 1335827,
    "range_builds": 810,
    "range_rows": 207933,
+   "rounds_run": 9,
    "rows_joined": 3200860,
    "rows_out": 3004358,
-   "rows_scanned": 4968975,
+   "rows_scanned": 4773634,
    "stage_rows": 2613596,
-   "subquery_runs": 218130
+   "subquery_runs": 218130,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/step-aware-eager-helper": {
    "bounds_unproven": 0,
@@ -1248,11 +1378,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/terminal-hydration-definitions": {
    "bounds_unproven": 0,
@@ -1267,11 +1399,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_state_tripwires/test-only-acknowledgement": {
    "bounds_unproven": 0,
@@ -1286,11 +1420,13 @@
    "probes": 398,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/cannot-batch": {
    "bounds_unproven": 0,
@@ -1305,11 +1441,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/closed-migration-postop": {
    "bounds_unproven": 0,
@@ -1324,11 +1462,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/closed-migration-refs": {
    "bounds_unproven": 0,
@@ -1343,11 +1483,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/closed-migration-with-refs": {
    "bounds_unproven": 0,
@@ -1362,11 +1504,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/compile-object-manipulation": {
    "bounds_unproven": 0,
@@ -1381,11 +1525,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/empty-result-assertion": {
    "bounds_unproven": 0,
@@ -1400,11 +1546,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/misc-runtime-definition": {
    "bounds_unproven": 0,
@@ -1419,11 +1567,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/misc-runtime-member": {
    "bounds_unproven": 0,
@@ -1438,11 +1588,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/parse-error": {
    "bounds_unproven": 0,
@@ -1457,11 +1609,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/runtime-builder-string-name": {
    "bounds_unproven": 0,
@@ -1476,11 +1630,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/runtime-reference-summaries": {
    "bounds_unproven": 0,
@@ -1495,11 +1651,13 @@
    "probes": 235343,
    "range_builds": 76,
    "range_rows": 8337,
+   "rounds_run": 7,
    "rows_joined": 195080,
    "rows_out": 179996,
    "rows_scanned": 7557024,
    "stage_rows": 112531,
-   "subquery_runs": 3450
+   "subquery_runs": 3450,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/runtime-state": {
    "bounds_unproven": 0,
@@ -1514,11 +1672,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/side-effect-tags": {
    "bounds_unproven": 0,
@@ -1533,11 +1693,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/source-ref-ingress": {
    "bounds_unproven": 0,
@@ -1552,11 +1714,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/step-contracts-1": {
    "bounds_unproven": 0,
@@ -1571,11 +1735,13 @@
    "probes": 516176,
    "range_builds": 38,
    "range_rows": 1003,
+   "rounds_run": 0,
    "rows_joined": 249345,
    "rows_out": 225763,
-   "rows_scanned": 1381853,
+   "rows_scanned": 1358802,
    "stage_rows": 202467,
-   "subquery_runs": 236045
+   "subquery_runs": 236045,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/step-contracts-2": {
    "bounds_unproven": 0,
@@ -1590,11 +1756,13 @@
    "probes": 302108,
    "range_builds": 114,
    "range_rows": 7057,
+   "rounds_run": 0,
    "rows_joined": 119385,
    "rows_out": 107283,
-   "rows_scanned": 435150,
+   "rows_scanned": 423443,
    "stage_rows": 95500,
-   "subquery_runs": 224080
+   "subquery_runs": 224080,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/step-contracts-3": {
    "bounds_unproven": 0,
@@ -1609,11 +1777,13 @@
    "probes": 309477,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 12,
    "rows_joined": 114352,
    "rows_out": 114088,
    "rows_scanned": 954650,
    "stage_rows": 101546,
-   "subquery_runs": 254029
+   "subquery_runs": 254029,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/step-contracts-4": {
    "bounds_unproven": 0,
@@ -1628,11 +1798,13 @@
    "probes": 58155,
    "range_builds": 38,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 29088,
    "rows_out": 22912,
-   "rows_scanned": 113630,
+   "rows_scanned": 107416,
    "stage_rows": 22837,
-   "subquery_runs": 25088
+   "subquery_runs": 25088,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/step-contracts-5": {
    "bounds_unproven": 0,
@@ -1647,11 +1819,13 @@
    "probes": 258931,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 1,
    "rows_joined": 319288,
    "rows_out": 290894,
-   "rows_scanned": 618235,
+   "rows_scanned": 590232,
    "stage_rows": 262761,
-   "subquery_runs": 29816
+   "subquery_runs": 29816,
+   "tree_fallbacks": 0
   },
   "serverplan_steps/step-contracts-6": {
    "bounds_unproven": 0,
@@ -1666,11 +1840,13 @@
    "probes": 2569,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 1,
    "rows_joined": 3856,
    "rows_out": 3533,
-   "rows_scanned": 7001,
+   "rows_scanned": 6681,
    "stage_rows": 3210,
-   "subquery_runs": 367
+   "subquery_runs": 367,
+   "tree_fallbacks": 1
   },
   "serverplan_steps/terminal-projection-dispatch": {
    "bounds_unproven": 0,
@@ -1685,11 +1861,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/backend-names": {
    "bounds_unproven": 0,
@@ -1704,11 +1882,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/executor-imports": {
    "bounds_unproven": 0,
@@ -1723,11 +1903,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/executor-parameters": {
    "bounds_unproven": 0,
@@ -1742,11 +1924,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-physical_program.py-direct": {
    "bounds_unproven": 0,
@@ -1761,11 +1945,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-physical_program.py-from": {
    "bounds_unproven": 0,
@@ -1780,11 +1966,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-planning_contract.py-direct": {
    "bounds_unproven": 0,
@@ -1799,11 +1987,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-planning_contract.py-from": {
    "bounds_unproven": 0,
@@ -1818,11 +2008,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-runtime_application.py-direct": {
    "bounds_unproven": 0,
@@ -1837,11 +2029,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/imports-l2070_batching-runtime_application.py-from": {
    "bounds_unproven": 0,
@@ -1856,11 +2050,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/legacy-symbols": {
    "bounds_unproven": 0,
@@ -1875,11 +2071,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/receipt-accounting": {
    "bounds_unproven": 0,
@@ -1894,11 +2092,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/required-contracts": {
    "bounds_unproven": 0,
@@ -1913,11 +2113,13 @@
    "probes": 118,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 23301,
    "rows_out": 23286,
    "rows_scanned": 23395,
    "stage_rows": 19467,
-   "subquery_runs": 39
+   "subquery_runs": 39,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/strategy-getattr": {
    "bounds_unproven": 0,
@@ -1932,11 +2134,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/strategy-isinstance": {
    "bounds_unproven": 0,
@@ -1951,11 +2155,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/tag-conditions": {
    "bounds_unproven": 0,
@@ -1970,11 +2176,13 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   },
   "serverplan_target_architecture/tag-matches": {
    "bounds_unproven": 0,
@@ -1989,13 +2197,15 @@
    "probes": 0,
    "range_builds": 0,
    "range_rows": 0,
+   "rounds_run": 0,
    "rows_joined": 0,
    "rows_out": 0,
    "rows_scanned": 0,
    "stage_rows": 0,
-   "subquery_runs": 0
+   "subquery_runs": 0,
+   "tree_fallbacks": 0
   }
  },
- "commit": "26dbfee6248c882597df9f08bb22eaf0786ccc54",
+ "commit": "d1a9faa6d562d4ea6809f4dbd5c07fae000e6e12+dirty",
  "format": "rerail.facts-counts/v1"
 }
