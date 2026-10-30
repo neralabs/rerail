@@ -10,6 +10,19 @@ block = { path = "native/vendor/block-0.1.6" }
 [profile.dev.package."*"]
 opt-level = 3
 
+# Dev and test builds keep file and line numbers (panics, backtraces) but not full debug info: the
+# test binary was ~300 MB, mostly DWARF, and linking it dominated each rebuild. For a debugger,
+# build with full debug info: `cargo test --profile debugging` (or `cargo build --profile debugging`).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.debugging]
+inherits = "dev"
+debug = true
+
+[profile.debugging.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

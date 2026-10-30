@@ -18,6 +18,7 @@ fn corpus() -> std::path::PathBuf {
 }
 
 #[test]
+#[ignore = "a measurement run (P's v8 spike `measure`), no assertions; run with --include-ignored"]
 fn measure_runs_on_rerails_python_grammar() {
     let dir = corpus();
     let args = ["v8spike", "measure", "small", "python", dir.to_str().unwrap()].map(String::from);

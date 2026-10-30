@@ -278,12 +278,43 @@ fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
             std::fs::write(stamp_path, key).expect("parser fingerprint is writable");
         }
     }
+    // Every engine edit reruns this script for the engine identity; recompiling the grammars' C
+    // each time cost ~5 s. The library is rebuilt only when its inputs or the C toolchain settings
+    // change, and otherwise linked as `cc` links it.
+    let library = format!("tree-sitter-{name}");
+    let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
+    let archive = out_dir.join(format!("lib{library}.a"));
+    let compiled_stamp = out_dir.join(format!("{library}.compiled.sha256"));
+    let scanner = format!("{source}/scanner.c");
+    let mut inputs = Sha256::new();
+    for variable in ["TARGET", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "CC", "CFLAGS"] {
+        println!("cargo:rerun-if-env-changed={variable}");
+        inputs.update(variable.as_bytes());
+        inputs.update(std::env::var(variable).unwrap_or_default().as_bytes());
+    }
+    let mut headers = Vec::new();
+    collect_sources(Path::new(grammar.headers), &mut headers);
+    headers.sort();
+    for path in std::iter::once(parser_path.clone())
+        .chain(std::iter::once(PathBuf::from(&scanner)))
+        .chain(headers)
+    {
+        inputs.update(path.to_string_lossy().as_bytes());
+        inputs.update(std::fs::read(&path).expect("grammar C input is readable"));
+    }
+    let key = hex(&inputs.finalize());
+    if archive.is_file() && std::fs::read_to_string(&compiled_stamp).ok().as_deref() == Some(&key) {
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static={library}");
+        return;
+    }
     cc::Build::new()
         .include(grammar.headers)
         .file(parser_path)
-        .file(format!("{source}/scanner.c"))
+        .file(scanner)
         .warnings(false)
-        .compile(&format!("tree-sitter-{name}"));
+        .compile(&library);
+    std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
 }
 
 /// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative

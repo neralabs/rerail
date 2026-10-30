@@ -21,14 +21,32 @@ fn slow_initial_zero_path(mut program: Program) -> Program {
     program
 }
 
+// Split by program and length so the four parts run in parallel; together they cover what the
+// single test covered (both programs, every length 0..=6).
 #[test]
 fn streaming_runs_preserve_all_zero_capture_joins_raw_ordinals_and_failure_boundaries() {
-    for p in [
-        capture_run_tests::program(),
-        slow_initial_zero_path(capture_run_tests::program()),
-    ] {
+    streaming_runs_preserve_joins(capture_run_tests::program(), 0..=5);
+}
+
+#[test]
+fn streaming_runs_preserve_all_zero_capture_joins_at_length_six() {
+    streaming_runs_preserve_joins(capture_run_tests::program(), 6..=6);
+}
+
+#[test]
+fn slow_initial_streaming_runs_preserve_all_zero_capture_joins() {
+    streaming_runs_preserve_joins(slow_initial_zero_path(capture_run_tests::program()), 0..=5);
+}
+
+#[test]
+fn slow_initial_streaming_runs_preserve_all_zero_capture_joins_at_length_six() {
+    streaming_runs_preserve_joins(slow_initial_zero_path(capture_run_tests::program()), 6..=6);
+}
+
+fn streaming_runs_preserve_joins(p: Program, lengths: std::ops::RangeInclusive<usize>) {
+    {
         let prepared = prepare(&p).unwrap();
-        for length in 0..=6 {
+        for length in lengths {
             for bits in 0..(1usize << length) {
                 let values = (0..length)
                     .map(|index| {
