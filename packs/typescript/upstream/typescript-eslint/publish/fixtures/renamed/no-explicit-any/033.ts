@@ -1,0 +1,1 @@
+function zfdnmul(): Array<any> {}

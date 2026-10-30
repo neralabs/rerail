@@ -1,0 +1,1 @@
+const i = +Number('1');

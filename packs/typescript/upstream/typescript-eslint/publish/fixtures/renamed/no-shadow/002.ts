@@ -1,0 +1,1 @@
+function cnq<I = ([bfd]: [any]) => any>(bfd: I) {}

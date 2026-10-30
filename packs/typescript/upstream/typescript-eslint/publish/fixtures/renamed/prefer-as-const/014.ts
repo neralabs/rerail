@@ -1,0 +1,1 @@
+let rnk: number = 1;

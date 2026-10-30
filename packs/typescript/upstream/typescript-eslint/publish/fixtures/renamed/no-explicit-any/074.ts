@@ -1,0 +1,1 @@
+type Erzv = keyof any;

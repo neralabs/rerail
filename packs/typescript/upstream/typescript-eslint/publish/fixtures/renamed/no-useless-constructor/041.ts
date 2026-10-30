@@ -1,0 +1,5 @@
+
+class X {
+  public constructor() {}
+}
+      

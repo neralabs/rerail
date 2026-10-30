@@ -1,0 +1,1 @@
+function qq(j: number, l: boolean, n: string) {}

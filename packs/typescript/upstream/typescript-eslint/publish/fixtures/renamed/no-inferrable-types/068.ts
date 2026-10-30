@@ -1,0 +1,1 @@
+const e: number = Number?.('1');

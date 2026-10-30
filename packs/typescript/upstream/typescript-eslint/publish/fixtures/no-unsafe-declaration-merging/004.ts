@@ -1,0 +1,4 @@
+
+namespace Fooo {}
+function Foo() {}
+    

@@ -1,0 +1,1 @@
+let hcd = `bar` as `bar`;

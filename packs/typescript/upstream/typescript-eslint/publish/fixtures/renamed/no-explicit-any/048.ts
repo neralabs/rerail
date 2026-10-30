@@ -1,0 +1,5 @@
+
+interface Aojyakg {
+  message: any[];
+}
+      

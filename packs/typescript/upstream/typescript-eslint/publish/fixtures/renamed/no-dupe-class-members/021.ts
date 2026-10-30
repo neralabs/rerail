@@ -1,0 +1,6 @@
+
+class H {
+  kpc;
+  kpc() {}
+}
+      

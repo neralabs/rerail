@@ -1,0 +1,1 @@
+const a = -BigInt?.(10);

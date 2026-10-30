@@ -1,0 +1,1 @@
+const pgh = require('./package.json');

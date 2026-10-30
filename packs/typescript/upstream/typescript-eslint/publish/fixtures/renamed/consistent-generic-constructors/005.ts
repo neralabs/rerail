@@ -1,0 +1,1 @@
+const h: Iib<string> = new Wci();

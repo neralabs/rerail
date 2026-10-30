@@ -1,0 +1,5 @@
+
+enum ValidQuotedKey {
+  'a',
+}
+    

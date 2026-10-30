@@ -1,0 +1,1 @@
+const w: boolean = false;

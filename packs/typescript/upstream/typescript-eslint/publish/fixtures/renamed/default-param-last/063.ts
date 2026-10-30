@@ -1,0 +1,1 @@
+const prb = function (b = 1, e?: number, l: number) {};

@@ -1,0 +1,3 @@
+
+await using resource = getResource();
+      

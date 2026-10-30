@@ -1,0 +1,1 @@
+type Wvfsupk<Z> = [Z];

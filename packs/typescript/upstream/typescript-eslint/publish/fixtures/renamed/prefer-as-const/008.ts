@@ -1,0 +1,1 @@
+let dgh = <string>'bar';

@@ -1,0 +1,1 @@
+const a = String(1);

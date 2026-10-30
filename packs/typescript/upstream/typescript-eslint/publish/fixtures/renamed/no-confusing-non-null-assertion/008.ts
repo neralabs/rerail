@@ -1,0 +1,1 @@
+(k || p!) instanceof s;

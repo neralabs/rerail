@@ -1,0 +1,4 @@
+
+export { G };
+class G {}
+      

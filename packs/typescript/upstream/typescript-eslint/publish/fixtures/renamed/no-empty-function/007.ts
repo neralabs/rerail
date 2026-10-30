@@ -1,0 +1,5 @@
+
+class Ews {
+  protected constructor() {}
+}
+      

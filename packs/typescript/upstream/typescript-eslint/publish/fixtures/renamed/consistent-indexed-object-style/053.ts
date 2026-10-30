@@ -1,0 +1,1 @@
+type Aja = { [key: string]: any };

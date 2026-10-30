@@ -1,0 +1,837 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "typescript",
+  "tool": "eslint-plugin-vitest",
+  "sources": {
+    "eslint-plugin-vitest": {
+      "repository": "https://github.com/vitest-dev/eslint-plugin-vitest",
+      "tag": "v1.6.27",
+      "commit": "aad57d121647efe764463c37414a8cd67ec9cf92",
+      "license": "MIT"
+    },
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "fixtures.expected.json": {
+      "source": "rerail",
+      "how": "recorded"
+    },
+    "fixtures/expect-expect/001.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/002.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/003.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/004.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/005.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/006.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/007.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/008.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/009.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/010.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/011.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/012.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/013.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/014.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/015.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/016.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/017.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/018.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/019.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/020.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/021.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/022.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/023.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/024.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/025.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/026.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/027.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/028.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/029.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/030.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/031.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/032.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/033.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/expect-expect/rerail-assertion-computed-names.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/expect-expect/rerail-assertion-names.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/expect-expect/rerail-ava.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/expect-expect/rerail-test-without-callback.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/expect-expect/rerail-vitest-extend.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/expect-expect/rerail-vitest-table-calls.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/001.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/002.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/003.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/004.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/005.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/006.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/007.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/008.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/009.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/010.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/011.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/012.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/013.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/014.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/015.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/016.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/017.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/018.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/019.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/020.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/021.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/022.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/023.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/024.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/025.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/026.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/027.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/028.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/029.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/030.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/031.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/032.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/033.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/034.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-disabled-tests/rerail-expect-modifier-rules.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-unchecked-heads.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-alias-not-a-test.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-alias.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-dynamic-import.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-import.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-require-computed-key.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-require-renamed.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-require-template.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-disabled-tests/rerail-vitest-require-whole.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/001.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/002.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/003.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/004.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/005.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/006.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/007.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/008.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/009.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/010.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/011.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/012.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/013.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/014.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/015.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/016.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/017.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/018.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/019.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/020.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-focused-tests.test.ts",
+      "how": "extracted"
+    },
+    "fixtures/no-focused-tests/rerail-bun-test.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-comment-between-links.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-global-extend.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-invalid-chains.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-local-binding.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-mode-option-overridden.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-multiline-chain.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-node-test-default.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-node-test-mode-options.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-node-test.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-parameter.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-suite-only.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-test-context-explicit-property.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-test-context-named-callback.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-test-context-property.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-test-context-renamed-property.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-test-context-unchecked-chain.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-test-context.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-alias-across-grammars.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-default-import-named-type.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-default-import.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-dynamic-import-trailing-comma.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-extend-chain.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-extend-not-a-test.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-extend-parenthesized.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-import-escaped.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-mode-options.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-require-comment.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-require-default-value.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-require-parenthesized.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-require-template-escape.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-require.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-submodule.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/no-focused-tests/rerail-vitest-type-import.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "fixtures/renamed/expect-expect/003.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/003.test.ts"
+    },
+    "fixtures/renamed/expect-expect/004.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/004.test.ts"
+    },
+    "fixtures/renamed/expect-expect/010.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/010.test.ts"
+    },
+    "fixtures/renamed/expect-expect/011.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/011.test.ts"
+    },
+    "fixtures/renamed/expect-expect/013.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/013.test.ts"
+    },
+    "fixtures/renamed/expect-expect/014.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/014.test.ts"
+    },
+    "fixtures/renamed/expect-expect/015.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/015.test.ts"
+    },
+    "fixtures/renamed/expect-expect/016.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/016.test.ts"
+    },
+    "fixtures/renamed/expect-expect/017.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/017.test.ts"
+    },
+    "fixtures/renamed/expect-expect/019.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/019.test.ts"
+    },
+    "fixtures/renamed/expect-expect/022.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/022.test.ts"
+    },
+    "fixtures/renamed/expect-expect/023.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/023.test.ts"
+    },
+    "fixtures/renamed/expect-expect/024.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/024.test.ts"
+    },
+    "fixtures/renamed/expect-expect/025.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/025.test.ts"
+    },
+    "fixtures/renamed/expect-expect/026.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/026.test.ts"
+    },
+    "fixtures/renamed/expect-expect/027.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/027.test.ts"
+    },
+    "fixtures/renamed/expect-expect/028.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/028.test.ts"
+    },
+    "fixtures/renamed/expect-expect/029.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/029.test.ts"
+    },
+    "fixtures/renamed/expect-expect/030.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/030.test.ts"
+    },
+    "fixtures/renamed/expect-expect/031.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/031.test.ts"
+    },
+    "fixtures/renamed/expect-expect/033.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/expect-expect.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/expect-expect/033.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/013.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/013.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/014.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/014.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/015.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/015.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/016.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/016.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/017.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/017.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/018.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/018.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/019.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/019.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/020.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/020.test.ts"
+    },
+    "fixtures/renamed/no-disabled-tests/023.test.ts": {
+      "source": "eslint-plugin-vitest",
+      "from": "tests/no-disabled-tests.test.ts",
+      "how": "renamed",
+      "renamedFrom": "fixtures/no-disabled-tests/023.test.ts"
+    }
+  }
+}

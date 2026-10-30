@@ -1,0 +1,1 @@
+let lib2 = require('lib2');

@@ -1,0 +1,5 @@
+
+class Abtigom {
+  message: string;
+}
+    

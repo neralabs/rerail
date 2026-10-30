@@ -1,0 +1,1 @@
+someCode(); // tslint:disable-line

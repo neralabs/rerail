@@ -1,0 +1,5 @@
+
+interface Hqf {
+  [key: string];
+}
+    

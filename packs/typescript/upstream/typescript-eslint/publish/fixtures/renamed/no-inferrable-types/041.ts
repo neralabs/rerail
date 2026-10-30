@@ -1,0 +1,1 @@
+const fd = function (b = 5, d = true, e = 'foo') {};

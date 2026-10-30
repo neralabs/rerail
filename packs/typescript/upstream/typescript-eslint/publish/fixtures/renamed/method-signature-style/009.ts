@@ -1,0 +1,1 @@
+type Ibhn = { ['f']?: (e: boolean) => void };

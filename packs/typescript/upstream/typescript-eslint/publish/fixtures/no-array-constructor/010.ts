@@ -1,0 +1,1 @@
+new Array<Foo>();

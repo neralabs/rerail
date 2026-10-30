@@ -1,0 +1,5 @@
+
+interface Oye {
+  jmk: string;
+}
+    

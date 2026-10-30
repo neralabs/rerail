@@ -1,0 +1,1 @@
+type Fahg = { get b(): number };

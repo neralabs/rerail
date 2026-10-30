@@ -1,0 +1,1 @@
+class FqXhpic extends Number {}

@@ -1,0 +1,5 @@
+
+type ngs = {
+  message: any[];
+};
+      

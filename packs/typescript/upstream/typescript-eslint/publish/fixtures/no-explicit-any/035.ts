@@ -1,0 +1,1 @@
+function generic(param: Array<any>): number {}

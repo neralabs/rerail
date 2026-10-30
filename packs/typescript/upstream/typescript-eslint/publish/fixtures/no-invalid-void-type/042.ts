@@ -1,0 +1,1 @@
+declare function voidArray(args: void[]): void[];

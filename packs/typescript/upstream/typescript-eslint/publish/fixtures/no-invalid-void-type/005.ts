@@ -1,0 +1,1 @@
+function takeThing(thing: undefined) {}

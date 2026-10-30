@@ -1,0 +1,5 @@
+
+const foo = class {
+  constructor();
+};
+    

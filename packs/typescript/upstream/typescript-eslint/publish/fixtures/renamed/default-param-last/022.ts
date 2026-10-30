@@ -1,0 +1,1 @@
+const wqh = function (c: number, m = 1, ...u) {};

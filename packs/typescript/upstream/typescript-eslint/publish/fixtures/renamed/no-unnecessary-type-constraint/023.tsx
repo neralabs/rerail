@@ -1,0 +1,1 @@
+const hily = <X extends any , >() => {};

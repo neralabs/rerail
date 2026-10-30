@@ -1,0 +1,1 @@
+const ldifmYlmdhzl = <N extends void>(lda: N) => {};

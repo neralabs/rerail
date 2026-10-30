@@ -1,0 +1,1 @@
+function gul<L extends ([...cdpm]: any[]) => any>(ge: L, cdpm: any[]) {}

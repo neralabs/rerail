@@ -1,0 +1,1 @@
+interface MyInterface extends Number {}

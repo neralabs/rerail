@@ -1,0 +1,1 @@
+function geum<S extends unknown>() {}

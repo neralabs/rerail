@@ -1,0 +1,1 @@
+type IntersectionType = string & number & void;

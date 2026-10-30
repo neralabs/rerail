@@ -1,0 +1,1 @@
+const rxs = function (d = 1, q: number) {};

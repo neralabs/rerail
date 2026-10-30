@@ -1,0 +1,1 @@
+let value: <T>(t: T) => T;

@@ -1,0 +1,1 @@
+const jfufzQtfjivz2 = <V extends void = void>(jfi: V) => {};

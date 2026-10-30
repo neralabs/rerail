@@ -1,0 +1,6 @@
+
+t!
+ // comment
+    . /* comment */
+      x
+      

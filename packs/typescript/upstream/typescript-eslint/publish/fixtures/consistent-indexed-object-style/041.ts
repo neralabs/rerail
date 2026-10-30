@@ -1,0 +1,1 @@
+type T = { [key in Foo]: key | number };

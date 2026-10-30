@@ -1,0 +1,1 @@
+interface Qlxr extends Array<number> {}

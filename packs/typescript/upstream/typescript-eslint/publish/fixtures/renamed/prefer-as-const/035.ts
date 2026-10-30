@@ -1,0 +1,1 @@
+let vkc: 'bar' = 'bar';

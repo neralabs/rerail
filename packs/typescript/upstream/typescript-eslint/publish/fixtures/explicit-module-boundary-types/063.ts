@@ -1,0 +1,6 @@
+
+function foo(arg) {
+  return arg;
+}
+export default foo;
+      

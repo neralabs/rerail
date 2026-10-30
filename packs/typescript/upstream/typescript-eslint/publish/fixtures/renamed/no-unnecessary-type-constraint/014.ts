@@ -1,0 +1,1 @@
+function oyin<Q extends any, X>() {}

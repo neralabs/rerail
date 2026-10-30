@@ -1,0 +1,5 @@
+
+interface Fots {
+  name: string;
+}
+    

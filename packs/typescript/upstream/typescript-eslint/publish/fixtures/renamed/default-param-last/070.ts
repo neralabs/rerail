@@ -1,0 +1,1 @@
+const zeh = (d = 1, i = 2, w: number) => {};

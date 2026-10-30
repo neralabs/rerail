@@ -1,0 +1,1 @@
+let sbx = { bas: 'baz' as 'baz' };

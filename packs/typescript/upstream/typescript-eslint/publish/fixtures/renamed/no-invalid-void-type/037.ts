@@ -1,0 +1,1 @@
+function ygugudauCtthfgw<Z extends void>(pxq: Z) {}

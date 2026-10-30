@@ -1,0 +1,1 @@
+abstract class Foo<t = any> extends Bar<any> {}

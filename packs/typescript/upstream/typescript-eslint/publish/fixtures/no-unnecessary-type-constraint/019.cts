@@ -1,0 +1,1 @@
+const data = <T extends any>() => {};

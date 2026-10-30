@@ -1,0 +1,1 @@
+function sih({ d, f } = { d: 1, f: 2 }, j) {}

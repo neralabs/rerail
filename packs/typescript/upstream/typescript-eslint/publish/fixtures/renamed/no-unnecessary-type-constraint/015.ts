@@ -1,0 +1,1 @@
+function uyew<X, Y extends any>() {}

@@ -1,0 +1,1 @@
+const u: Zry = new Zry<string>();

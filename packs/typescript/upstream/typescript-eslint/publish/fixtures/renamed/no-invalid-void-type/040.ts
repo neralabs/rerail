@@ -1,0 +1,1 @@
+declare function npzrsmtrAlzmypqekkk2<W extends void = void>(epk: W): void;
