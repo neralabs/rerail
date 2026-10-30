@@ -127,7 +127,8 @@ const factsFindingsSchema = z.object({ findings: z.array(z.tuple([z.string(), z.
  * `compare-findings <native findings dir> <facts findings dir> [<facts.json>]`: per workspace (`<name>.scan.json`, and
  * `<name>.edits.json` when both have it), native's violations of the clauses the facts daemon answers per file (its
  * `hello`'s `per_file_clauses`, from facts.json) against the daemon's per-file findings, as multisets of
- * `[check, clause, path, line, code]` (native's rule id `data-layer-a-b` is check `a_b`). Prints one row per file
+ * `[check, clause, path, line, code]` (native's rule id `data-layer-a-b` is check `a_b`, every leading `data-layer-`
+ * stripped as the daemon does: `data-layer-data-layer-compat-aliases` is `compat_aliases`). Prints one row per file
  * compared and up to 5 differences each; returns whether every workspace is equal.
  */
 export function compareFindings(nativeDir: string, factsDir: string, factsJson: string): boolean {
@@ -138,7 +139,7 @@ export function compareFindings(nativeDir: string, factsDir: string, factsJson: 
     const nativePath = join(nativeDir, file);
     if (!existsSync(nativePath)) continue;
     const native = nativeFindingsSchema.parse(JSON.parse(readFileSync(nativePath, "utf8"))).violations
-      .map(v => [(v.ruleId ?? v.policyId ?? "").replace(/^data-layer-/, "").replaceAll("-", "_"), v.clauseId, v.path, v.span.startLine + 1, v.code] as const)
+      .map(v => [(v.ruleId ?? v.policyId ?? "").replace(/^(data-layer-)+/, "").replaceAll("-", "_"), v.clauseId, v.path, v.span.startLine + 1, v.code] as const)
       .filter(([check, clause]) => perFile.has(`${check}\u0000${clause}`))
       .map(key => JSON.stringify(key));
     const facts = factsFindingsSchema.parse(JSON.parse(readFileSync(join(factsDir, file), "utf8"))).findings
