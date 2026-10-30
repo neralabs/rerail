@@ -137,14 +137,27 @@ expected findings from `upstream/` unless `conformance.json` sets `oracles`:
   `rules` the run reported, the `files` (units: a path, or a list of paths for a multi-file unit), and `units`, each
   unit's upstream origin by its key (its path, or its first path): `rules`, the upstream rules whose tests the unit was
   written from. A unit without an entry (Rerail's probes, or one whose origin is unknown) is scored but is no rule's
-  own evidence for `stays-silent`.
+  own evidence for `stays-silent`. An ECMA unit's entry may also carry `languageOptions`, the language upstream linted
+  it under where its test case set one beyond ESLint's flat-config defaults for its extension: `ecmaVersion` (left out
+  when `"latest"`), `sourceType` (left out when it is the extension's: `commonjs` for `.cjs` and `.cts`, `module`
+  otherwise) and `parserOptions` (without `ecmaFeatures.jsx`, which the extension gives), never `globals`
+  (`unitLanguage` in `scripts/pack-data/eslint-expected.mjs`). A rename variant carries its original's. The
+  conformance runner evaluates the unit under them: it merges them into the `languageOptions` of each AST clause of
+  the port (its `ecmaVersion` and `sourceType`, `parserOptions.ecmaFeatures`' `globalReturn` and `impliedStrict`, and
+  typescript-eslint's `jsxPragma`, `jsxFragmentName` and `lib`, which a code rule spells at the top of
+  `languageOptions`), so the port judges the file as the linter did; a unit without them gets the port's own
+  `languageOptions` (ESLint's defaults unless the port sets others). Today the javascript pack's two tools and
+  eslint-plugin-vitest record them; the other ECMA generators lint every case under one configuration of ESLint's
+  defaults (vue's, next's, react's, typescript-eslint's) or convey the source type through the unit's `package.json`
+  (eslint-plugin-n's), so their units carry none.
 - Rename variants (the ECMA tool-packs): the generator writes a renamed copy of every upstream unit under
-  `fixtures/renamed/<the original's path>`, its identifiers and string and number literal contents renamed by
-  `scripts/pack-data/rename/ecmascript.ts` (same length and shape, one bijective map per file, keywords, the standard
-  library and common host names protected), and lints it with upstream like any unit. Its `source.units` entry adds
+  `fixtures/renamed/<the original's path>`, its identifiers renamed by `scripts/pack-data/rename/ecmascript.ts` (same
+  length and shape, one order-preserving bijective map per file; literals, comments other than `/* global */`-style
+  name lists, keywords, the standard library, common host and test-runner names and hook-shaped names kept), and
+  lints it with upstream like any unit. Its `source.units` entry adds
   `renamedFrom`, the key of the original unit, which must be an original with an origin. The conformance check scores
-  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names or literals rather
-  than the construct fails. A family without variants takes its overfit evidence from its samples alone.
+  variants apart from the originals (`holds-under-rename`), so a port that matches the tests' names rather than the
+  construct fails. A family without variants takes its overfit evidence from its samples alone.
 - `upstream/<tool>/gates.yaml` (a gated tool-pack): the upstream manifest the conformance check reads: the pins, the
   file types upstream lints, and per upstream rule its declared deprecation and recommended configuration
   ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
@@ -200,7 +213,10 @@ judged, and [CONTRIBUTING.md](../CONTRIBUTING.md#pack-test-data) who does what.
   `upstream/<tool>/UPSTREAM.md` lists ([UPSTREAM.md](#upstreammd)), and everything under `upstream/<tool>/authored/`, a
   contributor's code corpus with its ground truth where the corpus is no public repository a pin can name;
 - **derived**: everything else, upstream's tests copied or derived and the tool's expected findings, which the
-  generators make from the pins.
+  generators make from the pins. The expected findings' `source.units` say per unit where it came from, whether it is
+  a rename variant (`renamedFrom`) and, for an ECMA unit its test case linted under its own language, that language
+  (`languageOptions`), which the conformance runner evaluates the unit under
+  ([above](#conformancejson-divergencesjson-upstream)).
 
 **Samples** are the tool-pack's labelled real files ([docs/upstream.md, "Samples"](upstream.md#samples)). The
 archive's layout is `scripts/samples/format.ts`: each sample is `<sample-id>/<source path>` beside its

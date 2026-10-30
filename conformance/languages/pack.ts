@@ -158,6 +158,20 @@ export function unitKey(unit: z.infer<typeof unitSchema>): string {
   return typeof unit === "string" ? unit : unit[0]!;
 }
 
+/**
+ * The language upstream linted an ECMA unit under, beyond ESLint's flat-config defaults for its extension
+ * (scripts/pack-data/eslint-expected.mjs `unitLanguage`): its `ecmaVersion`, `sourceType` and `parserOptions`, never
+ * `globals`. The runner evaluates the unit under it (`inUnitLanguage` in runner.ts).
+ */
+const unitLanguageSchema = z
+  .strictObject({
+    ecmaVersion: z.union([z.literal("latest"), z.number().int().positive()]).optional(),
+    sourceType: z.enum(["script", "module", "commonjs"]).optional(),
+    parserOptions: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine(language => Object.keys(language).length > 0, "an empty languageOptions: leave it out");
+export type UnitLanguage = z.infer<typeof unitLanguageSchema>;
+
 /** Where a unit came from upstream. */
 const unitOriginSchema = z.strictObject({
   /** The upstream rules (names as in `rules`) whose tests the unit was written from. */
@@ -167,6 +181,8 @@ const unitOriginSchema = z.strictObject({
    * contents changed, `scripts/pack-data/rename/`), labelled by upstream like any unit.
    */
   renamedFrom: nonEmpty.optional(),
+  /** The language upstream linted the unit under, where its test case set one (a rename variant's is its original's). */
+  languageOptions: unitLanguageSchema.optional(),
 });
 export type UnitOrigin = z.infer<typeof unitOriginSchema>;
 
@@ -190,6 +206,7 @@ const fixtureSourceSchema = z
       if (origin.renamedFrom === undefined) continue;
       const original = units[origin.renamedFrom];
       if (original === undefined || original.renamedFrom !== undefined) issue(`${key}: renamedFrom ${origin.renamedFrom} is not an original unit with an origin`);
+      else if (JSON.stringify(original.languageOptions) !== JSON.stringify(origin.languageOptions)) issue(`${key}: its languageOptions differ from its original's, ${origin.renamedFrom}`);
     }
   });
 

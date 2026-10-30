@@ -53,10 +53,11 @@ const FIX = "fix the rule, or declare the divergence in the pack's divergences.j
 /**
  * holds-under-rename: the rule scored on its tool's rename variants, apart from the originals. An unexplained FP or
  * FN, or an engine failure, on a variant fails it; parse-induced `source-incomplete` reads and variants the renaming
- * took every finding from are only reported. When the renaming took every finding, the check holds vacuously: no
- * finding survived to show the rule matches the construct rather than the cases' names or literals. That is reported
- * as `vacuous`, not failed, while the renamer still rewrites the literals a rule may match; it blocks once the renamer
- * keeps literals. With no variant for the rule it is n/a, naming the held-out evidence left.
+ * took every finding from are only reported, as long as one finding survives. When the renaming took every finding, the
+ * check fails: no finding survived to show the rule matches the construct rather than the cases' names. The renamer
+ * keeps literals and every two names' order (scripts/pack-data/rename/ecmascript.ts), so a rule that reads a literal
+ * or an order keeps its findings on the variants. With no variant for the rule it is n/a, naming the held-out evidence
+ * left.
  */
 function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
   const id = "holds-under-rename";
@@ -81,16 +82,19 @@ function holdsUnderRename(row: RuleRow, samples: RuleRow | undefined): Check {
     ...(disagrees ? [`${renamed.fp} unexplained FP${point(renamed.falsePositives[0])} and ${renamed.fn} unexplained FN${point(renamed.falseNegatives[0])} on rename variants: the rule matches the test cases' names or literals, not the construct`] : []),
     ...(renamed.engineFailures > 0 ? [`${renamed.engineFailures} engine failure(s) on rename variants`] : []),
   ];
-  const vacuous = problems.length === 0 && renamed.tp === 0 && renamed.renamedAway > 0;
+  if (problems.length === 0 && renamed.tp === 0 && renamed.renamedAway > 0) {
+    return {
+      id,
+      ok: false,
+      detail: `vacuous: no finding of the rule survives on its ${renamed.units} rename variant unit(s)${notes}: the rule matches the test cases' names, not the construct; fix the rule`,
+    };
+  }
   return {
     id,
     ok: problems.length === 0,
-    ...(vacuous ? { vacuous: true as const } : {}),
     detail: problems.length > 0
       ? `${problems.join("; ")}${notes}; ${disagrees ? FIX : "fix the rule"}`
-      : vacuous
-        ? `vacuous: no finding of the rule survives on its ${renamed.units} rename variant unit(s)${notes}`
-        : `agrees with upstream on its ${renamed.units} rename variant unit(s) (${renamed.tp} true positive(s))${notes}`,
+      : `agrees with upstream on its ${renamed.units} rename variant unit(s) (${renamed.tp} true positive(s))${notes}`,
   };
 }
 

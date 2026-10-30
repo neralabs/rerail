@@ -35,6 +35,7 @@ import {
   type LoadedPack,
   type PackRule,
   type ExpectedFindings,
+  type UnitLanguage,
   type UnitOrigin,
   type UpstreamFinding,
 } from "./pack.js";
@@ -247,6 +248,86 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
       return [];
     }
   });
+}
+
+/** Whether an AST query's `language` is an ECMA one, whose queries take ESLint's `languageOptions`. */
+const isEcmaQuery = (language: unknown): boolean =>
+  typeof language === "string" && (CODE_RULE_AST_LANGUAGES as readonly string[]).includes(language) && codeRuleLanguageFamily(language as (typeof CODE_RULE_AST_LANGUAGES)[number]) === "ecma";
+
+/**
+ * What a code rule's AST query spells of a unit's language (`UnitLanguage`): `ecmaVersion` and `sourceType` as they are,
+ * `parserOptions.ecmaFeatures`' `globalReturn` and `impliedStrict` (the engine reads no other parser option of
+ * espree's), and typescript-eslint's `jsxPragma`, `jsxFragmentName` and `lib`, which a query spells at the top of its
+ * `languageOptions`. Anything else is the parser's alone (`ecmaFeatures.jsx` is the extension's).
+ */
+export function queryLanguageOptions(language: UnitLanguage): JsonObject {
+  const options: JsonObject = {};
+  if (language.ecmaVersion !== undefined) options.ecmaVersion = language.ecmaVersion;
+  if (language.sourceType !== undefined) options.sourceType = language.sourceType;
+  const parserOptions = language.parserOptions ?? {};
+  const features = isJsonObject(parserOptions.ecmaFeatures) ? parserOptions.ecmaFeatures : {};
+  const ecmaFeatures = Object.fromEntries(["globalReturn", "impliedStrict"].filter(key => typeof features[key] === "boolean").map(key => [key, features[key]]));
+  if (Object.keys(ecmaFeatures).length > 0) options.parserOptions = { ecmaFeatures };
+  for (const key of ["jsxPragma", "jsxFragmentName", "lib"]) if (parserOptions[key] !== undefined) options[key] = parserOptions[key];
+  return options;
+}
+
+/**
+ * A code rule document with `language` (a unit's) merged into the `languageOptions` of each ECMA AST clause, every
+ * case of a clause chosen by a document option included: the unit's language replaces the rule's `ecmaVersion`,
+ * `sourceType` and typescript-eslint options and adds to its `ecmaFeatures`; the rule's `globals` stay.
+ */
+export function inUnitLanguage(documentText: string, language: UnitLanguage): string {
+  const document = JSON.parse(documentText) as JsonObject;
+  const options = queryLanguageOptions(language);
+  const merge = (query: JsonObject): void => {
+    if (!isEcmaQuery(query.language)) return;
+    const own = isJsonObject(query.languageOptions) ? query.languageOptions : {};
+    const merged: JsonObject = { ...own, ...options };
+    if (isJsonObject(options.parserOptions) && isJsonObject(own.parserOptions)) {
+      const ownFeatures = isJsonObject(own.parserOptions.ecmaFeatures) ? own.parserOptions.ecmaFeatures : {};
+      merged.parserOptions = { ...own.parserOptions, ecmaFeatures: { ...ownFeatures, ...(options.parserOptions.ecmaFeatures as JsonObject) } };
+    }
+    query.languageOptions = merged;
+  };
+  for (const clause of Array.isArray(document.clauses) ? document.clauses.filter(isJsonObject) : []) {
+    const body = isJsonObject(clause.forbid) ? clause.forbid : isJsonObject(clause.require) ? clause.require : undefined;
+    if (!isJsonObject(body?.ast)) continue;
+    const ast = body.ast;
+    if (ast.$option !== undefined && isJsonObject(ast.cases)) for (const variant of [...Object.values(ast.cases), ast.default].filter(isJsonObject)) merge(variant);
+    else merge(ast);
+  }
+  return JSON.stringify(document);
+}
+
+/**
+ * The rules as a unit with a recorded language (`source.units[key].languageOptions`) is evaluated with: each rule's code
+ * rule recompiled with that language in its AST clauses (`inUnitLanguage`), once per rule and distinct language. The
+ * engine's languageOptions are per query, not per file, so a unit of its own language takes its own copy of the rule.
+ * A copy that does not compile is an error, and the rule is not evaluated on the unit.
+ */
+function unitLanguageRules(errors: string[]): (rules: readonly CompiledRule[], language: UnitLanguage | undefined, unit: string) => CompiledRule[] {
+  const cache = new Map<string, CompiledRule | string>();
+  return (rules, language, unit) => {
+    if (language === undefined) return [...rules];
+    const key = JSON.stringify(language);
+    return rules.flatMap(entry => {
+      const cacheKey = `${entry.policyId}\0${key}`;
+      let compiled = cache.get(cacheKey);
+      if (compiled === undefined) {
+        const document = inUnitLanguage(entry.document, language);
+        try {
+          compiled = { ...entry, compiled: loadNativeBinding().CodeRuleDslRuntime.compile(document, "json", capabilitiesJson()) };
+        } catch (error) {
+          compiled = error instanceof Error ? error.message : String(error);
+        }
+        cache.set(cacheKey, compiled);
+      }
+      if (typeof compiled !== "string") return [compiled];
+      errors.push(`${entry.rule.id}: does not compile in the language of fixture unit ${unit} (${key}): ${compiled}`);
+      return [];
+    });
+  };
 }
 
 /** Byte offset → upstream coordinates: the engine's line (the family's linter's terminators), code points from line start. */
@@ -468,6 +549,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
   const scored = new Set<string>();
   const units: FixturesRun["units"] = new Map();
   const summary: SourceSummary = { source: "fixtures", units: 0, files: 0, bytes: 0, syntaxErrorFiles: { count: 0, files: [] }, evaluationMs: 0 };
+  const inLanguage = unitLanguageRules(errors);
   for (const tool of toolsOf(compiled)) {
     const toolExpected = pinnedExpectedFindings(loaded, tool, fixturesExpectedPath(loaded, tool));
     expectedByTool.set(tool, toolExpected);
@@ -478,8 +560,8 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
     units.set(tool, toolUnits);
     for (const unit of source.files) {
       const paths = typeof unit === "string" ? [unit] : unit;
-      const unitRules = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
-      if (unitRules.length === 0) continue;
+      const covering = rules.filter(entry => paths.some(path => coversFixture(entry.rule, path)));
+      if (covering.length === 0) continue;
       const files: SourceFile[] = [];
       // A unit's package.json and module configurations are no sources: they ride along so the engine reads the
       // sources' manifest facts and import aliases.
@@ -499,6 +581,8 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       if (files.length === 0) continue;
       const key = unitKey(unit);
       const origin = source.units?.[key];
+      // A unit linted under its test case's own language is evaluated under it too.
+      const unitRules = inLanguage(covering, origin?.languageOptions, key);
       // A rename variant's findings are scored apart from the originals' (`renamed` on the row).
       const into = origin?.renamedFrom === undefined ? actual : renamedActual;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
@@ -1000,6 +1084,7 @@ export function reportFailures(report: T4Report): string[] {
         if (row.renamed !== null && row.renamed.fp > 0) problems.push(`${where}: ${row.renamed.fp} unexplained FP on rename variants, first ${JSON.stringify(row.renamed.falsePositives[0])}`);
         if (row.renamed !== null && row.renamed.fn > 0) problems.push(`${where}: ${row.renamed.fn} unexplained FN on rename variants, first ${JSON.stringify(row.renamed.falseNegatives[0])}`);
         if (row.renamed !== null && row.renamed.engineFailures > 0) problems.push(`${where}: ${row.renamed.engineFailures} engine failure(s) on rename variants`);
+        if (row.renamed !== null && row.renamed.tp === 0 && row.renamed.renamedAway > 0) problems.push(`${where}: the renaming took every finding from its ${row.renamed.renamedAway} rename variant(s) and none survives`);
       }
       if (row.engineFailures > 0) problems.push(`${where}: ${row.engineFailures} engine failure(s)`);
       return problems;
