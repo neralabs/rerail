@@ -1,6 +1,6 @@
 ---
 name: rerail-create
-description: Suggest, write, test and tune Rerail rules for the repository you are in. Suggests rules from this repo's own sessions (the person's corrections, risky commands, which rules already steer) and its written standards, drafts each rule as a code rule or a command rule, tests it against cases and the whole repo, reads it back, adds it only after the person says yes, then audits what waits for the person's approval. Use for /rerail-create, "suggest rules", "what rules should we have", "make a rule that…", "this rule is wrong", or approving a rule that waits.
+description: Suggest, write, test and tune Rerail rules for the repository you are in. Suggests rules from this repo's own sessions (the person's corrections, risky commands, which rules already steer) and its written standards, drafts each rule as a code rule or a command rule, tests it against cases and the whole repo, reads it back, adds it only after the person says yes, then audits what waits for the person's approval. Also writes architecture rules (where code belongs, which way dependencies run) from the repo's design docs and maintainers' review comments, proved against the repo's history. Use for /rerail-create, "suggest rules", "what rules should we have", "make a rule that…", "architecture rules", "layering rules", "this rule is wrong", or approving a rule that waits.
 ---
 
 # Create a Rerail rule
@@ -27,12 +27,16 @@ decides: nothing is added until they say yes, and nothing runs until they approv
 | [references/suggesting-rules.md](references/suggesting-rules.md) | you suggest rules: evidence, the value model, the shortlist |
 | [references/code-rules.md](references/code-rules.md) | you draft a rule over the code in files |
 | [references/conversation-rules.md](references/conversation-rules.md) | you draft a rule over a command the agent runs (internal testing) |
+| [references/architecture-rules.md](references/architecture-rules.md) | the rule is about where code belongs or which way dependencies run, or the person asks for architecture rules |
 | [references/rule-quality.md](references/rule-quality.md) | you check a draft before showing it, and when you tune a rule |
 
 ## Which path
 
 - **The person said what the rule should check:** go to [Write](#write).
 - **No words, or "suggest", "what rules should we have":** go to [Suggest](#suggest), then Write each rule the person picks.
+- **"Architecture rules", layering, or where code belongs:** read
+  [references/architecture-rules.md](references/architecture-rules.md), then go to [Suggest](#suggest) or [Write](#write) as
+  above. It adds evidence to gather in Suggest and a history check in Write.
 - **A rule misfires** ("this rule is wrong", "stop telling me X", a `◆ Rerail` message the person disputes): go to [Tune](#tune).
 - **The person asks to approve a rule that waits**, or what waits ("approve my rule", `rerail rules list`): go to
   [Approve](#approve).
@@ -52,6 +56,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - Look at the code for conventions it already keeps. Count both forms with a search: for example, 140 files call `logger`
      and 3 call `console.log`.
    - `rerail rules export --output <tmp>/rules.json`, to see the person's own rules and avoid duplicating them.
+   - For architecture rules, also read the design docs and the maintainers' review comments that
+     [Where the intent is written](references/architecture-rules.md#where-the-intent-is-written) lists.
 2. **Turn the evidence into candidates.** Write one checkable sentence each, in the person's own words. Never turn a "should" into
    a "must". Score each candidate with the value model and drop the ones it says to skip.
 3. **Show the shortlist:** at most five, best first, in the card format the reference gives, and ask which to write. With no
@@ -91,6 +97,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      Its matches say nothing about those.
    - A rule that matches hundreds of places fights the repo's convention.
    - The message passes the harmful-steering check.
+   - An architecture rule passes [Proving it against history](references/architecture-rules.md#proving-it-against-history):
+     it catches the first draft the maintainers sent back, and stays quiet on the merge and on recent merged work.
 
    After about five rounds without passing, stop and tell the person what does not work.
 5. **Get it reviewed.** If you can start a fresh subagent, give it the draft, the test report and
@@ -127,6 +135,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
    - **Rules from the shortlist.** Put one line above the card: `From: <the evidence, e.g. "you corrected this 3 times">`.
+   - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
+     draft of #123; quiet on its merge and on 15 recent merged PRs.`
    - **Conversation rules** (command or similarity). Put one line above the card: `Internal testing: this kind of rule is not
      part of Rerail 0.1.0 yet.`
    - **"Change something".** Offer Steer and Log, each with what it means, and any other row the person names.

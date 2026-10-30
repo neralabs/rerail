@@ -29,6 +29,9 @@ const SOURCE_SUFFIXES: &[&str] = &[
     "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "vue", "yaml",
     "yml", "zsh",
 ];
+/// The names of the files the host evaluates by their whole name (`SOURCE_NAMES` in
+/// code-rule-languages.ts): the package ignore files `file.package.published` reads.
+const SOURCE_NAMES: &[&str] = &[".npmignore", ".gitignore"];
 const STATUS_EXCLUDES: &[&str] = &[
     ":(glob,exclude)**/.git/**",
     ":(glob,exclude)**/node_modules/**",
@@ -263,14 +266,22 @@ fn hash_key(id: &gix::hash::oid) -> Result<HashKey, DiscoveryError> {
 }
 
 fn source_path(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            SOURCE_SUFFIXES
+    let path = Path::new(path);
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            SOURCE_NAMES
                 .iter()
-                .any(|suffix| suffix.eq_ignore_ascii_case(extension))
+                .any(|source| source.eq_ignore_ascii_case(name))
         })
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                SOURCE_SUFFIXES
+                    .iter()
+                    .any(|suffix| suffix.eq_ignore_ascii_case(extension))
+            })
 }
 
 struct IgnoreRules {

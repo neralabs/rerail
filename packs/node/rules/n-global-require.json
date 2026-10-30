@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-global-require",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Keep require() calls at the top level of a module, not inside functions or blocks; nested requires hide dependencies and load synchronously mid-run.",
   "scope": {
@@ -23,7 +23,9 @@
       "forbid": {
         "ast": {
           "language": "typescript",
-          "languageOptions": {},
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
           "rule": {
             "kind": "call_expression",
             "has": {

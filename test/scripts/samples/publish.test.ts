@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { samplesArchiveCachePath, samplesTree, samplesTreeDirectory } from "../../../scripts/s3/pack-fixtures.mjs";
 import { buildArchive, compressArchive, lockText } from "../../../scripts/s3/test-data-archive.mjs";
 import { publishSamplesDirectory, writeSampleSet } from "../../../scripts/samples/pack.js";
-import { recordedLicence } from "../../../scripts/samples/licences.js";
+import { recordedLicences } from "../../../scripts/samples/licences.js";
 import { publishedSamples } from "../../../scripts/samples/publish.js";
 import { writeSamplesTree } from "../../support/samples.js";
 
@@ -94,7 +94,17 @@ function refusalWith(edit: Record<string, string>): string {
 
 describe("publishedSamples on the source licence", () => {
   it("refuses a declared source.license that is not the repository's recorded licence", () => {
-    expect(refusalWith({ license: "Apache-2.0" })).toContain(`its source.license "Apache-2.0" is not fastify/fastify's recorded licence "MIT"`);
+    expect(refusalWith({ license: "Apache-2.0" })).toMatch(/its source\.license "Apache-2\.0" is not fastify\/fastify's recorded licence at [0-9a-f]{12}, "MIT"/u);
+  });
+
+  it("judges a sample by the licence recorded at its own commit, where that differs from the repository's", () => {
+    // jest was BSD-3-Clause with a patent grant until 2018, then MIT.
+    const bsd = "242fb35459b387e360f52394b0e30f42101cc51d";
+    const later = "f".repeat(40);
+    expect(refusalWith({ repo: "jestjs/jest", commit: bsd, license: "BSD-3-Clause" })).toBe("");
+    expect(refusalWith({ repo: "jestjs/jest", commit: bsd, license: "MIT" })).toContain(`recorded licence at 242fb35459b3, "BSD-3-Clause"`);
+    expect(refusalWith({ repo: "jestjs/jest", commit: later, license: "MIT" })).toBe("");
+    expect(refusalWith({ repo: "jestjs/jest", commit: later, license: "BSD-3-Clause" })).toContain(`recorded licence at ffffffffffff, "MIT"`);
   });
 
   it("refuses a repository with no recorded licence, whatever licence it declares", () => {
@@ -109,15 +119,15 @@ describe("publishedSamples on the source licence", () => {
     expect(refusalWith({ repo: "Fastify/Fastify" })).toBe("");
   });
 
-  it("records every repository the committed SAMPLES.md tables list, under the licence they list", () => {
+  it("records every repository the committed SAMPLES.md tables list, under each licence they list", () => {
     // SAMPLES.md sits at packs/<pack>/upstream/<tool>/; walking all of packs/ would read every pulled fixture.
     const listed = readdirSync("packs")
       .flatMap(pack => (existsSync(join("packs", pack, "upstream")) ? readdirSync(join("packs", pack, "upstream")).map(tool => join("packs", pack, "upstream", tool, "SAMPLES.md")) : []))
       .filter(path => existsSync(path))
       .flatMap(path => [...readFileSync(path, "utf8").matchAll(/^\| ([\w.-]+\/[\w.-]+) \| ([^|]+?) \|/gmu)])
-      .map(([, repo, licence]) => [repo!, recordedLicence(repo!) ?? "(none)", licence!]);
+      .flatMap(([, repo, licences]) => licences!.split(", ").map(licence => [repo!, recordedLicences(repo!).join(", ") || "(none)", licence]));
     expect(listed.length).toBeGreaterThan(0);
-    expect(listed.filter(([, recorded, licence]) => recorded !== licence)).toEqual([]);
+    expect(listed.filter(([, recorded, licence]) => !recorded!.split(", ").includes(licence!))).toEqual([]);
   });
 });
 

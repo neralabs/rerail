@@ -282,7 +282,7 @@ describe("Rerail managed launcher", () => {
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
   }, 60_000); // Twelve CLI runs, four of them updates that health-check the version they install: about 16s locally, twice that in CI.
 
-  test("keeps status and rollback available when the active managed CLI is missing", async () => {
+  test("keeps status available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));
     temporaryDirectories.push(root);
     const manifest = await packageManifest();
@@ -300,9 +300,10 @@ describe("Rerail managed launcher", () => {
     const status = await run(["node", "dist/cli/cli.js", "update", "status"], environment);
     expect(status).toMatchObject({ exitCode: 0, stderr: "" });
     expect(status.stdout).toContain(`Current: ${missingVersion}`);
-    const rollback = await run(["node", "dist/cli/cli.js", "update", "rollback"], environment);
-    expect(rollback).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(rollback.stdout).toContain(`${manifest.version}; new harness sessions will use it.`);
-  }, 30_000); // Rollback health-checks this checkout: a real start, then a real session.
+    // A command the missing launcher would have run says how to get Rerail back.
+    const forwarded = await run(["node", "dist/cli/cli.js", "update", "check"], environment);
+    expect(forwarded.exitCode).toBe(1);
+    expect(forwarded.stderr).toContain(`Active Rerail launcher is missing: ${join(root, "missing", "dist", "cli", "cli.js")}. Run npx ${manifest.name} setup`);
+  });
 
 });

@@ -62,6 +62,7 @@
     ".claude-plugin",
     ".codex-plugin",
     ".cursor-plugin",
+    "!.cursor-plugin/marketplace.json",
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",

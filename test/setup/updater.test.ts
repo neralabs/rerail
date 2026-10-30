@@ -132,13 +132,6 @@ describe("ManagedUpdater", () => {
     expect(registry.resolvedChannels).toEqual(["beta"]);
     expect(registry.installedVersions).toEqual(["1.1.0"]);
     await expect(readFile(join(updated.current.packageRoot, "package.json"), "utf8")).resolves.toContain('"1.1.0"');
-
-    const rolledBack = await updater.rollback();
-    expect(rolledBack).toMatchObject({
-      changed: true,
-      current: { version: "1.0.0", packageRoot },
-      previous: { version: "1.1.0" },
-    });
   });
 
   it("does not reinstall or downgrade when the selected channel is not newer", async () => {
@@ -382,57 +375,6 @@ describe("ManagedUpdater", () => {
   });
 });
 
-/**
- * An installed release from before set-up, as 0.1.0-next.0 behaves under the health check: `state` answers "never",
- * `start` rejects `--answer` as an unknown option, and only a started folder opens a session.
- */
-async function preSetupRelease(): Promise<Installation> {
-  const root = await mkdtemp(join(tmpdir(), "rerail-pre-setup-release-"));
-  temporaryDirectories.push(root);
-  await Promise.all([ENTRY_POINTS.index, ENTRY_POINTS.cli, ENTRY_POINTS.eventStream].map(path => mkdir(dirname(join(root, path)), { recursive: true })));
-  await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0-next.0", type: "module" }));
-  await writeFile(join(root, ENTRY_POINTS.index), "export function nativeHealth() { return { ok: true }; }\n");
-  await writeFile(join(root, ENTRY_POINTS.cli), [
-    'import { mkdirSync } from "node:fs";',
-    'import { join } from "node:path";',
-    "const [command, ...args] = process.argv.slice(2);",
-    'if (command === "state") process.stdout.write("never\\n");',
-    'else if (command === "start" && args.includes("--answer")) {',
-    '  process.stderr.write("rerail: Unknown start option: --answer\\n");',
-    "  process.exitCode = 1;",
-    '} else if (command === "start") mkdirSync(join(process.env.RERAIL_HOME, "started"), { recursive: true });',
-    "else process.exitCode = 1;",
-    "",
-  ].join("\n"));
-  await writeFile(join(root, ENTRY_POINTS.eventStream), [
-    'import { existsSync, mkdirSync, readFileSync } from "node:fs";',
-    'import { join } from "node:path";',
-    'const request = JSON.parse(readFileSync(0, "utf8").trimEnd().split("\\n").at(-1));',
-    'if (existsSync(join(process.env.RERAIL_HOME, "started"))) mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
-    'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
-    "",
-  ].join("\n"));
-  return { version: "0.1.0-next.0", packageRoot: root };
-}
-
-describe("rollback to a release from before set-up", () => {
-  it("passes the health check by starting the release without --answer", async () => {
-    const { home, packageRoot } = await fixture();
-    const previous = await preSetupRelease();
-    await mkdir(home, { recursive: true });
-    await writeFile(join(home, "update-state.json"), JSON.stringify({
-      schemaVersion: 1,
-      channel: "latest",
-      current: { version: "1.0.0", packageRoot },
-      previous,
-    }));
-    // No validateInstallation: the real health check runs against the release.
-    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
-
-    expect(await updater.rollback()).toMatchObject({ changed: true, current: previous, previous: { version: "1.0.0" } });
-  }, 30_000);
-});
-
 describe("ManagedUpdater.install (setup bootstrap)", () => {
   it("materializes the running version under versions/, links current, and writes the launcher", async () => {
     const { home, packageRoot } = await fixture();
@@ -451,7 +393,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
       version: "1.0.0",
       packageRoot: join(home, "versions", "1.0.0", "node_modules", "@neralabs", "rerail"),
     });
-    // The npx cache / checkout it ran from is not a rollback target.
+    // The npx cache / checkout it ran from is not recorded as the previous version.
     expect(installed.previous).toBeUndefined();
     expect(registry.installedVersions).toEqual(["1.0.0"]);
 
@@ -507,7 +449,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(existsSync(updater.launcherPath)).toBe(true);
   });
 
-  it("keeps a managed previous version for rollback and re-points current on update", async () => {
+  it("records the managed previous version and re-points current on update", async () => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.0.0");
     const updater = new ManagedUpdater({
@@ -524,11 +466,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(updated.previous).toEqual(first.current);
     expect(await readlink(updater.currentLink)).toBe(updated.current.packageRoot);
 
-    const rolledBack = await updater.rollback();
-    expect(rolledBack.current).toEqual(first.current);
-    expect(await readlink(updater.currentLink)).toBe(first.current.packageRoot);
-
-    // A later `setup` from a newer npx copy keeps the managed previous.
+    // A later `setup` from a newer npx copy records the managed version it replaces.
     const newer = new ManagedUpdater({
       home,
       packageRoot,
@@ -538,7 +476,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     });
     const bootstrapped = await newer.install();
     expect(bootstrapped.current.version).toBe("1.2.0");
-    expect(bootstrapped.previous).toEqual(first.current);
+    expect(bootstrapped.previous).toEqual(updated.current);
   });
 
   it("leaves no Rerail home behind when a first install fails validation", async () => {
@@ -687,7 +625,7 @@ async function candidate(eventStream: readonly string[]): Promise<Installation> 
 
 describe("validateManagedInstallation", () => {
   // A build that speaks another event protocol rejects this build's preface with an error frame and exits 0. It is
-  // refused for that reply even when it opened a session, so the update or rollback never activates it.
+  // refused for that reply even when it opened a session, so the update never activates it.
   it("refuses a candidate whose event stream rejects this build's preface", async () => {
     const installation = await candidate([
       'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',

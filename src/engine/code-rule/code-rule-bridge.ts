@@ -17,7 +17,7 @@ import type { AuditMode } from "../audit/audit.js";
 import { readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
-import { languageOfPath, SOURCE_LANGUAGES } from "./code-rule-languages.js";
+import { sourceLanguageOfPath } from "./code-rule-languages.js";
 import { sensitiveByName } from "../path-boundary.js";
 
 
@@ -207,7 +207,7 @@ export function generatedEditPaths(toolName: string, input: unknown): string[] {
     const patched = patchPaths(candidate);
     return patched.length > 0 ? patched : [candidate];
   });
-  return [...new Set(paths.filter(path => languageOfPath(SOURCE_LANGUAGES, path) !== undefined))];
+  return [...new Set(paths.filter(path => sourceLanguageOfPath(path) !== undefined))];
 }
 
 /** Tools that run arbitrary commands can write any source without a preimage, so their results reconcile the workspace. */
@@ -799,7 +799,7 @@ export class CodeRuleBridge {
   /** A file Git ignores is not observed at all: no baseline entry, so no later read or edit of it is audited. */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
-    const language = languageOfPath(SOURCE_LANGUAGES, path);
+    const language = sourceLanguageOfPath(path);
     if (language !== undefined && !this.#auditor.ignoresPath?.(path, false))
       await this.#observeFile(walk, { absolute, path, language }, info);
   }
@@ -846,7 +846,7 @@ export class CodeRuleBridge {
   #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown): void {
     const { discovery, previousSources, scan } = walk;
     const path = sessionPath(discovery.root, absolute);
-    const language = languageOfPath(SOURCE_LANGUAGES, path);
+    const language = sourceLanguageOfPath(path);
     const readError = error instanceof Error ? error.message : String(error);
     if (language !== undefined) {
       scan.sources.set(path, { path, language, readError });
@@ -904,7 +904,7 @@ export class CodeRuleBridge {
     const absolute = isAbsolute(configuredPath) ? configuredPath : resolve(root, configuredPath);
     const path = relative(root, absolute).split(sep).join("/");
     if (path === "" || isAbsolute(path)) return undefined;
-    const language = languageOfPath(SOURCE_LANGUAGES, path);
+    const language = sourceLanguageOfPath(path);
     if (language === undefined || !this.#auditor.acceptsPath(path)) return undefined;
     return { absolute, path, language };
   }

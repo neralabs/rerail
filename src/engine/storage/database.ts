@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -29,55 +29,9 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
 }
 
 /**
- * Beside the database while `rerail update rollback` writes a copy into it (`project-cli.ts`), holding that process's
- * pid. Every opener refuses the database while it is live (`rollbackRestoring`).
- */
-export function rollbackRestoringPath(path: string): string {
-  return `${path}.restoring`;
-}
-
-/**
- * Whether a rollback is writing a copy into the database at `path`: its `.restoring` file exists and the process it
- * names still runs. A file whose process is gone is left by a rollback that was killed, and holds nothing back; one
- * that names no process (unreadable, or written by an earlier build) is taken as live.
- */
-export function rollbackRestoring(path: string): boolean {
-  let text: string;
-  try {
-    text = readFileSync(rollbackRestoringPath(path), "utf8");
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ENOENT";
-  }
-  const pid = Number.parseInt(text.trim(), 10);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
-/**
- * Refuses a connection while a rollback writes a copy into the database; checked after a read, so the connection
- * already holds what makes the rollback's journal switch fail (WAL keeps a reader's shared lock until it closes). A
- * connection that read before the rollback's file existed makes the rollback refuse; one that reads after sees it.
- */
-function refuseWhileRestoring(client: Database.Database, path: string): void {
-  client.pragma("user_version", { simple: true });
-  if (rollbackRestoring(path)) {
-    throw new Error(
-      `Rerail is putting back a copy of ${path} for a rollback; try again in a moment (if no rerail update rollback is `
-        + `running, one was interrupted: delete ${rollbackRestoringPath(path)})`,
-    );
-  }
-}
-
-/**
  * A connection that has changed nothing on disk yet; a writable one creates the directory and an absent file. A
  * writable open of a file this process cannot write throws before anything else touches it: SQLite would quietly open
- * it read-only, and the writer would then change its mode before failing. No connection opens while a rollback writes
- * a copy into the file (`refuseWhileRestoring`).
+ * it read-only, and the writer would then change its mode before failing.
  */
 function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   if (!readonly) {
@@ -89,7 +43,6 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   try {
     const database = drizzle(client, { schema });
     database.run(sql`PRAGMA busy_timeout = 5000`);
-    refuseWhileRestoring(client, path);
     return database;
   } catch (error) {
     client.close();
@@ -100,13 +53,11 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
 /**
  * What a writer owns: the file mode, WAL, and the connection's integrity settings. The file and every file named after
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
- * creates the database file's mode. The rollback check runs again in WAL mode: a file a rollback left in
- * rollback-journal mode holds no lock for a connection between its reads.
+ * creates the database file's mode.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);
   enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
-  refuseWhileRestoring(database.$client, path);
   database.run(sql`PRAGMA foreign_keys = ON`);
   database.run(sql`PRAGMA synchronous = FULL`);
 }

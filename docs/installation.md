@@ -35,7 +35,7 @@ there. That copy is ephemeral, so `setup`'s first job is to make a durable one:
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── coding-agents.json                                 the coding agents set-up and `rerail install` have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     the rule packs you installed (`rerail packs`)
-└── versions/<older>/…                                 kept for `rerail update rollback`
+└── versions/<older>/…                                 the versions `rerail update` replaced
 ```
 
 Set-up follows the same steps in a terminal and from a coding agent. Nothing
@@ -482,7 +482,7 @@ rerail session claude-code ID --open  # this session's status line and page URL;
 rerail scan --session ID --scope repository --wait  # internal testing: inspect findings in Sessions
 rerail settings --session ID --mode log             # save this workspace's default
 rerail update check      # is a newer version on the channel?
-rerail update            # install it; `rerail update rollback` undoes it
+rerail update            # install it
 rerail reset             # delete this repository's session history, across all worktrees; rules stay
 rerail rules list        # your rules, and those waiting for approval
 rerail rules approve ID  # print a waiting rule's content and approve it so it runs
@@ -501,8 +501,7 @@ the ones it retired; a coding agent never connected is left alone. Command files
 and skills Rerail generated are replaced without a `.bak` copy. Updating from
 0.1.0-next.2 or earlier runs that version's update, which does not do this: run
 `rerail install --refresh` once afterwards.
-Settings, scans, status, update checks, rollback and reset are the CLI
-commands above.
+Settings, scans, status, update checks and reset are the CLI commands above.
 Restart the coding agent after installing or rebuilding to load the commands.
 A scan or settings invocation must supply the exact session
 identity. See the [scan and settings contract](reference.md#scan-and-settings-controls)
@@ -523,9 +522,8 @@ daemon serves every repository; its pages are scoped to one with
 (`$RERAIL_HOME/packs`, see [Rule packs](rule-packs.md#installing-packs)) run only
 in repositories that add them (see [Rule scoping](rule-scoping.md)).
 `rerail update` first copies the database to `~/.rerail/rerail.sqlite.pre-update`
-(kept only when the update changes the version, and recorded with that change), and
-`rerail update rollback` puts that copy back when rolling that change back and the
-update changed the database in a way the older version cannot read (see
+(kept only when the update changes the version), the database as it was before
+the version now active, to put back by hand if you need it (see
 [Database compatibility](#database-compatibility));
 `rerail rules export [--output <file>]` and `rerail rules import <file>` move
 your rules and each repository's configuration by hand. `rerail seed` fills the
@@ -618,33 +616,18 @@ they keep the floor and an older Rerail still opens the file; a hook or the
 status line runs them before reading. A step an older version would misread
 raises the floor and waits for the new version's daemon or a command that
 writes (until then a hook or the status line says to start Rerail, `rerail
-daemon start`); from then on older versions refuse the file, and `rerail update
-rollback` puts back the copy `rerail update` took before that version change
-when the floor is now above what the version rolled back to opens. It writes the
-copy into the database file itself, so anything that has the file open goes on
-with the restored database, after keeping what the database held as
-`rerail.sqlite.before-rollback` (readable only by you; a later rollback keeps its
-own as `.before-rollback.2`, `.3`, …, never over an earlier one). A copy's
-record is used once: once the copy is put back, or you are told how to put it
-back yourself, no later rollback puts it back again. While it writes,
-`rerail.sqlite.restoring` (holding the rollback's process id) sits beside the
-database and every Rerail process refuses to open it; try again in a moment. A
-rollback that was killed leaves the file behind, but once its process is gone
-Rerail opens the database again and the next rollback takes the file over. While
-a coding agent session still has the database open, or another rollback is
-restoring, the copy is not put back: copy it over yourself, as the message says
-(it also says when it stopped the daemon). An update that finds nothing
-newer, or fails, keeps the copy of the last change; one that changes the version
-but cannot keep a copy removes the last one, which no longer belongs to the
-change a rollback would undo.
+daemon start`); from then on older versions refuse the file. To run an older
+version against it anyway, put back the copy `rerail update` took before that
+version change: stop Rerail (`rerail daemon stop`, and close the coding agent
+sessions that have it open), keep `rerail.sqlite` elsewhere if you need what
+changed since the update, then copy `rerail.sqlite.pre-update` over it. An
+update that finds nothing newer, or fails, keeps the copy of the last change;
+one that changes the version but cannot keep a copy removes the last one, which
+is not the database as it was before the version now active.
 
 A database written by 0.1.0-next.1 (stamped 1, before the migration path) is
 adopted: the first Rerail process that opens it records the baseline and stamps
-it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it, and its
-`rerail update` kept a copy with no record of the change, so `rerail update
-rollback` to it does not put the copy back itself: it prints how to (copy
-`rerail.sqlite.pre-update` over `rerail.sqlite` with Rerail stopped, keeping
-the current file if you need what changed since). A database file written by a newer Rerail (a
+it 3, keeping everything in it. 0.1.0-next.1 then no longer opens it. A database file written by a newer Rerail (a
 floor above this release's), by other software, by 0.1.0-next.0 (stamped 1, in
 an older shape) or by a development build (stamped 2) is refused with an error
 and left untouched. Move such a file aside (or point `RERAIL_HOME` elsewhere)

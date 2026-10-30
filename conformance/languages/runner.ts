@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join, relative, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree } from "../../scripts/s3/pack-fixtures.mjs";
 import { LABELS_SUFFIX, SAMPLE_ID, sampleLabelsSchema } from "../../scripts/samples/format.js";
@@ -75,13 +75,16 @@ interface Evaluation {
 
 /**
  * The repository audit's path through the production workspace: every code rule added to one workspace, sources applied
- * in 32-file / 1 MiB batches with global relations deferred, one closing apply, then results paged out.
+ * in 32-file / 1 MiB batches with global relations deferred, one closing apply, then results paged out. `root` is the
+ * folder the files' paths are relative to, which import targets resolve against as the daemon resolves them against
+ * its workspace root.
  */
-export async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[]): Promise<Evaluation> {
+export async function evaluateWorkspace(codeRules: readonly NativeCompiledCodeRuleDsl[], files: readonly SourceFile[], root?: string): Promise<Evaluation> {
   const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   const started = performance.now();
   try {
     for (const codeRule of codeRules) workspace.addCodeRule(codeRule);
+    if (root !== undefined) workspace.setRoot(resolve(root));
     let revision = 0;
     let batch: SourceFile[] = [];
     let bytes = 0;
@@ -453,10 +456,10 @@ function pinnedExpectedFindings(loaded: LoadedPack, tool: string, path: string):
  * code rule in a workspace, so candidates evaluated beside the shipped ports would spend the shipped ports' budget and
  * change their verdicts, which a candidate must never do. Production never runs candidates beside shipped rules either.
  */
-async function evaluateApart(rules: readonly CompiledRule[], files: readonly SourceFile[]): Promise<[CompiledRule[], Evaluation][]> {
+async function evaluateApart(rules: readonly CompiledRule[], files: readonly SourceFile[], root?: string): Promise<[CompiledRule[], Evaluation][]> {
   const groups = [rules.filter(entry => !isCandidate(entry.rule)), rules.filter(entry => isCandidate(entry.rule))].filter(group => group.length > 0);
   const evaluations: [CompiledRule[], Evaluation][] = [];
-  for (const group of groups) evaluations.push([group, await evaluateWorkspace(group.map(entry => entry.compiled), files)]);
+  for (const group of groups) evaluations.push([group, await evaluateWorkspace(group.map(entry => entry.compiled), files, root)]);
   return evaluations;
 }
 
@@ -502,7 +505,7 @@ async function runFixtures(loaded: LoadedPack, compiled: readonly CompiledRule[]
       // A rename variant's findings are scored apart from the originals' (`renamed` on the row).
       const into = origin?.renamedFrom === undefined ? actual : renamedActual;
       const sources = new Map(files.map(file => [file.path, Buffer.from(file.source, "utf8")]));
-      for (const [group, evaluation] of await evaluateApart(unitRules, [...manifests, ...files])) {
+      for (const [group, evaluation] of await evaluateApart(unitRules, [...manifests, ...files], fixturesDirectory(loaded, tool))) {
         collectActual(group, evaluation, sources, await syntaxErrorLocations(loaded, evaluation, files), into, key);
         summary.evaluationMs += evaluation.ms;
       }
@@ -677,11 +680,12 @@ async function runSamples(loaded: LoadedPack, compiled: readonly CompiledRule[],
 }
 
 /**
- * Whether a unit's file rides along with its sources rather than being one: a package.json, or a project configuration
- * (a `.json` file named `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
+ * Whether a unit's file rides along with its sources rather than being one: a package.json, a `.npmignore` or
+ * `.gitignore` (as the engine's `ignore_file_directory` names them), or a project configuration (a `.json` file named
+ * `tsconfig…` or `jsconfig…`, as the engine's `is_module_config` names them).
  */
 function ridesAlong(path: string): boolean {
-  return /^(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
+  return /^(?:package\.json|\.npmignore|\.gitignore|(?:ts|js)config[^/]*\.json)$/.test(basename(path));
 }
 
 export interface RunOptions {
